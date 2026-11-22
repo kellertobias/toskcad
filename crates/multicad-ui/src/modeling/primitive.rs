@@ -10,8 +10,8 @@ use multicad_core::{
     sketch::{Datum, Frame},
 };
 
-mod corner_inputs;
-mod gizmo;
+pub(super) mod corner_inputs;
+pub(super) mod gizmo;
 mod pose;
 
 #[derive(Default)]
@@ -192,8 +192,17 @@ impl PrimitivePanel {
     pub(super) fn dragging(&self) -> bool {
         self.resize.active() || self.pose.active()
     }
+    #[cfg(test)]
     pub(super) fn corner_input_active(&self) -> bool {
         self.corner_inputs.active()
+    }
+    pub(super) fn corner_input_focused(&self) -> bool {
+        self.corner_inputs.focused()
+    }
+    /// Open the viewport dimension inputs at the far corner so a new draft
+    /// is directly editable without first discovering the corner click.
+    pub(super) fn open_dimension_inputs(&mut self) {
+        self.corner_inputs.open(7);
     }
     fn resolved(&self, session: &multicad_core::commands::Session) -> Option<ResolvedPrimitive> {
         self.request(session.document(), true)
@@ -264,6 +273,7 @@ impl PrimitivePanel {
                 rect,
                 basis: Default::default(),
                 start_allowed: start_allowed && !resize.input_owned,
+                snap: super::TransformSnap::OFF,
             };
             match self.frame(document).and_then(|frame| {
                 self.pose
@@ -336,6 +346,7 @@ impl PrimitivePanel {
             gizmo::corners(shape),
             session,
             &mut fields,
+            &[],
         )
     }
 

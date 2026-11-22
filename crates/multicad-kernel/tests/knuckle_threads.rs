@@ -1,7 +1,37 @@
 use multicad_core::document::EntityId;
 use multicad_kernel::{
-    BooleanOperation, GeometryPolicy, KnuckleHelicalThread, RigidTransform, Solid,
+    GeometryError, GeometryPolicy, KnuckleHelicalThread, PlaneFrame, Solid,
+    rust_kernel::rounded_thread,
 };
+/// Owned-kernel knuckle (DIN 405) thread: tangent crest/root circles on
+/// 15-degree flanks, whose minor radius is exactly the major less half a pitch.
+/// Exact STEP serialization of the owned solid; the Rust analogue of the
+/// former OCCT BRep text used to prove that meshing never mutates geometry.
+fn step_bytes(solid: &Solid) -> Vec<u8> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("snapshot.step");
+    solid.write_step(&path).unwrap();
+    std::fs::read(path).unwrap()
+}
+
+fn rust_knuckle(p: KnuckleHelicalThread, feature: EntityId) -> Result<Solid, GeometryError> {
+    Solid::rust_rounded_thread(
+        rounded_thread::Spec {
+            major_radius_mm: p.major_radius_mm,
+            pitch_mm: p.pitch_mm,
+            length_mm: p.length_mm,
+            depth_mm: p.pitch_mm / 2.,
+            crest_radius_mm: p.crest_radius_mm,
+            root_radius_mm: p.root_radius_mm,
+            flank_angle_deg: 15.,
+            starts: 1,
+            left_hand: p.left_hand,
+        },
+        feature,
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+    )
+}
 fn spec(internal: bool, left_hand: bool) -> KnuckleHelicalThread {
     let pitch = 3.175;
     let a = 15_f64.to_radians();
@@ -16,20 +46,33 @@ fn spec(internal: bool, left_hand: bool) -> KnuckleHelicalThread {
         left_hand,
     }
 }
+/// Fraction of the probe cube's centre and eight corners that the owned
+/// kernel's exact point classification places in material. Owned rounded
+/// bodies have no exact Boolean or overlap volume (the former OCCT probe
+/// intersected the cube). Each probe cube sits farther from the expected
+/// boundary than its half-diagonal, so the former volume fraction was 0 or 1;
+/// nine exact classifications detect the same side unless a material feature
+/// smaller than the cube lies wholly inside it. This is a proxy, not an
+/// exact replacement for the cube volume.
 fn material(shape: &Solid, point: [f64; 3]) -> f64 {
     let edge = 0.00002;
-    let cube = Solid::box_solid([edge; 3], Default::default())
-        .unwrap()
-        .transformed(RigidTransform {
-            translation_mm: point.map(|v| v - edge / 2.),
-            ..Default::default()
+    let samples = std::iter::once([0.; 3]).chain((0..8).map(|corner| {
+        std::array::from_fn(|axis| {
+            if corner >> axis & 1 == 1 {
+                edge / 2.
+            } else {
+                -edge / 2.
+            }
         })
-        .unwrap();
-    shape
-        .boolean(&cube, BooleanOperation::Intersect, Default::default())
-        .unwrap()
-        .map_or(0., |s| s.volume_mm3().unwrap())
-        / edge.powi(3)
+    }));
+    samples
+        .filter(|offset: &[f64; 3]| {
+            shape
+                .rust_thread_contains(std::array::from_fn(|i| point[i] + offset[i]))
+                .unwrap()
+        })
+        .count() as f64
+        / 9.
 }
 fn analytic_volume(p: KnuckleHelicalThread) -> f64 {
     let a = 15_f64.to_radians();
@@ -59,30 +102,47 @@ fn native_knuckle_circles_flanks_volume_and_step_keep_distinct_cutter_radii_for_
         for left in [false, true] {
             let p = spec(internal, left);
             let id = EntityId::new();
-            let solid = Solid::knuckle_helical_thread_named(p, id, Default::default()).unwrap();
+            let solid = rust_knuckle(p, id).unwrap();
             assert_eq!(solid.solid_count().unwrap(), 1);
             let bounds = solid.bounds().unwrap();
             assert!(bounds.min[2].abs() < 16e-7);
             assert!((bounds.max[2] - p.length_mm).abs() < 16e-7);
             let topology = solid.topology_snapshot(id, 0).unwrap();
             assert!(topology.elements.iter().all(|e| !e.origins.is_empty()));
-            for role in ["thread/start/0/root/lower", "thread/start/0/root/upper"] {
+            // Owned rounded threads name each exact meridian band; the root
+            // circle is one periodic band (OCCT split it into root/lower and
+            // root/upper faces) that also carries the shared root identity.
+            for role in [
+                "cap.start",
+                "cap.end",
+                "thread/rounded/crest.start",
+                "thread/rounded/lower",
+                "thread/rounded/root",
+                "thread/rounded/upper",
+                "thread/rounded/crest.end",
+            ] {
                 assert!(
                     topology
                         .elements
                         .iter()
-                        .any(|e| e.origins.iter().any(|o| o.source == id && o.role == role))
+                        .any(|e| e.origins.iter().any(|o| o.source == id && o.role == role)),
+                    "missing {role}"
                 );
             }
+            assert!(topology.elements.iter().any(|e| {
+                ["thread/rounded/root", "thread.root"]
+                    .iter()
+                    .all(|role| e.origins.iter().any(|o| o.source == id && o.role == *role))
+            }));
             let path = dir.path().join(format!("knuckle-{internal}-{left}.step"));
             solid.write_step(&path).unwrap();
             let back = Solid::read_step(&path, Default::default()).unwrap();
             let area: f64 = solid.faces().unwrap().iter().map(|f| f.area_mm2).sum();
             let exact = analytic_volume(p);
             let budget = GeometryPolicy::default().linear_tolerance_mm * area + 1e-7 * exact;
-            let before = solid.to_brep().unwrap();
+            let before = step_bytes(&solid);
             solid.mesh(Default::default()).unwrap();
-            assert_eq!(solid.to_brep().unwrap(), before);
+            assert_eq!(step_bytes(&solid), before);
             for shape in [&solid, &back] {
                 assert!(
                     (shape.volume_mm3().unwrap() - exact).abs() < budget,
@@ -212,19 +272,25 @@ fn small_knuckle_fixed_meridian_keeps_its_actual_crest_circle_with_radial_offset
         root_radius_mm: radius,
         left_hand: false,
     };
-    let shape =
-        Solid::knuckle_helical_thread_named(p, EntityId::new(), Default::default()).unwrap();
+    let shape = rust_knuckle(p, EntityId::new()).unwrap();
     let dz = -0.65 * radius * a.cos();
     let boundary = p.major_radius_mm - radius + (radius * radius - dz * dz).sqrt();
-    let before = shape.to_brep().unwrap();
+    let before = step_bytes(&shape);
+    // The 1 um linear deflection (chords certified within half of it) is what
+    // resolves the +/-1 um crest-circle probes below. The former 0.04 rad was
+    // OCCT's angle between consecutive edge chords; the owned tessellator
+    // instead certifies every triangle normal within half the angular
+    // deflection of the exact surface, which at 0.04 rad needs about 3.1M
+    // triangles on the two 150-degree knuckle arcs. 0.1 rad keeps a fine,
+    // certified shading bound inside the same triangle budget.
     let mesh = shape
         .mesh(multicad_kernel::MeshOptions {
             linear_deflection_mm: 0.001,
-            angular_deflection_rad: 0.04,
+            angular_deflection_rad: 0.1,
             maximum_triangles: 2_000_000,
         })
         .unwrap();
-    assert_eq!(shape.to_brep().unwrap(), before);
+    assert_eq!(step_bytes(&shape), before);
     let area: f64 = shape.faces().unwrap().iter().map(|f| f.area_mm2).sum();
     let expected = analytic_volume(p);
     assert!(

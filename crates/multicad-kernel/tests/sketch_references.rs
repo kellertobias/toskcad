@@ -732,3 +732,123 @@ fn finite_cylinder_face_marks_proven_tangent_line_and_distinguishes_two_inside_f
     assert!(empty.results.is_empty());
     near(cylinder.volume_mm3().unwrap(), 250. * std::f64::consts::PI);
 }
+
+#[test]
+fn rust_face_sections_refuse_clipped_oblique_cylinders_and_face_projection() {
+    let cylinder = Solid::cylinder(Default::default(), 5., 10., p()).unwrap();
+    let side = cylinder
+        .faces()
+        .unwrap()
+        .into_iter()
+        .find(|f| f.plane.is_none())
+        .unwrap()
+        .index;
+    let c = std::f64::consts::FRAC_1_SQRT_2;
+    // The 45 degree ellipse spans z = 2..12 and would need a rim trim.
+    let clipped = PlaneFrame {
+        origin: [0., 0., 7.],
+        u: [1., 0., 0.],
+        v: [0., c, c],
+    };
+    let refused = cylinder
+        .sketch_reference_geometry(
+            BRepSelection::Face(side),
+            clipped,
+            SketchReferenceMethod::Intersect,
+            p(),
+        )
+        .unwrap_err();
+    assert_eq!(refused.kind, GeometryErrorKind::Unsupported);
+    let above = PlaneFrame {
+        origin: [0., 0., 20.],
+        ..clipped
+    };
+    assert!(
+        query(
+            &cylinder,
+            BRepSelection::Face(side),
+            above,
+            SketchReferenceMethod::Intersect
+        )
+        .results
+        .is_empty()
+    );
+    let top = cylinder
+        .faces()
+        .unwrap()
+        .into_iter()
+        .find(|f| f.plane.is_some_and(|(o, _)| (o[2] - 10.).abs() < 1e-9))
+        .unwrap()
+        .index;
+    assert!(
+        cylinder
+            .sketch_reference_geometry(
+                BRepSelection::Face(top),
+                xy(0.),
+                SketchReferenceMethod::Project,
+                p()
+            )
+            .is_err()
+    );
+    // An oblique chord through the cap disk is exact.
+    let chord = query(
+        &cylinder,
+        BRepSelection::Face(top),
+        vertical_x(3.),
+        SketchReferenceMethod::Intersect,
+    );
+    let SketchReferenceGeometry::Curve(CurvedEdge2d::Line { a, b }) = chord.results[0].geometry
+    else {
+        panic!()
+    };
+    near((a[0] - b[0]).abs(), 8.);
+}
+
+#[test]
+fn spline_fragment_rims_reference_their_whole_authored_span_in_source_parameters() {
+    // The sweep keeps finite manufacturing patches, but every rim patch
+    // refers to the one authored span with its own knot domain.
+    let mut authored = arch(None);
+    authored.knots = vec![2., 5.];
+    let s = spline_solid(authored.clone());
+    let snapshot = s.topology_snapshot(EntityId::new(), 0).unwrap();
+    let mut rims = 0;
+    for key in snapshot
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Edge)
+        .map(|e| e.key)
+    {
+        let Ok(coplanar) = s.sketch_reference_geometry(
+            BRepSelection::Edge(key.ordinal),
+            xy(0.),
+            SketchReferenceMethod::Coplanar,
+            p(),
+        ) else {
+            continue;
+        };
+        let SketchReferenceGeometry::Curve(CurvedEdge2d::BSpline(curve)) =
+            &coplanar.results[0].geometry
+        else {
+            continue;
+        };
+        rims += 1;
+        assert_eq!(curve.poles, authored.poles);
+        assert_eq!(curve.knots, authored.knots);
+        let hit = query(
+            &s,
+            BRepSelection::Edge(key.ordinal),
+            vertical_y(3.),
+            SketchReferenceMethod::Intersect,
+        );
+        assert_eq!(hit.results.len(), 2);
+        for r in &hit.results {
+            assert_eq!(r.source_interval, Some([2., 5.]));
+            let u = r.source_parameter.unwrap();
+            assert!((2. ..=5.).contains(&u));
+            near(authored.evaluate(u, p()).unwrap().point[1], 3.);
+        }
+    }
+    // The arch is retained as several patches, each naming the whole span.
+    assert!(rims >= 2, "{rims}");
+}

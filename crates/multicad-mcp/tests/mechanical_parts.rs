@@ -30,6 +30,289 @@ fn run(h: &Headless, name: &str, args: Value) -> Value {
 fn mm(value: f64) -> Value {
     json!({"value":value,"unit":"mm"})
 }
+
+#[test]
+fn rust_mcp_round_trips_rotated_washer_step_and_edits_bearing_envelope() {
+    use multicad_mcp::Storage;
+    use multicad_model::GeometryBackend;
+    use std::f64::consts::PI;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("annular-hardware.tcd");
+    let document = Document::new("Rust annular hardware").unwrap();
+    ProjectStore
+        .save(
+            &path,
+            &multicad_core::project_file::ProjectFile::new(document).unwrap(),
+        )
+        .unwrap();
+    let open = || {
+        Headless::with_geometry_backend(
+            Workspace::project(path.clone(), Box::new(ProjectStore)).unwrap(),
+            Some(directory.path().into()),
+            false,
+            GeometryBackend::Rust,
+        )
+    };
+    let h = open();
+    let profiles = run(&h, "mechanical_part_profiles", json!({}));
+    assert_eq!(
+        profiles["active_geometry_support"]["step_geometry"],
+        json!([
+            "washer",
+            "bearing_envelope",
+            "machine_screw",
+            "hex_nut",
+            "hanger_bolt",
+            "wood_insert"
+        ])
+    );
+    let washer = run(
+        &h,
+        "set_mechanical_part",
+        json!({
+            "expected_revision":0,"name":"Rotated washer","recipe":{
+                "kind":"washer","plane":"yz","origin":[mm(10.),mm(20.),mm(30.)]
+            }
+        }),
+    );
+    let file_name = "annulus.step";
+    let step = run(
+        &h,
+        "export_step",
+        json!({"part":washer["part"],"file_name":file_name}),
+    );
+    let washer_volume = PI * (3.5_f64.powi(2) - 1.6_f64.powi(2)) * 0.5;
+    let near = |actual: &Value, expected: f64| {
+        let actual = actual.as_f64().unwrap();
+        assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
+    };
+    near(&step["readback_volume_mm3"], washer_volume);
+    let imported = run(
+        &h,
+        "import_step",
+        json!({"expected_revision":1,"file_name":file_name}),
+    );
+    let bearing = run(
+        &h,
+        "set_mechanical_part",
+        json!({
+            "expected_revision":2,"name":"Bearing envelope","recipe":{"kind":"bearing_envelope"}
+        }),
+    );
+    let edit = run(
+        &h,
+        "set_mechanical_part",
+        json!({
+            "expected_revision":3,"feature":bearing["feature"],"recipe":{"kind":"bearing_envelope","width":mm(12.)}
+        }),
+    );
+    assert_eq!(edit["feature"], bearing["feature"]);
+    assert_eq!(edit["part"], bearing["part"]);
+    let model = run(&h, "evaluate_model", json!({}));
+    let parts = model["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 3);
+    let part = |id: &Value| parts.iter().find(|part| part["part"] == *id).unwrap();
+    let original = part(&washer["part"]);
+    let exchange = part(&imported["parts"][0]);
+    near(&exchange["volume_mm3"], washer_volume);
+    assert_eq!(exchange["bounds_mm"], original["bounds_mm"]);
+    near(
+        &part(&bearing["part"])["volume_mm3"],
+        PI * (225. - 25.) * 12.,
+    );
+    run(&h, "save_project", json!({"expected_revision": 4}));
+    drop(h);
+    std::fs::remove_file(directory.path().join(file_name)).unwrap();
+    let reopened = open();
+    assert_eq!(
+        run(&reopened, "evaluate_model", json!({}))["parts"],
+        model["parts"],
+    );
+}
+
+#[test]
+fn rust_mcp_edits_and_reopens_a_modeled_m6_socket_screw() {
+    use multicad_mcp::Storage;
+    use multicad_model::GeometryBackend;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("socket-screw.tcd");
+    let document = Document::new("Rust M6 socket screw").unwrap();
+    ProjectStore
+        .save(
+            &path,
+            &multicad_core::project_file::ProjectFile::new(document).unwrap(),
+        )
+        .unwrap();
+    let open = || {
+        Headless::with_geometry_backend(
+            Workspace::project(path.clone(), Box::new(ProjectStore)).unwrap(),
+            Some(directory.path().into()),
+            false,
+            GeometryBackend::Rust,
+        )
+    };
+    let h = open();
+    let profiles = run(&h, "mechanical_part_profiles", json!({}));
+    assert_eq!(
+        profiles["supported_geometry"],
+        json!([
+            "machine_screw",
+            "hex_nut",
+            "washer",
+            "bearing_envelope",
+            "wood_screw",
+            "hanger_bolt",
+            "wood_insert"
+        ])
+    );
+    assert_eq!(
+        profiles["active_geometry_support"]["head_drive_pairs"],
+        json!([
+            ["socket_cap", "hex_socket"],
+            ["external_hex", "external_hex"],
+            ["countersunk", "hex_socket"],
+            ["button", "hex_socket"],
+            ["socket_cap", "hexalobular"],
+            ["pan", "hexalobular"],
+            ["button", "hexalobular"],
+            ["countersunk", "hexalobular"],
+            ["pan", "phillips_h"],
+            ["countersunk", "phillips_h"]
+        ])
+    );
+    assert_eq!(
+        profiles["active_geometry_support"]["representations"],
+        json!(["modeled", "cosmetic_envelope"])
+    );
+    let create = json!({
+        "expected_revision":0,"name":"M6 × 1 socket screw",
+        "recipe":{"kind":"machine_screw","underhead_length":mm(10.),"shank_diameter":mm(6.),
+            "head":{"kind":"socket_cap","diameter":mm(10.),"height":mm(6.)},
+            "drive":{"kind":"hex_socket","across_flats":mm(5.),"depth":mm(3.)},
+            "thread":{"major_diameter":mm(6.),"pitch":mm(1.),"length":mm(6.5),"fit":"metric_6g_external"}}
+    });
+    let before = h.document();
+    let cancelled = dispatch(&h, &call(true), "set_mechanical_part", create.clone()).unwrap_err();
+    assert_eq!(cancelled.code, "cancelled");
+    let mut invalid = create.clone();
+    invalid["recipe"]["thread"]["representation"] = json!("cosmetic_envelope");
+    let rejected = dispatch(&h, &call(false), "set_mechanical_part", invalid).unwrap_err();
+    assert_eq!(rejected.code, "model_failed");
+    assert!(
+        rejected
+            .message
+            .contains("matching shank and thread envelope diameters"),
+        "{}",
+        rejected.message
+    );
+    assert_eq!(h.document(), before);
+    let created = run(&h, "set_mechanical_part", create);
+    let feature = &created["feature"];
+    let part = &created["part"];
+    let original = run(&h, "evaluate_model", json!({}))["parts"][0].clone();
+    assert_eq!(original["solid_count"], 1);
+    assert_eq!(original["bounds_mm"]["min"], json!([-5., -5., -6.]));
+    assert_eq!(original["bounds_mm"]["max"], json!([5., 5., 10.]));
+    let edit = run(
+        &h,
+        "set_mechanical_part",
+        json!({"expected_revision":1,"feature":feature,"recipe":{"kind":"machine_screw","thread":{"hand":"left"}}}),
+    );
+    assert_eq!(&edit["feature"], feature);
+    assert_eq!(&edit["part"], part);
+    run(&h, "save_project", json!({"expected_revision":2}));
+    drop(h);
+    let reopened = open();
+    let source = run(
+        &reopened,
+        "inspect_mechanical_part",
+        json!({"feature":feature}),
+    );
+    assert_eq!(&source["source"]["output"]["body"], part);
+    assert_eq!(source["source"]["parameters"]["thread"]["hand"], "left");
+    assert_eq!(
+        run(&reopened, "evaluate_model", json!({}))["parts"][0],
+        original
+    );
+}
+
+#[test]
+fn rust_mcp_edits_and_reopens_a_modeled_m6_hex_nut() {
+    use multicad_mcp::Storage;
+    use multicad_model::GeometryBackend;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("metric-nut.tcd");
+    ProjectStore
+        .save(
+            &path,
+            &multicad_core::project_file::ProjectFile::new(
+                Document::new("Rust M6 hex nut").unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let open = || {
+        Headless::with_geometry_backend(
+            Workspace::project(path.clone(), Box::new(ProjectStore)).unwrap(),
+            Some(directory.path().into()),
+            false,
+            GeometryBackend::Rust,
+        )
+    };
+    let h = open();
+    let profiles = run(&h, "mechanical_part_profiles", json!({}));
+    assert_eq!(
+        profiles["active_geometry_support"]["hex_nut_metric_fits"],
+        json!(["nominal_basic", "metric_6h_internal"])
+    );
+    let request = json!({
+        "expected_revision":0,"name":"M6 × 1 hex nut","recipe":{
+            "kind":"hex_nut","across_flats":mm(10.),
+            "thread":{"major_diameter":mm(6.),"pitch":mm(1.),"length":mm(5.2),
+                "fit":"metric_6h_internal","representation":"modeled","minimum_wall":mm(1.)}
+        }
+    });
+    let before = h.document();
+    let mut invalid = request.clone();
+    invalid["recipe"]["across_flats"] = mm(7.);
+    assert!(dispatch(&h, &call(false), "set_mechanical_part", invalid).is_err());
+    assert_eq!(h.document(), before);
+    let created = run(&h, "set_mechanical_part", request);
+    let feature = &created["feature"];
+    let part = &created["part"];
+    let original = run(&h, "evaluate_model", json!({}))["parts"][0].clone();
+    assert_eq!(original["solid_count"], 1);
+    assert_eq!(original["bounds_mm"]["min"][0], -5.);
+    assert_eq!(original["bounds_mm"]["max"][0], 5.);
+    assert_eq!(original["bounds_mm"]["max"][2], 5.2);
+    let edited = run(
+        &h,
+        "set_mechanical_part",
+        json!({"expected_revision":1,"feature":feature,"recipe":{
+            "kind":"hex_nut","thread":{"hand":"left"}
+        }}),
+    );
+    assert_eq!(&edited["feature"], feature);
+    assert_eq!(&edited["part"], part);
+    run(&h, "save_project", json!({"expected_revision":2}));
+    drop(h);
+    let reopened = open();
+    let source = run(
+        &reopened,
+        "inspect_mechanical_part",
+        json!({"feature":feature}),
+    );
+    assert_eq!(source["resolved"]["fit"]["class"], "metric_6h_internal");
+    assert_eq!(source["resolved"]["hand"], "left");
+    assert_eq!(
+        run(&reopened, "evaluate_model", json!({}))["parts"][0],
+        original
+    );
+}
+
 #[test]
 fn native_washer_edit_history_and_step_keep_one_parametric_part() {
     let dir = tempfile::tempdir().unwrap();
@@ -142,18 +425,25 @@ fn nut_uses_shared_thread_recipe_and_manufacturing_guard_while_bearing_is_explic
     assert_eq!(
         profiles["supported_geometry"],
         json!([
-            "washer",
-            "hex_nut",
-            "bearing_envelope",
             "machine_screw",
-            "wood_screw"
+            "hex_nut",
+            "washer",
+            "bearing_envelope",
+            "wood_screw",
+            "hanger_bolt",
+            "wood_insert"
         ])
     );
+    assert_eq!(
+        profiles["active_geometry_support"]["hex_nut_metric_fits"],
+        json!(["nominal_basic", "metric_6h_internal"])
+    );
+    assert_eq!(profiles["active_geometry_support"]["threaded_step"], true);
     assert!(
-        profiles["catalog_status"]
+        profiles["bearing"]
             .as_str()
             .unwrap()
-            .contains("sourced dimensional references")
+            .contains("envelope only")
     );
 }
 #[test]
@@ -186,8 +476,8 @@ fn stale_cancelled_unsupported_ambiguous_and_native_invalid_requests_change_noth
     assert_eq!(h.document(), before);
 }
 
-struct WasherProjectStore;
-impl multicad_mcp::Storage for WasherProjectStore {
+struct ProjectStore;
+impl multicad_mcp::Storage for ProjectStore {
     fn open(
         &mut self,
         path: &std::path::Path,
@@ -352,14 +642,14 @@ fn configured_washer_keeps_nominal_facts_through_owner_overrides_mcp_history_and
     assert_ne!(feature, request.feature);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("configured-washer.tcd");
-    WasherProjectStore
+    ProjectStore
         .save(
             &path,
             &ProjectFile::new(consuming.document().clone()).unwrap(),
         )
         .unwrap();
     let h = Headless::new(
-        Workspace::project(path.clone(), Box::new(WasherProjectStore)).unwrap(),
+        Workspace::project(path.clone(), Box::new(ProjectStore)).unwrap(),
         Some(dir.path().into()),
         false,
     );
@@ -414,7 +704,7 @@ fn configured_washer_keeps_nominal_facts_through_owner_overrides_mcp_history_and
     assert_eq!(h.document(), after_edit);
     run(&h, "save_project", json!({"expected_revision":3}));
     let reopened = Headless::new(
-        Workspace::project(path, Box::new(WasherProjectStore)).unwrap(),
+        Workspace::project(path, Box::new(ProjectStore)).unwrap(),
         Some(dir.path().into()),
         false,
     );
@@ -496,7 +786,7 @@ fn both_machine_screw_heads_and_thread_extents_keep_native_drives_history_saved_
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("screw.tcd");
             let h = Headless::new(
-                Workspace::project(path.clone(), Box::new(WasherProjectStore)).unwrap(),
+                Workspace::project(path.clone(), Box::new(ProjectStore)).unwrap(),
                 Some(dir.path().into()),
                 false,
             );
@@ -552,7 +842,7 @@ fn both_machine_screw_heads_and_thread_extents_keep_native_drives_history_saved_
             assert_eq!(h.document(), changed);
             run(&h, "save_project", json!({"expected_revision":4}));
             let reopened = Headless::new(
-                Workspace::project(path, Box::new(WasherProjectStore)).unwrap(),
+                Workspace::project(path, Box::new(ProjectStore)).unwrap(),
                 Some(dir.path().into()),
                 false,
             );
@@ -628,10 +918,10 @@ fn invalid_stale_cancelled_and_incomplete_screw_recipes_never_partially_commit()
     for (key, value) in [
         ("underhead_length", mm(1.)),
         ("shank_diameter", mm(0.)),
-        ("drive", json!({"kind":"hex_socket","depth":mm(3.)})),
+        ("drive", json!({"kind":"hex_socket","depth":mm(9.)})),
         ("drive", json!({"kind":"hex_socket","across_flats":mm(5.)})),
         ("head", json!({"kind":"external_hex","height":mm(2.)})),
-        ("head", json!({"kind":"socket_cap","height":mm(1.)})),
+        ("head", json!({"kind":"socket_cap","height":mm(0.)})),
         ("thread", json!({"length":mm(1.5),"pitch":mm(0.)})),
         (
             "thread",
@@ -664,6 +954,67 @@ fn invalid_stale_cancelled_and_incomplete_screw_recipes_never_partially_commit()
             )
             .is_err()
         );
+        assert_eq!(h.document(), before);
+    }
+}
+
+#[test]
+fn rust_mcp_shallow_head_recess_can_extend_into_plain_shank_and_export_actual_material() {
+    use multicad_core::document::EntityId;
+    use multicad_kernel::{GeometryPolicy, Solid};
+    use multicad_model::GeometryBackend;
+    for (height, depth) in [(3., 3.), (1., 1.3)] {
+        let dir = tempfile::tempdir().unwrap();
+        let h = Headless::with_geometry_backend(
+            Workspace::new(Document::new("Plain-zone socket").unwrap()).unwrap(),
+            Some(dir.path().into()),
+            false,
+            GeometryBackend::Rust,
+        );
+        let created = run(
+            &h,
+            "set_mechanical_part",
+            json!({"expected_revision":0,"name":"Plain-zone socket","recipe":{"kind":"machine_screw","underhead_length":mm(3.),"thread":{"length":mm(1.5)},"head":{"kind":"socket_cap","height":mm(height)},"drive":{"kind":"hex_socket","depth":mm(depth)}}}),
+        );
+        let before = h.document();
+        let exported = run(
+            &h,
+            "export_step",
+            json!({"part":created["part"],"file_name":"plain-zone.step"}),
+        );
+        let decoded = Solid::import_rust_step(
+            &std::fs::read_to_string(dir.path().join("plain-zone.step")).unwrap(),
+            EntityId::new(),
+            GeometryPolicy::default(),
+        )
+        .unwrap();
+        let floor = depth - height;
+        assert!(
+            !decoded
+                .rust_thread_contains([0., 0., floor - 0.01])
+                .unwrap()
+        );
+        assert!(
+            decoded
+                .rust_thread_contains([0., 0., floor + 0.01])
+                .unwrap()
+        );
+        assert!(
+            decoded
+                .rust_thread_contains([1.49, 0., floor - 0.01])
+                .unwrap()
+        );
+        assert!(
+            (decoded.volume_mm3().unwrap() - exported["readback_volume_mm3"].as_f64().unwrap())
+                .abs()
+                < 1e-6
+        );
+        let mesh = decoded
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+        assert_eq!(h.document(), before);
+        assert!(dispatch(&h,&call(false),"set_mechanical_part",json!({"expected_revision":1,"feature":created["feature"],"recipe":{"kind":"machine_screw","drive":{"kind":"hex_socket","depth":mm(9.)}}})).is_err());
         assert_eq!(h.document(), before);
     }
 }

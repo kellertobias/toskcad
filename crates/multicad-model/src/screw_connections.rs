@@ -1,6 +1,8 @@
 //! Native connection validation over reconstructed canonical sources and physical leaves.
 mod custom;
+mod rust;
 mod seating;
+mod seating_pose;
 use crate::{Model, ModelError, compiler::checkpoint, error};
 use multicad_core::{
     document::{Document, EntityData, EntityId},
@@ -12,9 +14,11 @@ use multicad_core::{
     references::{ReferenceFrame, TopologySnapshot},
 };
 use multicad_kernel::{BooleanOperation, PlaneFrame, Solid};
+pub(crate) use seating_pose::{Inputs as SeatingPoseInputs, refine as refine_hardware_pose};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use multicad_core::model::ScrewConnectionCheck;
+pub(crate) use rust::validate as validate_rust;
 
 fn mm(
     value: &multicad_core::constraint_sketch::Dimension,
@@ -189,6 +193,24 @@ fn require_contiguous(
     }
     Ok(())
 }
+
+fn connection_topologies(model: &Model) -> BTreeMap<EntityId, TopologySnapshot> {
+    let mut topologies: BTreeMap<_, _> = model
+        .snapshot()
+        .shapes
+        .iter()
+        .map(|(id, shape)| (*id, shape.topology.clone()))
+        .collect();
+    topologies.extend(
+        model
+            .snapshot()
+            .occurrences
+            .iter()
+            .map(|(id, occurrence)| (*id, occurrence.topology.clone())),
+    );
+    topologies
+}
+
 /// Runs once after physical occurrence expansion and before publishing a model.
 /// No source pose or recipe is changed to make an invalid candidate pass.
 pub(crate) fn validate(
@@ -201,19 +223,7 @@ pub(crate) fn validate(
     if !document.entities().any(|entity| matches!(&entity.data, EntityData::Extension { definition, .. } if definition.type_id == model::SCREW_CONNECTION_TYPE)) {
         return Ok(vec![]);
     }
-    let mut topologies: BTreeMap<EntityId, TopologySnapshot> = model
-        .snapshot()
-        .shapes
-        .iter()
-        .map(|(id, s)| (*id, s.topology.clone()))
-        .collect();
-    topologies.extend(
-        model
-            .snapshot()
-            .occurrences
-            .iter()
-            .map(|(id, s)| (*id, s.topology.clone())),
-    );
+    let topologies = connection_topologies(model);
     let mut checks = vec![];
     let mut collision_queries = 0;
     for entity in document.entities() {
@@ -588,7 +598,7 @@ pub(crate) fn validate(
                 collision(a.solid, other, model, id, &mut collision_queries)?;
             }
         }
-        checks.push(ScrewConnectionCheck{connection:id,mode:source.mode,hardware_instances:hardware.iter().map(|r|r.instance).collect(),receiver_features:source.receivers.iter().map(|r|r.feature).collect(),grip_mm:grip,minimum_engagement_mm:engagement,blind_tip_clearance_mm:clearance,actual_engagement_mm:actual_engagement,actual_wood_engagement_mm:None,native_component_collision_checked:true,scope:"Current placed complete-profile metric engagement, phase, ordered hardware, receiving stack and strict native component non-interference; no strength or installation certification".into()});
+        checks.push(ScrewConnectionCheck{connection:id,mode:source.mode,hardware_instances:hardware.iter().map(|r|r.instance).collect(),receiver_features:source.receivers.iter().map(|r|r.feature).collect(),grip_mm:grip,minimum_engagement_mm:engagement,blind_tip_clearance_mm:clearance,actual_engagement_mm:actual_engagement,actual_wood_engagement_mm:None,actual_head_bearing_gap_mm:None,actual_insert_inset_mm:None,native_component_collision_checked:true,scope:"Current placed complete-profile metric engagement, phase, ordered hardware, receiving stack and strict native component non-interference; no strength or installation certification".into()});
     }
     Ok(checks)
 }

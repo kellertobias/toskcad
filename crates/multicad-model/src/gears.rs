@@ -1,4 +1,4 @@
-//! Native gear bodies are derived from the canonical, resolved gear recipe.
+//! Gear bodies are derived from the canonical, resolved gear recipe.
 use crate::{ModelError, error};
 use multicad_core::{
     document::EntityId,
@@ -124,7 +124,63 @@ pub(crate) fn build(
             Solid::generated_za_worm_wheel_named(spec, feature, policy)
         }
     };
-    let frame = r.frame();
+    place(feature, &r, solid)
+}
+
+pub(crate) fn build_rust(
+    feature: EntityId,
+    source: &GearDefinition,
+    parameters: &EvaluatedParameters,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    let resolved = source
+        .parameters
+        .resolve_geometry(parameters)
+        .map_err(|e| error(Some(feature), e))?;
+    let solid = match specification(feature, &resolved)? {
+        NativeSpecification::Rack(spec) => Solid::rust_straight_rack_named(spec, feature, policy),
+        NativeSpecification::Rotary(spec) if spec.sweep == GearSweep::Spur => {
+            Solid::rust_spur_gear_named(spec, feature, policy)
+        }
+        NativeSpecification::Rotary(spec) if spec.sweep == GearSweep::Chevron => {
+            Solid::rust_herringbone_named(spec, feature, policy)
+        }
+        NativeSpecification::Rotary(spec) if spec.sweep == GearSweep::Helical => {
+            Solid::rust_helical_gear_named(spec, feature, policy)
+        }
+        NativeSpecification::Rotary(spec)
+            if matches!(spec.sweep, GearSweep::GappedChevron { .. }) =>
+        {
+            Solid::rust_double_helical_named(spec, feature, policy)
+        }
+        NativeSpecification::Rotary(spec)
+            if matches!(spec.sweep, GearSweep::InternalSpur { .. }) =>
+        {
+            Solid::rust_internal_ring_named(spec, feature, policy)
+        }
+        NativeSpecification::Bevel(spec) => {
+            Solid::rust_spherical_bevel_gear_named(spec, feature, policy)
+        }
+        NativeSpecification::Worm(spec) => Solid::rust_za_worm_named(spec, feature, policy),
+        NativeSpecification::WormWheel(spec) => {
+            Solid::rust_generated_za_worm_wheel_named(spec, feature, policy)
+        }
+        _ => {
+            return Err(error(
+                Some(feature),
+                "Rust gear geometry currently requires an external spur gear, an internal spur ring, a helical gear, a continuous herringbone, a gapped double-helical gear, a spherical bevel gear, a ZA worm or generated wheel, or a straight rack",
+            ));
+        }
+    };
+    place(feature, &resolved, solid)
+}
+
+fn place(
+    feature: EntityId,
+    geometry: &ResolvedGearGeometry,
+    solid: Result<Solid, multicad_kernel::GeometryError>,
+) -> Result<Solid, ModelError> {
+    let frame = geometry.frame();
     let placement = RigidTransform {
         rotation: std::array::from_fn(|i| [frame.u[i], frame.v[i], frame.n[i]]),
         translation_mm: frame.origin,

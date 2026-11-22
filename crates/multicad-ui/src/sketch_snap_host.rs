@@ -3,10 +3,25 @@
 //! midpoint marker, dotted assistive lines and the target label. Nothing here
 //! changes the document; placement commits keep using the shared draw API.
 use super::*;
-use snap::{Axis, Query, SnapGeometry, TargetKind};
+use snap::{Axis, Marker, Query, SnapGeometry, TargetKind};
 
 const REFERENCE_COLOR: Color32 = Color32::from_rgb(255, 170, 60);
 const GUIDE_COLOR: Color32 = Color32::from_rgb(120, 200, 255);
+/// Vertex and corner snaps use a stronger color than other targets.
+const VERTEX_COLOR: Color32 = Color32::from_rgb(255, 220, 90);
+
+/// The pointer shape while a target is shown: a precise crosshair at points
+/// (vertices, centers, midpoints, constructed points), a cell cursor on an
+/// edge, and the ordinary cursor in empty space and along plain alignment.
+pub(super) fn snap_cursor(kind: TargetKind) -> Option<egui::CursorIcon> {
+    match kind.marker() {
+        Marker::Vertex | Marker::Center | Marker::Midpoint | Marker::Construction => {
+            Some(egui::CursorIcon::Crosshair)
+        }
+        Marker::Edge => Some(egui::CursorIcon::Cell),
+        Marker::Alignment => None,
+    }
+}
 
 fn to_screen(camera: Camera, frame: Frame, rect: Rect) -> impl Fn([f64; 2]) -> Option<[f32; 2]> {
     move |p| {
@@ -83,6 +98,9 @@ impl SketchEditor {
                 self.message = "Reference released".into();
             }
             None => {}
+        }
+        if let Some(icon) = outcome.target.as_ref().and_then(|t| snap_cursor(t.kind)) {
+            ui.ctx().set_cursor_icon(icon);
         }
         snap::placement(outcome.target.as_ref(), raw, grid)
     }
@@ -170,6 +188,45 @@ impl SketchEditor {
                 }
             }
         }
+        let marker = target.kind.marker();
+        let color = if marker == Marker::Vertex {
+            VERTEX_COLOR
+        } else {
+            GUIDE_COLOR
+        };
+        let stroke = Stroke::new(2., color);
+        match marker {
+            Marker::Vertex => {
+                let square = Rect::from_center_size(at, Vec2::splat(10.));
+                painter.rect_filled(square, 0., color.gamma_multiply(0.35));
+                painter.rect_stroke(square, 0., stroke, egui::StrokeKind::Middle);
+            }
+            Marker::Center => {
+                painter.circle_stroke(at, 5.5, stroke);
+                painter.circle_filled(at, 1.8, color);
+            }
+            Marker::Midpoint => {
+                let d = 6.;
+                painter.add(egui::Shape::closed_line(
+                    vec![
+                        at + Vec2::new(0., -d),
+                        at + Vec2::new(d, d * 0.7),
+                        at + Vec2::new(-d, d * 0.7),
+                    ],
+                    stroke,
+                ));
+            }
+            Marker::Construction => {
+                let d = 4.5;
+                painter.line_segment([at - Vec2::splat(d), at + Vec2::splat(d)], stroke);
+                painter.line_segment([at + Vec2::new(-d, d), at + Vec2::new(d, -d)], stroke);
+            }
+            Marker::Edge => {
+                painter.circle_stroke(at, 4., Stroke::new(1.5, color));
+                painter.circle_filled(at, 1.5, color);
+            }
+            Marker::Alignment => {}
+        }
         let label = match target.kind {
             TargetKind::Guide(Axis::Horizontal) => "Horizontal",
             TargetKind::Guide(Axis::Vertical) => "Vertical",
@@ -180,7 +237,7 @@ impl SketchEditor {
             Align2::LEFT_BOTTOM,
             label,
             FontId::proportional(11.),
-            GUIDE_COLOR,
+            color,
         );
     }
 }

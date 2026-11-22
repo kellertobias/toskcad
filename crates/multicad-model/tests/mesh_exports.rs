@@ -1,4 +1,4 @@
-//! Real OBJ, 3MF, STL and GLB output from exact native solids, read back by
+//! Real OBJ, 3MF, STL and GLB output from exact solids, read back by
 //! readers that share no code with the writers: a local OBJ parser, a
 //! separate ZIP reader with CRC checks, quick-xml for the 3MF model, the
 //! system `unzip` when present, a binary STL parser and a glTF reader that
@@ -11,7 +11,10 @@ use multicad_core::{
     model::{self, PrimitiveFrame, PrimitiveParameters, PrimitiveRequest, length},
     project_file::ContentHash,
 };
-use multicad_model::export::Exporter;
+use multicad_model::{
+    GeometryBackend,
+    export::{ExportWorker, Exporter},
+};
 use quick_xml::{Reader, events::Event};
 use std::{collections::BTreeMap, f64::consts::PI, path::Path};
 
@@ -773,6 +776,566 @@ fn assert_bounds(b: [[f64; 3]; 2], e: [[f64; 3]; 2], tolerance: f64) {
     }
 }
 
+fn next_reply(worker: &ExportWorker) -> ExportResult {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if let Some(reply) = worker.poll() {
+            return reply.result;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "export worker timed out"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+fn assert_closed_winding(triangles: &Triangles) {
+    let mut edges = BTreeMap::new();
+    for triangle in triangles {
+        let ids = triangle.map(|p| p.map(|v| if v == 0. { 0 } else { v.to_bits() }));
+        for (a, b) in [(ids[0], ids[1]), (ids[1], ids[2]), (ids[2], ids[0])] {
+            assert_ne!(a, b, "collapsed edge in written mesh");
+            let uses = edges.entry([a.min(b), a.max(b)]).or_insert([0; 2]);
+            uses[usize::from(a > b)] += 1;
+        }
+    }
+    assert!(!edges.is_empty());
+    assert!(edges.values().all(|uses| *uses == [1, 1]));
+}
+
+#[test]
+fn rust_export_worker_round_trips_four_certified_mesh_formats_and_assembly_placements() {
+    let mut f = Fixture::new();
+    f.define(SetDefinition {
+        recipes: [
+            (MeshFormat::Obj, LengthUnit::Millimeter),
+            (MeshFormat::Stl, LengthUnit::Millimeter),
+            (MeshFormat::ThreeMf, LengthUnit::Millimeter),
+            (MeshFormat::Glb, LengthUnit::Meter),
+        ]
+        .into_iter()
+        .map(|(format, unit)| mesh(format, unit, HierarchyMode::PreserveAssembly))
+        .collect(),
+        ..Default::default()
+    });
+    let document = f.session.document();
+    let revision = f.session.revision();
+    let worker =
+        ExportWorker::with_geometry_backend(Exporter::default(), GeometryBackend::Rust).unwrap();
+    worker.preview(document, revision, f.set, actor()).unwrap();
+    let ExportResult::Preview(preview) = next_reply(&worker) else {
+        panic!("expected mesh preview");
+    };
+    let preview = preview.unwrap();
+    assert!(preview.can_run(), "{:?}", preview.recipes);
+    assert!(preview.provider.contains("mesh-files.rust-certified.1"));
+    assert!(!preview.provider.contains("occt:"));
+    assert_eq!(preview.artifacts.len(), 4);
+    let root = tempfile::tempdir().unwrap();
+    worker
+        .run(document, revision, &preview.key, root.path(), actor())
+        .unwrap();
+    let ExportResult::Run(receipt) = next_reply(&worker) else {
+        panic!("expected mesh publication");
+    };
+    let receipt = receipt.unwrap();
+    assert_eq!(receipt.files.len(), 4);
+    for file in &receipt.files {
+        let name = &file.artifact.output.filename;
+        let bytes = std::fs::read(Path::new(&receipt.directory).join(name)).unwrap();
+        let evidence = file.artifact.mesh.as_ref().unwrap();
+        assert_eq!(evidence.build_items, 4);
+        let triangles: Triangles = if name.ends_with(".obj") {
+            let (unit, objects) = parse_obj(std::str::from_utf8(&bytes).unwrap());
+            assert_eq!(unit.as_deref(), Some("millimeter"));
+            assert_eq!(objects.len(), 4);
+            objects.into_values().flatten().collect()
+        } else if name.ends_with(".stl") {
+            let (header, triangles) = parse_stl(&bytes);
+            assert!(header.contains("units=millimeter"), "{header}");
+            triangles
+        } else if name.ends_with(".3mf") {
+            let entries = unzip(&bytes);
+            let package = parse_3mf(&entries["3D/3dmodel.model"]);
+            assert_eq!(package.unit, "millimeter");
+            assert_eq!((package.objects.len(), package.items.len()), (3, 4));
+            (0..package.items.len())
+                .flat_map(|i| package.placed(i))
+                .collect()
+        } else {
+            assert!(name.ends_with(".glb"), "unexpected artifact {name}");
+            let glb = parse_glb(&bytes);
+            assert_eq!(glb.json["meshes"].as_array().unwrap().len(), 3);
+            let rotated = drawn_by(&glb, "Panel Rotated copy");
+            assert_bounds(bounds(&rotated), [[30., 5., 2.], [50., 15., 32.]], 1e-4);
+            glb.drawn
+                .into_iter()
+                .map(|(_, _, triangle)| triangle)
+                .collect()
+        };
+        assert_eq!(triangles.len(), evidence.triangles);
+        assert_closed_winding(&triangles);
+        assert_bounds(
+            bounds(&triangles),
+            [[-20., -5., 0.], [105., 60., 32.]],
+            0.051,
+        );
+        near(volume(&triangles), 3. * 6000. + PI * 25. * 10., 6.);
+    }
+}
+
+#[test]
+fn rust_export_worker_writes_watertight_metric_threads_to_stl_and_3mf() {
+    rust_export_metric_thread(false);
+}
+
+#[test]
+fn rust_export_worker_writes_watertight_metric_receivers_to_stl_and_3mf() {
+    rust_export_metric_thread(true);
+}
+
+#[test]
+fn rust_export_worker_writes_one_closed_headed_screw_with_a_hex_socket_floor() {
+    rust_export_hardware_mesh(model::default_machine_screw(), |triangles| {
+        assert_bounds(
+            bounds(triangles),
+            [[-2.84, -2.84, -3.], [2.84, 2.84, 10.]],
+            0.05,
+        );
+        let floor_area: f64 = triangles
+            .iter()
+            .filter(|points| points.iter().all(|p| (p[2] + 1.7).abs() < 1e-6))
+            .map(|[a, b, c]| {
+                ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() / 2.
+            })
+            .sum();
+        near(floor_area, 3_f64.sqrt() * 2.55_f64.powi(2) / 2., 1e-5);
+        assert!(
+            triangles
+                .iter()
+                .flatten()
+                .any(|p| (2. ..8.).contains(&p[2]) && p[0].hypot(p[1]) < 1.24)
+        );
+    });
+}
+
+#[test]
+fn rust_export_worker_writes_one_closed_hex_nut_with_an_open_threaded_bore() {
+    let parameters = model::MechanicalPartParameters::HexNut {
+        across_flats: length(10.),
+        thread: Box::new(model::ThreadParameters {
+            major_diameter: length(6.),
+            pitch: length(1.),
+            length: length(5.2),
+            fit: model::ThreadFit::Metric6HInternal,
+            ..Default::default()
+        }),
+    };
+    rust_export_hardware_mesh(parameters, |triangles| {
+        let corner = 10. / 3_f64.sqrt();
+        assert_bounds(
+            bounds(triangles),
+            [[-5., -corner, 0.], [5., corner, 5.2]],
+            1e-6,
+        );
+        assert!(
+            triangles
+                .iter()
+                .flatten()
+                .any(|p| (1. ..4.).contains(&p[2]) && p[0].hypot(p[1]) < 2.6)
+        );
+        // An axis ray must miss every triangle of both caps and the bore.
+        let cross = |a: [f64; 3], b: [f64; 3]| a[0] * b[1] - a[1] * b[0];
+        for &[a, b, c] in triangles {
+            let signed = [cross(a, b), cross(b, c), cross(c, a)];
+            assert!(
+                signed.iter().any(|area| *area < -1e-8) && signed.iter().any(|area| *area > 1e-8)
+            );
+        }
+    });
+}
+
+#[test]
+fn rust_export_worker_writes_a_closed_bearing_envelope_with_open_axis() {
+    let parameters = model::MechanicalPartParameters::BearingEnvelope {
+        bore_diameter: length(8.),
+        outside_diameter: length(22.),
+        width: length(7.),
+        frame: Default::default(),
+    };
+    rust_export_hardware_mesh(parameters, |triangles| {
+        assert_bounds(bounds(triangles), [[-11., -11., 0.], [11., 11., 7.]], 0.05);
+        let cross = |a: [f64; 3], b: [f64; 3]| a[0] * b[1] - a[1] * b[0];
+        for &[a, b, c] in triangles {
+            let signed = [cross(a, b), cross(b, c), cross(c, a)];
+            assert!(
+                signed.iter().any(|area| *area < -1e-8) && signed.iter().any(|area| *area > 1e-8)
+            );
+        }
+        assert!(
+            triangles
+                .iter()
+                .flatten()
+                .any(|p| (p[0].hypot(p[1]) - 4.).abs() < 1e-6)
+        );
+    });
+}
+
+#[test]
+fn rust_export_worker_writes_a_signed_revolve_with_its_internal_cavity() {
+    use multicad_core::{constraint_sketch::source::Source, sketch::Datum, sketch_regions};
+
+    let (sketch, edits) = Source::create(Datum::Xz, "Tapered meridian").unwrap();
+    let document = Document::new("Revolved mesh exports")
+        .unwrap()
+        .edited(&edits)
+        .unwrap();
+    let mut source = Source::read(&document, sketch).unwrap().0;
+    let corners = [[2., 0.], [6., 0.], [5., 4.], [2., 4.]].map(|p| source.add_point(p));
+    for (&a, &b) in corners.iter().zip(corners.iter().cycle().skip(1)) {
+        source.add_line(a, b);
+    }
+    source.add_rectangle([3., 1.], [4., 3.]).unwrap();
+    let profile = sketch_regions::extract(&source)
+        .regions
+        .into_iter()
+        .find(|r| r.holes.len() == 1)
+        .unwrap()
+        .intent();
+    let document = document
+        .edited(&source.replace(&document, sketch).unwrap())
+        .unwrap();
+    let mut session = Session::new(document).unwrap();
+    let request = model::RevolveRequest::new(
+        sketch,
+        vec![profile],
+        model::RevolveParameters {
+            angle: model::angle(-90.),
+            ..Default::default()
+        },
+    );
+    let prepared = model::prepare_revolve(&session, 0, actor(), &request).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    rust_export_model_mesh(session, request.outputs[0].feature, |triangles| {
+        assert_bounds(bounds(triangles), [[0., -6., 0.], [6., 0., 4.]], 1e-6);
+        let vertices = || triangles.iter().flatten();
+        for (z, radius) in [(1., 3.), (1., 4.), (3., 3.), (3., 4.), (4., 5.)] {
+            assert!(vertices().any(|p| {
+                (p[2] - z).abs() < 1e-6
+                    && (p[0].hypot(p[1]) - radius).abs() < 1e-6
+                    && p[0] > 0.5
+                    && p[1] < -0.5
+            }));
+        }
+        near(
+            volume(triangles),
+            137. / 3. * std::f64::consts::FRAC_PI_2,
+            0.5,
+        );
+    });
+}
+
+fn rust_export_hardware_mesh(
+    parameters: model::MechanicalPartParameters,
+    verify: impl Fn(&Triangles),
+) {
+    let mut session = Session::new(Document::new("Mechanical hardware exports").unwrap()).unwrap();
+    let request = model::MechanicalPartRequest::new("Hardware", parameters);
+    let prepared = model::prepare_mechanical_part(&session, 0, actor(), &request).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    rust_export_model_mesh(session, request.feature, verify);
+}
+
+fn rust_export_model_mesh(mut session: Session, feature: EntityId, verify: impl Fn(&Triangles)) {
+    let set = EntityId::new();
+    let definition = SetDefinition {
+        recipes: [MeshFormat::Stl, MeshFormat::ThreeMf]
+            .into_iter()
+            .map(|format| mesh(format, LengthUnit::Millimeter, HierarchyMode::SeparateParts))
+            .collect(),
+        ..Default::default()
+    };
+    let prepared = prepare_set(
+        &session,
+        session.revision(),
+        actor(),
+        set,
+        "Manufacturing",
+        &definition,
+    )
+    .unwrap();
+    session.commit(prepared).unwrap();
+    let document = session.document();
+    let revision = session.revision();
+    let worker =
+        ExportWorker::with_geometry_backend(Exporter::default(), GeometryBackend::Rust).unwrap();
+    worker.preview(document, revision, set, actor()).unwrap();
+    let ExportResult::Preview(preview) = next_reply(&worker) else {
+        panic!("Expected mesh preview");
+    };
+    let preview = preview.unwrap();
+    assert!(preview.can_run(), "{:?}", preview.recipes);
+    let directory = tempfile::tempdir().unwrap();
+    worker
+        .run(document, revision, &preview.key, directory.path(), actor())
+        .unwrap();
+    let ExportResult::Run(receipt) = next_reply(&worker) else {
+        panic!("Expected mesh export");
+    };
+    let receipt = receipt.unwrap();
+    assert_eq!(receipt.files.len(), 2);
+    for file in &receipt.files {
+        let artifact = &file.artifact;
+        assert_eq!(artifact.producer, feature);
+        assert_eq!(artifact.solid_count, 1);
+        let evidence = artifact.mesh.as_ref().unwrap();
+        assert_eq!((evidence.objects, evidence.build_items), (1, 1));
+        let name = &artifact.output.filename;
+        let bytes = std::fs::read(Path::new(&receipt.directory).join(name)).unwrap();
+        let triangles = if name.ends_with(".stl") {
+            parse_stl(&bytes).1
+        } else {
+            assert!(name.ends_with(".3mf"));
+            let entries = unzip(&bytes);
+            let package = parse_3mf(&entries["3D/3dmodel.model"]);
+            assert_eq!((package.objects.len(), package.items.len()), (1, 1));
+            package.placed(0)
+        };
+        assert_eq!(triangles.len(), evidence.triangles);
+        assert_closed_winding(&triangles);
+        near(volume(&triangles), evidence.mesh_volume_mm3, 0.001);
+        verify(&triangles);
+    }
+}
+
+fn rust_export_metric_thread(internal: bool) {
+    use model::{BodyInput, ThreadHand, ThreadMode, ThreadParameters, ThreadRequest};
+
+    let mut session = Session::new(Document::new("Thread manufacturing exports").unwrap()).unwrap();
+    let parameters = ThreadParameters {
+        length: length(9.2),
+        hand: ThreadHand::Left,
+        ..Default::default()
+    };
+    let thread = if internal {
+        let stock = PrimitiveRequest::new(
+            "Round stock",
+            PrimitiveParameters::Cylinder {
+                radius: length(6.),
+                height: length(9.2),
+                frame: Default::default(),
+            },
+        );
+        let prepared = model::prepare_primitive(&session, 0, actor(), &stock).unwrap();
+        session.commit(prepared.prepared).unwrap();
+        ThreadRequest::receiving(
+            "M8 × 1.25 left bore",
+            ThreadMode::CutInternal,
+            BodyInput {
+                body: stock.body,
+                producer: stock.feature,
+            },
+            parameters,
+        )
+        .unwrap()
+    } else {
+        ThreadRequest::new("M8 × 1.25 left shaft", parameters)
+    };
+    let prepared = model::prepare_thread(&session, session.revision(), actor(), &thread).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let set = EntityId::new();
+    let definition = SetDefinition {
+        recipes: [MeshFormat::Stl, MeshFormat::ThreeMf]
+            .into_iter()
+            .map(|format| mesh(format, LengthUnit::Millimeter, HierarchyMode::SeparateParts))
+            .collect(),
+        ..Default::default()
+    };
+    let prepared = prepare_set(
+        &session,
+        session.revision(),
+        actor(),
+        set,
+        "Manufacturing",
+        &definition,
+    )
+    .unwrap();
+    session.commit(prepared).unwrap();
+
+    let document = session.document();
+    let revision = session.revision();
+    let worker =
+        ExportWorker::with_geometry_backend(Exporter::default(), GeometryBackend::Rust).unwrap();
+    worker.preview(document, revision, set, actor()).unwrap();
+    let ExportResult::Preview(preview) = next_reply(&worker) else {
+        panic!("expected thread mesh preview");
+    };
+    let preview = preview.unwrap();
+    assert!(preview.can_run(), "{:?}", preview.recipes);
+    assert!(preview.provider.contains("mesh-files.rust-certified.1"));
+    let directory = tempfile::tempdir().unwrap();
+    worker
+        .run(document, revision, &preview.key, directory.path(), actor())
+        .unwrap();
+    let ExportResult::Run(receipt) = next_reply(&worker) else {
+        panic!("expected thread mesh publication");
+    };
+    let receipt = receipt.unwrap();
+    assert_eq!(receipt.files.len(), 2);
+    for file in &receipt.files {
+        let artifact = &file.artifact;
+        let name = &artifact.output.filename;
+        assert_eq!(artifact.producer, thread.feature);
+        assert_eq!(artifact.solid_count, 1);
+        let evidence = artifact.mesh.as_ref().unwrap();
+        assert_eq!((evidence.objects, evidence.build_items), (1, 1));
+        assert_eq!(evidence.chord_deviation_mm, 0.05);
+
+        let bytes = std::fs::read(Path::new(&receipt.directory).join(name)).unwrap();
+        let triangles = if name.ends_with(".stl") {
+            let (header, triangles) = parse_stl(&bytes);
+            assert!(header.contains("units=millimeter"), "{header}");
+            triangles
+        } else {
+            assert!(name.ends_with(".3mf"), "unexpected artifact {name}");
+            let entries = unzip(&bytes);
+            let package = parse_3mf(&entries["3D/3dmodel.model"]);
+            assert_eq!(package.unit, "millimeter");
+            assert_eq!((package.objects.len(), package.items.len()), (1, 1));
+            package.placed(0)
+        };
+        assert_eq!(triangles.len(), evidence.triangles);
+        assert_closed_winding(&triangles);
+        let radius = if internal { 6. } else { 4. };
+        assert_bounds(
+            bounds(&triangles),
+            [[-radius, -radius, 0.], [radius, radius, 9.2]],
+            0.05,
+        );
+        near(volume(&triangles), evidence.mesh_volume_mm3, 0.001);
+        near(
+            evidence.mesh_volume_mm3,
+            artifact.volume_mm3,
+            if internal { 5. } else { 2. },
+        );
+        // The threaded boundary has a distinct crest and root even in the
+        // receiver, which also has a constant-radius outer wall.
+        let mut wall_radii = triangles
+            .iter()
+            .flatten()
+            .filter(|p| (1. ..8.).contains(&p[2]))
+            .map(|p| p[0].hypot(p[1]));
+        assert!(
+            wall_radii
+                .clone()
+                .any(|radius| (3.99..4.01).contains(&radius))
+        );
+        assert!(wall_radii.any(|radius| (3.3..3.4).contains(&radius)));
+        // For a left-hand thread the crest phase stays constant as Z falls
+        // with increasing angle, with a tolerance for its physical flat width.
+        let crest_vertices = triangles
+            .iter()
+            .flatten()
+            .filter(|p| (1. ..8.).contains(&p[2]) && (p[0].hypot(p[1]) - 4.).abs() < 1e-5);
+        assert!(crest_vertices.clone().count() > 100);
+        for p in crest_vertices {
+            let phase = (p[2] + p[1].atan2(p[0]) * 1.25 / std::f64::consts::TAU).rem_euclid(1.25);
+            assert!(phase.min(1.25 - phase) < 1.25 / 16. + 1e-5);
+        }
+    }
+}
+
+#[test]
+fn rust_export_refuses_collapsed_float_positions_and_keeps_glb_resource_placements_separate() {
+    let mut f = Fixture::new();
+    let distant = [9_000_000., 0., 0.];
+    let mut thin_box = |origin: [f64; 3]| {
+        let part = PrimitiveRequest::new(
+            "Thin part",
+            PrimitiveParameters::Box {
+                size: [length(0.01), length(2.), length(3.)],
+                frame: PrimitiveFrame {
+                    origin: origin.map(length),
+                    ..Default::default()
+                },
+            },
+        );
+        let prepared =
+            model::prepare_primitive(&f.session, f.session.revision(), actor(), &part).unwrap();
+        f.session.commit(prepared.prepared).unwrap();
+        part.body
+    };
+    let distant_part = thin_box(distant);
+    let local_part = thin_box([0.; 3]);
+    let copy = Entity::new(
+        "Distant copy",
+        EntityData::Instance {
+            component: local_part,
+            placement: Placement {
+                translation_mm: distant,
+                ..Default::default()
+            },
+            placement_source: None,
+        },
+    );
+    let instance = copy.id;
+    f.session
+        .apply(Request {
+            expected_revision: f.session.revision(),
+            actor: actor(),
+            label: "Place distant thin copy".into(),
+            edits: vec![Mutation::Insert(copy)],
+        })
+        .unwrap();
+    let worker =
+        ExportWorker::with_geometry_backend(Exporter::default(), GeometryBackend::Rust).unwrap();
+    for entity in [distant_part, instance] {
+        f.define(SetDefinition {
+            scope: Scope {
+                root: ScopeRoot::Explicit {
+                    entities: vec![entity],
+                },
+                tags: None,
+            },
+            recipes: [
+                (MeshFormat::Stl, LengthUnit::Millimeter),
+                (MeshFormat::Glb, LengthUnit::Meter),
+                (MeshFormat::ThreeMf, LengthUnit::Millimeter),
+            ]
+            .into_iter()
+            .map(|(format, unit)| mesh(format, unit, HierarchyMode::SeparateParts))
+            .collect(),
+            ..Default::default()
+        });
+        let document = f.session.document();
+        let revision = f.session.revision();
+        worker.preview(document, revision, f.set, actor()).unwrap();
+        let ExportResult::Preview(preview) = next_reply(&worker) else {
+            panic!("expected precision-checked preview");
+        };
+        let preview = preview.unwrap();
+        let [stl, glb, three_mf] = preview.recipes.as_slice() else {
+            panic!("expected the three mesh recipes");
+        };
+        let is_collapsed = |status: &RecipeStatus| matches!(status, RecipeStatus::Unsupported(reason) if reason.contains("single-precision output collapses distinct vertices"));
+        assert!(is_collapsed(&stl.status), "{stl:?}");
+        if entity == distant_part {
+            assert!(is_collapsed(&glb.status), "{glb:?}");
+        } else {
+            assert_eq!(glb.status, RecipeStatus::Ready);
+        }
+        assert_eq!(three_mf.status, RecipeStatus::Ready);
+        assert!(!preview.can_run());
+        let root = tempfile::tempdir().unwrap();
+        worker
+            .run(document, revision, &preview.key, root.path(), actor())
+            .unwrap();
+        assert!(matches!(next_reply(&worker), ExportResult::Run(Err(_))));
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+}
+
 #[test]
 fn stl_files_hold_exact_world_meshes_in_the_stated_unit_and_repeat_byte_for_byte() {
     let mut f = Fixture::new();
@@ -990,8 +1553,19 @@ fn project_and_tag_scopes_keep_glb_membership_and_part_appearances() {
     let all = glb_for(&mut f, None);
     let names: std::collections::BTreeSet<_> = all.drawn.iter().map(|(n, ..)| n.clone()).collect();
     assert_eq!(names.len(), 4, "{names:?}");
-    let total: f64 = names.iter().map(|n| volume(&drawn_by(&all, n))).sum();
-    near(total, 3. * 6000. + PI * 25. * 10., 2.);
+    // Planar boxes tessellate exactly up to GLB's f32 metre positions. The
+    // pin is inscribed in its cylinder and, at the recipe's 10 degree angular
+    // deviation, has at least 36 facets around, bounding its deficit below.
+    let storage = 6000. * f64::from(f32::EPSILON) * 8.;
+    let pin_floor = 10. * 0.5 * 36. * 25. * (2. * PI / 36.).sin();
+    for name in &names {
+        let v = volume(&drawn_by(&all, name));
+        if name == "Pin" {
+            assert!(v < PI * 25. * 10. && v >= pin_floor - storage, "{v}");
+        } else {
+            near(v, 6000., storage);
+        }
+    }
     // Two appearances: the default and steel red.
     let materials = all.json["materials"].as_array().unwrap();
     assert_eq!(materials.len(), 2);

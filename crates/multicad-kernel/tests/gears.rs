@@ -31,8 +31,291 @@ fn normal(teeth: u32, beta: f64, sweep: GearSweep) -> InvoluteGear {
         sweep,
     }
 }
+/// The Rust constructor the model selects for each authored sweep
+/// (`multicad_model::gears::build_rust`).
+fn rust_gear(
+    spec: InvoluteGear,
+    feature: EntityId,
+) -> Result<Solid, multicad_kernel::GeometryError> {
+    let policy = GeometryPolicy::default();
+    match spec.sweep {
+        GearSweep::Spur => Solid::rust_spur_gear_named(spec, feature, policy),
+        GearSweep::Helical => Solid::rust_helical_gear_named(spec, feature, policy),
+        GearSweep::Chevron => Solid::rust_herringbone_named(spec, feature, policy),
+        GearSweep::GappedChevron { .. } => Solid::rust_double_helical_named(spec, feature, policy),
+        GearSweep::InternalSpur { .. } => Solid::rust_internal_ring_named(spec, feature, policy),
+    }
+}
 fn build(spec: InvoluteGear) -> Solid {
-    Solid::involute_gear_named(spec, EntityId::new(), GeometryPolicy::default()).unwrap()
+    rust_gear(spec, EntityId::new()).unwrap()
+}
+
+#[test]
+fn rust_spur_axial_drawing_preserves_visible_flanks_and_bore() {
+    use multicad_core::drawings::{VectorCurve, VectorRole};
+    use multicad_kernel::{
+        DrawingProjection, DrawingSolid, GeometryErrorKind, PlaneFrame, project_drawing,
+    };
+
+    let solid = Solid::rust_spur_gear_named(
+        normal(24, 0., GearSweep::Spur),
+        EntityId::new(),
+        GeometryPolicy::default(),
+    )
+    .unwrap();
+    let inputs = [DrawingSolid {
+        solid: &solid,
+        hatch: None,
+    }];
+    let options = DrawingProjection {
+        hidden_lines: true,
+        ..Default::default()
+    };
+    for frame in [
+        PlaneFrame::default(),
+        PlaneFrame {
+            v: [0., -1., 0.],
+            ..Default::default()
+        },
+    ] {
+        let vectors = project_drawing(&inputs, DrawingProjection { frame, ..options }).unwrap();
+        assert!(
+            vectors
+                .iter()
+                .all(|vector| vector.role == VectorRole::Visible && vector.source_index == 0)
+        );
+        assert_eq!(
+            vectors
+                .iter()
+                .filter(|vector| matches!(vector.curve, VectorCurve::BSpline { degree: 3, .. }))
+                .count(),
+            48
+        );
+        assert_eq!(
+            vectors.iter().filter(|vector| matches!(vector.curve,
+                VectorCurve::Ellipse { center: [0., 0.], major_mm: 2., minor_mm: 2., start_rad: 0., end_rad, .. }
+                    if end_rad == TAU)).count(),
+            1
+        );
+    }
+    for limited in [
+        DrawingProjection {
+            maximum_curves: 48,
+            ..options
+        },
+        DrawingProjection {
+            maximum_points: 8,
+            ..options
+        },
+    ] {
+        assert_eq!(
+            project_drawing(&inputs, limited).unwrap_err().kind,
+            GeometryErrorKind::Limit
+        );
+    }
+    let oblique = DrawingProjection {
+        frame: PlaneFrame {
+            v: [0., 0., 1.],
+            ..Default::default()
+        },
+        ..options
+    };
+    // The side view draws through the scene engine (CAD-346): its extent is
+    // the exact bounding rectangle of the body in X and Z.
+    let side = project_drawing(&inputs, oblique).unwrap();
+    let bounds = inputs[0].solid.bounds().unwrap();
+    for (k, axis) in [0, 2].into_iter().enumerate() {
+        let values = side.iter().flat_map(|v| v.preview_mm.iter().map(|p| p[k]));
+        let low = values.clone().fold(f64::INFINITY, f64::min);
+        let high = values.fold(f64::NEG_INFINITY, f64::max);
+        assert!((low - bounds.min[axis]).abs() < 1e-9 && (high - bounds.max[axis]).abs() < 1e-9);
+    }
+}
+
+#[test]
+fn rust_spur_axial_view_marks_the_far_side_hub_hidden() {
+    use multicad_core::drawings::{VectorCurve, VectorRole};
+    use multicad_kernel::{DrawingProjection, DrawingSolid, PlaneFrame, project_drawing};
+
+    let spec = InvoluteGear {
+        hub: Some(GearHub {
+            radius_mm: 8.,
+            axial_start_mm: -3.,
+            axial_end_mm: 2.,
+        }),
+        ..normal(24, 0., GearSweep::Spur)
+    };
+    let solid =
+        Solid::rust_spur_gear_named(spec, EntityId::new(), GeometryPolicy::default()).unwrap();
+    let inputs = [DrawingSolid {
+        solid: &solid,
+        hatch: None,
+    }];
+    for (reverse, hidden_lines, expected) in [
+        (false, false, None),
+        (false, true, Some(VectorRole::Hidden)),
+        (true, false, Some(VectorRole::Visible)),
+        (true, true, Some(VectorRole::Visible)),
+    ] {
+        let frame = PlaneFrame {
+            v: [0., if reverse { -1. } else { 1. }, 0.],
+            ..Default::default()
+        };
+        let vectors = project_drawing(
+            &inputs,
+            DrawingProjection {
+                frame,
+                hidden_lines,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let hub = vectors
+            .iter()
+            .filter_map(|vector| {
+                matches!(vector.curve, VectorCurve::Ellipse {
+                center: [0., 0.], major_mm: 8., minor_mm: 8., start_rad: 0., end_rad, ..
+            } if end_rad == TAU)
+                .then_some(vector.role)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(hub, expected.into_iter().collect::<Vec<_>>());
+    }
+}
+
+#[test]
+fn rust_spur_flank_projects_into_sketch_with_bounded_curve_error() {
+    use multicad_kernel::{
+        BRepSelection, CurvedEdge2d, GeometryErrorKind, PlaneFrame, SketchReferenceGeometry,
+        SketchReferenceMethod, rust_kernel::spur_gear::Involute,
+    };
+
+    let feature = EntityId::new();
+    let policy = GeometryPolicy::default();
+    let solid =
+        Solid::rust_spur_gear_named(normal(24, 0., GearSweep::Spur), feature, policy).unwrap();
+    let snapshot = solid.topology_snapshot(feature, 0).unwrap();
+    let edge = snapshot
+        .elements
+        .iter()
+        .find_map(|edge| match edge.geometry {
+            Some(AnalyticGeometry::InvoluteArc {
+                frame,
+                base_radius_mm,
+                parameters,
+            }) => Some((edge.key, frame, base_radius_mm, parameters)),
+            _ => None,
+        })
+        .unwrap();
+    let (key, frame, radius, [a, b]) = edge;
+    let pick = BRepSelection::Edge(key.ordinal);
+    let exact = Involute::new(radius, [a.min(b), a.max(b)], 0.).unwrap();
+    let exact = if a > b { exact.reversed() } else { exact };
+    let target = PlaneFrame::default();
+    let reference = |frame, method| solid.sketch_reference_geometry(pick, frame, method, policy);
+    let projected = reference(target, SketchReferenceMethod::Coplanar).unwrap();
+    assert!(!projected.coincident);
+    assert_eq!(projected.results[0].support, vec![key]);
+    let SketchReferenceGeometry::Curve(CurvedEdge2d::BSpline(spline)) =
+        &projected.results[0].geometry
+    else {
+        panic!("Expected a cubic projected flank");
+    };
+    for i in 0..=100 {
+        let t = f64::from(i) / 100.;
+        let [x, y] = exact.point(t);
+        let expected: [f64; 2] = std::array::from_fn(|axis| {
+            frame.origin_mm[axis] + x * frame.u[axis] + y * frame.v[axis]
+        });
+        let actual = spline.evaluate(t, policy).unwrap().point;
+        assert!(
+            (actual[0] - expected[0]).hypot(actual[1] - expected[1]) < policy.linear_tolerance_mm
+        );
+    }
+    assert!(
+        reference(target, SketchReferenceMethod::Intersect)
+            .unwrap()
+            .coincident
+    );
+    let offset = PlaneFrame {
+        origin: [0., 0., 1.],
+        ..target
+    };
+    let miss = reference(offset, SketchReferenceMethod::Intersect).unwrap();
+    assert!(!miss.coincident && miss.results.is_empty());
+    assert!(reference(offset, SketchReferenceMethod::Coplanar).is_err());
+    assert_eq!(
+        reference(offset, SketchReferenceMethod::Project)
+            .unwrap()
+            .results[0]
+            .geometry,
+        projected.results[0].geometry
+    );
+    let crossing = PlaneFrame {
+        origin: [spline.poles[0][0], 0., 0.],
+        u: [0., 1., 0.],
+        v: [0., 0., 1.],
+    };
+    assert_eq!(
+        reference(crossing, SketchReferenceMethod::Intersect)
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Unsupported
+    );
+    assert!(reference(crossing, SketchReferenceMethod::Project).is_err());
+}
+
+#[test]
+fn rust_spur_step_verifies_each_member_and_rejects_a_mismatched_flank() {
+    use multicad_kernel::{
+        PlaneFrame,
+        rust_kernel::{Rational, step_read},
+    };
+
+    let policy = GeometryPolicy::default();
+    let gear =
+        Solid::rust_spur_gear_named(normal(24, 0., GearSweep::Spur), EntityId::new(), policy)
+            .unwrap();
+    let box_id = EntityId::new();
+    let stock = Solid::rust_box(
+        box_id.uuid_bits(),
+        [Rational::new(5, 1).unwrap(); 3],
+        PlaneFrame {
+            origin: [100., 0., 0.],
+            ..Default::default()
+        },
+        policy,
+    )
+    .unwrap();
+    let feature = EntityId::new();
+    let solid = Solid::compound_named(&[&gear, &stock], feature, policy).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("spur-and-box.step");
+    solid.write_step(&path).unwrap();
+    let bytes = std::fs::read_to_string(&path).unwrap();
+    let members = step_read::read_analytic_compound(&bytes, policy.linear_tolerance_mm).unwrap();
+    assert_eq!(members.len(), 2);
+    assert_eq!(members[0].splines.len(), 96);
+    assert!(members[1].splines.is_empty());
+    let volume: f64 = members.iter().map(|member| member.volume_mm3).sum();
+    assert!((volume - solid.volume_mm3().unwrap()).abs() < 1e-4);
+    let mut topology = solid.topology_snapshot(feature, 0).unwrap();
+    let tolerance = policy.linear_tolerance_mm * 2.;
+    assert!(Solid::step_compound_topology_matches(
+        &topology, &members, tolerance
+    ));
+    let flank = topology
+        .elements
+        .iter_mut()
+        .find_map(|element| match &mut element.geometry {
+            Some(AnalyticGeometry::InvoluteArc { base_radius_mm, .. }) => Some(base_radius_mm),
+            _ => None,
+        })
+        .unwrap();
+    *flank += 0.01;
+    assert!(!Solid::step_compound_topology_matches(
+        &topology, &members, tolerance
+    ));
 }
 
 #[test]
@@ -54,7 +337,7 @@ fn intrinsic_hubs_extend_one_solid_and_one_continuous_bore_with_exact_face_ances
             }),
             ..base
         };
-        let solid = Solid::involute_gear_named(spec, feature, GeometryPolicy::default()).unwrap();
+        let solid = rust_gear(spec, feature).unwrap();
         assert_eq!(solid.solid_count().unwrap(), 1);
         let added = 6. * PI * (100. - base.bore_radius_mm.powi(2));
         assert!((solid.volume_mm3().unwrap() - plain.volume_mm3().unwrap() - added).abs() < 0.005);
@@ -154,13 +437,12 @@ fn detached_thin_root_erasing_and_nonfinite_hubs_are_rejected() {
         },
     ] {
         assert!(
-            Solid::involute_gear_named(
+            rust_gear(
                 InvoluteGear {
                     hub: Some(hub),
                     ..base
                 },
                 EntityId::new(),
-                GeometryPolicy::default()
             )
             .is_err(),
             "{hub:?}"
@@ -174,7 +456,7 @@ fn coincident_or_hidden_hub_caps_preserve_every_surviving_face_and_gear_end() {
     let plain = build(base).volume_mm3().unwrap();
     for (start, end, extension) in [(-3., 8., 3.), (0., 11., 3.), (0., 8., 0.)] {
         let feature = EntityId::new();
-        let solid = Solid::involute_gear_named(
+        let solid = rust_gear(
             InvoluteGear {
                 hub: Some(GearHub {
                     radius_mm: 10.,
@@ -184,7 +466,6 @@ fn coincident_or_hidden_hub_caps_preserve_every_surviving_face_and_gear_end() {
                 ..base
             },
             feature,
-            GeometryPolicy::default(),
         )
         .unwrap();
         assert_eq!(solid.solid_count().unwrap(), 1);
@@ -261,7 +542,7 @@ fn rotated(s: &Solid, angle: f64, x: f64) -> Solid {
 fn spur_has_measured_involute_width_native_circular_fillets_and_complete_provenance() {
     let spec = normal(20, 0., GearSweep::Spur);
     let feature = EntityId::new();
-    let solid = Solid::involute_gear_named(spec, feature, GeometryPolicy::default()).unwrap();
+    let solid = rust_gear(spec, feature).unwrap();
     assert_eq!(solid.solid_count().unwrap(), 1);
     let bounds = solid.bounds().unwrap();
     for axis in 0..2 {
@@ -390,6 +671,70 @@ fn compatible_pairs_have_no_sampled_interference_and_wrong_phase_is_detected() {
 }
 
 #[test]
+fn twisted_interference_solid_is_enclosed_moves_rigidly_and_refuses_boundary_queries() {
+    use multicad_kernel::GeometryErrorKind;
+    let policy = GeometryPolicy::default();
+    for sweep in [GearSweep::Helical, GearSweep::Chevron] {
+        let beta = 20_f64.to_radians();
+        let (a, b) = (normal(20, beta, sweep), normal(30, -beta, sweep));
+        let one = build(a);
+        let two = rotated(&build(b), PI, a.pitch_radius_mm + b.pitch_radius_mm);
+        let common = one
+            .boolean(&two, BooleanOperation::Intersect, policy)
+            .unwrap()
+            .unwrap();
+        let swapped = two
+            .boolean(&one, BooleanOperation::Intersect, policy)
+            .unwrap()
+            .unwrap();
+        let volume = common.volume_mm3().unwrap();
+        let [low, high] = common.certified_volume_bounds_mm3().unwrap();
+        assert!(
+            1. < low && low <= volume && volume <= high,
+            "{low} {volume} {high}"
+        );
+        assert!((swapped.volume_mm3().unwrap() - volume).abs() < 1e-6);
+        // Tooth tips meet head on where every section turns least, so the
+        // common material is far less than either tooth band.
+        assert!(volume < one.volume_mm3().unwrap() / 20., "{volume}");
+        let bounds = common.bounds().unwrap();
+        for member in [&one, &two] {
+            let m = member.bounds().unwrap();
+            for i in 0..3 {
+                assert!(bounds.min[i] >= m.min[i] && bounds.max[i] <= m.max[i]);
+            }
+        }
+        let moved = common
+            .transformed(RigidTransform {
+                rotation: [[0., -1., 0.], [1., 0., 0.], [0., 0., 1.]],
+                translation_mm: [4., -2., 7.],
+            })
+            .unwrap();
+        assert_eq!(moved.volume_mm3().unwrap(), volume);
+        assert_eq!(moved.certified_volume_bounds_mm3(), Some([low, high]));
+        assert!((moved.bounds().unwrap().min[2] - bounds.min[2] - 7.).abs() < 1e-9);
+        let kind = |result: Result<(), multicad_kernel::GeometryError>| result.unwrap_err().kind;
+        assert_eq!(
+            kind(common.mesh(MeshOptions::default()).map(drop)),
+            GeometryErrorKind::Unsupported
+        );
+        assert_eq!(
+            kind(common.solid_count().map(drop)),
+            GeometryErrorKind::Unsupported
+        );
+        assert!(!common.supports_step_export());
+        // A difference of interfering curved gears stays a typed refusal.
+        assert_eq!(
+            kind(
+                one.boolean(&two, BooleanOperation::Subtract, policy)
+                    .map(drop)
+            ),
+            GeometryErrorKind::Unsupported
+        );
+    }
+}
+
+#[test]
 fn larger_teeth_root_fillets_and_helical_step_roundtrip_keep_manufacturing_geometry() {
     let large = build(normal(60, 0., GearSweep::Spur));
     assert_eq!(large.solid_count().unwrap(), 1);
@@ -457,9 +802,7 @@ fn invalid_inputs_and_excessive_twist_are_refused_without_a_solid() {
             ..base
         },
     ] {
-        assert!(
-            Solid::involute_gear_named(spec, EntityId::new(), GeometryPolicy::default()).is_err()
-        );
+        assert!(rust_gear(spec, EntityId::new()).is_err());
     }
-    assert!(Solid::involute_gear_named(base, EntityId::nil(), GeometryPolicy::default()).is_err());
+    assert!(rust_gear(base, EntityId::nil()).is_err());
 }

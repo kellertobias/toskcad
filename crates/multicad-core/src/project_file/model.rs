@@ -17,9 +17,7 @@ impl ContentHash {
         Self(Sha256::digest(bytes).into())
     }
     pub fn document(document: &Document) -> Result<Self, String> {
-        serde_json::to_vec(document)
-            .map(|bytes| Self::of(&bytes))
-            .map_err(|e| e.to_string())
+        document.canonical_hash()
     }
 }
 impl std::fmt::Display for ContentHash {
@@ -398,6 +396,12 @@ impl ProjectFile {
         }
         if crate::drawings::books(&self.document).any(|id| {
             crate::drawings::read(&self.document, id)
+                .is_ok_and(|book| crate::drawings::shows_panel_grain(&book))
+        }) {
+            required.insert(crate::drawings::PANEL_GRAIN_CAPABILITY.into());
+        }
+        if crate::drawings::books(&self.document).any(|id| {
+            crate::drawings::read(&self.document, id)
                 .is_ok_and(|book| crate::drawings::has_guided_views(&book))
         }) {
             required.insert(crate::drawings::GUIDED_VIEW_CAPABILITY.into());
@@ -503,6 +507,7 @@ pub fn supported_capabilities() -> BTreeSet<String> {
         crate::drawings::GUIDE_CAPABILITY.into(),
         crate::drawings::GUIDED_VIEW_CAPABILITY.into(),
         crate::drawings::TITLE_LOGO_CAPABILITY.into(),
+        crate::drawings::PANEL_GRAIN_CAPABILITY.into(),
         "core.plane.offset.1".into(),
         crate::hierarchy::CAPABILITY.into(),
         crate::constraint_sketch::source::V2_CAPABILITY.into(),
@@ -560,6 +565,7 @@ pub fn supported_capabilities() -> BTreeSet<String> {
         crate::model::SPLIT_V2_CAPABILITY.into(),
         crate::model::TRANSFORM_CAPABILITY.into(),
         crate::model::SCALE_CAPABILITY.into(),
+        crate::model::HELICAL_TUBE_CUT_CAPABILITY.into(),
         crate::model::EDGE_TREATMENT_CAPABILITY.into(),
         crate::model::EDGE_TREATMENT_V2_CAPABILITY.into(),
         crate::model::ADVANCED_CAPABILITY.into(),
@@ -616,6 +622,7 @@ pub fn supported_capabilities() -> BTreeSet<String> {
         crate::model::INSIDE_FACE_CAPABILITY.into(),
         crate::model::HARDWARE_PATTERN_CAPABILITY.into(),
         crate::model::imports::STEP_SOURCE_CAPABILITY.into(),
+        crate::model::imports::RUST_STEP_SOURCE_CAPABILITY.into(),
         crate::model::imports::STEP_BODY_CAPABILITY.into(),
         crate::model::imports::BOARD_CAPABILITY.into(),
         crate::model::imports::COMPONENT_CAPABILITY.into(),

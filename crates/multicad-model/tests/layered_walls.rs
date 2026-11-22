@@ -10,7 +10,7 @@ use multicad_core::{
     },
 };
 use multicad_kernel::{GeometryPolicy, Solid, SolidPairRelation};
-use multicad_model::{Compiler, Model};
+use multicad_model::{Compiler, GeometryBackend, Model};
 use std::collections::{BTreeMap, BTreeSet};
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -165,44 +165,51 @@ fn compound_cutout_retains_every_wall_layers_material_on_new_cut_faces() {
     )
     .unwrap();
     session.commit(prepared.prepared).unwrap();
-    let after = native(&session);
-    let solid = after.solid(receiver.feature).unwrap();
-    assert_eq!(solid.solid_count().unwrap(), 5);
-    near(
-        solid.volume_mm3().unwrap(),
-        old.volume_mm3().unwrap() - (80. + 120. + 40. + 100. + 12.5) * 700. * 1300.,
-        1e-3,
-    );
-    let topology = solid
-        .topology_snapshot(receiver.feature, session.revision())
-        .unwrap();
-    let materials = model::wall_face_materials(session.document(), &topology).unwrap();
-    assert_eq!(
-        materials.len(),
-        topology
-            .elements
-            .iter()
-            .filter(|face| face.key.kind == multicad_core::references::TopologyKind::Face)
-            .count()
-    );
-    assert_eq!(
-        materials
-            .values()
-            .map(|face| face.layer)
-            .collect::<BTreeSet<_>>()
-            .len(),
-        5
-    );
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("compound-layered-wall.step");
-    solid.write_step(&path).unwrap();
-    let readback = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
-    assert_eq!(readback.solid_count().unwrap(), 5);
-    near(
-        readback.volume_mm3().unwrap(),
-        solid.volume_mm3().unwrap(),
-        1e-3,
-    );
+    for backend in
+        std::iter::once(GeometryBackend::Rust).chain(false.then_some(GeometryBackend::OpenCascade))
+    {
+        let after = Compiler::default()
+            .compile_with_backend(session.document(), session.revision(), backend, None)
+            .unwrap_or_else(|e| panic!("{backend:?}: {e}"));
+        let solid = after.solid(receiver.feature).unwrap();
+        assert_eq!(solid.uses_rust_geometry(), backend == GeometryBackend::Rust);
+        assert_eq!(solid.solid_count().unwrap(), 5);
+        near(
+            solid.volume_mm3().unwrap(),
+            old.volume_mm3().unwrap() - (80. + 120. + 40. + 100. + 12.5) * 700. * 1300.,
+            1e-3,
+        );
+        let topology = solid
+            .topology_snapshot(receiver.feature, session.revision())
+            .unwrap();
+        let materials = model::wall_face_materials(session.document(), &topology).unwrap();
+        assert_eq!(
+            materials.len(),
+            topology
+                .elements
+                .iter()
+                .filter(|face| face.key.kind == multicad_core::references::TopologyKind::Face)
+                .count()
+        );
+        assert_eq!(
+            materials
+                .values()
+                .map(|face| face.layer)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            5
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("compound-layered-wall.step");
+        solid.write_step(&path).unwrap();
+        let readback = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
+        assert_eq!(readback.solid_count().unwrap(), 5);
+        near(
+            readback.volume_mm3().unwrap(),
+            solid.volume_mm3().unwrap(),
+            1e-3,
+        );
+    }
 }
 fn members(solid: &Solid, owner: EntityId) -> BTreeMap<EntityId, Solid> {
     let mut result = BTreeMap::new();
@@ -342,6 +349,49 @@ fn real_material_layers_and_openings_have_true_thickness_and_independent_step_re
     let parts = members(solid, wall.feature);
     assert_eq!(parts.len(), 5);
     assert_eq!(solid.solid_count().unwrap(), 5);
+    let rust = Compiler::default()
+        .compile_sources_with_backend(
+            session.document(),
+            session.revision(),
+            &[wall.feature],
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let rust_solid = rust.solid(wall.feature).unwrap();
+    assert!(rust_solid.uses_rust_geometry());
+    let rust_parts = members(rust_solid, wall.feature);
+    assert_eq!(
+        rust_parts.keys().collect::<Vec<_>>(),
+        parts.keys().collect::<Vec<_>>()
+    );
+    for (id, expected) in &parts {
+        let actual = &rust_parts[id];
+        near(
+            actual.volume_mm3().unwrap(),
+            expected.volume_mm3().unwrap(),
+            0.1,
+        );
+        let (a, b) = (actual.bounds().unwrap(), expected.bounds().unwrap());
+        for axis in 0..3 {
+            near(a.min[axis], b.min[axis], 1e-6);
+            near(a.max[axis], b.max[axis], 1e-6);
+        }
+    }
+    let rust_topology = rust_solid
+        .topology_snapshot(wall.feature, session.revision())
+        .unwrap();
+    let rust_materials = model::wall_face_materials(session.document(), &rust_topology).unwrap();
+    assert_eq!(
+        rust_materials
+            .values()
+            .map(|face| face.material)
+            .collect::<BTreeSet<_>>(),
+        assignments
+            .values()
+            .map(|face| face.material)
+            .collect::<BTreeSet<_>>()
+    );
     near(
         solid.volume_mm3().unwrap(),
         352.5 * (4000. * 2700. - 900. * 2100. - 500. * 1000.),
@@ -1440,7 +1490,9 @@ fn perpendicular_t_contact_is_rigidly_invariant_under_rotation_and_translation()
     .unwrap();
     let compiled = Compiler::default()
         .compile(p.prepared.document(), session.revision())
-        .unwrap();
+        .unwrap_or_else(|error| {
+            panic!("host {}, branch {}: {error}", host.feature, branch.feature)
+        });
     near(
         compiled.solid(branch.body).unwrap().volume_mm3().unwrap(),
         352.5 * (3000. - 191.25) * 2700.,

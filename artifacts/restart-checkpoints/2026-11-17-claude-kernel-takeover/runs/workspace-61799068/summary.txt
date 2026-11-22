@@ -1,0 +1,8 @@
+Full workspace check at 61799068 (2026-11-22, macOS local)
+cargo fmt --all -- --check: OK
+cargo clippy --workspace --all-targets --locked -- -D warnings: exit 0
+cargo test --workspace --locked --no-fail-fast: exit 0
+test binaries with ok result: 644
+FAILED results: 0
+passed: 8345
+ignored: 14

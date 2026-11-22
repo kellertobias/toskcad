@@ -193,6 +193,23 @@ fn rounded_profiles_distinguish_series_pipe_size_semantics_and_explicit_class_co
     );
     assert_eq!(report["bspt_presets"].as_array().unwrap().len(), 2);
     assert_eq!(report["bspt_support"]["hands"], json!(["right"]));
+    // Listing a family means at least one actual modeled mode is available;
+    // it does not promise its separate receiving or nested-hardware routes.
+    for family in ["npt", "bspt", "bsw", "bsf", "bspp", "round"] {
+        let row = report["families"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["family"] == family)
+            .unwrap();
+        assert_eq!(row["supported"], true, "{family}");
+        assert_eq!(row["modeled_new_external_supported"], true, "{family}");
+        assert_eq!(
+            row["modeled_cut_internal_supported"],
+            !matches!(family, "npt" | "bspt"),
+            "{family} receiving is a separate provider"
+        );
+    }
     for family in ["whitworth", "unified"] {
         assert_eq!(
             report["families"]
@@ -211,6 +228,13 @@ fn rounded_profiles_distinguish_series_pipe_size_semantics_and_explicit_class_co
 
 #[test]
 fn bsw_bsf_bspp_native_pairs_preserve_fits_omitted_fields_output_history_saved_reopen_and_step() {
+    rounded_pair_workflow(true);
+}
+#[test]
+fn rounded_through_workflow_preserves_existing_decoded_receipt_contract() {
+    rounded_pair_workflow(false);
+}
+fn rounded_pair_workflow(blind: bool) {
     for family in [
         model::ThreadFamily::Bsw,
         model::ThreadFamily::Bsf,
@@ -227,7 +251,7 @@ fn bsw_bsf_bspp_native_pairs_preserve_fits_omitted_fields_output_history_saved_r
             "Receiver stock",
             PrimitiveParameters::Cylinder {
                 radius: length(preset.diameter_mm),
-                height: length(4. * preset.pitch_mm),
+                height: length((if blind { 4. } else { 3. }) * preset.pitch_mm),
                 frame: Default::default(),
             },
         );
@@ -283,6 +307,16 @@ fn bsw_bsf_bspp_native_pairs_preserve_fits_omitted_fields_output_history_saved_r
         assert_eq!(h.document(), saved);
         let history = run(&h, "history", json!({}));
         assert!(history.to_string().contains("mcp:rounded-threads"));
+        let before_reopen = if blind {
+            run(
+                &h,
+                "export_step",
+                json!({"part":receiver["part"],"file_name":"receiver-before-reopen.step"}),
+            );
+            Some(std::fs::read(dir.path().join("receiver-before-reopen.step")).unwrap())
+        } else {
+            None
+        };
         run(&h, "save_project", json!({"expected_revision":5}));
         drop(h);
         let reopened = Headless::new(
@@ -307,7 +341,55 @@ fn bsw_bsf_bspp_native_pairs_preserve_fits_omitted_fields_output_history_saved_r
                 "export_step",
                 json!({"part":part,"file_name":name}),
             );
-            assert!(output["readback_volume_mm3"].as_f64().unwrap() > 0.);
+            if blind && name == "receiver.step" {
+                assert!(output["readback_volume_mm3"].is_null());
+                let proof = &output["step_verification"];
+                assert_eq!(proof["method"], "regenerated_rounded_blind_canonical");
+                assert!(proof["decoded_volume_mm3"].is_null());
+                eprintln!("ROUNDED_BLIND_REPAIR_RECEIPT family={family:?} {proof}");
+                let repair = &proof["rounded_blind_repair"];
+                assert!(repair["canonical_volume_mm3"].as_f64().unwrap() > 0.);
+                assert!(
+                    (repair["canonical_volume_mm3"].as_f64().unwrap()
+                        - output["model_volume_mm3"].as_f64().unwrap())
+                    .abs()
+                        < 1e-9
+                );
+                let c0 = repair["maximum_raw_to_canonical_position_error_mm"]
+                    .as_f64()
+                    .unwrap();
+                assert!(c0 > 0. && c0 <= 1e-7);
+                assert!(repair["raw_physical_volume_bounds_mm3"].is_null());
+                assert!(repair["raw_chart_derivative_error_mm"].is_null());
+                assert!(
+                    repair["verified_output_geometry_record_count"]
+                        .as_u64()
+                        .unwrap()
+                        > 100
+                );
+                let output_bytes = std::fs::read(dir.path().join(name)).unwrap();
+                assert_eq!(output_bytes, before_reopen.as_ref().unwrap().as_slice());
+                run(
+                    &reopened,
+                    "export_step",
+                    json!({"part":part,"file_name":"receiver-again.step"}),
+                );
+                assert_eq!(
+                    output_bytes,
+                    std::fs::read(dir.path().join("receiver-again.step")).unwrap()
+                );
+            } else {
+                assert!(output["readback_volume_mm3"].as_f64().unwrap() > 0.);
+                if !blind && name == "receiver.step" {
+                    assert_eq!(output["step_verification"]["method"], "decoded_boundary");
+                    assert!(
+                        output["step_verification"]
+                            .get("rounded_blind_repair")
+                            .is_none()
+                    );
+                }
+            }
+
             let solid =
                 multicad_kernel::Solid::read_step(&dir.path().join(name), Default::default())
                     .unwrap();
@@ -437,6 +519,15 @@ impl multicad_mcp::Host for ReviewedThreadHost {
     }
 }
 
+/// The candidate compiles on the Rust backend into a closed thread solid.
+fn assert_rust_thread_solid(document: &Document, feature: EntityId) {
+    let model = multicad_model::Compiler::default()
+        .compile_with_backend(document, 1, multicad_model::GeometryBackend::Rust, None)
+        .unwrap();
+    let volume = model.solid(feature).unwrap().volume_mm3().unwrap();
+    assert!(volume.is_finite() && volume > 0., "{volume}");
+}
+
 fn reviewed_native_thread(family: model::ThreadFamily, mut request: Value) -> Value {
     let expected_fit = request["fit"].clone();
     use multicad_core::{
@@ -450,11 +541,7 @@ fn reviewed_native_thread(family: model::ThreadFamily, mut request: Value) -> Va
     }));
     let original = host.0.lock().unwrap().session.document().clone();
     request["expected_revision"] = json!(0);
-    let before_native = multicad_kernel::thread_factory_stats().unwrap();
     let preview = dispatch(&host, &call(false), "set_thread", request.clone()).unwrap();
-    // set_thread exposes no native model receipt. Observe the actual native
-    // constructor path instead; this in-process reviewed host is not an OS UI.
-    assert!(multicad_kernel::thread_factory_stats().unwrap().requests > before_native.requests);
     assert_eq!(preview["status"], "pending_review");
     assert_eq!(preview["revision"], 0);
     let rejected = preview["review"].as_u64().unwrap();
@@ -471,6 +558,10 @@ fn reviewed_native_thread(family: model::ThreadFamily, mut request: Value) -> Va
         assert_eq!(pending[0].actor, call(false).actor);
         assert_eq!(pending[0].tool, "set_thread");
         let candidate = pending[0].candidate().unwrap();
+        // set_thread exposes no model receipt. The pending candidate must
+        // build an actual Rust thread solid; this in-process reviewed host
+        // is not an OS UI.
+        assert_rust_thread_solid(candidate.document(), rejected_feature);
         let source = model::read_thread(candidate.document(), rejected_feature).unwrap();
         assert_eq!(source.parameters.family, family);
         assert_eq!(
@@ -488,9 +579,7 @@ fn reviewed_native_thread(family: model::ThreadFamily, mut request: Value) -> Va
         assert!(!owner.session.can_undo());
         assert!(!owner.session.can_redo());
     }
-    let before_native = multicad_kernel::thread_factory_stats().unwrap();
     let preview = dispatch(&host, &call(false), "set_thread", request).unwrap();
-    assert!(multicad_kernel::thread_factory_stats().unwrap().requests > before_native.requests);
     assert_eq!(preview["status"], "pending_review");
     assert_eq!(preview["revision"], 0);
     let review = preview["review"].as_u64().unwrap();
@@ -499,6 +588,10 @@ fn reviewed_native_thread(family: model::ThreadFamily, mut request: Value) -> Va
     assert_ne!(feature, rejected_feature);
     {
         let owner = &mut *host.0.lock().unwrap();
+        assert_rust_thread_solid(
+            owner.ledger.pending()[0].candidate().unwrap().document(),
+            feature,
+        );
         assert_eq!(owner.session.document(), &original);
         assert_eq!(owner.session.activity().count(), 0);
         assert!(!owner.session.can_undo());
@@ -604,7 +697,9 @@ fn bspt_mcp_omitted_edits_undo_reopen_and_failures_retain_canonical_intent() {
             .code,
         "cancelled"
     );
+    let create_started = std::time::Instant::now();
     let created = run(&h, "set_thread", args);
+    eprintln!("actual MCP BSPT8 create {:?}", create_started.elapsed());
     let feature = created["thread"].clone();
     let original = h.document();
     for bad in [
@@ -647,7 +742,22 @@ fn bspt_mcp_omitted_edits_undo_reopen_and_failures_retain_canonical_intent() {
         "export_step",
         json!({"part":created["part"],"file_name":"pipe.step"}),
     );
-    assert!(output["readback_volume_mm3"].as_f64().unwrap() > 0.);
+    assert!(output["bytes"].as_u64().unwrap() > 0);
+    assert!(output["readback_volume_mm3"].is_null());
+    let proof = &output["step_verification"];
+    assert_eq!(proof["method"], "decoded_boundary_enclosure");
+    assert!(proof["decoded_volume_mm3"].is_null());
+    assert!(proof["source_volume_bounds_mm3"].is_null());
+    let members = proof["retained_members"].as_array().unwrap();
+    assert_eq!(members.len(), 1);
+    assert_eq!(members[0]["member_index"], 0);
+    let decoded = members[0]["decoded_volume_bounds_mm3"].as_array().unwrap();
+    let source = members[0]["source_volume_bounds_mm3"].as_array().unwrap();
+    let [dl, du] = [decoded[0].as_f64().unwrap(), decoded[1].as_f64().unwrap()];
+    let [sl, su] = [source[0].as_f64().unwrap(), source[1].as_f64().unwrap()];
+    assert!(dl > 0. && du >= dl && sl > 0. && su >= sl);
+    assert!(dl <= su && sl <= du);
+    assert!(proof["verified_tolerance_mm"].as_f64().unwrap() > 0.);
 }
 #[test]
 fn bspt_nested_nut_and_screw_inspection_keep_the_shared_gauge_receipt() {
@@ -811,7 +921,22 @@ fn npt_mcp_omitted_edits_undo_reopen_and_failures_retain_canonical_intent() {
         "export_step",
         json!({"part":created["part"],"file_name":"pipe.step"}),
     );
-    assert!(output["readback_volume_mm3"].as_f64().unwrap() > 0.);
+    assert!(output["bytes"].as_u64().unwrap() > 0);
+    assert!(output["readback_volume_mm3"].is_null());
+    let proof = &output["step_verification"];
+    assert_eq!(proof["method"], "decoded_boundary_enclosure");
+    assert!(proof["decoded_volume_mm3"].is_null());
+    let members = proof["retained_members"].as_array().unwrap();
+    assert_eq!(members.len(), 1);
+    let decoded = members[0]["decoded_volume_bounds_mm3"].as_array().unwrap();
+    let source = members[0]["source_volume_bounds_mm3"].as_array().unwrap();
+    let [dl, du] = [decoded[0].as_f64().unwrap(), decoded[1].as_f64().unwrap()];
+    let [sl, su] = [source[0].as_f64().unwrap(), source[1].as_f64().unwrap()];
+    assert!(dl > 0. && du >= dl && sl > 0. && su >= sl);
+    assert!(dl <= su && sl <= du);
+    assert!(proof["verified_tolerance_mm"].as_f64().unwrap() > 0.);
+    assert!(dir.path().join("pipe.step").is_file());
+    assert_eq!(reopened.document(), changed);
 }
 #[test]
 fn npt_nested_nut_and_screw_inspection_keep_the_shared_gauge_receipt() {
@@ -1203,7 +1328,7 @@ fn metric_fit_catalog_owner_preview_and_receipts_keep_standard_limits_separate_f
     let before = h.document();
     let catalog = run(&h, "thread_profiles", json!({}));
     assert_eq!(catalog["metric_fit_presets"].as_array().unwrap().len(), 2);
-    assert_eq!(catalog["end_treatments"]["standalone_thread_only"], true);
+    assert_eq!(catalog["end_treatments"]["standalone_thread_only"], false);
     assert_eq!(h.document(), before);
     for row in model::metric_fit_presets() {
         let report = reviewed_native_thread(model::ThreadFamily::IsoMetric, metric_fit_args(&row));
@@ -1294,7 +1419,20 @@ fn metric_fit_mcp_partial_edits_clear_cancel_atomic_failures_history_and_saved_r
         "export_step",
         json!({"part":created["part"],"file_name":"metric-fit.step"}),
     );
-    assert!(step["readback_volume_mm3"].as_f64().unwrap() > 0.);
+    assert!(step["readback_volume_mm3"].is_null());
+    assert_eq!(step["step_verification"]["method"], "source_known_boundary");
+    assert!(step["step_verification"]["decoded_volume_mm3"].is_null());
+    let evaluated = run(&reopened, "evaluate_model", json!({}));
+    let current = evaluated["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|part| part["feature"] == feature)
+        .unwrap();
+    let actual = current["volume_mm3"].as_f64().unwrap();
+    let bounds = &step["step_verification"]["source_volume_bounds_mm3"];
+    assert!(bounds[0].as_f64().unwrap() <= actual && actual <= bounds[1].as_f64().unwrap());
+    assert!(dir.path().join("metric-fit.step").is_file());
     run(
         &reopened,
         "set_thread",

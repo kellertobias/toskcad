@@ -1,0 +1,535 @@
+use multicad_core::{
+    commands::{Actor, Channel, Session},
+    document::Document,
+    model::{
+        self, BodyInput, CustomThreadProfile, PrimitiveParameters, PrimitiveRequest, ThreadFamily,
+        ThreadFit, ThreadHand, ThreadMode, ThreadParameters, ThreadRequest, angle, length,
+    },
+    project_file::{self, ProjectFile},
+    references::{self, GeometryIntent, Resolution, TopologyKind},
+};
+use multicad_model::{Compiler, GeometryBackend, Model};
+use std::f64::consts::{PI, TAU};
+
+fn actor() -> Actor {
+    Actor::local(Channel::Ui)
+}
+
+fn rust(document: &Document, revision: u64) -> Model {
+    Compiler {
+        omit_display: true,
+        ..Default::default()
+    }
+    .compile_with_backend(document, revision, GeometryBackend::Rust, None)
+    .unwrap()
+}
+
+fn m8_volume(length_mm: f64) -> f64 {
+    let pitch = 1.25;
+    let radius: f64 = 4.;
+    let root = radius - 5. * 3_f64.sqrt() / 16. * pitch;
+    let crest = pitch / 8.;
+    let flanks = 2. * 30_f64.to_radians().tan();
+    let radius_integral = (radius * radius - root * root) / 2.;
+    let ridge = crest * radius_integral
+        + flanks * (radius * radius_integral - (radius.powi(3) - root.powi(3)) / 3.);
+    length_mm * (PI * root * root + TAU * ridge / pitch)
+}
+
+#[test]
+fn contained_thread_intersection_preserves_exact_output_history_and_independent_step() {
+    use multicad_core::model::{BooleanRequest, Operation, PrimitiveFrame};
+    use multicad_kernel::{GeometryPolicy, Solid};
+    for hand in [ThreadHand::Right, ThreadHand::Left] {
+        let mut session = Session::new(Document::new("Thread contained Boolean").unwrap()).unwrap();
+        let parameters = ThreadParameters {
+            hand,
+            frame: PrimitiveFrame {
+                origin: [length(11.), length(-7.), length(5.)],
+                u: [0.8, 0.6, 0.],
+                v: [-0.36, 0.48, 0.8],
+            },
+            ..Default::default()
+        };
+        let frame = parameters
+            .resolve(session.parameters(), ThreadMode::NewExternal)
+            .unwrap()
+            .frame;
+        let thread = ThreadRequest::new("Original M8 source", parameters);
+        session
+            .commit(
+                model::prepare_thread(&session, session.revision(), actor(), &thread)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+        let local = [0.4, 0.1, 1.];
+        let origin = std::array::from_fn(|i| {
+            length(
+                frame.origin[i]
+                    + frame.u[i] * local[0]
+                    + frame.v[i] * local[1]
+                    + frame.n[i] * local[2],
+            )
+        });
+        let small = PrimitiveRequest::new(
+            "Contained exact box",
+            PrimitiveParameters::Box {
+                size: std::array::from_fn(|_| length(0.1)),
+                frame: PrimitiveFrame {
+                    origin,
+                    u: frame.u,
+                    v: frame.v,
+                },
+            },
+        );
+        session
+            .commit(
+                model::prepare_primitive(&session, session.revision(), actor(), &small)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+        let before = session.document().clone();
+        let operation = BooleanRequest::new(
+            Operation::Intersect,
+            BodyInput {
+                body: thread.body,
+                producer: thread.feature,
+            },
+            vec![BodyInput {
+                body: small.body,
+                producer: small.feature,
+            }],
+        );
+        let prepared =
+            model::prepare_boolean(&session, session.revision(), actor(), &operation).unwrap();
+        let checked = rust(prepared.prepared.document(), session.revision() + 1);
+        assert_eq!(checked.snapshot().bodies[&thread.body], operation.feature);
+        assert!(!checked.snapshot().bodies.contains_key(&small.body));
+        let output = checked.solid(operation.feature).unwrap();
+        assert!(output.uses_rust_geometry());
+        assert!((output.volume_mm3().unwrap() - 0.001).abs() < 1e-12);
+        assert!(
+            output
+                .manufacturing_mesh_with_receipt(Default::default())
+                .unwrap()
+                .edge_pairs
+                > 0
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("actual-contained-result.step");
+        output.write_step(&path).unwrap();
+        let decoded = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
+        assert!((decoded.volume_mm3().unwrap() - 0.001).abs() < 1e-12);
+        assert_eq!(*session.document(), before);
+        session.commit(prepared.prepared).unwrap();
+        let after = session.document().clone();
+        session.undo(session.revision(), actor()).unwrap();
+        assert_eq!(*session.document(), before);
+        session.redo(session.revision(), actor()).unwrap();
+        assert_eq!(*session.document(), after);
+        let mut bytes = Vec::new();
+        project_file::write(
+            &ProjectFile::new(after).unwrap(),
+            &mut bytes,
+            Default::default(),
+        )
+        .unwrap();
+        let opened = project_file::read(
+            &mut bytes.as_slice(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap();
+        let reopened = rust(&opened.project.document, 0);
+        assert!(
+            (reopened
+                .solid(operation.feature)
+                .unwrap()
+                .volume_mm3()
+                .unwrap()
+                - 0.001)
+                .abs()
+                < 1e-12
+        );
+    }
+}
+
+#[test]
+fn long_custom_m8_keeps_geometry_and_cap_intent_through_edit_history_and_reopen() {
+    let mut session = Session::new(Document::new("Rust M8 threads").unwrap()).unwrap();
+    let before = session.document().clone();
+    let initial = ThreadParameters {
+        family: ThreadFamily::Custom,
+        custom: Some(CustomThreadProfile {
+            depth: length(5. * 3_f64.sqrt() / 16. * 1.25),
+            crest_width: length(1.25 / 8.),
+            lower_flank: angle(30.),
+            upper_flank: angle(30.),
+            ..Default::default()
+        }),
+        length: length(50.),
+        ..Default::default()
+    };
+    let request = ThreadRequest::new("M8 × 1.25", initial.clone());
+    let candidate = model::prepare_thread(&session, 0, actor(), &request).unwrap();
+    let checked = rust(candidate.prepared.document(), 1);
+    let shape = &checked.snapshot().shapes[&request.feature];
+    assert!(checked.solid(request.feature).unwrap().uses_rust_geometry());
+    assert_eq!(shape.solid_count, 1);
+    assert!((shape.volume_mm3 - m8_volume(50.)).abs() < 1e-7);
+    for (actual, expected) in shape.bounds.min.into_iter().zip([-4., -4., 0.]) {
+        assert!((actual - expected).abs() < 1e-7);
+    }
+    for (actual, expected) in shape.bounds.max.into_iter().zip([4., 4., 50.]) {
+        assert!((actual - expected).abs() < 1e-7);
+    }
+    let cap = shape
+        .topology
+        .elements
+        .iter()
+        .find(|face| {
+            face.key.kind == TopologyKind::Face
+                && face.origins.iter().any(|origin| origin.role == "cap.start")
+        })
+        .unwrap();
+    let intent = GeometryIntent::capture(&shape.topology, cap.key).unwrap();
+    assert_eq!(session.document(), &before);
+    session.commit(candidate.prepared).unwrap();
+    let original = session.document().clone();
+
+    let edited = ThreadParameters {
+        length: length(49.8),
+        hand: ThreadHand::Left,
+        ..initial
+    };
+    let candidate =
+        model::prepare_thread_edit(&session, 1, actor(), request.feature, &edited).unwrap();
+    let checked = rust(candidate.prepared.document(), 2);
+    let shape = &checked.snapshot().shapes[&request.feature];
+    assert!((shape.volume_mm3 - m8_volume(49.8)).abs() < 1e-7);
+    assert!(matches!(
+        references::resolve(&intent, &shape.topology, 2),
+        Resolution::Resolved { key, .. } if key == cap.key
+    ));
+    assert_eq!(session.document(), &original);
+    session.commit(candidate.prepared).unwrap();
+
+    let saved = session.document().clone();
+    session.undo(2, actor()).unwrap();
+    assert_eq!(session.document(), &original);
+    session.redo(3, actor()).unwrap();
+    assert_eq!(session.document(), &saved);
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(saved).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let reopened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project;
+    let source = model::read_thread(&reopened.document, request.feature).unwrap();
+    assert_eq!(source.parameters, edited);
+    let rebuilt = rust(&reopened.document, 0);
+    assert_eq!(rebuilt.snapshot().bodies[&request.body], request.feature);
+    assert!(
+        (rebuilt.snapshot().shapes[&request.feature].volume_mm3 - m8_volume(49.8)).abs() < 1e-7
+    );
+}
+
+#[test]
+fn rust_6g_m6_matches_native_fitted_profile_mass_and_major_extent() {
+    let mut session = Session::new(Document::new("Rust 6g profile").unwrap()).unwrap();
+    let request = ThreadRequest::new(
+        "M6 × 1 6g left",
+        ThreadParameters {
+            major_diameter: length(6.),
+            pitch: length(1.),
+            length: length(6.6),
+            hand: ThreadHand::Left,
+            fit: ThreadFit::Metric6gExternal,
+            ..Default::default()
+        },
+    );
+    let candidate = model::prepare_thread(&session, 0, actor(), &request).unwrap();
+    let document = candidate.prepared.document();
+    let actual = rust(document, 1);
+    let solid = actual.solid(request.feature).unwrap();
+    assert!(solid.uses_rust_geometry());
+    let resolved = request
+        .parameters
+        .resolve(session.parameters(), ThreadMode::NewExternal)
+        .unwrap();
+    let radius = resolved.major_radius_mm;
+    let root = radius - resolved.profile.depth_mm;
+    assert!(radius < 3. && root > 0.);
+    let volume = solid.volume_mm3().unwrap();
+    assert!(volume > PI * root * root * resolved.length_mm);
+    assert!(volume < PI * radius * radius * resolved.length_mm);
+    let bounds = solid.bounds().unwrap();
+    for (actual, expected) in bounds.min.into_iter().chain(bounds.max).zip([
+        -radius,
+        -radius,
+        0.,
+        radius,
+        radius,
+        resolved.length_mm,
+    ]) {
+        assert!((actual - expected).abs() < 1e-7);
+    }
+    for (z, boundary) in [
+        (2. * resolved.pitch_mm, radius),
+        (2.5 * resolved.pitch_mm, root),
+    ] {
+        assert!(solid.rust_thread_contains([0., 0., z]).unwrap());
+        assert!(
+            solid
+                .rust_thread_contains([boundary - 0.001, 0., z])
+                .unwrap()
+        );
+        assert!(
+            !solid
+                .rust_thread_contains([boundary + 0.001, 0., z])
+                .unwrap()
+        );
+    }
+    let drop = 0.4 * resolved.profile.depth_mm;
+    let z = 2. * resolved.pitch_mm
+        + resolved.profile.crest_width_mm / 2.
+        + drop * resolved.profile.upper_flank_deg.to_radians().tan();
+    assert!(
+        solid
+            .rust_thread_contains([radius - drop - 0.001, 0., z])
+            .unwrap()
+    );
+    assert!(
+        !solid
+            .rust_thread_contains([radius - drop + 0.001, 0., z])
+            .unwrap()
+    );
+    let shape = &actual.snapshot().shapes[&request.feature];
+    assert_eq!(shape.solid_count, 1);
+    let cap = shape
+        .topology
+        .elements
+        .iter()
+        .find(|element| {
+            element.key.kind == TopologyKind::Face
+                && element
+                    .origins
+                    .iter()
+                    .any(|origin| origin.role == "cap.start")
+        })
+        .unwrap();
+    let cap_intent = GeometryIntent::capture(&shape.topology, cap.key).unwrap();
+
+    session.commit(candidate.prepared).unwrap();
+    let before = session.document().clone();
+    let changed = ThreadParameters {
+        length: length(7.2),
+        hand: ThreadHand::Right,
+        ..request.parameters.clone()
+    };
+    let edit = model::prepare_thread_edit(&session, 1, actor(), request.feature, &changed).unwrap();
+    let checked = rust(edit.prepared.document(), 2);
+    assert!(
+        (checked
+            .solid(request.feature)
+            .unwrap()
+            .volume_mm3()
+            .unwrap()
+            - volume * 7.2 / 6.6)
+            .abs()
+            < 1e-7
+    );
+    assert!(
+        matches!(references::resolve(&cap_intent,&checked.snapshot().shapes[&request.feature].topology,2),Resolution::Resolved{key,..} if key==cap.key)
+    );
+    assert_eq!(session.document(), &before);
+    session.commit(edit.prepared).unwrap();
+    let after = session.document().clone();
+    session.undo(2, actor()).unwrap();
+    assert_eq!(session.document(), &before);
+    session.redo(3, actor()).unwrap();
+    assert_eq!(session.document(), &after);
+}
+
+#[test]
+fn rust_internal_6h_matches_native_cut_and_keeps_the_cylinder_face_intents() {
+    let mut session = Session::new(Document::new("Rust 6H receiver").unwrap()).unwrap();
+    let stock = PrimitiveRequest::new(
+        "Stock",
+        PrimitiveParameters::Cylinder {
+            radius: length(5.),
+            height: length(6.6),
+            frame: Default::default(),
+        },
+    );
+    let prepared = model::prepare_primitive(&session, 0, actor(), &stock).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let original = rust(session.document(), 1);
+    let original = &original.snapshot().shapes[&stock.feature];
+    let surviving: Vec<_> = original
+        .topology
+        .elements
+        .iter()
+        .filter(|element| element.key.kind == TopologyKind::Face)
+        .map(|element| GeometryIntent::capture(&original.topology, element.key).unwrap())
+        .collect();
+    assert_eq!(surviving.len(), 3);
+    let target = BodyInput {
+        body: stock.body,
+        producer: stock.feature,
+    };
+    let parameters = ThreadParameters {
+        major_diameter: length(6.),
+        pitch: length(1.),
+        length: length(6.6),
+        minimum_wall: length(1.),
+        fit: ThreadFit::Metric6HInternal,
+        ..Default::default()
+    };
+    let request = ThreadRequest::receiving(
+        "M6 × 1 6H",
+        ThreadMode::CutInternal,
+        target.clone(),
+        parameters.clone(),
+    )
+    .unwrap();
+    let candidate = model::prepare_thread(&session, 1, actor(), &request).unwrap();
+    let before = session.document().clone();
+    let document = candidate.prepared.document();
+    let actual = rust(document, 2);
+    let shape = &actual.snapshot().shapes[&request.feature];
+    let solid = actual.solid(request.feature).unwrap();
+    assert!(solid.uses_rust_geometry());
+    assert_eq!(actual.snapshot().bodies[&stock.body], request.feature);
+    assert_eq!(shape.solid_count, 1);
+    assert_eq!(shape.bounds, original.bounds);
+
+    for z in [0., 0.25, 3.3, 6.35, 6.6] {
+        assert!(!solid.rust_thread_contains([0., 0., z]).unwrap());
+        assert!(solid.rust_thread_contains([4., 0., z]).unwrap());
+    }
+    assert!(!solid.rust_thread_contains([2.75, 0., 2.]).unwrap());
+    assert!(solid.rust_thread_contains([2.75, 0., 2.5]).unwrap());
+    let retained: Vec<_> = surviving
+        .iter()
+        .map(|intent| references::resolve(intent, &shape.topology, 2))
+        .collect();
+    assert!(
+        retained
+            .iter()
+            .all(|result| matches!(result, Resolution::Resolved { .. }))
+    );
+    assert_eq!(session.document(), &before);
+    session.commit(candidate.prepared).unwrap();
+
+    let changed = ThreadParameters {
+        hand: ThreadHand::Left,
+        ..parameters
+    };
+    let edited =
+        model::prepare_thread_edit(&session, 2, actor(), request.feature, &changed).unwrap();
+    let checked = rust(edited.prepared.document(), 3);
+    let shape = &checked.snapshot().shapes[&request.feature];
+    let solid = checked.solid(request.feature).unwrap();
+    assert!(!solid.rust_thread_contains([0., 2.75, 1.75]).unwrap());
+    assert!(solid.rust_thread_contains([0., 2.75, 2.25]).unwrap());
+    assert!(
+        surviving.iter().zip(retained).all(|(intent, previous)| {
+            references::resolve(intent, &shape.topology, 3) == previous
+        })
+    );
+    session.commit(edited.prepared).unwrap();
+    assert_eq!(
+        model::read_thread(session.document(), request.feature)
+            .unwrap()
+            .target,
+        Some(target)
+    );
+}
+
+#[test]
+fn rust_thread_compiler_refuses_unimplemented_variants_without_changing_source() {
+    use multicad_core::{constraint_sketch::Dimension, model::ThreadRepresentation};
+
+    let mut session =
+        Session::new(Document::new("Rust thread provider boundaries").unwrap()).unwrap();
+    let stock = PrimitiveRequest::new(
+        "Stock",
+        PrimitiveParameters::Cylinder {
+            radius: length(5.),
+            height: length(20.),
+            frame: Default::default(),
+        },
+    );
+    let prepared = model::prepare_primitive(&session, 0, actor(), &stock).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let before = session.document().clone();
+    let receiving = ThreadRequest::receiving(
+        "Receiving cut",
+        ThreadMode::CutExternal,
+        BodyInput {
+            body: stock.body,
+            producer: stock.feature,
+        },
+        ThreadParameters {
+            representation: ThreadRepresentation::CosmeticEnvelope,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut tapered = ThreadRequest::new(
+        "Tapered receiving custom thread",
+        ThreadParameters {
+            family: ThreadFamily::Custom,
+            custom: Some(CustomThreadProfile {
+                radial_taper: Dimension::Literal {
+                    value: 0.01,
+                    unit: "ratio".into(),
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
+    tapered.mode = ThreadMode::CutInternal;
+    tapered.target = Some(BodyInput {
+        body: stock.body,
+        producer: stock.feature,
+    });
+    tapered.body = stock.body;
+    for (request, diagnostic) in [
+        (
+            receiving,
+            "external receiving cuts require a modeled thread",
+        ),
+        (tapered, "untapered profile"),
+    ] {
+        let candidate = model::prepare_thread(&session, 1, actor(), &request).unwrap();
+        let failure = Compiler {
+            omit_display: true,
+            ..Default::default()
+        }
+        .compile_with_backend(
+            candidate.prepared.document(),
+            2,
+            GeometryBackend::Rust,
+            None,
+        )
+        .err()
+        .expect("unsupported variant must never fall back to OpenCascade");
+        assert_eq!(failure.entity, Some(request.feature));
+        assert!(failure.message.contains(diagnostic), "{failure}");
+        assert_eq!(session.revision(), 1);
+        assert_eq!(session.document(), &before);
+    }
+}

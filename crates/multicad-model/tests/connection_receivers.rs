@@ -287,3 +287,170 @@ fn real_tapped_receiver_uses_same_axis_and_retains_source_length() {
         r.source
     );
 }
+
+#[test]
+fn plain_blind_receiving_depth_edits_keep_actual_floor_references_history_and_reopen() {
+    use multicad_core::references::{GeometryIntent, Resolution, resolve};
+    let (mut session, mut request) = fixture();
+    request.source.extent = ConnectionReceiverExtent::Blind {
+        depth: length(4.),
+        floor: length(1.),
+    };
+    let q = prepare_connection_receiver(&session, session.revision(), actor(), &request).unwrap();
+    let original = compiler()
+        .compile(q.prepared.document(), session.revision() + 1)
+        .unwrap();
+    session.commit(q.prepared).unwrap();
+    let old = &original.snapshot().shapes[&request.feature].topology;
+    let floor = old
+        .elements
+        .iter()
+        .find(|e| {
+            e.key.kind == TopologyKind::Face
+                && e.origins
+                    .iter()
+                    .any(|o| o.role.starts_with("pocket.floor/") && o.source == request.feature)
+        })
+        .unwrap();
+    let intent = GeometryIntent::capture(old, floor.key).unwrap();
+    let before = session.document().clone();
+    request.source.extent = ConnectionReceiverExtent::Blind {
+        depth: length(5.),
+        floor: length(1.),
+    };
+    let q = prepare_connection_receiver_edit(
+        &session,
+        session.revision(),
+        actor(),
+        request.feature,
+        &request.source,
+    )
+    .unwrap();
+    let edited = compiler()
+        .compile(q.prepared.document(), session.revision() + 1)
+        .unwrap();
+    assert!(matches!(
+        resolve(
+            &intent,
+            &edited.snapshot().shapes[&request.feature].topology,
+            session.revision() + 1
+        ),
+        Resolution::Resolved { .. }
+    ));
+    assert!(
+        (edited.solid(request.feature).unwrap().volume_mm3().unwrap()
+            - (4000. - 20. * std::f64::consts::PI))
+            .abs()
+            < 1e-7
+    );
+    assert_eq!(session.document(), &before);
+    session.commit(q.prepared).unwrap();
+    let saved = session.document().clone();
+    session.undo(session.revision(), actor()).unwrap();
+    assert_eq!(session.document(), &before);
+    session.redo(session.revision(), actor()).unwrap();
+    assert_eq!(session.document(), &saved);
+    let mut bytes = vec![];
+    project_file::write(
+        &ProjectFile::new(saved.clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let reopened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project;
+    assert_eq!(reopened.document, saved);
+    let model = compiler()
+        .compile(&reopened.document, session.revision())
+        .unwrap();
+    assert!(
+        (model.solid(request.feature).unwrap().volume_mm3().unwrap()
+            - edited.solid(request.feature).unwrap().volume_mm3().unwrap())
+        .abs()
+            < 1e-9
+    );
+    let receipt = model
+        .solid(request.feature)
+        .unwrap()
+        .manufacturing_mesh_with_receipt(Default::default())
+        .unwrap();
+    assert!(receipt.edge_pairs > 0 && receipt.vertex_links > 0);
+}
+#[test]
+fn plain_blind_receivers_refuse_uncertified_counterbore_pose_cones_wrong_entry_and_material_failures_atomically()
+ {
+    for case in 0..6 {
+        let (session, mut request) = fixture();
+        request.source.extent = ConnectionReceiverExtent::Blind {
+            depth: length(4.),
+            floor: length(1.),
+        };
+        match case {
+            0 => {
+                request.source.seat = Some(ConnectionReceiverSeat::Counterbore {
+                    diameter: length(8.),
+                    depth: length(2.),
+                })
+            }
+            1 => {
+                request.source.seat = Some(ConnectionReceiverSeat::Countersink {
+                    diameter: length(8.),
+                    depth: length(2.),
+                })
+            }
+            2 => request.source.station = length(0.1),
+            3 => request.source.station = length(-0.1),
+            4 => request.source.minimum_wall = length(20.),
+            _ => {
+                request.source.extent = ConnectionReceiverExtent::Blind {
+                    depth: length(9.5),
+                    floor: length(1.),
+                }
+            }
+        };
+        let before = session.document().clone();
+        let q =
+            prepare_connection_receiver(&session, session.revision(), actor(), &request).unwrap();
+        let failure = compiler()
+            .compile(q.prepared.document(), session.revision() + 1)
+            .err()
+            .expect("blind source guard");
+        assert_eq!(failure.entity, Some(request.feature));
+        if case == 0 {
+            assert!(
+                failure.message.contains("exact cardinal entry chart"),
+                "{failure}"
+            );
+        } else if case == 1 {
+            assert!(failure.message.contains("conical seats"), "{failure}");
+        }
+        assert_eq!(session.document(), &before);
+    }
+}
+
+#[test]
+fn plain_blind_receiver_cancellation_does_not_publish_a_candidate() {
+    let (session, mut request) = fixture();
+    request.source.extent = ConnectionReceiverExtent::Blind {
+        depth: length(4.),
+        floor: length(1.),
+    };
+    let before = session.document().clone();
+    let q = prepare_connection_receiver(&session, session.revision(), actor(), &request).unwrap();
+    let failure = compiler()
+        .compile_with_backend(
+            q.prepared.document(),
+            session.revision() + 1,
+            multicad_model::GeometryBackend::Rust,
+            Some(&|| true),
+        )
+        .err()
+        .unwrap();
+    assert!(multicad_model::is_superseded(&failure));
+    assert_eq!(session.document(), &before);
+}

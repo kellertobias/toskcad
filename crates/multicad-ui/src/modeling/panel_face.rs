@@ -37,8 +37,13 @@ pub(super) const TARGET: egui::Color32 = egui::Color32::from_rgb(255, 176, 64);
 pub(super) const HOVER: egui::Color32 = egui::Color32::from_rgb(255, 230, 90);
 pub(super) const CUT: egui::Color32 = egui::Color32::from_rgb(80, 220, 140);
 pub(super) const INVALID: egui::Color32 = egui::Color32::from_rgb(255, 90, 90);
+/// Panel B of a joint pair; panel A uses `TARGET`.
+pub(super) const ROLE_B: egui::Color32 = egui::Color32::from_rgb(90, 190, 255);
 pub(super) const AXIS_U: egui::Color32 = egui::Color32::from_rgb(235, 80, 80);
 pub(super) const AXIS_V: egui::Color32 = egui::Color32::from_rgb(90, 200, 90);
+/// Cosine between view ray and face normal below which a face is edge-on.
+const EDGE_ON: f64 = 1e-6;
+const LABEL_PLATE: egui::Color32 = egui::Color32::from_rgba_premultiplied(16, 18, 22, 210);
 
 /// A point on a panel face, in that face's coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -245,6 +250,62 @@ pub(super) fn hover(
     locate(document, &parameters, hit.instance, hit.point_mm)
 }
 
+/// The Part under the pointer, panel or not, if the scene is current. Tools
+/// that only take panels use it to explain why another object is refused.
+pub(super) fn hovered_part(
+    document: &Document,
+    revision: u64,
+    view: &TerminationViewport<'_>,
+) -> Option<EntityId> {
+    let scene = view.scene?;
+    if scene.stamp().document != document.id() || scene.stamp().revision != revision {
+        return None;
+    }
+    let pointer = view.pointer.filter(|p| view.rect.contains(*p))?;
+    scene
+        .pick_screen_with(
+            view.camera,
+            view.rect,
+            pointer,
+            PickOptions {
+                filter: PickFilter::Faces,
+                include_hidden: false,
+                section: view.section,
+            },
+        )
+        .map(|hit| hit.instance)
+}
+
+/// A panel's whole box as a guide box.
+pub(super) fn panel_box(b: &model::PanelBox) -> model::GuideBox {
+    let n = b.normal();
+    model::GuideBox {
+        origin: b.origin,
+        edges: [
+            b.u.map(|c| c * b.length_mm),
+            b.v.map(|c| c * b.width_mm),
+            n.map(|c| c * b.thickness_mm),
+        ],
+    }
+}
+/// Draw the twelve edges of a box; returns its highest on-screen corner for
+/// a label.
+pub(super) fn box_edges(
+    view: &TerminationViewport<'_>,
+    b: &model::GuideBox,
+    width: f32,
+    color: egui::Color32,
+) -> egui::Pos2 {
+    let p = b.corners().map(|c| screen(view, c));
+    for (i, j) in model::GuideBox::EDGES {
+        view.painter
+            .line_segment([p[i], p[j]], egui::Stroke::new(width, color));
+    }
+    p.into_iter()
+        .min_by(|a, b| a.y.total_cmp(&b.y))
+        .unwrap_or_default()
+}
+
 fn screen(view: &TerminationViewport<'_>, p: [f64; 3]) -> egui::Pos2 {
     let s = view
         .camera
@@ -297,19 +358,48 @@ pub(super) fn circle(
         .collect();
     polygon(view, frame, &points, color);
 }
+/// Text on a dark plate, so the bright annotation colors read the same over
+/// light and dark materials and over the grid.
 pub(super) fn label(
     view: &TerminationViewport<'_>,
     at: egui::Pos2,
     text: &str,
     color: egui::Color32,
 ) {
-    view.painter.text(
-        at,
-        egui::Align2::LEFT_BOTTOM,
-        text,
-        egui::FontId::proportional(12.),
-        color,
+    plate(view, at, egui::Align2::LEFT_BOTTOM, text, color);
+}
+fn plate(
+    view: &TerminationViewport<'_>,
+    at: egui::Pos2,
+    align: egui::Align2,
+    text: &str,
+    color: egui::Color32,
+) {
+    let galley =
+        view.painter
+            .layout_no_wrap(text.to_owned(), egui::FontId::proportional(12.), color);
+    let rect = align.anchor_size(at, galley.size());
+    view.painter.rect_filled(
+        rect.expand2(egui::vec2(3., 1.)),
+        3.,
+        LABEL_PLATE.gamma_multiply(color.a() as f32 / 255.),
     );
+    view.painter.galley(rect.min, galley, color);
+}
+/// Whether the outside of a face points towards the viewer. Annotations sit
+/// on top of the shaded model, so faces seen from behind are drawn faded:
+/// the overlay must not present a hidden face as the visible one.
+pub(super) fn faces_viewer(view: &TerminationViewport<'_>, frame: &MachiningFaceFrame) -> bool {
+    let center = on_screen(view, frame, [frame.size[0] / 2., frame.size[1] / 2.]);
+    view.camera.ray(center, view.rect).is_none_or(|ray| {
+        let d = ray.direction();
+        // An edge-on face shows no area; f32 camera angles leave noise there.
+        (0..3).map(|i| frame.inward[i] * d[i]).sum::<f64>() > EDGE_ON
+    })
+}
+/// The annotation color of a face seen from behind.
+pub(super) fn far_side(color: egui::Color32) -> egui::Color32 {
+    color.gamma_multiply(0.4)
 }
 /// Arrows for the face's u (first) and v (second) axes at its origin.
 pub(super) fn axes(view: &TerminationViewport<'_>, frame: &MachiningFaceFrame) {
@@ -327,13 +417,86 @@ pub(super) fn offsets(view: &TerminationViewport<'_>, frame: &MachiningFaceFrame
     for (from, color, value) in [([0., at[1]], AXIS_U, at[0]), ([at[0], 0.], AXIS_V, at[1])] {
         let (a, b) = (on_screen(view, frame, from), on_screen(view, frame, at));
         view.painter.line_segment([a, b], stroke);
-        label(view, a + (b - a) / 2., &format!("{value:.1}"), color);
+        // Centered on its leader like a dimension value, clear of the
+        // placement label beside the pointer.
+        plate(
+            view,
+            a + (b - a) / 2.,
+            egui::Align2::CENTER_CENTER,
+            &format!("{value:.1}"),
+            color,
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Which faces of the 600 × 400 × 18 panel face a camera.
+    fn facing(camera: crate::camera::Camera) -> Vec<MachiningFace> {
+        let (s, side) = crate::modeling::panel_fixture::flat_panel();
+        let parameters = multicad_core::parameters::evaluate(s.document()).unwrap();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600., 600.));
+        let ctx = egui::Context::default();
+        let mut out = vec![];
+        ctx.run_ui(Default::default(), |ui| {
+            let view = TerminationViewport {
+                scene: None,
+                report: None,
+                camera,
+                rect,
+                pointer: None,
+                clicked: false,
+                painter: ui.painter(),
+                section: None,
+            };
+            out = FACES
+                .iter()
+                .copied()
+                .filter(|&f| {
+                    let frame = frame(s.document(), &parameters, side, f).unwrap();
+                    faces_viewer(&view, &frame)
+                })
+                .collect();
+        })
+        .drop_without_applying_deltas();
+        out
+    }
+
+    #[test]
+    fn only_faces_turned_towards_the_camera_read_as_visible() {
+        let mut camera = crate::camera::Camera {
+            yaw: 0.,
+            pitch: std::f32::consts::FRAC_PI_2,
+            scale: 0.5,
+            target: [300., 200., 0.],
+            perspective: false,
+        };
+        // Straight down: only the top face.
+        assert_eq!(facing(camera), vec![MachiningFace::Top]);
+        // From below the far side is the bottom face.
+        camera.pitch = -std::f32::consts::FRAC_PI_2;
+        assert_eq!(facing(camera), vec![MachiningFace::Bottom]);
+        // An oblique perspective view from above and in front shows the top
+        // and the near edges, never the bottom or both opposite edges.
+        camera.pitch = 0.5;
+        camera.yaw = 0.6;
+        camera.perspective = true;
+        let seen = facing(camera);
+        assert!(seen.contains(&MachiningFace::Top), "{seen:?}");
+        assert!(!seen.contains(&MachiningFace::Bottom), "{seen:?}");
+        for pair in [
+            [PanelEdgeName::UStart, PanelEdgeName::UEnd],
+            [PanelEdgeName::VStart, PanelEdgeName::VEnd],
+        ] {
+            let n = pair
+                .iter()
+                .filter(|&&edge| seen.contains(&MachiningFace::Edge { edge }))
+                .count();
+            assert_eq!(n, 1, "{seen:?}");
+        }
+    }
 
     #[test]
     fn snapping_prefers_edges_and_center_lines_then_the_grid() {

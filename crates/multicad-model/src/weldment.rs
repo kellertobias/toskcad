@@ -1,21 +1,21 @@
-//! Native weldment members: the profile section swept along the member axis
+//! Weldment members: the profile section swept along the member axis
 //! as an exact prism (hollow sections keep their wall), and member cut
 //! records measured from each member Part's final solid in its member frame.
-use crate::{Model, ModelError, error};
+use crate::{GeometryBackend, Model, ModelError, error};
 use multicad_core::{
     document::{Document, DocumentError, EntityData, EntityId},
     materials::{self, ProfileShape},
     model::{
-        self, EndCut, EndTreatment, MemberDefinition, MemberFrame, MemberPath, PathSegment,
-        ResolvedConnection, ResolvedMember, SectionEdge, SectionLoop,
+        self, ConnectionKind, EndCut, EndTreatment, MemberDefinition, MemberEnd, MemberFrame,
+        MemberPath, PathSegment, ResolvedConnection, ResolvedMember, SectionEdge, SectionLoop,
     },
     parameters::EvaluatedParameters,
     references::Origin,
     sketch::{Frame, Geometry},
 };
 use multicad_kernel::{
-    BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, RigidTransform,
-    Solid,
+    BooleanOperation, CopedTube, CopedTubeNames, CurvedEdge2d, CurvedProfile, GeometryErrorKind,
+    GeometryPolicy, PlaneFrame, RigidTransform, Solid,
 };
 use multicad_solver::SketchEvaluationContext;
 use std::collections::BTreeMap;
@@ -264,17 +264,7 @@ pub(crate) fn joints(
 fn diagonal(m: &ResolvedMember) -> f64 {
     m.section.width_mm.hypot(m.section.height_mm)
 }
-/// Remove the half-space behind a plane: material on the side `normal`
-/// points to is kept.
-fn cut_plane(
-    solid: Solid,
-    point: [f64; 3],
-    normal: [f64; 3],
-    size: f64,
-    owner: EntityId,
-    role: &str,
-    policy: GeometryPolicy,
-) -> Result<Option<Solid>, ModelError> {
+fn plane_frame(point: [f64; 3], normal: [f64; 3]) -> PlaneFrame {
     let seed = if normal[0].abs() < 0.9 {
         [1., 0., 0.]
     } else {
@@ -294,13 +284,27 @@ fn cut_plane(
         normal[2] * u[0] - normal[0] * u[2],
         normal[0] * u[1] - normal[1] * u[0],
     ];
+    PlaneFrame {
+        origin: point,
+        u,
+        v,
+    }
+}
+
+/// Remove the half-space behind a plane: material on the side `normal`
+/// points to is kept.
+fn cut_plane(
+    solid: Solid,
+    point: [f64; 3],
+    normal: [f64; 3],
+    size: f64,
+    owner: EntityId,
+    role: &str,
+    policy: GeometryPolicy,
+) -> Result<Option<Solid>, ModelError> {
     let corners = [[-size, -size], [size, -size], [size, size], [-size, size]];
     let profile = CurvedProfile {
-        frame: PlaneFrame {
-            origin: point,
-            u,
-            v,
-        },
+        frame: plane_frame(point, normal),
         outer: (0..4)
             .map(|i| CurvedEdge2d::Line {
                 a: corners[i],
@@ -315,17 +319,326 @@ fn cut_plane(
             role: format!("{role}.side.{i}"),
         })
         .collect();
-    let tool = Solid::extrude_curved_profile_vector_named(
-        &profile,
-        normal.map(|n| -n * size),
-        owner,
-        &origins,
-        policy,
-    )
+    let displacement = normal.map(|n| -n * size);
+    let tool = if solid.uses_rust_geometry() {
+        Solid::rust_extrude_linear_named(&profile, displacement, 0., owner, &origins, policy)
+    } else {
+        Solid::extrude_curved_profile_vector_named(&profile, displacement, owner, &origins, policy)
+    }
     .map_err(|e| error(Some(owner), e))?;
     solid
         .boolean(&tool, BooleanOperation::Subtract, policy)
         .map_err(|e| error(Some(owner), e))
+}
+
+fn rust_member(
+    member: &ResolvedMember,
+    joints: &[Joint],
+    id: EntityId,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    let from = member.start_offset_mm();
+    let mut stations = [from, from + member.length_mm()];
+    let mut miters = [None; 2];
+    for joint in joints {
+        let EndCut::Plane { point, normal } = joint.treatment.cut else {
+            return rust_clipped_member(member, joints, id, policy);
+        };
+        let end = usize::from(joint.treatment.end == MemberEnd::End);
+        if joint.treatment.kind == ConnectionKind::Miter {
+            miters[end] = Some((joint.connection, plane_frame(point, normal)));
+        } else {
+            stations[end] = member.axial(point);
+        }
+    }
+    let profile = section_profile(member, stations[0], None);
+    let origins = origins(id, member, &profile, "member");
+    let straight = std::iter::once(&profile.outer)
+        .chain(&profile.holes)
+        .flatten()
+        .all(|edge| matches!(edge, CurvedEdge2d::Line { .. }));
+    let Some((connection, _)) = miters.iter().flatten().next().copied() else {
+        let height = stations[1] - stations[0];
+        if height <= 0. {
+            return Err(error(
+                Some(joints.first().map_or(id, |joint| joint.connection)),
+                "Connection cuts leave no member between the end planes",
+            ));
+        }
+        if straight {
+            return Solid::rust_extrude_linear_named(
+                &profile,
+                member.frame.axis.map(|component| component * height),
+                0.,
+                id,
+                &origins,
+                policy,
+            )
+            .map_err(|cause| error(Some(id), cause));
+        }
+        return crate::rust_backend::stock_profile(id, &profile, &origins, height, policy);
+    };
+    if !straight {
+        return Err(error(
+            Some(connection),
+            "Rust weldment miters require a straight-sided section",
+        ));
+    }
+    let planes = std::array::from_fn(|end| {
+        miters[end].map_or_else(
+            || PlaneFrame {
+                origin: member.section_origin(stations[end]),
+                ..profile.frame
+            },
+            |(_, plane)| plane,
+        )
+    });
+    let trimmed = Solid::rust_extrude_between_planes_named(
+        &profile,
+        member.frame.axis,
+        planes,
+        id,
+        &origins,
+        policy,
+    );
+    match trimmed {
+        Ok(solid) => Ok(solid),
+        Err(cause) if cause.kind == GeometryErrorKind::Input => {
+            // A short member can lose part of its section after the first
+            // miter. A generator-preserving sweep cannot represent that
+            // intermediate shape; clip the actual extended stock instead.
+            rust_clipped_member(member, joints, id, policy)
+        }
+        Err(cause) => Err(error(Some(connection), cause)),
+    }
+}
+
+fn cut_stock_extent(member: &ResolvedMember, joints: &[Joint]) -> (f64, f64, f64) {
+    let mut from = member.start_offset_mm();
+    let mut to = from + member.length_mm();
+    let mut size = member.length_mm() + diagonal(member);
+    for joint in joints {
+        let sin = (joint.resolved.angle_deg.to_radians().sin()).max(0.25);
+        let margin = 2. * (diagonal(member) + diagonal(&joint.partner_member)) / sin
+            + joint.resolved.gap_mm
+            + 1.;
+        match joint.treatment.end {
+            MemberEnd::Start => from = from.min(-margin),
+            MemberEnd::End => to = to.max(member.path_length_mm + margin),
+        }
+        size = size.max(joint.partner_member.length_mm() + 4. * margin);
+    }
+    (from, to, 2. * size + 100.)
+}
+
+/// The center and radius of a profile loop that is one full circle.
+fn circle(profile: &CurvedProfile, edges: &[CurvedEdge2d]) -> Option<([f64; 3], f64)> {
+    let [CurvedEdge2d::Circle { center, radius_mm }] = edges else {
+        return None;
+    };
+    let f = &profile.frame;
+    let world = std::array::from_fn(|i| f.origin[i] + center[0] * f.u[i] + center[1] * f.v[i]);
+    Some((world, *radius_mm))
+}
+
+/// A round hollow branch with one cope onto a round receiving member and a
+/// square far end: the exact fish-mouth boundary. `None` leaves every other
+/// case to the clipped stock.
+fn rust_round_cope(
+    member: &ResolvedMember,
+    joints: &[Joint],
+    id: EntityId,
+    policy: GeometryPolicy,
+) -> Option<Result<Solid, ModelError>> {
+    let [joint] = joints else {
+        return None;
+    };
+    let EndCut::Cope { grow_mm, .. } = joint.treatment.cut else {
+        return None;
+    };
+    let partner = &joint.partner_member;
+    let from = member.start_offset_mm();
+    let to = from + member.length_mm();
+    let profile = section_profile(member, from, None);
+    let (center, outer) = circle(&profile, &profile.outer)?;
+    let [hole] = profile.holes.as_slice() else {
+        return None;
+    };
+    let (hole_center, inner) = circle(&profile, hole)?;
+    let envelope = section_profile(partner, partner.start_offset_mm(), Some(grow_mm));
+    let (point, radius) = circle(&envelope, &envelope.outer)?;
+    let magnitude = center
+        .into_iter()
+        .chain(point)
+        .map(f64::abs)
+        .fold(outer.max(radius), f64::max);
+    let rounding = 64. * f64::EPSILON * magnitude;
+    if distance(center, hole_center) > rounding {
+        return None;
+    }
+    // Where the branch axis meets the receiving axis.
+    let (a, b) = (member.frame.axis, partner.frame.axis);
+    let w = sub(point, center);
+    let (ab, aw, bw) = (dot(a, b), dot(a, w), dot(b, w));
+    let denominator = 1. - ab * ab;
+    if denominator <= 1e-6 {
+        return None;
+    }
+    let s = (aw - ab * bw) / denominator;
+    let u = (ab * aw - bw) / denominator;
+    let on_branch = add(center, scale(a, s));
+    if distance(on_branch, add(point, scale(b, u))) > rounding {
+        return None;
+    }
+    // The finite envelope must span all the material the cope removes:
+    // between the plane through the receiving axis and the saddle, that
+    // material projects onto the receiving axis within
+    // (R + |cos| Rc) / sin of the axes' meeting point.
+    let sin = denominator.sqrt();
+    let reach = (outer + ab.abs() * radius) / sin + policy.linear_tolerance_mm;
+    let along = partner.axial(on_branch);
+    let span = partner.start_offset_mm();
+    if along - reach < span || along + reach > span + partner.length_mm() {
+        return None;
+    }
+    let (axis, length) = match joint.treatment.end {
+        MemberEnd::Start => (a, to - from - s),
+        MemberEnd::End => (scale(a, -1.), s - (to - from)),
+    };
+    let tube = CopedTube {
+        origin_mm: on_branch,
+        axis,
+        outer_radius_mm: outer,
+        inner_radius_mm: inner,
+        length_mm: length,
+        envelope_axis: b,
+        envelope_radius_mm: radius,
+    };
+    let roles = origins(id, member, &profile, "member");
+    let [outer_role, inner_role] = [&roles[0], &roles[1]];
+    let role = |role: String| Origin { source: id, role };
+    let names = CopedTubeNames {
+        outer: outer_role.clone(),
+        inner: inner_role.clone(),
+        end: role(match joint.treatment.end {
+            MemberEnd::Start => "member.end".into(),
+            MemberEnd::End => "member.start".into(),
+        }),
+        saddle: role(format!("connection.{}.cope", joint.connection)),
+    };
+    Some(
+        Solid::rust_coped_round_tube(&tube, &names, id, policy)
+            .map_err(|cause| error(Some(joint.connection), cause)),
+    )
+}
+
+fn rust_clipped_member(
+    member: &ResolvedMember,
+    joints: &[Joint],
+    id: EntityId,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    if let Some(coped) = rust_round_cope(member, joints, id, policy) {
+        return coped;
+    }
+    let (from, to, size) = cut_stock_extent(member, joints);
+    let profile = section_profile(member, from, None);
+    let straight = |profile: &CurvedProfile| {
+        profile
+            .outer
+            .iter()
+            .chain(profile.holes.iter().flatten())
+            .all(|edge| matches!(edge, CurvedEdge2d::Line { .. }))
+    };
+    if !straight(&profile) {
+        return Err(error(
+            Some(
+                joints
+                    .iter()
+                    .find(|joint| matches!(joint.treatment.cut, EndCut::Cope { .. }))
+                    .map_or(id, |joint| joint.connection),
+            ),
+            "Rust coped ends require straight-sided member sections",
+        ));
+    }
+    let mut solid = Solid::rust_extrude_linear_named(
+        &profile,
+        member.frame.axis.map(|a| a * (to - from)),
+        0.,
+        id,
+        &origins(id, member, &profile, "member"),
+        policy,
+    )
+    .map_err(|cause| error(Some(id), cause))?;
+    for joint in joints {
+        let (point, normal) = match joint.treatment.cut {
+            EndCut::Plane { point, normal } => (point, normal),
+            EndCut::Cope {
+                grow_mm,
+                point,
+                normal,
+            } => {
+                let partner = &joint.partner_member;
+                let profile = section_profile(partner, partner.start_offset_mm(), Some(grow_mm));
+                if !straight(&profile) {
+                    return Err(error(
+                        Some(joint.connection),
+                        "Rust coped ends require a straight-sided receiving section",
+                    ));
+                }
+                let envelope = Solid::rust_extrude_linear_named(
+                    &profile,
+                    partner.frame.axis.map(|a| a * partner.length_mm()),
+                    0.,
+                    id,
+                    &origins(
+                        id,
+                        partner,
+                        &profile,
+                        &format!("connection.{}.cope", joint.connection),
+                    ),
+                    policy,
+                )
+                .map_err(|cause| error(Some(joint.connection), cause))?;
+                solid = solid
+                    .boolean(&envelope, BooleanOperation::Subtract, policy)
+                    .map_err(|cause| error(Some(joint.connection), cause))?
+                    .ok_or_else(|| {
+                        error(
+                            Some(joint.connection),
+                            "The connection cut removes the whole member",
+                        )
+                    })?;
+                (point, normal)
+            }
+        };
+        solid = cut_plane(
+            solid,
+            point,
+            normal,
+            size,
+            id,
+            &format!("connection.{}", joint.connection),
+            policy,
+        )?
+        .ok_or_else(|| {
+            error(
+                Some(joint.connection),
+                "The connection cut removes the whole member",
+            )
+        })?;
+    }
+    if solid
+        .solid_count()
+        .map_err(|cause| error(Some(id), cause))?
+        != 1
+    {
+        return Err(error(
+            Some(id),
+            "Connection cuts split the member into separate pieces; check the joint geometry",
+        ));
+    }
+    Ok(solid)
 }
 
 /// Build a member solid with its connection end cuts; returns it with its
@@ -335,6 +648,7 @@ pub(crate) fn build(
     parameters: &EvaluatedParameters,
     id: EntityId,
     policy: GeometryPolicy,
+    backend: GeometryBackend,
     paths: &mut Paths,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<(Solid, ResolvedMember), ModelError> {
@@ -347,23 +661,12 @@ pub(crate) fn build(
         &member,
         &mut |feature| resolve(document, parameters, feature, paths, interrupt),
     )?;
-    // Connected ends start long enough to be cut back to their joint.
-    let mut from = member.start_offset_mm();
-    let mut to = from + member.length_mm();
-    let mut size = member.length_mm() + diagonal(&member);
-    for joint in &joints {
-        let sin = (joint.resolved.angle_deg.to_radians().sin()).max(0.25);
-        let margin = 2. * (diagonal(&member) + diagonal(&joint.partner_member)) / sin
-            + joint.resolved.gap_mm
-            + 1.;
-        match joint.treatment.end {
-            model::MemberEnd::Start => from = from.min(-margin),
-            model::MemberEnd::End => to = to.max(member.path_length_mm + margin),
-        }
-        size = size.max(joint.partner_member.length_mm() + 4. * margin);
+    if backend == GeometryBackend::Rust {
+        return Ok((rust_member(&member, &joints, id, policy)?, member));
     }
+    // Connected ends start long enough to be cut back to their joint.
+    let (from, to, size) = cut_stock_extent(&member, &joints);
     let mut solid = prism(&member, from, to - from, None, id, "member", policy)?;
-    let size = 2. * size + 100.;
     for joint in &joints {
         let role = format!("connection.{}", joint.connection);
         let removed = || {
@@ -644,4 +947,21 @@ impl Model {
         }
         Ok(out)
     }
+}
+
+fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    std::array::from_fn(|i| a[i] + b[i])
+}
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    std::array::from_fn(|i| a[i] - b[i])
+}
+fn scale(a: [f64; 3], s: f64) -> [f64; 3] {
+    a.map(|x| x * s)
+}
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (0..3).map(|i| a[i] * b[i]).sum()
+}
+fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
+    let d = sub(a, b);
+    dot(d, d).sqrt()
 }

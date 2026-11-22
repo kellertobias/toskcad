@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Native comparison fixtures opt in explicitly. Rust-only workspace tests must
+# not regain OpenCascade through this crate's development dependencies.
+
 [dependencies]
 eframe.workspace = true
 multicad-core.workspace = true

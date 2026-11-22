@@ -46,6 +46,7 @@ impl SketchEditor {
         self.activate_sketch(created.sketch)?;
         self.occurrence = None;
         self.creation_evaluation = None;
+        self.fresh_sketch = Some((created.sketch, session.revision()));
         self.message =
             "Developed sketch · draw a closed profile inside one flat area, clear of bends".into();
         Ok(())

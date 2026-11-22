@@ -20,8 +20,8 @@ fn failure(kind: GeometryErrorKind, message: impl Into<String>) -> GeometryError
 }
 
 impl Solid {
-    /// Reflection is deliberately separate from the positive-determinant Scale
-    /// transform. OCCT reverses orientation and returns outward face normals.
+    /// Reflect a solid and preserve its authored topology. The result keeps
+    /// outward face normals and right-handed planar attachments.
     pub fn mirrored_named(
         &self,
         plane: PlaneFrame,
@@ -35,8 +35,18 @@ impl Solid {
                 "Mirror needs a feature identity",
             ));
         }
+        let checked = plane.checked(policy)?;
+        if self.uses_rust_geometry() {
+            if let Some(result) = self
+                .mirror_annulus(plane, policy)
+                .or_else(|| self.mirror_cylinder(plane, policy))
+            {
+                return result;
+            }
+            return self.mirror_cardinal(plane, feature, policy);
+        }
         let mut result = Self::adopt(
-            ffi::mirror_shape(&self.native.0, &plane.checked(policy)?)
+            ffi::mirror_shape(self.occt()?, &checked)
                 .map_err(|e| failure(GeometryErrorKind::Native, e.to_string()))?,
             policy,
             "mirror",

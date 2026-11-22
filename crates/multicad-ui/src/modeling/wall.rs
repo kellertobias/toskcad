@@ -5,7 +5,7 @@ use super::{
     FormStamp, PreviewState, TerminationViewport,
     dimension::DimensionField,
     form::{self, FormAction, ModelEvent, ModelRequest},
-    outline::{OutlineEditor, OutlineKind, plan_targets},
+    outline::{OutlineEditor, OutlineKey, OutlineKind, plan_targets},
 };
 use crate::{controls, egui};
 use multicad_core::{
@@ -127,6 +127,10 @@ pub(super) struct WallPanel {
     outline: OutlineEditor,
     /// Snap targets from other walls and slabs, cached per document revision.
     targets: Option<(u64, Vec<[f64; 2]>)>,
+    /// The wall's resolved construction (thickness, justification, layers),
+    /// cached per document revision and form stamp, used to preview and
+    /// check the canonical mitered plan while the path is drawn.
+    band: Option<(u64, u64, Option<model::ResolvedWall>)>,
     level: Option<EntityId>,
     levels: Vec<(EntityId, String)>,
     base_z: DimensionField,
@@ -181,6 +185,7 @@ impl WallPanel {
             override_size: false,
             outline: OutlineEditor::from_mm(OutlineKind::WallPath, &[[0., 0.], [4000., 0.]], false),
             targets: None,
+            band: None,
             level: model::levels(document).next().map(|e| e.id),
             levels: model::levels(document)
                 .map(|e| (e.id, e.name.clone()))
@@ -195,6 +200,7 @@ impl WallPanel {
         if panel.wall_type.is_some_and(|id| owned.contains(&id)) {
             panel.wall_type = panel.types.first().map(|(id, _)| *id);
         }
+        panel.outline.start_on_empty_click = true;
         panel.load_type(document)?;
         if panel.wall_type.is_none()
             && let Some(id) = panel.symbol.first()
@@ -313,6 +319,7 @@ impl WallPanel {
             }
         }
         panel.outline = OutlineEditor::new(OutlineKind::WallPath, &wall.path, wall.closed)?;
+        panel.outline.start_on_empty_click = false;
         panel.level = wall.level;
         panel.base_z = DimensionField::from_dimension(&wall.base_z, "mm")?;
         panel.cutouts = wall.cutouts.clone();
@@ -383,10 +390,157 @@ impl WallPanel {
             .map(|(_, t)| t.clone())
             .unwrap_or_default();
         let z = self.plane_z(document, Some(revision));
-        let changed = self.outline.viewport(document, &view, z, &targets);
+        let band = self.band_template(document, revision);
+        let check = |points: &[[f64; 2]], closed: bool| match &band {
+            Some(template) => wall_plan(template, points, closed).map(|_| ()),
+            None => Ok(()),
+        };
+        let changed = self
+            .outline
+            .viewport_checked(document, &view, z, &targets, &check);
         if changed {
             self.stamp.changed();
             self.error = None;
+        }
+        if let (Some(template), Ok(points)) = (&band, self.outline.positions(document)) {
+            let (path, closed, pending) = match self.outline.pending_path(&points) {
+                Some((path, closed)) if self.outline.drawing() && path.len() > points.len() => {
+                    (path, closed, true)
+                }
+                Some((path, closed)) => (path, closed, false),
+                None => (points, self.outline.closed(), false),
+            };
+            if let Ok(plan) = wall_plan(template, &path, closed) {
+                paint_band(&view, z, &plan, closed, pending);
+            }
+        }
+        changed
+    }
+    /// Route Enter, Escape or Backspace to the path while it captures the
+    /// plan; `None` when the key belongs to the form instead.
+    pub(super) fn outline_key(&mut self, key: OutlineKey) -> Option<bool> {
+        let changed = self.outline.key(key)?;
+        if changed {
+            self.stamp.changed();
+            self.error = None;
+        }
+        Some(changed)
+    }
+    /// The construction the plan preview offsets the path with: the canonical
+    /// resolution of this form's wall where its type already exists, else the
+    /// uniform thickness and justification typed for a new type.
+    fn band_template(&mut self, document: &Document, revision: u64) -> Option<model::ResolvedWall> {
+        let key = (revision, self.stamp.revision);
+        if let Some((r, s, band)) = &self.band
+            && (*r, *s) == key
+        {
+            return band.clone();
+        }
+        let rebuilt;
+        let parameters = match self.source.as_ref().filter(|s| {
+            s.session().document().id() == document.id() && s.session().revision() == revision
+        }) {
+            Some(source) => source.session().parameters(),
+            None => {
+                rebuilt = multicad_core::parameters::evaluate(document).ok()?;
+                &rebuilt
+            }
+        };
+        let resolved = self.request(document, true).ok().and_then(|command| {
+            let mut wall = command.wall;
+            wall.path = vec![[length(0.), length(0.)], [length(1000.), length(0.)]];
+            wall.closed = false;
+            wall.openings.clear();
+            wall.cutouts.clear();
+            if let Some(placement) = &mut wall.layer_placement {
+                placement.junctions.clear();
+            }
+            model::resolve_wall(document, parameters, &wall).ok()
+        });
+        let band = resolved.or_else(|| {
+            if self.layers.is_some() || self.symbol.active() {
+                return None;
+            }
+            let thickness = self
+                .thickness
+                .resolve(document)
+                .ok()?
+                .value_in(Unit::Millimeter, Some(parameters))
+                .ok()
+                .filter(|t| *t > 0. && t.is_finite())?;
+            Some(model::ResolvedWall {
+                junctions: vec![],
+                layers: None,
+                points: vec![],
+                closed: false,
+                base_z_mm: 0.,
+                thickness_mm: thickness,
+                height_mm: 1.,
+                justification: self.justification,
+                openings: vec![],
+                cutouts: vec![],
+            })
+        });
+        self.band = Some((key.0, key.1, band.clone()));
+        band
+    }
+    /// Left/Center/Right relative to the drawing direction, explained with
+    /// inside/outside for closed rooms, and a direction reversal that keeps
+    /// the wall where it is.
+    fn justification_controls(&mut self, ui: &mut egui::Ui, document: &Document) -> bool {
+        let mut changed = false;
+        let points = self.outline.positions(document).unwrap_or_default();
+        let closed = self.outline.closed();
+        let turn = closed.then(|| orientation(&points)).flatten();
+        ui.label("Drawn line runs along");
+        ui.horizontal(|ui| {
+            for (value, label, hover) in [
+                (
+                    Justification::Left,
+                    side_label(Justification::Left, turn),
+                    "The wall lies left of the drawn line, looking from corner 1 toward corner 2; the line is its right face",
+                ),
+                (
+                    Justification::Center,
+                    "Center".to_string(),
+                    "The drawn line runs along the middle of the wall thickness",
+                ),
+                (
+                    Justification::Right,
+                    side_label(Justification::Right, turn),
+                    "The wall lies right of the drawn line, looking from corner 1 toward corner 2; the line is its left face",
+                ),
+            ] {
+                changed |= ui
+                    .selectable_value(&mut self.justification, value, label)
+                    .on_hover_text(hover)
+                    .changed();
+            }
+        });
+        ui.small(justification_sentence(self.justification, turn));
+        let reversible = self.openings.is_empty()
+            && self.cutouts.is_empty()
+            && self.layer_placement.junctions.is_empty();
+        if ui
+            .add_enabled(
+                reversible && points.len() >= 2,
+                egui::Button::new("Reverse direction"),
+            )
+            .on_hover_text(
+                "Run the path the other way and swap Left and Right, so the wall stays in place",
+            )
+            .on_disabled_hover_text(
+                "Doors, windows, cutouts and joined ends are placed along the current direction; remove them to reverse",
+            )
+            .clicked()
+        {
+            self.outline.reverse();
+            self.justification = match self.justification {
+                Justification::Left => Justification::Right,
+                Justification::Right => Justification::Left,
+                Justification::Center => Justification::Center,
+            };
+            changed = true;
         }
         changed
     }
@@ -731,24 +885,7 @@ impl WallPanel {
                     changed |= self.height.show(ui, "Height", "This wall only");
                 }
             }
-            ui.label("Justification");
-            controls::inspector_combo(ui, "wall-justification")
-                .selected_text(format!("{:?}", self.justification))
-                .show_ui(ui, |ui| {
-                    for justification in [
-                        Justification::Center,
-                        Justification::Left,
-                        Justification::Right,
-                    ] {
-                        changed |= ui
-                            .selectable_value(
-                                &mut self.justification,
-                                justification,
-                                format!("{justification:?}"),
-                            )
-                            .changed();
-                    }
-                });
+            changed |= self.justification_controls(ui, document);
         }
         changed
     }
@@ -1030,6 +1167,166 @@ impl WallPanel {
                 Some(ModelEvent::Apply)
             }
             _ => None,
+        }
+    }
+}
+
+/// The canonical mitered plan of `template`'s construction along `points`.
+fn wall_plan(
+    template: &model::ResolvedWall,
+    points: &[[f64; 2]],
+    closed: bool,
+) -> Result<model::WallPlan, String> {
+    let mut wall = template.clone();
+    wall.points = points.to_vec();
+    wall.closed = closed;
+    if points.len() < if closed { 3 } else { 2 } {
+        return Err("The path needs more corners".into());
+    }
+    wall.plan().map_err(|e| e.to_string())
+}
+/// `Some(true)` for a counter-clockwise closed path (left is inside).
+fn orientation(points: &[[f64; 2]]) -> Option<bool> {
+    let n = points.len();
+    let area: f64 = (0..n)
+        .map(|i| {
+            let (a, b) = (points[i], points[(i + 1) % n]);
+            a[0] * b[1] - a[1] * b[0]
+        })
+        .sum();
+    (n >= 3 && area.abs() > 1e-6).then_some(area > 0.)
+}
+fn side_label(side: Justification, counter_clockwise: Option<bool>) -> String {
+    let (name, left) = match side {
+        Justification::Left => ("Left", true),
+        Justification::Right => ("Right", false),
+        Justification::Center => return "Center".into(),
+    };
+    match counter_clockwise {
+        Some(ccw) if ccw == left => format!("{name} (inside)"),
+        Some(_) => format!("{name} (outside)"),
+        None => name.into(),
+    }
+}
+/// What the chosen justification means for this path, in words.
+pub(super) fn justification_sentence(
+    justification: Justification,
+    counter_clockwise: Option<bool>,
+) -> String {
+    let direction = "Left and right are seen looking along the drawing direction, from corner 1 toward corner 2 (the arrows on the plan).";
+    let room = match counter_clockwise {
+        Some(true) => " This room is drawn counter-clockwise, so left is inside it.",
+        Some(false) => " This room is drawn clockwise, so left is outside it.",
+        None => "",
+    };
+    let what = match justification {
+        Justification::Center => {
+            "The drawn line is the wall's center line; half the thickness lies on each side."
+        }
+        Justification::Left => {
+            "The wall thickness lies left of the drawn line; the line is the wall's right face."
+        }
+        Justification::Right => {
+            "The wall thickness lies right of the drawn line; the line is the wall's left face."
+        }
+    };
+    format!(
+        "{what} {direction}{room} Reverse direction swaps the sides so the wall stays in place."
+    )
+}
+/// Paint the wall's material band from the canonical plan: one mitered quad
+/// per segment, the pending segment highlighted, and a direction arrow with
+/// L/R side marks on each segment.
+fn paint_band(
+    view: &TerminationViewport<'_>,
+    z: f64,
+    plan: &model::WallPlan,
+    closed: bool,
+    pending: bool,
+) {
+    let to_screen = |p: [f64; 2]| {
+        let s = view
+            .camera
+            .project([p[0] as f32, p[1] as f32, z as f32], view.rect);
+        egui::pos2(s[0], s[1])
+    };
+    let n = plan.segments.len();
+    let (left, right): (Vec<[f64; 2]>, Vec<[f64; 2]>) = if closed {
+        let Some(hole) = plan.holes.first() else {
+            return;
+        };
+        if plan
+            .outer
+            .roles
+            .first()
+            .is_some_and(|r| r.ends_with("left"))
+        {
+            (plan.outer.points.clone(), hole.points.clone())
+        } else {
+            (hole.points.clone(), plan.outer.points.clone())
+        }
+    } else {
+        if plan.outer.points.len() != 2 * (n + 1) {
+            return;
+        }
+        let mut right = plan.outer.points[n + 1..].to_vec();
+        right.reverse();
+        (plan.outer.points[..=n].to_vec(), right)
+    };
+    if left.len() < n || right.len() < n {
+        return;
+    }
+    let fill = egui::Color32::from_rgba_unmultiplied(64, 196, 255, 40);
+    let fresh = egui::Color32::from_rgba_unmultiplied(255, 176, 64, 60);
+    let face = egui::Stroke::new(1., egui::Color32::from_rgb(64, 196, 255));
+    let font = egui::FontId::proportional(10.);
+    let wrap = |v: &Vec<[f64; 2]>, i: usize| v[i % v.len()];
+    for i in 0..n {
+        let quad = [
+            wrap(&left, i),
+            wrap(&left, i + 1),
+            wrap(&right, i + 1),
+            wrap(&right, i),
+        ];
+        let color = if pending && i + 1 == n { fresh } else { fill };
+        view.painter.add(egui::Shape::convex_polygon(
+            quad.iter().map(|p| to_screen(*p)).collect(),
+            color,
+            egui::Stroke::NONE,
+        ));
+        view.painter
+            .line_segment([to_screen(quad[0]), to_screen(quad[1])], face);
+        view.painter
+            .line_segment([to_screen(quad[3]), to_screen(quad[2])], face);
+        let segment = &plan.segments[i];
+        let mid = [
+            segment.start[0] + segment.direction[0] * segment.length_mm / 2.,
+            segment.start[1] + segment.direction[1] * segment.length_mm / 2.,
+        ];
+        let (m, ahead) = (
+            to_screen(mid),
+            to_screen([mid[0] + segment.direction[0], mid[1] + segment.direction[1]]),
+        );
+        let dir = (ahead - m).normalized();
+        if !dir.is_finite() {
+            continue;
+        }
+        let normal = egui::vec2(dir.y, -dir.x);
+        let arrow = egui::Stroke::new(1.5, egui::Color32::from_rgb(64, 196, 255));
+        let tip = m + dir * 7.;
+        view.painter
+            .line_segment([tip, tip - dir * 7. + normal * 4.], arrow);
+        view.painter
+            .line_segment([tip, tip - dir * 7. - normal * 4.], arrow);
+        // Screen Y points down, so the screen-left normal is (dy, -dx).
+        for (label, side) in [("L", 1.), ("R", -1.)] {
+            view.painter.text(
+                m + normal * (side * 14.) - dir * 10.,
+                egui::Align2::CENTER_CENTER,
+                label,
+                font.clone(),
+                egui::Color32::from_gray(200),
+            );
         }
     }
 }
@@ -1590,5 +1887,483 @@ mod tests {
                 .iter()
                 .any(|output| output.body == panel.body)
         );
+    }
+
+    /// One plan-view frame over the wall panel: hover (and optionally click)
+    /// at plan point `at`, with optional key presses, through the same
+    /// viewport path the application uses.
+    fn plan_frame(
+        ctx: &egui::Context,
+        panel: &mut WallPanel,
+        session: &Session,
+        at: [f64; 2],
+        clicked: bool,
+        keys: &[egui::Key],
+    ) -> (bool, egui::FullOutput) {
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 800.));
+        let camera = crate::camera::Camera {
+            yaw: 0.,
+            pitch: 1.5,
+            scale: 0.1,
+            target: [1000., 1000., 0.],
+            perspective: false,
+        };
+        let events = keys
+            .iter()
+            .map(|key| egui::Event::Key {
+                key: *key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            })
+            .collect();
+        let mut changed = false;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                focused: true,
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let painter = ui.painter().clone();
+                let s = camera.project([at[0] as f32, at[1] as f32, 0.], rect);
+                changed = panel.viewport(
+                    session.document(),
+                    session.revision(),
+                    TerminationViewport {
+                        scene: None,
+                        report: None,
+                        camera,
+                        rect,
+                        pointer: Some(egui::pos2(s[0], s[1])),
+                        clicked,
+                        painter: &painter,
+                        section: None,
+                    },
+                );
+            },
+        );
+        output.textures_delta.clear();
+        (changed, output)
+    }
+    fn filled_quads(output: &egui::FullOutput) -> usize {
+        output
+            .shapes
+            .iter()
+            .filter(|shape| {
+                matches!(&shape.shape, egui::Shape::Path(path)
+                    if path.closed && path.points.len() == 4 && path.fill.a() > 0)
+            })
+            .count()
+    }
+
+    #[test]
+    fn clicked_wall_path_previews_each_pending_segment_and_builds_one_mitered_left_wall() {
+        let mut session = Session::new(Document::new("Wall path").unwrap()).unwrap();
+        let actor = || Actor::local(Channel::Ui);
+        let mut panel = WallPanel::new(session.document(), "Wall path".into()).unwrap();
+        panel.sync_source(&session);
+        let ctx = egui::Context::default();
+        // Hovering before any click shows the default wall's band only.
+        let (_, output) = plan_frame(&ctx, &mut panel, &session, [-2000., 2000.], false, &[]);
+        assert_eq!(filled_quads(&output), 1);
+        assert!(!panel.outline.capturing());
+        // A click on empty plan space starts a new path at that point.
+        let (changed, _) = plan_frame(&ctx, &mut panel, &session, [-2000., 2000.], true, &[]);
+        assert!(changed && panel.outline.drawing());
+        assert_eq!(panel.outline.len(), 1);
+        // The pending segment follows the pointer as a canonical wall band.
+        let (_, output) = plan_frame(&ctx, &mut panel, &session, [3000., 2000.], false, &[]);
+        assert_eq!(filled_quads(&output), 1, "the pending segment is previewed");
+        let points = panel.outline.positions(session.document()).unwrap();
+        assert_eq!(
+            panel.outline.pending_path(&points),
+            Some((vec![[-2000., 2000.], [3000., 2000.]], false))
+        );
+        assert_eq!(panel.outline.len(), 1, "hovering never adds a corner");
+        plan_frame(&ctx, &mut panel, &session, [3000., 2000.], true, &[]);
+        let (_, output) = plan_frame(&ctx, &mut panel, &session, [3000., -1000.], false, &[]);
+        assert_eq!(filled_quads(&output), 2, "drawn and pending segments");
+        plan_frame(&ctx, &mut panel, &session, [3000., -1000.], true, &[]);
+        // Enter finishes the open path with every clicked corner.
+        plan_frame(
+            &ctx,
+            &mut panel,
+            &session,
+            [3000., -1000.],
+            false,
+            &[egui::Key::Enter],
+        );
+        assert!(!panel.outline.capturing());
+        assert_eq!(
+            panel.outline.positions(session.document()).unwrap(),
+            vec![[-2000., 2000.], [3000., 2000.], [3000., -1000.]]
+        );
+        // Left of the drawing direction: the drawn line is the right face.
+        panel.justification = Justification::Left;
+        panel.stamp.changed();
+        let command = panel.request(session.document(), true).unwrap();
+        let prepared = command.prepare(&session, actor()).unwrap();
+        let native = Compiler::default()
+            .compile(prepared.prepared.document(), session.revision())
+            .unwrap();
+        let shape = &native.snapshot().shapes[&command.feature];
+        assert_eq!(shape.solid_count, 1, "one wall, not overlapping pieces");
+        let area = 5200. * 200. + 200. * 3000.;
+        assert!((shape.volume_mm3 - area * 2500.).abs() < 0.01);
+        session.commit(prepared.prepared).unwrap();
+        let committed = session.document().clone();
+        let wall = model::read_wall(&committed, command.feature).unwrap();
+        let ty = model::read_wall_type(&committed, wall.wall_type).unwrap();
+        assert_eq!(ty.justification, Justification::Left);
+        let plan = model::resolve_wall(&committed, session.parameters(), &wall)
+            .unwrap()
+            .plan()
+            .unwrap();
+        assert_eq!(
+            plan.outer.points,
+            vec![
+                [-2000., 2200.],
+                [3200., 2200.],
+                [3200., -1000.],
+                [3000., -1000.],
+                [3000., 2000.],
+                [-2000., 2000.]
+            ],
+            "the corner is one miter, with the drawn line as the right face"
+        );
+        // Undo, Redo, save and reopen keep the path and its alignment.
+        session.undo(session.revision(), actor()).unwrap();
+        assert!(model::walls(session.document()).next().is_none());
+        session.redo(session.revision(), actor()).unwrap();
+        assert_eq!(session.document(), &committed);
+        let mut bytes = Vec::new();
+        multicad_core::project_file::write(
+            &multicad_core::project_file::ProjectFile::new(committed.clone()).unwrap(),
+            &mut bytes,
+            Default::default(),
+        )
+        .unwrap();
+        let reopened = multicad_core::project_file::read(
+            &mut bytes.as_slice(),
+            Default::default(),
+            &multicad_core::project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project
+        .document;
+        assert_eq!(reopened, committed);
+        let mut edit = WallPanel::existing(&reopened, command.feature, "Wall path".into()).unwrap();
+        assert_eq!(edit.justification, Justification::Left);
+        assert!(
+            !edit.outline.start_on_empty_click,
+            "editing never redraws by accident"
+        );
+        assert_eq!(
+            edit.outline.positions(&reopened).unwrap(),
+            vec![[-2000., 2000.], [3000., 2000.], [3000., -1000.]]
+        );
+        // Editing: continue the path with one more corner, then apply.
+        let mut reopened = Session::new(reopened).unwrap();
+        edit.sync_source(&reopened);
+        edit.outline.continue_drawing();
+        plan_frame(&ctx, &mut edit, &reopened, [6000., -1000.], true, &[]);
+        plan_frame(
+            &ctx,
+            &mut edit,
+            &reopened,
+            [6000., -1000.],
+            false,
+            &[egui::Key::Enter],
+        );
+        let command = edit.request(reopened.document(), true).unwrap();
+        assert!(command.editing && command.new_types.is_empty());
+        assert_eq!(command.wall.justification, Some(Justification::Left));
+        let before_edit = reopened.document().clone();
+        reopened
+            .commit(command.prepare(&reopened, actor()).unwrap().prepared)
+            .unwrap();
+        let edited = model::read_wall(reopened.document(), command.feature).unwrap();
+        assert_eq!(edited.path.len(), 4);
+        assert_eq!(edited.path[3], [length(6000.), length(-1000.)]);
+        reopened.undo(reopened.revision(), actor()).unwrap();
+        assert_eq!(reopened.document(), &before_edit);
+    }
+
+    #[test]
+    fn invalid_pending_segments_are_refused_and_keep_the_last_valid_path() {
+        let session = Session::new(Document::new("Invalid wall path").unwrap()).unwrap();
+        let mut panel = WallPanel::new(session.document(), "Wall".into()).unwrap();
+        panel.sync_source(&session);
+        let ctx = egui::Context::default();
+        panel.outline.start_drawing();
+        for at in [[0., 0.], [4000., 0.]] {
+            plan_frame(&ctx, &mut panel, &session, at, true, &[]);
+        }
+        let valid = panel.outline.dimensions(session.document()).unwrap();
+        // Doubling back along the last segment cannot be built as one wall.
+        let (_, output) = plan_frame(&ctx, &mut panel, &session, [2000., 0.], false, &[]);
+        let reason = panel.outline.hover_refusal().unwrap().to_string();
+        assert!(reason.contains("reverses at point 2"), "{reason}");
+        assert!(
+            output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                egui::Shape::Text(text) if text.galley.text() == reason
+            )),
+            "the refusal is shown at the pointer"
+        );
+        let (changed, _) = plan_frame(&ctx, &mut panel, &session, [2000., 0.], true, &[]);
+        assert!(!changed);
+        assert_eq!(panel.outline.dimensions(session.document()).unwrap(), valid);
+        assert!(
+            panel
+                .outline
+                .message
+                .as_deref()
+                .unwrap()
+                .starts_with("Corner not added")
+        );
+        // A very sharp return exceeds the miter limit and is refused too.
+        panel.outline.ortho = false;
+        let (changed, _) = plan_frame(&ctx, &mut panel, &session, [0., 100.], true, &[]);
+        assert!(!changed);
+        assert!(
+            panel
+                .outline
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("too sharp")
+        );
+        assert_eq!(panel.outline.dimensions(session.document()).unwrap(), valid);
+        // A valid corner is still accepted afterwards.
+        let (changed, _) = plan_frame(&ctx, &mut panel, &session, [4000., 3000.], true, &[]);
+        assert!(changed);
+        assert_eq!(panel.outline.len(), 3);
+        // Apply of an invalid path fails without touching the document.
+        panel.outline.finish();
+        panel
+            .outline
+            .set_points(&[[0., 0.], [4000., 0.], [1000., 0.]], false);
+        let before = session.document().clone();
+        let command = panel.request(session.document(), true).unwrap();
+        assert!(
+            command
+                .prepare(&session, Actor::local(Channel::Ui))
+                .is_err()
+        );
+        assert_eq!(session.document(), &before);
+    }
+
+    #[test]
+    fn escape_backspace_and_short_finishes_leave_no_phantom_corners() {
+        let session = Session::new(Document::new("Cancel wall path").unwrap()).unwrap();
+        let mut panel = WallPanel::new(session.document(), "Wall".into()).unwrap();
+        panel.sync_source(&session);
+        let ctx = egui::Context::default();
+        let original = panel.outline.dimensions(session.document()).unwrap();
+        plan_frame(&ctx, &mut panel, &session, [-3000., 3000.], true, &[]);
+        plan_frame(&ctx, &mut panel, &session, [0., 3000.], true, &[]);
+        assert_eq!(panel.outline.len(), 2);
+        // Backspace removes the last clicked corner; Escape restores the path
+        // from before the drawing, with no pending segment left behind.
+        plan_frame(
+            &ctx,
+            &mut panel,
+            &session,
+            [0., 3000.],
+            false,
+            &[egui::Key::Backspace],
+        );
+        assert_eq!(panel.outline.len(), 1);
+        plan_frame(
+            &ctx,
+            &mut panel,
+            &session,
+            [0., 3000.],
+            false,
+            &[egui::Key::Escape],
+        );
+        assert!(!panel.outline.capturing());
+        assert_eq!(
+            panel.outline.dimensions(session.document()).unwrap(),
+            original
+        );
+        let points = panel.outline.positions(session.document()).unwrap();
+        assert_eq!(panel.outline.pending_path(&points), None);
+        assert_eq!(
+            panel.outline_key(OutlineKey::Cancel),
+            None,
+            "Esc returns to the form"
+        );
+        assert_eq!(
+            panel.outline_key(OutlineKey::Finish),
+            None,
+            "Enter returns to Apply"
+        );
+        // Finishing a single clicked corner keeps the previous path too.
+        panel.outline.start_drawing();
+        plan_frame(&ctx, &mut panel, &session, [-3000., 3000.], true, &[]);
+        assert_eq!(panel.outline_key(OutlineKey::Finish), Some(true));
+        assert_eq!(
+            panel.outline.dimensions(session.document()).unwrap(),
+            original
+        );
+        assert!(
+            panel
+                .outline
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("at least two corners")
+        );
+        // Continuing a path never lets Backspace remove its existing corners.
+        panel.outline.continue_drawing();
+        assert!(!panel.outline.remove_last());
+        plan_frame(&ctx, &mut panel, &session, [4000., 3000.], true, &[]);
+        assert!(panel.outline.remove_last());
+        assert!(!panel.outline.remove_last());
+        assert_eq!(
+            panel.outline.dimensions(session.document()).unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn side_terminology_follows_direction_and_reversal_keeps_the_wall_in_place() {
+        let session = Session::new(Document::new("Wall sides").unwrap()).unwrap();
+        let mut panel = WallPanel::new(session.document(), "Room".into()).unwrap();
+        panel.sync_source(&session);
+        // A counter-clockwise room: left is inside.
+        let room = [[0., 0.], [4000., 0.], [4000., 3000.], [0., 3000.]];
+        panel.outline.set_points(&room, true);
+        panel.justification = Justification::Left;
+        let points = panel.outline.positions(session.document()).unwrap();
+        assert_eq!(orientation(&points), Some(true));
+        assert_eq!(side_label(Justification::Left, Some(true)), "Left (inside)");
+        assert_eq!(
+            side_label(Justification::Right, Some(true)),
+            "Right (outside)"
+        );
+        assert_eq!(
+            side_label(Justification::Left, Some(false)),
+            "Left (outside)"
+        );
+        assert_eq!(side_label(Justification::Left, None), "Left");
+        let sentence = justification_sentence(Justification::Left, Some(true));
+        assert!(sentence.contains("right face") && sentence.contains("left is inside"));
+        let plan = |panel: &WallPanel| {
+            let wall = panel.request(session.document(), true).unwrap().wall;
+            let template = model::ResolvedWall {
+                junctions: vec![],
+                layers: None,
+                points: vec![],
+                closed: false,
+                base_z_mm: 0.,
+                thickness_mm: 200.,
+                height_mm: 1.,
+                justification: panel.justification,
+                openings: vec![],
+                cutouts: vec![],
+            };
+            let points: Vec<_> = wall
+                .path
+                .iter()
+                .map(|[x, y]| {
+                    [
+                        x.value_in(Unit::Millimeter, None).unwrap(),
+                        y.value_in(Unit::Millimeter, None).unwrap(),
+                    ]
+                })
+                .collect();
+            let plan = wall_plan(&template, &points, wall.closed).unwrap();
+            let mut outer = plan.outer.points.clone();
+            outer.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let mut hole = plan.holes[0].points.clone();
+            hole.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            (outer, hole)
+        };
+        let before = plan(&panel);
+        assert_eq!(
+            before.0[0],
+            [0., 0.],
+            "left of a CCW room: the outline is the outer face"
+        );
+        assert_eq!(before.1[0], [200., 200.]);
+        // Reverse direction through the Inspector control.
+        let ctx = egui::Context::default();
+        let label = "Reverse direction";
+        let find = |output: &egui::FullOutput| {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(egui::Rect::from_min_size(text.pos, text.galley.size()).center())
+                }
+                _ => None,
+            })
+        };
+        let frame = |panel: &mut WallPanel, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(360., 3000.),
+                    )),
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    panel.show(ui, session.document(), true, PreviewState::Idle);
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let output = frame(&mut panel, vec![]);
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::Shape::Text(text) if text.galley.text() == "Left (inside)"
+        )));
+        let at = find(&output).expect("painted Reverse direction control");
+        for pressed in [true, false] {
+            frame(
+                &mut panel,
+                vec![
+                    egui::Event::PointerMoved(at),
+                    egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert_eq!(panel.justification, Justification::Right);
+        let points = panel.outline.positions(session.document()).unwrap();
+        assert_eq!(points[0], [0., 3000.]);
+        assert_eq!(orientation(&points), Some(false), "now clockwise");
+        assert_eq!(plan(&panel), before, "the wall itself did not move");
+        // Openings are placed along the direction, so reversal is refused.
+        panel.openings.push(OpeningRow::new(false).unwrap());
+        let output = frame(&mut panel, vec![]);
+        let at = find(&output).unwrap();
+        for pressed in [true, false] {
+            frame(
+                &mut panel,
+                vec![
+                    egui::Event::PointerMoved(at),
+                    egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert_eq!(panel.justification, Justification::Right);
+        assert_eq!(panel.outline.positions(session.document()).unwrap(), points);
     }
 }

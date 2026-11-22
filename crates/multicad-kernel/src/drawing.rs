@@ -2,6 +2,14 @@
 //! caller's geometry worker; only owned immutable curve records leave it.
 use crate::{GeometryError, GeometryErrorKind, GeometryPolicy, PlaneFrame, Solid, ffi};
 use multicad_core::drawings::{VectorCurve, VectorRole};
+mod curved;
+mod imported;
+mod panel;
+mod planar;
+mod scene;
+mod section;
+mod sphere;
+mod torus;
 
 #[derive(Clone, Copy, Debug)]
 pub struct DrawingProjection {
@@ -71,7 +79,329 @@ fn p(p: [f64; 3]) -> ffi::Point3 {
         z: p[2],
     }
 }
+fn projection_members<'a>(solids: &[DrawingSolid<'a>]) -> Vec<(usize, &'a Solid)> {
+    fn leaves<'a>(solid: &'a Solid, source: usize, output: &mut Vec<(usize, &'a Solid)>) {
+        if let Some(compound) = solid.rust_compound() {
+            for member in compound.members() {
+                leaves(member, source, output);
+            }
+        } else {
+            output.push((source, solid));
+        }
+    }
+    let mut members = Vec::new();
+    for (source, input) in solids.iter().enumerate() {
+        leaves(input.solid, source, &mut members);
+    }
+    members
+}
+
+fn contains_loft(solid: &Solid) -> bool {
+    solid.nonplanar_loft_body().is_some()
+        || solid
+            .rust_compound()
+            .is_some_and(|compound| compound.members().any(contains_loft))
+}
+
+fn contains_sphere(solid: &Solid) -> bool {
+    solid.sphere_body().is_some()
+        || solid
+            .rust_compound()
+            .is_some_and(|compound| compound.members().any(contains_sphere))
+}
+
+fn contains_bevel(solid: &Solid) -> bool {
+    solid.bevel_body().is_some()
+        || solid
+            .rust_compound()
+            .is_some_and(|compound| compound.members().any(contains_bevel))
+}
+
+fn contains_worm(solid: &Solid) -> bool {
+    solid.worm_body().is_some()
+        || solid
+            .rust_compound()
+            .is_some_and(|compound| compound.members().any(contains_worm))
+}
+
+fn contains_herringbone(solid: &Solid) -> bool {
+    solid.herringbone_body().is_some()
+        || solid
+            .rust_compound()
+            .is_some_and(|compound| compound.members().any(contains_herringbone))
+}
+
+/// Families whose exact projection is published for one body at a time.
+fn single_body_family(solid: &Solid) -> bool {
+    contains_worm(solid)
+        || contains_bevel(solid)
+        || contains_herringbone(solid)
+        || panel::contains_spline_sweep(solid)
+        || solid.spur_gear_body().is_some()
+        || solid.internal_ring_body().is_some()
+        || solid.oblique_bore_body().is_some()
+}
+
+/// A scene with a single-body family draws as the union of its exact member
+/// drawings when the members' projected bounds are pairwise separated: no
+/// line of sight can then meet two members, so nothing occludes anything
+/// else, and a section plane cuts each member independently. Overlapping
+/// scenes keep their explicit refusal.
+fn project_separated(
+    solids: &[DrawingSolid<'_>],
+    options: DrawingProjection,
+) -> Option<Result<Vec<ProjectedVector>, GeometryError>> {
+    if solids.len() < 2 || !solids.iter().any(|input| single_body_family(input.solid)) {
+        return None;
+    }
+    let [u, v, _] = planar::view_axes(options.frame);
+    let mut extents = Vec::with_capacity(solids.len());
+    let mut tolerance: f64 = 0.;
+    for input in solids {
+        let Ok(bounds) = input.solid.bounds() else {
+            return None;
+        };
+        tolerance = tolerance.max(input.solid.geometry_policy().linear_tolerance_mm);
+        let extent = [u, v].map(|axis| {
+            let [mut lo, mut hi] = [0., 0.];
+            for (i, &component) in axis.iter().enumerate() {
+                let offset = component * options.frame.origin[i];
+                let [a, b] = [component * bounds.min[i], component * bounds.max[i]];
+                lo += a.min(b) - offset;
+                hi += a.max(b) - offset;
+            }
+            [lo, hi]
+        });
+        extents.push(extent);
+    }
+    let separated = extents.iter().enumerate().all(|(i, a)| {
+        extents[i + 1..]
+            .iter()
+            .all(|b| (0..2).any(|k| a[k][1] + tolerance < b[k][0] || b[k][1] + tolerance < a[k][0]))
+    });
+    if !separated {
+        return None;
+    }
+    Some((|| {
+        let mut output = Vec::new();
+        let mut remaining = options;
+        for (source, input) in solids.iter().enumerate() {
+            let vectors = project_drawing(std::slice::from_ref(input), remaining)?;
+            let points: usize = vectors.iter().map(|vector| vector.preview_mm.len()).sum();
+            let exhausted = || {
+                err(
+                    GeometryErrorKind::Limit,
+                    "Rust drawing exceeded its curve or point budget",
+                )
+            };
+            remaining.maximum_curves = remaining
+                .maximum_curves
+                .checked_sub(u32::try_from(vectors.len()).map_err(|_| exhausted())?)
+                .filter(|count| *count > 0 || source + 1 == solids.len())
+                .ok_or_else(exhausted)?;
+            remaining.maximum_points = remaining
+                .maximum_points
+                .checked_sub(u32::try_from(points).map_err(|_| exhausted())?)
+                .filter(|count| *count > 0 || source + 1 == solids.len())
+                .ok_or_else(exhausted)?;
+            output.extend(vectors.into_iter().map(|mut vector| {
+                vector.source_index = source;
+                vector
+            }));
+        }
+        Ok(output)
+    })())
+}
+
+fn project_rust(
+    solids: &[DrawingSolid<'_>],
+    options: DrawingProjection,
+) -> Result<Vec<ProjectedVector>, GeometryError> {
+    if solids.iter().any(|input| !input.solid.uses_rust_geometry()) {
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust drawing projection requires all sources to use Rust geometry",
+        ));
+    }
+    // Sections through retained imported boundaries cut the exact faces.
+    if options.section_only
+        && let Some(offset) = options.section_offset_mm
+        && let Some(vectors) = imported::section(solids, options, offset)
+    {
+        return vectors;
+    }
+    // Bored rectangular prisms draw through the equivalent orthogonal
+    // stock, which the curved, aperture and section providers qualify.
+    let equivalents = solids
+        .iter()
+        .map(|input| input.solid.drawing_bored_equivalent().transpose())
+        .collect::<Result<Vec<_>, _>>()?;
+    if equivalents.iter().any(Option::is_some) {
+        let inputs: Vec<_> = solids
+            .iter()
+            .zip(&equivalents)
+            .map(|(input, equivalent)| DrawingSolid {
+                solid: equivalent.as_ref().unwrap_or(input.solid),
+                hatch: input.hatch,
+            })
+            .collect();
+        return project_drawing(&inputs, options);
+    }
+    if let Some(projection) = project_separated(solids, options) {
+        return projection;
+    }
+    if solids
+        .iter()
+        .any(|input| input.solid.oblique_bore_body().is_some())
+        && (solids.len() > 1 || options.section_offset_mm.is_none())
+    {
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust oblique bore drawings currently support sections of one solid or separated scenes",
+        ));
+    }
+    if let [input] = solids
+        && let Some((sphere, frame)) = input.solid.sphere_body()
+        && (options.section_offset_mm.is_none()
+            || options.section_only
+            || (options.section_depth_mm.is_none()
+                && options.section_u_mm.is_none()
+                && options.section_v_mm.is_none()))
+    {
+        return sphere::project(input, frame.origin, sphere.radius_mm(), options);
+    }
+    if let [input] = solids
+        && let Some((torus, frame)) = input.solid.torus_body()
+    {
+        return torus::project(input, frame, torus.radii_mm(), options);
+    }
+    if !options.section_only
+        && let [input] = solids
+        && let Some(projection) = panel::project_herringbone(input, options)
+    {
+        return projection;
+    }
+    if let [input] = solids
+        && let Some(projection) = panel::project_worm_gearing(input, options)
+    {
+        return projection;
+    }
+    if solids.iter().any(|input| contains_worm(input.solid)) {
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust worm and worm-wheel drawings support one placed gear at a time",
+        ));
+    }
+    if let [input] = solids
+        && let Some(projection) = panel::project_bevel(input, options)
+    {
+        return projection;
+    }
+    if solids.iter().any(|input| contains_bevel(input.solid)) {
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust bevel drawing supports one gear at a time; scene occlusion is unavailable",
+        ));
+    }
+    if !options.section_only && solids.iter().any(|input| contains_herringbone(input.solid)) {
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust exact drawing projection for continuous herringbone gears is unavailable",
+        ));
+    }
+    if let [input] = solids
+        && let Some(projection) = panel::project_spline_sweep(input, options)
+    {
+        return projection;
+    }
+    if solids
+        .iter()
+        .any(|input| panel::contains_spline_sweep(input.solid))
+    {
+        return Err(err(
+            GeometryErrorKind::Unsupported,
+            "Rust spline sweep drawing supports one solid at a time; scene occlusion is unavailable",
+        ));
+    }
+    if let Some(depth) = options.section_offset_mm {
+        if let [input] = solids
+            && let Some(projection) = panel::section_straight_gear(input, options, depth)
+        {
+            return projection;
+        }
+        if let [input] = solids
+            && input.solid.oblique_bore_body().is_some()
+        {
+            // The exact cut face, and retained stock that lies wholly behind
+            // it. A finite depth adds a far face, which draws as a scene.
+            if (options.section_only || options.section_depth_mm.is_none())
+                && let Some(projection) =
+                    section::oblique::project_oblique_bore(input, options, depth)
+            {
+                return projection;
+            }
+            return Err(err(
+                GeometryErrorKind::Unsupported,
+                "Rust retained oblique bore sections draw through the scene engine",
+            ));
+        }
+        if let [input] = solids
+            && input.solid.annulus_body().is_some()
+        {
+            return if options.section_only {
+                section::project_circular(input, options, depth)
+            } else {
+                curved::project_annulus_depth(input, options, depth)
+            };
+        }
+        return section::project(solids, options, depth);
+    }
+    if let [input] = solids
+        && input.solid.nonplanar_loft_body().is_some()
+    {
+        return section::project_loft_view(input, options);
+    }
+    if solids.iter().any(|input| contains_loft(input.solid)) {
+        return section::project_loft_scene(&projection_members(solids), options);
+    }
+    if let [input] = solids
+        && let Some(projection) = panel::project(input, options)
+            .or_else(|| panel::project_chamfered_bores(input, options))
+            .or_else(|| panel::project_normal_sweep(input, options))
+            .or_else(|| panel::project_spur_gear(input, options))
+            .or_else(|| panel::project_internal_ring(input, options))
+    {
+        return projection;
+    }
+    if solids
+        .iter()
+        .any(|input| curved::needs_curved_scene(input.solid))
+    {
+        return curved::project_scene(solids, options);
+    }
+    planar::project(solids, options)
+}
+
 pub fn project_drawing(
+    solids: &[DrawingSolid<'_>],
+    options: DrawingProjection,
+) -> Result<Vec<ProjectedVector>, GeometryError> {
+    let result = project_drawing_with_families(solids, options);
+    // A plane section that the family projectors refuse is cut through the
+    // exact boundary the solids export, retained as written.
+    match (&result, options.section_offset_mm) {
+        (Err(error), Some(offset))
+            if error.kind == GeometryErrorKind::Unsupported
+                && options.section_only
+                && solids.iter().all(|input| input.solid.uses_rust_geometry()) =>
+        {
+            imported::section_through_export(solids, options, offset).unwrap_or(result)
+        }
+        _ => result,
+    }
+}
+
+fn project_drawing_with_families(
     solids: &[DrawingSolid<'_>],
     options: DrawingProjection,
 ) -> Result<Vec<ProjectedVector>, GeometryError> {
@@ -114,6 +444,34 @@ pub fn project_drawing(
             "Invalid drawing source, tolerance, section/detail region or budget",
         ));
     }
+    for input in solids {
+        if input.hatch.is_some_and(|h| {
+            !h.angle_rad.is_finite()
+                || !h.spacing_mm.is_finite()
+                || (matches!(
+                    h.pattern,
+                    multicad_core::materials::HatchPattern::Alternating
+                        | multicad_core::materials::HatchPattern::Dots
+                ) && (!h.line_width_mm.is_finite() || h.line_width_mm <= 0.))
+                || !(1e-5..=1e7).contains(&h.spacing_mm)
+        }) {
+            return Err(err(
+                GeometryErrorKind::Input,
+                "Invalid section hatch specification",
+            ));
+        }
+    }
+    if solids.iter().any(|input| input.solid.uses_rust_geometry()) {
+        // The family providers keep the views they qualify. Every other
+        // request draws through the exact-curve scene engine when all of its
+        // bodies have scene members.
+        return match project_rust(solids, options) {
+            Err(error) if error.kind == GeometryErrorKind::Unsupported => {
+                scene::project_solids(solids, options).unwrap_or(Err(error))
+            }
+            result => result,
+        };
+    }
     let (center, radius) = options.detail.unwrap_or(([0.; 2], 1.));
     let data = ffi::DrawingOptionsData {
         frame,
@@ -139,21 +497,6 @@ pub fn project_drawing(
     };
     let mut job = ffi::drawing_job(&data).map_err(|e| err(GeometryErrorKind::Native, e))?;
     for input in solids {
-        if input.hatch.is_some_and(|h| {
-            !h.angle_rad.is_finite()
-                || !h.spacing_mm.is_finite()
-                || (matches!(
-                    h.pattern,
-                    multicad_core::materials::HatchPattern::Alternating
-                        | multicad_core::materials::HatchPattern::Dots
-                ) && (!h.line_width_mm.is_finite() || h.line_width_mm <= 0.))
-                || !(1e-5..=1e7).contains(&h.spacing_mm)
-        }) {
-            return Err(err(
-                GeometryErrorKind::Input,
-                "Invalid section hatch specification",
-            ));
-        }
         let hatch = input.hatch.unwrap_or(DrawingHatch {
             angle_rad: 0.,
             spacing_mm: 1.,
@@ -162,7 +505,7 @@ pub fn project_drawing(
         });
         ffi::drawing_add(
             job.pin_mut(),
-            &input.solid.native.0,
+            input.solid.occt()?,
             match hatch.pattern {
                 multicad_core::materials::HatchPattern::None => 0,
                 multicad_core::materials::HatchPattern::Lines => 1,

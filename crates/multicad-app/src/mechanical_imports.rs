@@ -5,8 +5,8 @@ use multicad_core::{
     model::imports::{KicadImport, StepFile},
 };
 use multicad_model::{
-    Compiler,
-    imports::{KicadOptions, read_kicad_file, read_step_file},
+    Compiler, GeometryBackend,
+    imports::{KicadOptions, read_kicad_file_with_backend, read_step_file_with_backend},
 };
 use multicad_ui::mechanical_import::MechanicalImportBackend;
 use std::{
@@ -14,12 +14,19 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-#[derive(Default)]
-pub struct Backend;
+pub struct Backend {
+    geometry_backend: GeometryBackend,
+}
+
+impl Backend {
+    pub fn with_geometry_backend(geometry_backend: GeometryBackend) -> Self {
+        Self { geometry_backend }
+    }
+}
 
 impl MechanicalImportBackend for Backend {
     fn read_step(&self, path: &Path) -> Result<StepFile, String> {
-        read_step_file(path).map_err(|e| e.to_string())
+        read_step_file_with_backend(path, self.geometry_backend).map_err(|e| e.to_string())
     }
     /// The user chose the board in the native dialog, so its footprint models
     /// are looked up wherever KiCad would find them (`${KIPRJMOD}`, the
@@ -29,7 +36,8 @@ impl MechanicalImportBackend for Backend {
             min_hole_mm,
             ..KicadOptions::default()
         };
-        read_kicad_file(path, &options).map_err(|e| e.to_string())
+        read_kicad_file_with_backend(path, &options, self.geometry_backend)
+            .map_err(|e| e.to_string())
     }
     fn verify(
         &self,
@@ -39,8 +47,558 @@ impl MechanicalImportBackend for Backend {
     ) -> Result<(), String> {
         let interrupt = || cancel.load(Ordering::Relaxed);
         Compiler::default()
-            .compile_interruptible(document, revision, Some(&interrupt))
-            .map(|_| ())
+            .compile_with_backend(document, revision, self.geometry_backend, Some(&interrupt))
+            .and_then(|model| multicad_model::imports::validate_references(document, &model))
             .map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use multicad_core::{
+        commands::Session,
+        model::imports::{StepEncoding, read_step_source, step_bodies, step_sources},
+        project_file::ProjectFile,
+    };
+    use multicad_kernel::rust_kernel::{Rational, step::write_box};
+    use multicad_ui::{
+        mechanical_import::{MechanicalImport, Outcome, Report, SourceKind, Target},
+        storage::{DocumentStorage, SaveMode},
+    };
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+
+    fn step_box(length: i64) -> String {
+        write_box(
+            [length, 8, 3].map(|mm| Rational::new(mm, 1).unwrap()),
+            [5., -2., 4.],
+            [0., 1., 0.],
+            [0., 0., 1.],
+        )
+        .unwrap()
+    }
+
+    fn check_import(session: &Session, path: &Path, target: Target) -> MechanicalImport {
+        check_import_kind(session, path, target, SourceKind::Step)
+    }
+
+    fn check_import_kind(
+        session: &Session,
+        path: &Path,
+        target: Target,
+        kind: SourceKind,
+    ) -> MechanicalImport {
+        let mut import = MechanicalImport::default();
+        import
+            .begin(
+                Arc::new(Backend::with_geometry_backend(GeometryBackend::Rust)),
+                kind,
+                path.to_owned(),
+                target,
+            )
+            .unwrap();
+        let end = Instant::now() + Duration::from_secs(15);
+        while import.pending() {
+            assert!(Instant::now() < end, "Mechanical import timed out");
+            import.poll(session);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        import
+    }
+
+    #[test]
+    fn rust_step_import_and_update_survive_project_reopen_without_the_source_file() {
+        let scratch = tempfile::tempdir().unwrap();
+        let step = scratch.path().join("stock.step");
+        std::fs::write(&step, step_box(12)).unwrap();
+        let mut session = Session::new(Document::new("STEP import").unwrap()).unwrap();
+
+        let mut import = check_import(&session, &step, Target::New);
+        assert_eq!(import.report(), Some(&Report::StepNew { parts: 1 }));
+        assert!(import.can_apply(&session), "{:?}", import.checked());
+        assert_eq!(session.revision(), 0);
+        assert!(matches!(
+            import.apply(&mut session),
+            Ok(Outcome::Applied { .. })
+        ));
+        let source = step_sources(session.document()).next().unwrap().id;
+        let body = step_bodies(session.document()).next().unwrap().id;
+        assert_eq!(
+            read_step_source(session.document(), source)
+                .unwrap()
+                .encoding,
+            StepEncoding::RustStep
+        );
+
+        std::fs::write(&step, step_box(16)).unwrap();
+        let mut update = check_import(&session, &step, Target::Update(source));
+        let Some(Report::StepUpdate {
+            matched,
+            added,
+            missing,
+        }) = update.report()
+        else {
+            panic!("{:?}", update.checked());
+        };
+        assert_eq!(matched.len(), 1);
+        assert!(matched[0].2);
+        assert!(added.is_empty() && missing.is_empty());
+        assert_eq!(session.revision(), 1);
+        assert!(matches!(
+            update.apply(&mut session),
+            Ok(Outcome::Applied { .. })
+        ));
+        assert_eq!(session.revision(), 2);
+
+        let mut store = crate::files::ProjectStore::new(scratch.path().join("recovery"));
+        let project = scratch.path().join("stock.tcd");
+        let file = ProjectFile::new(session.document().clone()).unwrap();
+        store
+            .save_project(&project, &file, SaveMode::Create)
+            .unwrap();
+        std::fs::remove_file(&step).unwrap();
+        let reopened = store.open_project(&project).unwrap().file.document;
+        assert_eq!(
+            step_bodies(&reopened)
+                .map(|entity| entity.id)
+                .collect::<Vec<_>>(),
+            [body]
+        );
+        let evaluated = Compiler::default()
+            .compile_with_backend(&reopened, 0, GeometryBackend::Rust, None)
+            .unwrap();
+        let solid = evaluated.solid(body).unwrap();
+        assert!(solid.uses_rust_geometry());
+        assert!((solid.volume_mm3().unwrap() - 384.).abs() < 1e-7);
+        let bounds = solid.bounds().unwrap();
+        assert_eq!(bounds.min, [5., -2., 4.]);
+        assert_eq!(bounds.max, [8., 14., 12.]);
+    }
+
+    #[test]
+    fn rust_step_tenon_reopens_with_exact_caps_after_the_source_is_deleted() {
+        use multicad_core::{
+            document::EntityId, manufacturing::PlanarEdge, references::TopologyKind,
+        };
+        use multicad_kernel::{
+            GeometryPolicy, MeshOptions, PlaneFrame,
+            rust_kernel::{stadium::Stadium, step::write_stadium_prism},
+        };
+        use std::f64::consts::PI;
+
+        let scratch = tempfile::tempdir().unwrap();
+        let source_path = scratch.path().join("tenon.step");
+        let frame = PlaneFrame {
+            origin: [5., -2., 4.],
+            u: [0., 1., 0.],
+            v: [0., 0., 1.],
+        };
+        let profile = Stadium::new([[0., 0.], [4., 0.]], 2.).unwrap();
+        let source =
+            write_stadium_prism(&profile, 8., frame.origin, frame.u, frame.v, false).unwrap();
+        std::fs::write(&source_path, source).unwrap();
+        let mut session = Session::new(Document::new("Rounded STEP import").unwrap()).unwrap();
+        let mut import = check_import(&session, &source_path, Target::New);
+        assert_eq!(
+            import.report(),
+            Some(&Report::StepNew { parts: 1 }),
+            "{:?}",
+            import.checked()
+        );
+        assert!(matches!(
+            import.apply(&mut session),
+            Ok(Outcome::Applied { .. })
+        ));
+        let body = step_bodies(session.document()).next().unwrap().id;
+        let mut store = crate::files::ProjectStore::new(scratch.path().join("recovery"));
+        let project_path = scratch.path().join("tenon.tcd");
+        store
+            .save_project(
+                &project_path,
+                &ProjectFile::new(session.document().clone()).unwrap(),
+                SaveMode::Create,
+            )
+            .unwrap();
+        std::fs::remove_file(source_path).unwrap();
+        let document = store.open_project(&project_path).unwrap().file.document;
+        let model = Compiler::default()
+            .compile_with_backend(&document, 0, GeometryBackend::Rust, None)
+            .unwrap();
+        let solid = model.solid(body).unwrap();
+        assert!(solid.uses_rust_geometry());
+        let tolerance = GeometryPolicy::default().linear_tolerance_mm;
+        assert!((solid.volume_mm3().unwrap() - profile.area_mm2() * 8.).abs() <= tolerance);
+        solid
+            .manufacturing_mesh_with_receipt(MeshOptions::default())
+            .unwrap();
+        let cap = solid
+            .topology_snapshot(EntityId::new(), 0)
+            .unwrap()
+            .elements
+            .into_iter()
+            .find(|item| {
+                item.key.kind == TopologyKind::Face
+                    && item.frames.iter().any(|cap| {
+                        (cap.frame.origin_mm[0] - frame.origin[0]).abs() <= tolerance
+                            && cap.frame.normal()[0].abs() > 0.99
+                    })
+            })
+            .expect("Imported cap retained its analytic frame");
+        let contours = solid.planar_face_contours(cap.key.ordinal, frame).unwrap();
+        assert!((contours.area_mm2() - profile.area_mm2()).abs() <= tolerance);
+        let arcs = contours.loops[0]
+            .edges
+            .iter()
+            .filter(|edge| matches!(edge, PlanarEdge::Arc { sweep_rad, .. } if (sweep_rad.abs() - PI).abs() <= tolerance));
+        assert_eq!(arcs.count(), 2);
+    }
+
+    #[test]
+    fn rust_step_cabinet_tenon_group_publishes_and_reopens_as_one_part() {
+        use multicad_core::{
+            commands::{Actor, Channel},
+            document::EntityId,
+            exchange::{ExportResult, Scope, ScopeRoot, SetDefinition, prepare_set},
+            model, parameters, project_file,
+        };
+        use multicad_kernel::{GeometryPolicy, MeshOptions, Solid, rust_kernel::step_read};
+        use multicad_ui::exchange::ExportBackend;
+
+        let mut bytes = &include_bytes!("../../../examples/cabinet.tcd")[..];
+        let cabinet = project_file::read(
+            &mut bytes,
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project;
+        let mut source = Session::new(cabinet.document).unwrap();
+        let document = source.document();
+        let feature = model::loose_tenons(document).next().unwrap().id;
+        let part = model::read_loose_tenon(document, feature)
+            .unwrap()
+            .output
+            .body;
+        let layout = model::resolve_loose_tenon_feature(
+            document,
+            &parameters::evaluate(document).unwrap(),
+            feature,
+        )
+        .unwrap();
+        let member_count = layout.len();
+        assert!(member_count > 1);
+        let expected_volume = layout
+            .iter()
+            .map(|tenon| {
+                let r = tenon.thickness_mm / 2.;
+                let area =
+                    std::f64::consts::PI * r * r + 2. * r * (tenon.width_mm - 2. * r).max(0.);
+                area * (tenon.into_face_mm + tenon.into_edge_mm)
+            })
+            .sum::<f64>();
+        let actor = Actor::local(Channel::Ui);
+        let set = EntityId::new();
+        let prepared = prepare_set(
+            &source,
+            source.revision(),
+            actor.clone(),
+            set,
+            "Cabinet tenons",
+            &SetDefinition {
+                scope: Scope {
+                    root: ScopeRoot::Explicit {
+                        entities: vec![part],
+                    },
+                    tags: None,
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        source.commit(prepared).unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let mut backend = crate::exchange::Backend::with_geometry_backend(GeometryBackend::Rust);
+        let wait = |backend: &mut crate::exchange::Backend, id| {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                if let Some(reply) = backend.poll() {
+                    assert_eq!(reply.id, id);
+                    break reply.result;
+                }
+                assert!(Instant::now() < deadline, "STEP export timed out");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        };
+        let job = backend
+            .preview(source.document(), source.revision(), set, actor.clone())
+            .unwrap();
+        let ExportResult::Preview(preview) = wait(&mut backend, job) else {
+            panic!("expected the STEP preview");
+        };
+        let preview = preview.unwrap();
+        assert!(preview.can_run(), "{:?}", preview.recipes);
+        assert_eq!(preview.artifacts.len(), 1);
+        assert_eq!(preview.artifacts[0].solid_count as usize, member_count);
+        let job = backend
+            .run(
+                source.document(),
+                source.revision(),
+                &preview.key,
+                scratch.path(),
+                actor,
+            )
+            .unwrap();
+        let ExportResult::Run(receipt) = wait(&mut backend, job) else {
+            panic!("expected the STEP publication receipt");
+        };
+        let receipt = receipt.unwrap();
+        let [written] = receipt.files.as_slice() else {
+            panic!("one Part must publish one STEP file")
+        };
+        assert_eq!(written.artifact, preview.artifacts[0]);
+        let path = Path::new(&receipt.directory).join(&written.artifact.output.filename);
+        let policy = GeometryPolicy::default();
+        let check = |solid: &Solid| {
+            assert_eq!(solid.solid_count().unwrap() as usize, member_count);
+            assert!((solid.volume_mm3().unwrap() - expected_volume).abs() < 1e-6);
+            let bounds = solid.bounds().unwrap();
+            for (actual, expected) in bounds
+                .min
+                .into_iter()
+                .chain(bounds.max)
+                .zip(written.artifact.bounds_mm.into_iter().flatten())
+            {
+                assert!((actual - expected).abs() <= policy.linear_tolerance_mm);
+            }
+        };
+        let members = step_read::read_analytic_compound(
+            &std::fs::read_to_string(&path).unwrap(),
+            policy.linear_tolerance_mm,
+        )
+        .unwrap();
+        assert_eq!(members.len(), member_count);
+        assert!(
+            members
+                .iter()
+                .all(|member| member.solid_count == 1 && member.semicircles.len() == 4)
+        );
+
+        let mut target = Session::new(Document::new("Imported cabinet tenons").unwrap()).unwrap();
+        let mut import = check_import(&target, &path, Target::New);
+        assert_eq!(
+            import.report(),
+            Some(&Report::StepNew { parts: 1 }),
+            "{:?}",
+            import.checked()
+        );
+        assert!(matches!(
+            import.apply(&mut target),
+            Ok(Outcome::Applied { .. })
+        ));
+        let source_id = step_sources(target.document()).next().unwrap().id;
+        let embedded = read_step_source(target.document(), source_id).unwrap();
+        assert_eq!(embedded.encoding, StepEncoding::RustStep);
+        assert_eq!(embedded.solids.len(), 1);
+        let body = step_bodies(target.document()).next().unwrap().id;
+        let mut store = crate::files::ProjectStore::new(scratch.path().join("recovery"));
+        let project = scratch.path().join("tenon-group.tcd");
+        store
+            .save_project(
+                &project,
+                &ProjectFile::new(target.document().clone()).unwrap(),
+                SaveMode::Create,
+            )
+            .unwrap();
+        std::fs::remove_file(path).unwrap();
+        let document = store.open_project(&project).unwrap().file.document;
+        let model = Compiler::default()
+            .compile_with_backend(&document, 0, GeometryBackend::Rust, None)
+            .unwrap();
+        assert_eq!(model.snapshot().bodies.len(), 1);
+        let solid = model.solid(body).unwrap();
+        assert!(solid.uses_rust_geometry());
+        check(solid);
+        solid
+            .manufacturing_mesh_with_receipt(MeshOptions::default())
+            .unwrap();
+    }
+
+    #[test]
+    fn rust_import_inspector_checks_and_applies_a_kicad_board() {
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("board.kicad_pcb");
+        let board = r#"(kicad_pcb (general (thickness 1.6))
+            (gr_rect (start 0 0) (end 80 50) (layer "Edge.Cuts"))
+            (gr_circle (center 15 20) (end 17 20) (layer "Edge.Cuts")))"#;
+        std::fs::write(&path, board).unwrap();
+        let mut session = Session::new(Document::new("KiCad board").unwrap()).unwrap();
+        let mut import = check_import_kind(&session, &path, Target::New, SourceKind::Kicad);
+        assert!(
+            matches!(import.report(), Some(Report::KicadNew { .. })),
+            "{:?}",
+            import.error()
+        );
+        assert_eq!(session.revision(), 0);
+        assert!(import.can_apply(&session));
+        assert!(matches!(
+            import.apply(&mut session),
+            Ok(Outcome::Applied { .. })
+        ));
+        assert_eq!(session.revision(), 1);
+        let model = Compiler::default()
+            .compile_with_backend(
+                session.document(),
+                session.revision(),
+                GeometryBackend::Rust,
+                None,
+            )
+            .unwrap();
+        let body = *model.snapshot().bodies.keys().next().unwrap();
+        let solid = model.solid(body).unwrap();
+        assert!(solid.uses_rust_geometry());
+        let expected = (80. * 50. - std::f64::consts::PI * 4.) * 1.6;
+        assert!((solid.volume_mm3().unwrap() - expected).abs() < 1e-8);
+    }
+
+    #[test]
+    fn unsupported_step_units_do_not_fall_back_to_native_or_change_the_project() {
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("centimetres.step");
+        let step = step_box(12).replace("SI_UNIT(.MILLI.,.METRE.)", "SI_UNIT(.CENTI.,.METRE.)");
+        std::fs::write(&path, step).unwrap();
+
+        let session = Session::new(Document::new("Unsupported STEP").unwrap()).unwrap();
+        let import = check_import(&session, &path, Target::New);
+        assert!(
+            import
+                .error()
+                .is_some_and(|error| error.contains("Rust STEP")),
+            "{:?}",
+            import.error()
+        );
+        assert!(!import.can_apply(&session));
+        assert_eq!(session.revision(), 0);
+        assert!(step_sources(session.document()).next().is_none());
+    }
+    #[test]
+    fn import_inspector_refuses_changed_finite_face_without_committing_broken_datum() {
+        fn imported_tetra(length: f64) -> String {
+            let [a, b, c, d] = [[0., 0., 0.], [4., 0., 0.], [0., 4., 0.], [0., 0., length]];
+            let union = multicad_kernel::rust_kernel::planar_boolean::Union::from_planar_rings(
+                &[vec![a, c, b], vec![a, b, d], vec![a, d, c], vec![b, c, d]],
+                1e-7,
+            )
+            .unwrap();
+            multicad_kernel::rust_kernel::step::write_planar_union(
+                &union,
+                [0.; 3],
+                [1., 0., 0.],
+                [0., 1., 0.],
+            )
+            .unwrap()
+        }
+        fn attach_imported_datum(
+            session: &mut multicad_core::commands::Session,
+            producer: multicad_core::document::EntityId,
+        ) {
+            use multicad_core::{
+                commands::{Actor, Channel, Request},
+                document::{Entity, EntityData, Link, Mutation},
+                references::{Attachment, GeometryIntent, TopologyKind},
+            };
+            let model = multicad_model::Compiler::default()
+                .compile_with_backend(
+                    session.document(),
+                    session.revision(),
+                    GeometryBackend::Rust,
+                    None,
+                )
+                .unwrap();
+            let topology = &model.snapshot().shapes[&producer].topology;
+            let face = topology
+                .elements
+                .iter()
+                .find(|face| face.key.kind == TopologyKind::Face && matches!(face.geometry, Some(multicad_core::references::AnalyticGeometry::Plane {frame}) if frame.normal()[0] < -0.99))
+                .unwrap();
+            let mut intent = GeometryIntent::capture(topology, face.key).unwrap();
+            intent.boundary = Some(face.boundary.clone());
+            intent.attachment = Some(Attachment {
+                anchor: face.frames[0].origin.clone(),
+                offset_mm: [0.25, -0.5, 0.75],
+                angle_rad: 0.3,
+            });
+            session
+                .apply(Request {
+                    expected_revision: session.revision(),
+                    actor: Actor::local(Channel::Ui),
+                    label: "Attach imported face datum".into(),
+                    edits: vec![Mutation::Insert(Entity::new(
+                        "Imported datum",
+                        EntityData::Plane {
+                            origin_mm: [0.; 3],
+                            normal: [0., 0., 1.],
+                            anchor: Some(Link {
+                                target: producer,
+                                role: "face_attachment".into(),
+                                geometry: Some(intent),
+                            }),
+                        },
+                    ))],
+                })
+                .unwrap();
+        }
+
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("tetra.step");
+        std::fs::write(&path, imported_tetra(4.)).unwrap();
+        let mut session = Session::new(Document::new("Import update repair").unwrap()).unwrap();
+        let mut import = check_import(&session, &path, Target::New);
+        import.apply(&mut session).unwrap();
+        let source = step_sources(session.document()).next().unwrap().id;
+        let producer = step_bodies(session.document()).next().unwrap().id;
+        attach_imported_datum(&mut session, producer);
+        let before = session.document().clone();
+        let state = (
+            session.revision(),
+            session.activity().count(),
+            session.can_undo(),
+            session.can_redo(),
+        );
+        std::fs::write(&path, imported_tetra(5.)).unwrap();
+        let mut update = check_import(&session, &path, Target::Update(source));
+        assert!(
+            matches!(update.checked(), Some(Err(error)) if error.contains("reference repair")),
+            "{:?}",
+            update.checked()
+        );
+        assert!(!update.can_apply(&session));
+        assert!(update.apply(&mut session).is_err());
+        assert_eq!(session.document(), &before);
+        assert_eq!(
+            (
+                session.revision(),
+                session.activity().count(),
+                session.can_undo(),
+                session.can_redo()
+            ),
+            state
+        );
+        let mut equivalent = imported_tetra(4.);
+        let start = equivalent.find("=CLOSED_SHELL('',(").unwrap() + "=CLOSED_SHELL('',(".len();
+        let end = start + equivalent[start..].find("))").unwrap();
+        let refs = equivalent[start..end]
+            .split(',')
+            .rev()
+            .collect::<Vec<_>>()
+            .join(",");
+        equivalent.replace_range(start..end, &refs);
+        std::fs::write(&path, equivalent).unwrap();
+        let mut recovery = check_import(&session, &path, Target::Update(source));
+        assert!(recovery.can_apply(&session), "{:?}", recovery.error());
+        recovery.apply(&mut session).unwrap();
+        assert_eq!(session.revision(), state.0 + 1);
     }
 }

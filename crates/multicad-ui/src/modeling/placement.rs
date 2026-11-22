@@ -3,6 +3,9 @@
 mod command;
 #[cfg(test)]
 mod native_bounds_tests;
+pub(crate) mod points;
+#[cfg(test)]
+mod points_tests;
 #[cfg(test)]
 mod tests;
 use super::{
@@ -17,6 +20,7 @@ use multicad_core::{
     model::{self, BodyInput, NumericTransform, PlacementBatchRequest},
     project_file::ContentHash,
 };
+use points::{PointAlignment, PointPick};
 use std::collections::BTreeSet;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlacementMode {
@@ -35,6 +39,8 @@ pub(super) struct PlacementPanel {
     angle: DimensionField,
     axis: [f64; 3],
     targets: Vec<String>,
+    point_pick: Option<PointPick>,
+    alignment: Option<PointAlignment>,
 }
 fn fields(
     values: &[multicad_core::constraint_sketch::Dimension; 3],
@@ -225,6 +231,8 @@ impl PlacementPanel {
             angle: DimensionField::from_dimension(&parameters.angle, "deg")?,
             axis: parameters.axis,
             targets,
+            point_pick: None,
+            alignment: None,
         })
     }
     pub fn stamp(&self) -> FormStamp {
@@ -267,7 +275,55 @@ impl PlacementPanel {
         self.alternate = Some(alternate);
         self.targets = targets;
         self.selected = selected.clone();
+        // Points belong to the previous targets.
+        self.point_pick = None;
+        self.alignment = None;
         self.stamp.changed();
+        Ok(())
+    }
+    /// Point-to-point applies to new Move / Copy batches, whose staged
+    /// translation composes after the current pose of every target.
+    pub(super) fn points_available(&self) -> bool {
+        self.alternate.is_some() && !self.selected.is_empty()
+    }
+    pub(super) fn point_pick(&self) -> Option<PointPick> {
+        self.point_pick
+    }
+    pub(super) fn alignment(&self) -> Option<PointAlignment> {
+        self.alignment
+    }
+    pub(super) fn toggle_point_pick(&mut self) {
+        self.point_pick = match self.point_pick {
+            None if self.points_available() => Some(PointPick::Source),
+            _ => None,
+        };
+    }
+    pub(super) fn pick_source(&mut self, source: [f64; 3], label: &'static str) {
+        if self.point_pick == Some(PointPick::Source) {
+            self.point_pick = Some(PointPick::Target { source, label });
+        }
+    }
+    /// Stage the translation that makes the chosen source coincide with
+    /// `target`. A failure keeps the previous staged values and pick state.
+    pub(super) fn pick_target(
+        &mut self,
+        document: &Document,
+        evaluated: &multicad_core::parameters::EvaluatedParameters,
+        target: [f64; 3],
+        target_label: &'static str,
+    ) -> Result<(), String> {
+        let Some(PointPick::Target { source, label }) = self.point_pick else {
+            return Err("Choose a source point on the moving part first".into());
+        };
+        let next = points::aligned(&self.parameters(document)?, evaluated, source, target)?;
+        self.set_drag_parameters(&next)?;
+        self.point_pick = None;
+        self.alignment = Some(PointAlignment {
+            source,
+            source_label: label,
+            target,
+            target_label,
+        });
         Ok(())
     }
     fn active_command(&self) -> &PlacementCommand {
@@ -377,6 +433,7 @@ impl PlacementPanel {
         controls::inspector_layout(ui);
         ui.strong(self.label());
         ui.small("Release the handle to stage. Press Enter to apply or Escape to cancel.");
+        ui.small("Dragging steps by the grid spacing and 45°; hold Shift while dragging for free placement.");
         ui.small(format!("{} selected object(s)", self.targets.len()));
         egui::ScrollArea::vertical()
             .id_salt("placement-targets")
@@ -388,6 +445,42 @@ impl PlacementPanel {
             });
         let mut changed = false;
         if self.alternate.is_some() {
+            ui.separator();
+            ui.strong("Point to point");
+            let label = if self.point_pick.is_some() {
+                "Cancel Points"
+            } else {
+                "Choose Points"
+            };
+            if ui
+                .add_enabled(
+                    enabled && self.points_available(),
+                    egui::Button::new(label),
+                )
+                .on_hover_text("Choose a vertex or edge midpoint on the moving part, then one on other geometry. Only the translation changes; rotation, pivot and dimensions stay.")
+                .clicked()
+            {
+                self.toggle_point_pick();
+            }
+            match self.point_pick {
+                Some(PointPick::Source) => {
+                    ui.small("1 · Click a source point on the moving part (orange square).");
+                }
+                Some(PointPick::Target { label, .. }) => {
+                    ui.small(format!(
+                        "2 · Source: {label}. Click a target point on other geometry (green ring)."
+                    ));
+                }
+                None => {
+                    if let Some(alignment) = self.alignment {
+                        ui.small(format!(
+                            "Staged: source {} to target {}",
+                            alignment.source_label.to_lowercase(),
+                            alignment.target_label.to_lowercase()
+                        ));
+                    }
+                }
+            }
             changed |= ui.checkbox(&mut self.create_copy, "Create copy")
                 .on_hover_text("Create independent linked Instances. Hold Option on macOS or Alt on Windows/Linux while dragging to copy temporarily; Shift changes selection")
                 .changed();
@@ -449,7 +542,13 @@ impl PlacementPanel {
         }
         ui.separator();
         form::preview_status(ui, self.stamp, preview);
-        let action = form::actions(ui, validation.is_ok(), changed, self.stamp, preview);
+        let action = form::actions(
+            ui,
+            validation.is_ok() && self.point_pick.is_none(),
+            changed,
+            self.stamp,
+            preview,
+        );
         if action == Some(FormAction::Cancel) {
             return Some(ModelEvent::Cancel);
         }

@@ -9,7 +9,7 @@
 //! # Result key
 //!
 //! The key of a feature is a SHA-256 over:
-//! - a cache format tag, the geometry policy and the display mesh options;
+//! - a cache format tag, solid backend, geometry policy and display options;
 //! - the feature's own identity;
 //! - the set of every entity in the feature's *input closure*, each as its
 //!   identity plus a hash of its complete canonical source (name, links and
@@ -40,7 +40,11 @@
 //! module are always evaluated, and so is every feature whose closure
 //! contains such a feature, an Instance, an Assembly, or a sketch targeted by
 //! an occurrence reference. A new provider is therefore uncached until it is
-//! audited and added here.
+//! audited and added here. Original Rust joining-plate outputs additionally use
+//! the shared bounded occurrence-pose projection: absolute driver/structure
+//! fingerprints replace only their explicit pose links, while every geometry,
+//! parameter and reference supplier remains in the ordinary audited closure.
+//! Generic Instance/Assembly consumers remain uncacheable.
 //!
 //! Fence geometry reads its declared run/type/path/level/parameter closure.
 //! A miss validates the complete run before returning any member solid, even
@@ -64,7 +68,7 @@
 //! returned model, bounded by [`crate::MAX_MODEL_FEATURES`]); older entries
 //! are evicted least-recently-used first until their estimated size is at
 //! most `retained_bytes` and the entry count at most `max_entries`.
-use crate::{Compiler, ShapeSnapshot, SheetLayout};
+use crate::{Compiler, GeometryBackend, ShapeSnapshot, SheetLayout};
 use multicad_core::{
     document::{Document, EntityData, EntityId},
     model,
@@ -77,6 +81,8 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
+
+mod profile_connections;
 
 /// Default bound on the estimated size of entries not used by the latest
 /// compile (kept for undo/redo and toggled edits).
@@ -99,6 +105,7 @@ pub fn cacheable_type(type_id: &str) -> bool {
         model::SPLIT_TYPE,
         model::TRANSFORM_TYPE,
         model::EDGE_TREATMENT_TYPE,
+        model::HELICAL_TUBE_CUT_TYPE,
         model::ADVANCED_TYPE,
         model::ALIGN_TYPE,
         model::PANEL_TYPE,
@@ -107,11 +114,13 @@ pub fn cacheable_type(type_id: &str) -> bool {
         // checks the full member/material set before accepting a cache hit.
         model::FENCE_MEMBER_TYPE,
         model::PANEL_JOINT_CUT_TYPE,
+        model::LOOSE_TENON_TYPE,
         model::MACHINING_CUT_TYPE,
         model::SHEET_TYPE,
         model::SHEET_PROFILE_CUT_TYPE,
         model::MEMBER_TYPE,
         model::HARDWARE_TYPE,
+        model::PROFILE_CONNECTION_OUTPUT_TYPE,
         model::AID_TYPE,
         model::imports::STEP_BODY_TYPE,
         model::imports::BOARD_TYPE,
@@ -143,10 +152,12 @@ struct Entry {
 /// What one compile did with the cache.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CompileStats {
-    /// Features whose native provider ran (cache misses and uncacheable).
+    /// Features whose geometry provider ran (cache misses and uncacheable).
     pub evaluated: BTreeSet<EntityId>,
     /// Features reused from an earlier compile.
     pub reused: BTreeSet<EntityId>,
+    /// The identical full Rust model was reused without scheduling features.
+    pub reused_full_model: bool,
     /// Evaluated features that are not cacheable (see the module docs).
     pub uncacheable: BTreeSet<EntityId>,
     /// Same-owner audited literal symbol nodes restored this compile.
@@ -302,7 +313,16 @@ fn literal_symbols(document: &Document) -> BTreeMap<EntityId, LiteralSymbol> {
     output
 }
 
-/// Exact feature results reused across compiles of one model worker.
+struct FullRustModel {
+    compiler: Compiler,
+    model: crate::Model,
+    features: BTreeSet<EntityId>,
+    /// Audited literal symbol nodes contained in the retained model.
+    symbols: BTreeSet<EntityId>,
+    bytes: usize,
+}
+
+/// Exact results reused across compiles on one model worker.
 pub struct EvaluationCache {
     entries: BTreeMap<CacheKey, Entry>,
     clock: u64,
@@ -317,6 +337,8 @@ pub struct EvaluationCache {
     symbol_native_checks: usize,
     symbol_nodes: BTreeMap<CacheKey, SymbolEntry>,
     pending_symbol_nodes: BTreeMap<CacheKey, SymbolEntry>,
+    full_rust: Option<FullRustModel>,
+    pub(crate) pipe_threads: multicad_kernel::PipeThreadFactory,
 }
 impl Default for EvaluationCache {
     fn default() -> Self {
@@ -342,12 +364,24 @@ impl EvaluationCache {
             symbol_native_checks: 0,
             symbol_nodes: BTreeMap::new(),
             pending_symbol_nodes: BTreeMap::new(),
+            full_rust: None,
+            pipe_threads: multicad_kernel::PipeThreadFactory::new(retained_bytes, max_entries),
         }
+    }
+    pub fn pipe_thread_factory_stats(&self) -> multicad_kernel::PipeThreadFactoryStats {
+        self.pipe_threads.stats()
     }
     /// Statistics of the most recent cached compile (also when it failed or
     /// was superseded).
     pub fn last_compile(&self) -> &CompileStats {
         &self.last
+    }
+    pub(crate) fn reset_compile_stats(&mut self) {
+        self.last = CompileStats {
+            entries: self.entries.len(),
+            estimated_bytes: self.last.estimated_bytes,
+            ..CompileStats::default()
+        };
     }
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -356,16 +390,89 @@ impl EvaluationCache {
         self.entries.is_empty()
     }
     pub fn estimated_bytes(&self) -> usize {
-        self.entries.values().map(|e| e.bytes).sum()
+        self.entries
+            .values()
+            .map(|e| e.bytes)
+            .sum::<usize>()
+            .saturating_add(self.full_rust.as_ref().map_or(0, |full| full.bytes))
+            .saturating_add(self.pipe_threads.retained_bytes())
     }
     pub fn clear(&mut self) {
+        self.pipe_threads.clear();
         self.entries.clear();
+        self.full_rust = None;
         self.gear_pairs.clear();
         self.native_intersections.clear();
         self.symbol_proofs.clear();
         self.pending_symbol_proofs.clear();
         self.symbol_nodes.clear();
         self.pending_symbol_nodes.clear();
+        self.last = CompileStats::default();
+    }
+
+    pub(crate) fn reuse_full_rust(
+        &mut self,
+        compiler: &Compiler,
+        document: &Document,
+        revision: u64,
+    ) -> Option<crate::Model> {
+        let full = self.full_rust.as_ref()?;
+        let stamp = full.model.snapshot().stamp;
+        if full.compiler != *compiler
+            || stamp.document != document.id()
+            || stamp.revision != revision
+            || !ContentHash::document(document).is_ok_and(|hash| hash == stamp.source_hash)
+        {
+            self.full_rust = None;
+            return None;
+        }
+        let model = full.model.share_completed();
+        self.last.reused.clone_from(&full.features);
+        self.last.symbol_reused.clone_from(&full.symbols);
+        self.last.reused_full_model = true;
+        Some(model)
+    }
+
+    pub(crate) fn store_full_rust(&mut self, compiler: &Compiler, model: &crate::Model) {
+        if self.max_entries == 0 {
+            return;
+        }
+        let snapshot = model.snapshot();
+        // Conservatively charge shared display data against both caches.
+        let shapes = snapshot.shapes.values().map(|shape| estimate(shape));
+        let occurrences = snapshot
+            .occurrences
+            .values()
+            .map(|occurrence| occurrence.topology.elements.len().saturating_mul(1280));
+        let leaves = snapshot
+            .leaf_occurrences
+            .values()
+            .map(|leaf| leaf.topology.elements.len().saturating_mul(1280));
+        let bytes = shapes
+            .chain(occurrences)
+            .chain(leaves)
+            .fold(0, usize::saturating_add);
+        if bytes > self.retained_bytes.saturating_sub(self.estimated_bytes()) {
+            return;
+        }
+        self.full_rust = Some(FullRustModel {
+            compiler: *compiler,
+            model: model.share_completed(),
+            features: self
+                .last
+                .evaluated
+                .union(&self.last.reused)
+                .copied()
+                .collect(),
+            symbols: self
+                .last
+                .symbol_evaluated
+                .union(&self.last.symbol_reused)
+                .copied()
+                .collect(),
+            bytes,
+        });
+        self.last.estimated_bytes = self.estimated_bytes();
     }
     /// Same-owner, exact native Intersect(None) receipts. These never replace
     /// current source, phase, engagement, leaf enumeration or budget checks.
@@ -374,7 +481,7 @@ impl EvaluationCache {
     ) -> crate::native_intersection_proofs::NativeIntersectionProofStats {
         self.native_intersections.stats()
     }
-    /// Completed, bounded native template receipts retained by this owner.
+    /// Completed, bounded, backend-specific template receipts retained by this owner.
     pub fn symbol_template_proofs(&self) -> usize {
         self.symbol_proofs.len()
     }
@@ -382,7 +489,7 @@ impl EvaluationCache {
     pub fn symbol_template_proof_hits(&self) -> usize {
         self.symbol_proof_hits
     }
-    /// Cumulative template native checks, including failed checks.
+    /// Cumulative template geometry checks, including failed checks.
     pub fn symbol_template_native_checks(&self) -> usize {
         self.symbol_native_checks
     }
@@ -454,7 +561,11 @@ impl EvaluationCache {
             .map(|(k, e)| (e.used, *k, e.bytes))
             .collect();
         stale.sort();
-        let mut stale_bytes: usize = stale.iter().map(|s| s.2).sum();
+        let mut stale_bytes: usize = stale
+            .iter()
+            .map(|s| s.2)
+            .sum::<usize>()
+            .saturating_add(self.pipe_threads.retained_bytes());
         let mut evicted = 0;
         for (_, key, bytes) in stale {
             if stale_bytes <= self.retained_bytes && self.entries.len() <= self.max_entries {
@@ -495,6 +606,8 @@ type Edges = (Vec<EntityId>, Vec<EntityId>);
 /// One compile's view of the cache.
 pub(crate) struct Session<'a> {
     cache: &'a mut EvaluationCache,
+    backend: GeometryBackend,
+    profile_poses: BTreeMap<EntityId, Option<Arc<profile_connections::PoseInputs>>>,
     document: &'a Document,
     parameters: &'a EvaluatedParameters,
     salt: Vec<u8>,
@@ -508,6 +621,7 @@ impl<'a> Session<'a> {
     pub(crate) fn new(
         cache: &'a mut EvaluationCache,
         compiler: &Compiler,
+        backend: GeometryBackend,
         document: &'a Document,
         parameters: &'a EvaluatedParameters,
     ) -> Self {
@@ -515,7 +629,7 @@ impl<'a> Session<'a> {
         let mut salt = FORMAT.to_vec();
         salt.extend(
             format!(
-                "|{:?}|{:?}|{}|",
+                "|{backend:?}|{:?}|{:?}|{}|",
                 compiler.policy, compiler.mesh, compiler.omit_display
             )
             .bytes(),
@@ -528,6 +642,8 @@ impl<'a> Session<'a> {
             .collect();
         Self {
             cache,
+            backend,
+            profile_poses: BTreeMap::new(),
             document,
             parameters,
             salt,
@@ -538,17 +654,40 @@ impl<'a> Session<'a> {
             literal_symbols: literal_symbols(document),
         }
     }
+    pub(crate) fn pipe_thread_factory(&mut self) -> &mut multicad_kernel::PipeThreadFactory {
+        &mut self.cache.pipe_threads
+    }
+    fn profile_pose(&mut self, id: EntityId) -> Option<Arc<profile_connections::PoseInputs>> {
+        if let Some(found) = self.profile_poses.get(&id) {
+            return found.clone();
+        }
+        let found = profile_connections::project(self.document, id).map(Arc::new);
+        self.profile_poses.insert(id, found.clone());
+        found
+    }
     /// Evaluation-dependency and mention edges of an entity.
     fn edges(&mut self, id: EntityId) -> Option<Edges> {
         if let Some(found) = self.edges.get(&id) {
             return found.clone();
         }
         let computed = (|| {
+            let projection = if profile_connections::source(self.document, id) {
+                Some(self.profile_pose(id)?)
+            } else {
+                None
+            };
             let entity = self.document.get(id)?;
-            let evaluation: BTreeSet<_> = self.document.evaluation_dependencies(id).ok()?;
+            let mut evaluation: BTreeSet<_> = self.document.evaluation_dependencies(id).ok()?;
             let mut mentioned = BTreeSet::new();
             mentions(&serde_json::to_value(entity).ok()?, &mut mentioned);
             mentioned.remove(&id);
+            if let Some(projection) = projection {
+                for id in &projection.omitted {
+                    evaluation.remove(id);
+                    mentioned.remove(id);
+                }
+                evaluation.extend(projection.geometry.iter().copied());
+            }
             let mentioned = mentioned
                 .into_iter()
                 .filter(|m| !evaluation.contains(m) && self.document.get(*m).is_some())
@@ -563,8 +702,17 @@ impl<'a> Session<'a> {
             return *found;
         }
         let computed = (|| {
+            let projection = if profile_connections::source(self.document, id) {
+                Some(self.profile_pose(id)?)
+            } else {
+                None
+            };
             let entity = self.document.get(id)?;
             let mut bytes = serde_json::to_vec(entity).ok()?;
+            if let Some(projection) = projection {
+                bytes.extend(b"|absolute-profile-poses|");
+                bytes.extend(projection.fingerprint.0);
+            }
             match (&entity.data, visit) {
                 (EntityData::Parameter { .. }, _) => {
                     bytes.extend(b"|value|");
@@ -610,6 +758,13 @@ impl<'a> Session<'a> {
                 continue;
             }
             match &entity.data {
+                EntityData::Feature { definition, .. }
+                    if definition.type_id == model::PROFILE_CONNECTION_OUTPUT_TYPE
+                        && (self.backend != GeometryBackend::Rust
+                            || !profile_connections::output(self.document, id)) =>
+                {
+                    return None;
+                }
                 EntityData::Instance { .. } | EntityData::Assembly { .. } => return None,
                 EntityData::Feature { definition, .. } if !cacheable_type(&definition.type_id) => {
                     return None;
@@ -757,8 +912,16 @@ impl<'a> Session<'a> {
 }
 impl Drop for Session<'_> {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.cache.pipe_threads.finish_compile(false);
+        }
         let mut stats = std::mem::take(&mut self.stats);
         stats.evicted = self.cache.evict();
+        if self.cache.full_rust.is_some()
+            && self.cache.estimated_bytes() > self.cache.retained_bytes
+        {
+            self.cache.full_rust = None;
+        }
         stats.entries = self.cache.entries.len();
         stats.estimated_bytes = self.cache.estimated_bytes();
         self.cache.last = stats;
@@ -768,6 +931,17 @@ impl Drop for Session<'_> {
 /// Entities a provider finds by scanning the document rather than through
 /// its own source. None when they cannot be determined.
 fn hidden_inputs(document: &Document, feature: EntityId, type_id: &str) -> Option<Vec<EntityId>> {
+    if type_id == model::LOOSE_TENON_TYPE {
+        let source = model::read_loose_tenon(document, feature).ok()?;
+        let joint = model::read_panel_joint(document, source.joint).ok()?;
+        let pair = joint.pairs.get(source.pair as usize)?;
+        // The provider resolves each Part's current base panel from its
+        // feature list. Include those definitions even for older joint links.
+        return Some(vec![
+            model::panel_feature(document, pair.a)?,
+            model::panel_feature(document, pair.b)?,
+        ]);
+    }
     if type_id != model::MEMBER_TYPE {
         return Some(vec![]);
     }
@@ -831,23 +1005,6 @@ pub(crate) struct Sides<'a> {
     pub sheet_layouts: &'a mut BTreeMap<EntityId, SheetLayout>,
     pub member_paths: &'a mut BTreeMap<EntityId, model::PathSegment>,
     pub consumed: &'a mut BTreeSet<(EntityId, EntityId)>,
-}
-/// Side results recorded by the provider of `feature` in this compile.
-pub(crate) fn capture(
-    feature: EntityId,
-    sides: Sides,
-    consumed_before: &BTreeSet<(EntityId, EntityId)>,
-) -> Extras {
-    let consumed_after = &*sides.consumed;
-    Extras {
-        panel_frame: sides.panel_frames.get(&feature).copied(),
-        sheet_layout: sides.sheet_layouts.get(&feature).cloned(),
-        member_path: sides.member_paths.get(&feature).copied(),
-        consumed: consumed_after
-            .difference(consumed_before)
-            .copied()
-            .collect(),
-    }
 }
 impl Extras {
     pub(crate) fn apply(self, feature: EntityId, sides: Sides) {

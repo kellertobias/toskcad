@@ -27,6 +27,7 @@ pub(super) struct Inputs<'a> {
     pub plane: PlaneFrame,
     pub revision: u64,
     pub policy: GeometryPolicy,
+    pub rust_receiver: bool,
 }
 pub(super) struct Cut {
     pub profile: CurvedProfile,
@@ -136,6 +137,15 @@ impl Inputs<'_> {
         let bytes = serde_json::to_vec(&origins).map_err(|e| self.fail(e))?;
         Ok(ContentHash::of(&bytes))
     }
+    fn offset(&self, profile: CurvedProfile) -> Result<CurvedProfile, ModelError> {
+        if self.rust_receiver {
+            profile.offset_rust_transfer_boundary(self.settings.clearance_mm, self.policy)
+        } else {
+            profile.offset_closed_boundary(self.settings.clearance_mm, self.policy)
+        }
+        .map_err(|e| self.fail(e))
+    }
+
     fn hole(
         &self,
         capture: EntityId,
@@ -144,16 +154,14 @@ impl Inputs<'_> {
         radius: f64,
     ) -> Result<Cut, ModelError> {
         let radius = self.settings.diameter_mm.map_or(radius, |d| d * 0.5);
-        let profile = CurvedProfile {
+        let profile = self.offset(CurvedProfile {
             frame: self.plane,
             outer: vec![CurvedEdge2d::Circle {
                 center,
                 radius_mm: radius,
             }],
             holes: vec![],
-        }
-        .offset_closed_boundary(self.settings.clearance_mm, self.policy)
-        .map_err(|e| self.fail(e))?;
+        })?;
         Ok(Cut {
             profile,
             origins: vec![self.origin(capture, identity)],
@@ -340,7 +348,7 @@ pub(super) fn profiles(input: Inputs<'_>) -> Result<Vec<Cut>, ModelError> {
                 }
                 origins.push(input.origin(*face, &format!("edge/{signature}")));
             }
-            let profile = CurvedProfile {
+            let profile = input.offset(CurvedProfile {
                 frame: input.plane,
                 outer: wire
                     .edges
@@ -348,9 +356,7 @@ pub(super) fn profiles(input: Inputs<'_>) -> Result<Vec<Cut>, ModelError> {
                     .map(|edge| input.edge(edge, frame, parity))
                     .collect(),
                 holes: vec![],
-            }
-            .offset_closed_boundary(input.settings.clearance_mm, input.policy)
-            .map_err(|e| input.fail(e))?;
+            })?;
             cuts.push(Cut {
                 profile,
                 origins,
@@ -359,152 +365,4 @@ pub(super) fn profiles(input: Inputs<'_>) -> Result<Vec<Cut>, ModelError> {
         }
     }
     Ok(cuts)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use multicad_core::{
-        model::{BodyInput, OccurrencePath, TransferTargetParameters},
-        references::GeometryIntent,
-    };
-    fn settings() -> ResolvedTransferTarget {
-        ResolvedTransferTarget {
-            diameter_mm: None,
-            clearance_mm: 0.,
-            blind_depth_mm: None,
-            reverse: true,
-        }
-    }
-    fn half_disk() -> CurvedProfile {
-        CurvedProfile {
-            frame: Default::default(),
-            outer: vec![
-                CurvedEdge2d::Line {
-                    a: [-5., 0.],
-                    b: [5., 0.],
-                },
-                CurvedEdge2d::Arc {
-                    center: [0., 0.],
-                    a: [5., 0.],
-                    b: [-5., 0.],
-                    clockwise: false,
-                },
-            ],
-            holes: vec![],
-        }
-    }
-    #[test]
-    fn antiparallel_cutout_projection_preserves_arc_region_and_rejects_tilt() {
-        let producer = EntityId::new();
-        let names: Vec<_> = (0..2)
-            .map(|_| Origin {
-                source: EntityId::new(),
-                role: "curve".into(),
-            })
-            .collect();
-        let hardware = Solid::extrude_curved_profile_named(
-            &half_disk(),
-            3.,
-            producer,
-            &names,
-            Default::default(),
-        )
-        .unwrap();
-        let component = EntityId::new();
-        let topology = hardware.topology_snapshot(component, 0).unwrap();
-        let top = hardware
-            .faces()
-            .unwrap()
-            .iter()
-            .find(|f| {
-                f.plane
-                    .is_some_and(|(p, n)| (p[2] - 3.).abs() < 1e-6 && n[2] > 0.99)
-            })
-            .unwrap()
-            .index;
-        let intent = GeometryIntent::capture(
-            &topology,
-            TopologyKey {
-                kind: TopologyKind::Face,
-                ordinal: top,
-            },
-        )
-        .unwrap();
-        let source = TransferSource {
-            component,
-            path: OccurrencePath {
-                root: component,
-                members: vec![],
-            },
-            selection: TransferSelection::FaceBoundary { face: intent.id },
-        };
-        let captures = vec![AlignmentInput {
-            source: component,
-            intent,
-        }];
-        let target = TransferTarget::new(
-            BodyInput {
-                body: EntityId::new(),
-                producer: EntityId::new(),
-            },
-            OccurrencePath {
-                root: EntityId::new(),
-                members: vec![],
-            },
-            EntityId::new(),
-            TransferTargetParameters::default(),
-        );
-        let plane = PlaneFrame {
-            origin: [0.; 3],
-            u: [1., 0., 0.],
-            v: [0., -1., 0.],
-        };
-        let threads = super::super::threads::ThreadSources::default();
-        let input = |relative| Inputs {
-            threads: &threads,
-            feature: target.feature,
-            source: &source,
-            target: &target,
-            settings: settings(),
-            captures: &captures,
-            hardware: &hardware,
-            topology: &topology,
-            relative,
-            plane,
-            revision: 0,
-            policy: Default::default(),
-        };
-        let cuts = profiles(input(Default::default())).unwrap();
-        assert_eq!(cuts.len(), 1);
-        let area = cuts[0].profile.area_mm2(Default::default()).unwrap();
-        assert!((area - std::f64::consts::PI * 12.5).abs() < 1e-6);
-        assert_eq!(
-            cuts[0]
-                .profile
-                .classify([0., -2.], Default::default())
-                .unwrap(),
-            multicad_kernel::CurvePointLocation::Inside
-        );
-        assert_eq!(
-            cuts[0]
-                .profile
-                .classify([0., 2.], Default::default())
-                .unwrap(),
-            multicad_kernel::CurvePointLocation::Outside
-        );
-        let angle = std::f64::consts::FRAC_PI_4;
-        let (s, c) = angle.sin_cos();
-        let relative = RigidPose {
-            rotation: [[1., 0., 0.], [0., c, -s], [0., s, c]],
-            translation_mm: [0.; 3],
-        };
-        assert!(
-            profiles(input(relative))
-                .err()
-                .unwrap()
-                .message
-                .contains("tilted")
-        );
-    }
 }

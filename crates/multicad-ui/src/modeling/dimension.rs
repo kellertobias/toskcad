@@ -120,6 +120,39 @@ impl DimensionField {
         .on_hover_text(help)
         .changed()
     }
+    /// The unit unqualified input is read in.
+    pub fn unit(&self) -> &str {
+        &self.unit
+    }
+    /// A named field linked to a diagram callout: `highlighted` marks the
+    /// measurement the diagram currently identifies and `invalid` the field
+    /// validation refers to. Returns the editor response for focus linking.
+    pub fn show_linked(
+        &mut self,
+        ui: &mut egui::Ui,
+        id_salt: impl egui::AsIdSalt,
+        label: &str,
+        help: &str,
+        highlighted: bool,
+        invalid: bool,
+    ) -> egui::Response {
+        let id = ui.make_persistent_id(id_salt);
+        let text = egui::RichText::new(format!("{label} ({})", self.unit));
+        ui.label(if invalid {
+            text.color(ui.visuals().error_fg_color).strong()
+        } else if highlighted {
+            text.color(ui.visuals().selection.stroke.color).strong()
+        } else {
+            text
+        });
+        ui.add(
+            egui::TextEdit::singleline(&mut self.text)
+                .id(id)
+                .desired_width(crate::controls::inspector_width(ui))
+                .hint_text(format!("Value or =$parameter · {}", self.unit)),
+        )
+        .on_hover_text(help)
+    }
     /// Two-column Inspector grids reserve room for their label instead of
     /// requesting the entire row for the value. The caller supplies an
     /// owner/field identity, independent of validation text or preceding widgets.

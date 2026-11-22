@@ -1,11 +1,9 @@
-//! Native sheet metal: folded solids and developed flat patterns built from
-//! the same sheet feature, sheet records measured from the evaluated solids,
-//! and the analysis that converts a constant-thickness solid into a sheet
-//! part.
+//! Folded solids, flat blanks, and developed patterns from the same sheet
+//! feature. Sheet records and conversion use the evaluated solid.
 use crate::sheet_forming::{
     PlacedFlange, SheetSpace, developed_rect, flat_cutout, fuse, interfere, polygon_edges,
 };
-use crate::{Model, ModelError, error};
+use crate::{GeometryBackend, Model, ModelError, error};
 use multicad_core::{
     commands::{Actor, CommandError, ErrorCode, Session},
     document::{Document, DocumentError, EntityData, EntityId},
@@ -23,6 +21,8 @@ use multicad_kernel::{
     BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, Solid,
 };
 
+mod channel;
+mod inset;
 mod profile_cut;
 pub(crate) use profile_cut::{CutProfile, build_profile_cut};
 
@@ -61,6 +61,9 @@ pub struct SheetLayout {
     pub patterns: Vec<model::ResolvedPattern>,
     pub(crate) profile_cuts: Vec<profile_cut::ProfileCut>,
     pub(crate) developed: Option<PlanarContours>,
+    /// Why a certified folded solid has no valid flat pattern.
+    pub(crate) developed_refusal: Option<String>,
+    rust_base_origins: Option<Vec<Origin>>,
 }
 impl SheetLayout {
     pub(crate) fn space(&self) -> SheetSpace {
@@ -148,6 +151,7 @@ pub(crate) fn build(
     parameters: &EvaluatedParameters,
     id: EntityId,
     policy: GeometryPolicy,
+    backend: GeometryBackend,
     profile: impl FnOnce(EntityId, &RegionIntent) -> Result<(CurvedProfile, Vec<Origin>), ModelError>,
 ) -> Result<(Solid, SheetLayout), ModelError> {
     let e = |e: DocumentError| error(Some(id), e);
@@ -191,7 +195,7 @@ pub(crate) fn build(
     let direction = if sheet.reverse { scale(n, -1.) } else { n };
     let t = sheet.thickness_mm;
     let flanges = place_flanges(&base, &sheet.flanges).map_err(m)?;
-    let layout = SheetLayout {
+    let mut layout = SheetLayout {
         forming_feature: id,
         frame: base.frame,
         thickness_direction: direction,
@@ -203,7 +207,37 @@ pub(crate) fn build(
         patterns: sheet.patterns.clone(),
         profile_cuts: vec![],
         developed: None,
+        developed_refusal: None,
+        rust_base_origins: None,
     };
+    if backend == GeometryBackend::Rust {
+        if let Some(flange) = layout.flanges.first() {
+            if let Some(touch) = touching_roots(&layout.flanges) {
+                return Err(m(touch));
+            }
+            layout.rust_base_origins = Some(origins.clone());
+            let solid = match sheet.base {
+                ResolvedBase::Rectangle {
+                    length_mm,
+                    width_mm,
+                    ..
+                } if channel::fits(&layout) => {
+                    let section_width = if flange.flange.edge % 2 == 0 {
+                        width_mm
+                    } else {
+                        length_mm
+                    };
+                    channel::build(&mut layout, section_width, policy)
+                }
+                _ => inset::build(&mut layout, &origins, policy),
+            }
+            .map_err(m)?;
+            return Ok((solid, layout));
+        }
+        layout.rust_base_origins = Some(origins);
+        let solid = rebuild_rust_flat(&mut layout, id, policy)?;
+        return Ok((solid, layout));
+    }
     let space = layout.space();
     let mut solid = Solid::extrude_curved_profile_vector_named(
         &base,
@@ -266,6 +300,83 @@ pub(crate) fn build(
         return Err(m("The sheet part falls apart into separate pieces".into()));
     }
     Ok((solid, layout))
+}
+
+/// Two flanges whose roots share an end touch along the web's corner edge.
+fn touching_roots(flanges: &[PlacedFlange]) -> Option<String> {
+    let ends = |f: &PlacedFlange| {
+        [0., f.width].map(|s| std::array::from_fn::<f64, 2, _>(|i| f.start[i] + f.along[i] * s))
+    };
+    flanges.iter().enumerate().find_map(|(i, a)| {
+        flanges[i + 1..].iter().find_map(|b| {
+            let touch = ends(a).into_iter().any(|p| {
+                ends(b)
+                    .into_iter()
+                    .any(|q| (p[0] - q[0]).hypot(p[1] - q[1]) <= TOLERANCE_MM)
+            });
+            let [first, second] = {
+                let mut pair = [a.flange.index, b.flange.index];
+                pair.sort_unstable();
+                pair
+            };
+            touch.then(|| {
+                format!(
+                    "Flanges {} and {} touch at a corner or seam; increase their insets",
+                    first + 1,
+                    second + 1
+                )
+            })
+        })
+    })
+}
+
+fn rebuild_rust_flat(
+    layout: &mut SheetLayout,
+    feature: EntityId,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    let fail = |message: String| error(Some(feature), message);
+    let Some(mut origins) = layout.rust_base_origins.clone() else {
+        return Err(fail(
+            "The previous sheet feature has no Rust flat layout".into(),
+        ));
+    };
+    let mut profile = layout.base.clone();
+    for cutout in &layout.cutouts {
+        let outline = flat_cutout(cutout, &[], layout.thickness_mm, layout.k_factor)
+            .ok_or_else(|| fail("Rust sheet cutouts must be on the flat base".into()))?;
+        let role = cutout.source.id();
+        origins.extend((0..outline.len()).map(|i| Origin {
+            source: layout.forming_feature,
+            role: format!("sheet.{role}.edge.{i}"),
+        }));
+        profile.holes.push(outline);
+    }
+    for cut in &layout.profile_cuts {
+        origins.extend(cut.origins.iter().cloned());
+        profile.holes.push(cut.outline.clone());
+    }
+    let height =
+        layout.thickness_mm * dot(layout.frame.normal(), layout.thickness_direction).signum();
+    let solid = crate::rust_backend::stock_profile(
+        layout.forming_feature,
+        &profile,
+        &origins,
+        height,
+        policy,
+    )
+    .map_err(|cause| {
+        fail(format!(
+            "Rust flat sheet requires an exact outline and separate through openings: {}",
+            cause.message
+        ))
+    })?;
+    let area = solid
+        .volume_mm3()
+        .map_err(|cause| fail(cause.to_string()))?
+        / layout.thickness_mm;
+    layout.developed = Some(base_contours(&solid, layout, area, policy).map_err(fail)?);
+    Ok(solid)
 }
 fn subtract(solid: Solid, tool: &Solid, policy: GeometryPolicy) -> Result<Solid, String> {
     solid
@@ -404,47 +515,15 @@ fn flat_solid(layout: &SheetLayout, policy: GeometryPolicy) -> Result<(Solid, f6
             return Err("A flange edge is not straight".into());
         };
         let developed = f.flange.developed_mm(t, k);
-        let at = |along: f64, out: f64| {
-            [
-                f.start[0] + f.along[0] * along + f.outward[0] * out,
-                f.start[1] + f.along[1] * along + f.outward[1] * out,
-            ]
-        };
-        let mut points = vec![a];
-        let relief = f.flange.relief_mm;
-        if f.flange.start_inset_mm > 1e-9 {
-            if let Some([w, depth]) = relief {
-                if w > f.flange.start_inset_mm + 1e-9 {
-                    return Err(format!(
-                        "Flange {} relief is wider than its start inset",
-                        f.flange.index + 1
-                    ));
-                }
-                points.extend([at(-w, 0.), at(-w, -depth), at(0., -depth)]);
-                area -= w * depth;
-            }
-            points.push(at(0., 0.));
+        let points = inset::edge_points(f, a, b, developed)?;
+        if let Some([w, depth]) = f.flange.relief_mm {
+            area -= w
+                * depth
+                * f64::from(
+                    u8::from(f.flange.start_inset_mm > 1e-9)
+                        + u8::from(f.flange.end_inset_mm > 1e-9),
+                );
         }
-        points.extend([at(0., developed), at(f.width, developed)]);
-        if f.flange.end_inset_mm > 1e-9 {
-            points.push(at(f.width, 0.));
-            if let Some([w, depth]) = relief {
-                if w > f.flange.end_inset_mm + 1e-9 {
-                    return Err(format!(
-                        "Flange {} relief is wider than its end inset",
-                        f.flange.index + 1
-                    ));
-                }
-                points.extend([
-                    at(f.width, -depth),
-                    at(f.width + w, -depth),
-                    at(f.width + w, 0.),
-                ]);
-                area -= w * depth;
-            }
-        }
-        points.push(b);
-        points.dedup_by(|p, q| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-9);
         outer.extend(
             points
                 .windows(2)
@@ -480,10 +559,22 @@ pub(crate) fn flat_contours(
     layout: &SheetLayout,
     policy: GeometryPolicy,
 ) -> Result<PlanarContours, String> {
+    if let Some(refusal) = &layout.developed_refusal {
+        return Err(refusal.clone());
+    }
     if let Some(contours) = &layout.developed {
         return Ok(contours.clone());
     }
     let (solid, area) = flat_solid(layout, policy)?;
+    base_contours(&solid, layout, area, policy)
+}
+
+fn base_contours(
+    solid: &Solid,
+    layout: &SheetLayout,
+    area: f64,
+    policy: GeometryPolicy,
+) -> Result<PlanarContours, String> {
     let outward = scale(layout.thickness_direction, -1.);
     let faces = solid.faces().map_err(|e| e.to_string())?;
     let on_base: Vec<_> = faces

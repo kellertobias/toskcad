@@ -3,8 +3,8 @@ use multicad_core::{
     references::{AnalyticGeometry, TopologyKind},
 };
 use multicad_kernel::{
-    BRepSelection, BooleanOperation, GeneratedZaWormWheel, GeometryPolicy, RigidTransform, Solid,
-    ZaWorm,
+    BRepSelection, BooleanOperation, GeneratedZaWormWheel, GeometryErrorKind, GeometryPolicy,
+    MeshOptions, RigidTransform, Solid, ZaWorm,
 };
 use std::f64::consts::{PI, TAU};
 
@@ -75,7 +75,7 @@ fn native_worm_has_axial_trapezoid_centered_phase_bore_and_independent_volume() 
         let length = spec.threaded_length_mm;
         let m = spec.axial_module_mm;
         let id = EntityId::new();
-        let native = Solid::za_worm_named(spec, id, policy).unwrap();
+        let native = Solid::rust_za_worm_named(spec, id, policy).unwrap();
         assert_eq!(native.solid_count().unwrap(), 1);
         let bounds = native.bounds().unwrap();
         close(bounds.min[2], -length / 2., 2e-6);
@@ -195,7 +195,8 @@ fn witness(solid: &Solid, owner: EntityId, role: &str, point: [f64; 3], outward:
 #[test]
 fn generated_wheel_has_measured_throat_flanks_root_caps_bore_and_native_step() {
     let id = EntityId::new();
-    let native = Solid::generated_za_worm_wheel_named(wheel(32), id, Default::default()).unwrap();
+    let native =
+        Solid::rust_generated_za_worm_wheel_named(wheel(32), id, Default::default()).unwrap();
     assert_eq!(native.solid_count().unwrap(), 1);
     // Independent Green-integral oracle, not a stored native result. Its
     // explicit radius-2/diameter-4 recipe and numerical refinement receipts
@@ -261,7 +262,8 @@ fn generated_wheel_upper_domain_has_independent_volume_and_step_readback() {
         ..wheel(64)
     };
     let native =
-        Solid::generated_za_worm_wheel_named(spec, EntityId::new(), Default::default()).unwrap();
+        Solid::rust_generated_za_worm_wheel_named(spec, EntityId::new(), Default::default())
+            .unwrap();
     let expected = 8. * 6393.570566838108;
     let area: f64 = native.faces().unwrap().iter().map(|f| f.area_mm2).sum();
     close(
@@ -287,8 +289,8 @@ fn conjugate_pair_phase_clears_and_half_tooth_wrong_phase_interferes() {
     let policy = GeometryPolicy::default();
     let worm_id = EntityId::new();
     let wheel_id = EntityId::new();
-    let worm = Solid::za_worm_named(worm(), worm_id, policy).unwrap();
-    let wheel = Solid::generated_za_worm_wheel_named(wheel(32), wheel_id, policy).unwrap();
+    let worm = Solid::rust_za_worm_named(worm(), worm_id, policy).unwrap();
+    let wheel = Solid::rust_generated_za_worm_wheel_named(wheel(32), wheel_id, policy).unwrap();
     for drive in [0., TAU * 0.37] {
         let (s, c) = drive.sin_cos();
         let driven = worm
@@ -357,19 +359,90 @@ fn conjugate_pair_phase_clears_and_half_tooth_wrong_phase_interferes() {
     }
 }
 #[test]
+fn worm_interference_solid_moves_rigidly_stays_in_both_members_and_refuses_boundary_queries() {
+    let policy = GeometryPolicy::default();
+    let worm = Solid::rust_za_worm_named(worm(), EntityId::new(), policy).unwrap();
+    let (s, c) = (PI / 32.).sin_cos();
+    let wheel = Solid::rust_generated_za_worm_wheel_named(wheel(32), EntityId::new(), policy)
+        .unwrap()
+        .transformed(RigidTransform {
+            rotation: [[c, -s, 0.], [0., 0., 1.], [-s, -c, 0.]],
+            translation_mm: [-21., 0., 0.],
+        })
+        .unwrap();
+    // Either operand order gives the same common material.
+    let common = worm
+        .boolean(&wheel, BooleanOperation::Intersect, policy)
+        .unwrap()
+        .unwrap();
+    let swapped = wheel
+        .boolean(&worm, BooleanOperation::Intersect, policy)
+        .unwrap()
+        .unwrap();
+    let volume = common.volume_mm3().unwrap();
+    assert!(
+        volume > 1. && volume < worm.volume_mm3().unwrap(),
+        "{volume}"
+    );
+    close(swapped.volume_mm3().unwrap(), volume, 1e-9);
+    let bounds = common.bounds().unwrap();
+    for member in [&worm, &wheel] {
+        let b = member.bounds().unwrap();
+        for i in 0..3 {
+            assert!(bounds.min[i] >= b.min[i] && bounds.max[i] <= b.max[i]);
+        }
+    }
+    // A rigid motion keeps the volume and moves the member boxes with it.
+    let moved = common
+        .transformed(RigidTransform {
+            rotation: [[0., -1., 0.], [1., 0., 0.], [0., 0., 1.]],
+            translation_mm: [4., -2., 7.],
+        })
+        .unwrap();
+    close(moved.volume_mm3().unwrap(), volume, 1e-12);
+    let mb = moved.bounds().unwrap();
+    close(mb.min[2], bounds.min[2] + 7., 1e-9);
+    close(mb.max[0], 4. - bounds.min[1], 1e-6);
+    // The common boundary is not built: boundary queries are typed refusals.
+    let kind = |result: Result<(), multicad_kernel::GeometryError>| result.unwrap_err().kind;
+    assert_eq!(
+        kind(common.mesh(MeshOptions::default()).map(drop)),
+        GeometryErrorKind::Unsupported
+    );
+    assert_eq!(
+        kind(common.solid_count().map(drop)),
+        GeometryErrorKind::Unsupported
+    );
+    assert!(!common.supports_step_export());
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        kind(common.write_step(&dir.path().join("common.step"))),
+        GeometryErrorKind::Unsupported
+    );
+    // A difference of interfering curved members stays a typed refusal.
+    assert_eq!(
+        kind(
+            worm.boolean(&wheel, BooleanOperation::Subtract, policy)
+                .map(drop)
+        ),
+        GeometryErrorKind::Unsupported
+    );
+}
+#[test]
 fn parallel_intersection_keeps_independent_native_owners_on_their_threads() {
     let workers: Vec<_> = (0..2)
         .map(|_| {
             std::thread::spawn(|| {
                 let policy = GeometryPolicy::default();
-                let a = Solid::za_worm_named(worm(), EntityId::new(), policy).unwrap();
-                let b = Solid::generated_za_worm_wheel_named(wheel(32), EntityId::new(), policy)
-                    .unwrap()
-                    .transformed(RigidTransform {
-                        rotation: [[1., 0., 0.], [0., 0., 1.], [0., -1., 0.]],
-                        translation_mm: [-21., 0., 0.],
-                    })
-                    .unwrap();
+                let a = Solid::rust_za_worm_named(worm(), EntityId::new(), policy).unwrap();
+                let b =
+                    Solid::rust_generated_za_worm_wheel_named(wheel(32), EntityId::new(), policy)
+                        .unwrap()
+                        .transformed(RigidTransform {
+                            rotation: [[1., 0., 0.], [0., 0., 1.], [0., -1., 0.]],
+                            translation_mm: [-21., 0., 0.],
+                        })
+                        .unwrap();
                 for _ in 0..2 {
                     assert!(a.intersect_parallel(&b, policy).unwrap().is_none());
                 }
@@ -401,7 +474,7 @@ fn unsupported_worm_native_domains_are_refused_before_construction() {
             ..worm()
         },
     ] {
-        assert!(Solid::za_worm_named(bad, EntityId::new(), p).is_err());
+        assert!(Solid::rust_za_worm_named(bad, EntityId::new(), p).is_err());
     }
     for bad in [
         GeneratedZaWormWheel {
@@ -421,6 +494,6 @@ fn unsupported_worm_native_domains_are_refused_before_construction() {
             ..wheel(32)
         },
     ] {
-        assert!(Solid::generated_za_worm_wheel_named(bad, EntityId::new(), p).is_err());
+        assert!(Solid::rust_generated_za_worm_wheel_named(bad, EntityId::new(), p).is_err());
     }
 }

@@ -138,15 +138,10 @@ fn native_profile_previews_reject_or_apply_once_then_edit_history_save_and_reope
         Some(dir.path().into()),
         false,
     ));
-    let native_before = multicad_kernel::thread_factory_stats().unwrap();
     let rejected = run(
         &h,
         "set_mechanical_part",
         json!({"expected_revision":0,"name":"Configured H1 pan","recipe":pan_h1()}),
-    );
-    assert!(
-        multicad_kernel::thread_factory_stats().unwrap().requests > native_before.requests,
-        "Public candidate must pass actual native geometry preflight"
     );
     let rejected_feature: EntityId = serde_json::from_value(rejected["feature"].clone()).unwrap();
     let rejected_review = rejected["review"].as_u64().unwrap();
@@ -158,6 +153,17 @@ fn native_profile_previews_reject_or_apply_once_then_edit_history_save_and_reope
         let pending = ledger.pending();
         assert_eq!(pending.len(), 1);
         let candidate = pending[0].candidate().unwrap();
+        // The public candidate must build an actual Rust screw solid.
+        let built = multicad_model::Compiler::default()
+            .compile_with_backend(
+                candidate.document(),
+                1,
+                multicad_model::GeometryBackend::Rust,
+                None,
+            )
+            .unwrap();
+        let volume = built.solid(rejected_feature).unwrap().volume_mm3().unwrap();
+        assert!(volume.is_finite() && volume > 0., "{volume}");
         let source = model::read_mechanical_part(candidate.document(), rejected_feature).unwrap();
         assert!(matches!(
             source.parameters,
@@ -311,9 +317,21 @@ fn native_profile_previews_reject_or_apply_once_then_edit_history_save_and_reope
     let raw = Solid::read_step(&dir.path().join("configured-csk.step"), policy).unwrap();
     assert_eq!(raw.solid_count().unwrap(), 1);
     let volume = raw.volume_mm3().unwrap();
-    let reported = receipt["readback_volume_mm3"].as_f64().unwrap();
+    // The Rust writer proves the periodic thread by decoded volume bounds
+    // instead of one scalar readback; both bounds must meet the readback
+    // tolerance against the independent reader.
+    assert!(receipt["readback_volume_mm3"].is_null());
+    let proof = &receipt["step_verification"];
+    assert_eq!(proof["method"], "decoded_periodic_repair");
+    let members = proof["periodic_members"].as_array().unwrap();
+    assert_eq!(members.len(), 1);
+    let decoded = members[0]["decoded_volume_bounds_mm3"].as_array().unwrap();
+    let [low, high] = [decoded[0].as_f64().unwrap(), decoded[1].as_f64().unwrap()];
+    assert!(low > 0. && high >= low);
     let area: f64 = raw.faces().unwrap().iter().map(|f| f.area_mm2).sum();
-    assert!((volume - reported).abs() <= policy.linear_tolerance_mm * area + 2e-7 * volume);
+    for reported in [low, high] {
+        assert!((volume - reported).abs() <= policy.linear_tolerance_mm * area + 2e-7 * volume);
+    }
     let bounds = raw.bounds().unwrap();
     assert!((bounds.min[2] + 1.65).abs() < 10. * policy.linear_tolerance_mm);
     assert!((bounds.max[2] - 12.35).abs() < 10. * policy.linear_tolerance_mm);

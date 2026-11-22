@@ -124,7 +124,6 @@ fn genuine_both_end_tangent_continuations_require_explicit_contacts_and_keep_ori
         .unwrap();
         assert_eq!(edit.report.replacements[&f.target], vec![f.target]);
         f.session.commit(edit.edit.preview.unwrap()).unwrap();
-        let result = NativeRegionQueries::curve(&review::current_curve(&f).unwrap());
         for i in 0..=50 {
             let p = original_native
                 .evaluate(a + (b - a) * i as f64 / 50., policy)
@@ -139,7 +138,16 @@ fn genuine_both_end_tangent_continuations_require_explicit_contacts_and_keep_ori
             .unwrap();
             assert!(hits.iter().any(|h| h.distance_mm <= 1e-7));
         }
-        assert!(result.self_intersections(policy).unwrap().points.is_empty());
+        assert!(
+            multicad_core::sketch_regions::RegionQueries::self_intersections(
+                &NativeRegionQueries::analytic(policy).unwrap(),
+                &review::current_curve(&f).unwrap(),
+                policy.linear_tolerance_mm,
+            )
+            .unwrap()
+            .points
+            .is_empty()
+        );
         let saved = review::archive(f.session.document()).unwrap();
         assert_eq!(
             review::reopen(&saved).unwrap().document(),
@@ -325,4 +333,173 @@ fn genuine_missing_hit_tangent_and_overlap_have_no_commit_capable_result() {
         );
         assert_eq!(f.session.document(), &source);
     }
+}
+
+#[test]
+fn rust_trims_and_reopens_a_weighted_degree_one_spline_with_the_authored_id() {
+    use multicad_core::{
+        constraint_sketch::SplineBasis,
+        sketch_trim::{TrimCurve, TrimPolicy},
+    };
+    use std::collections::BTreeSet;
+
+    let mut f = review::seed(true, review::BoundaryKind::Line).unwrap();
+    let mut source = review::source(&f).unwrap();
+    let CurveKind::BSpline { poles, basis } = &mut source
+        .sketch
+        .curves
+        .iter_mut()
+        .find(|curve| curve.id == f.target)
+        .unwrap()
+        .kind
+    else {
+        panic!("fixture must contain a spline");
+    };
+    let weights = basis.weights.clone();
+    *basis = SplineBasis::open_uniform(1, poles.len()).unwrap();
+    basis.weights = weights;
+    let mut parameter = f.session.document().get(f.cut_parameter).unwrap().clone();
+    let EntityData::Parameter { expression, .. } = &mut parameter.data else {
+        panic!("fixture must contain a driving parameter");
+    };
+    *expression = "15".into();
+    let mut edits = source.replace(f.session.document(), f.sketch).unwrap();
+    edits.push(Mutation::Replace(parameter));
+    review::apply(&mut f, "Set up weighted linear trim", edits).unwrap();
+
+    let before = f.session.document().clone();
+    let original = NativeRegionQueries::curve(&review::current_curve(&f).unwrap());
+    let request = TrimRequest::TrimCurve(TrimCurve {
+        target: f.target,
+        pick_mm: review::point_at(&f, 0.9).unwrap(),
+        boundaries: BTreeSet::from([f.boundary]),
+    });
+    let queries = NativeRegionQueries::analytic(GeometryPolicy::default()).unwrap();
+    let edit = multicad_solver::prepare_trim_with_queries(
+        &f.session,
+        f.session.revision(),
+        review::actor(),
+        f.sketch,
+        None,
+        &request,
+        TrimPolicy::default(),
+        &queries,
+    )
+    .unwrap();
+    assert_eq!(f.session.document(), &before);
+    assert_eq!(edit.report.replacements[&f.target], [f.target]);
+    assert_eq!(edit.report.contacts.len(), 1);
+    near(edit.report.contacts[0].parameter, 2. / 3.);
+    point_near(edit.report.contacts[0].point_mm, [15., 5.]);
+    f.session.commit(edit.edit.preview.unwrap()).unwrap();
+    let after = f.session.document().clone();
+    let retained = NativeRegionQueries::curve(&review::current_curve(&f).unwrap());
+    let policy = GeometryPolicy::default();
+    let [first, last] = retained.domain(policy).unwrap();
+    near(first, 0.);
+    near(last, 2. / 3.);
+    for i in 0..=24 {
+        let u = last * f64::from(i) / 24.;
+        point_near(
+            retained.evaluate(u, policy).unwrap().point,
+            original.evaluate(u, policy).unwrap().point,
+        );
+    }
+    let reopened = review::reopen(&review::archive(f.session.document()).unwrap()).unwrap();
+    assert_eq!(reopened.document(), &after);
+    f.session
+        .undo(f.session.revision(), review::actor())
+        .unwrap();
+    assert_eq!(f.session.document(), &before);
+    f.session
+        .redo(f.session.revision(), review::actor())
+        .unwrap();
+    assert_eq!(f.session.document(), &after);
+}
+
+#[test]
+fn rust_trims_a_saved_weighted_quadratic_against_a_finite_line() {
+    use multicad_core::sketch_trim::{TrimCurve, TrimPolicy};
+    use std::collections::BTreeSet;
+
+    let mut f = review::seed(true, review::BoundaryKind::Line).unwrap();
+    let mut source = review::source(&f).unwrap();
+    let CurveKind::BSpline { basis, .. } = &mut source
+        .sketch
+        .curves
+        .iter_mut()
+        .find(|curve| curve.id == f.target)
+        .unwrap()
+        .kind
+    else {
+        panic!("fixture must contain a weighted spline");
+    };
+    basis.knots = vec![2., 9.];
+    let mutations = source.replace(f.session.document(), f.sketch).unwrap();
+    review::apply(
+        &mut f,
+        "Author quadratic in a nonnormalized domain",
+        mutations,
+    )
+    .unwrap();
+    f.session = review::reopen(&review::archive(f.session.document()).unwrap()).unwrap();
+
+    let before = f.session.document().clone();
+    let original = NativeRegionQueries::curve(&review::current_curve(&f).unwrap());
+    let request = TrimRequest::TrimCurve(TrimCurve {
+        target: f.target,
+        pick_mm: review::point_at(&f, 0.9).unwrap(),
+        boundaries: BTreeSet::from([f.boundary]),
+    });
+    let policy = GeometryPolicy::default();
+    let queries = NativeRegionQueries::analytic(policy).unwrap();
+    let edit = multicad_solver::prepare_trim_with_queries(
+        &f.session,
+        f.session.revision(),
+        review::actor(),
+        f.sketch,
+        None,
+        &request,
+        TrimPolicy::default(),
+        &queries,
+    )
+    .unwrap();
+    assert_eq!(f.session.document(), &before);
+    assert_eq!(edit.report.replacements[&f.target], [f.target]);
+    assert_eq!(edit.report.contacts.len(), 1);
+    near(edit.report.contacts[0].parameter, 0.5);
+    point_near(edit.report.contacts[0].point_mm, [10., 10. / 3.]);
+    f.session.commit(edit.edit.preview.unwrap()).unwrap();
+
+    let after = f.session.document().clone();
+    let retained = NativeRegionQueries::curve(&review::current_curve(&f).unwrap());
+    let [first, last] = retained.domain(policy).unwrap();
+    near(first, 2.);
+    near(last, 5.5);
+    let multicad_kernel::CurvedEdge2d::BSpline(spline) = &retained else {
+        panic!("trim changed the curve kind");
+    };
+    assert_eq!(spline.degree, 2);
+    assert!(spline.weights.is_some());
+    for i in 0..=24 {
+        let u = first + (last - first) * f64::from(i) / 24.;
+        point_near(
+            retained.evaluate(u, policy).unwrap().point,
+            original.evaluate(u, policy).unwrap().point,
+        );
+    }
+    assert_eq!(
+        review::reopen(&review::archive(&after).unwrap())
+            .unwrap()
+            .document(),
+        &after
+    );
+    f.session
+        .undo(f.session.revision(), review::actor())
+        .unwrap();
+    assert_eq!(f.session.document(), &before);
+    f.session
+        .redo(f.session.revision(), review::actor())
+        .unwrap();
+    assert_eq!(f.session.document(), &after);
 }

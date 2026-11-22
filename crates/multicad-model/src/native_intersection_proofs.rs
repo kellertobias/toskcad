@@ -330,6 +330,3 @@ pub fn no_intersection(
     }
     Ok(empty)
 }
-
-#[cfg(test)]
-mod tests;

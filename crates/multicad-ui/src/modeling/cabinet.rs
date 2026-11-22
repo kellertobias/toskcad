@@ -4,10 +4,18 @@
 use super::{
     FormStamp, PreviewState,
     cabinet_edit::{self, CabinetGuide},
+    diagram::{self, Choice, DiagramLink, Key},
     dimension::DimensionField,
     form::{self, FormAction, ModelEvent, ModelRequest},
 };
 mod fields;
+#[cfg(test)]
+mod naming_tests;
+mod points;
+mod viewport;
+mod visual;
+#[cfg(test)]
+mod visual_tests;
 use crate::{controls, egui};
 use fields::CabinetFields;
 use multicad_core::{
@@ -21,6 +29,7 @@ use multicad_core::{
         ShelfLayout, Shelves, angle, length,
     },
 };
+pub(in crate::modeling) use points::PanelPointPick;
 
 /// The typed intent sent to native preview and Apply.
 #[derive(Clone, Debug)]
@@ -111,6 +120,41 @@ fn field(value: f64, unit: &'static str) -> DimensionField {
 fn of(d: &Dimension, unit: &'static str) -> Result<DimensionField, String> {
     DimensionField::from_dimension(d, unit)
 }
+/// Default names the stock editor gives new stock; they do not identify it.
+const PLACEHOLDER_STOCK_NAMES: [&str; 1] = ["New panel stock"];
+
+/// The generated name prefix for a panel cut from `stock`: the stock's own
+/// display name, its material name when the stock still has the editor's
+/// placeholder name, or `Panel` without stock.
+fn panel_name_prefix(document: &Document, stock: Option<EntityId>) -> Option<String> {
+    let entity = document.get(stock?)?;
+    let name = entity.name.trim();
+    if !name.is_empty()
+        && !PLACEHOLDER_STOCK_NAMES
+            .iter()
+            .any(|placeholder| placeholder.eq_ignore_ascii_case(name))
+    {
+        return Some(name.to_owned());
+    }
+    match materials::read(entity).ok().flatten() {
+        Some(LibraryDefinition::Stock(s)) => document
+            .get(s.material)
+            .map(|material| material.name.trim().to_owned())
+            .filter(|name| !name.is_empty()),
+        _ => None,
+    }
+}
+
+/// `MPX 6 - 1`, `MPX 6 - 2`, … skipping names any entity already uses,
+/// including the producer feature label; `Panel 1` without a stock name.
+pub(super) fn generated_panel_name(document: &Document, stock: Option<EntityId>) -> String {
+    let mut names = super::names::GeneratedNames::new(document);
+    match panel_name_prefix(document, stock) {
+        Some(prefix) => names.numbered_with(&prefix, " - ", " feature"),
+        None => names.numbered("Panel", " feature"),
+    }
+}
+
 /// Panel stock entries: (stock, name, thickness).
 fn panel_stocks(document: &Document) -> Vec<(EntityId, String, f64)> {
     document
@@ -195,6 +239,17 @@ pub(super) struct CabinetPanel {
     error: Option<String>,
     /// Display-only envelope guide for (stamp, source revision).
     guide: Option<(FormStamp, u64, Option<CabinetGuide>)>,
+    link: DiagramLink,
+    // Panel viewport draft (CAD-374).
+    resize: super::primitive::gizmo::ResizeGizmo,
+    corner_inputs: super::primitive::corner_inputs::CornerInputs,
+    last_shape: Option<model::ResolvedPrimitive>,
+    // Point-to-point placement of the panel draft (CAD-375).
+    point_pick: Option<points::PanelPointPick>,
+    alignment: Option<points::PanelAlignment>,
+    /// The name was generated from the stock and follows stock changes until
+    /// the user types their own (CAD-377).
+    name_generated: bool,
 }
 impl CabinetPanel {
     pub fn new(document: &Document, name: String) -> Self {
@@ -241,11 +296,20 @@ impl CabinetPanel {
             plane: PanelPlane::Xy,
             length: field(800., "mm"),
             panel_width: field(400., "mm"),
-            grain: GrainAxis::U,
+            // New panels default to Grain: Any (CAD-365); reopening keeps
+            // the saved choice.
+            grain: GrainAxis::Free,
             edges: [false; 4],
             oversize: field(0., "mm"),
             error: None,
             guide: None,
+            link: DiagramLink::default(),
+            resize: super::primitive::gizmo::ResizeGizmo::locked(viewport::LOCKED),
+            corner_inputs: Default::default(),
+            last_shape: None,
+            point_pick: None,
+            alignment: None,
+            name_generated: false,
         }
     }
     pub fn cabinet(document: &Document, name: String) -> Self {
@@ -262,11 +326,25 @@ impl CabinetPanel {
         form.kind = Kind::Panel;
         form
     }
-    pub(super) fn select_stock(&mut self, id: EntityId) {
+    /// A new rectangular panel named from its selected stock (CAD-377).
+    pub fn generated_panel(document: &Document) -> Self {
+        let mut form = Self::panel(document, String::new());
+        form.name_generated = true;
+        form.name = generated_panel_name(document, form.stock);
+        form
+    }
+    pub(super) fn select_stock(&mut self, id: EntityId, document: &Document) {
         self.stock = Some(id);
+        self.stock_changed(document);
         self.stamp.changed();
         self.error = None;
         self.guide = None;
+    }
+    /// A generated name follows the newly chosen stock; a typed name stays.
+    fn stock_changed(&mut self, document: &Document) {
+        if self.name_generated && self.kind == Kind::Panel && self.existing.is_none() {
+            self.name = generated_panel_name(document, self.stock);
+        }
     }
     /// Viewport dimensions of the carcass being drafted, planned exactly as
     /// Apply would plan it; `None` for panels or an invalid draft.
@@ -387,6 +465,10 @@ impl CabinetPanel {
     }
     pub fn stamp(&self) -> FormStamp {
         self.stamp
+    }
+    /// The panel body this draft creates or edits.
+    pub(in crate::modeling) fn body(&self) -> EntityId {
+        self.body
     }
     pub fn label(&self) -> &'static str {
         match self.kind {
@@ -522,15 +604,25 @@ impl CabinetPanel {
         ui.small(match (self.kind, self.existing.is_some()) {
             (Kind::Carcass, false) => "Sides, top, bottom, back and shelves from an outside envelope. Each panel is a named Part you can select.",
             (Kind::Carcass, true) => "Edit the carcass. Panels whose role remains keep their Parts; shelves and backs are added or removed.",
-            (Kind::Panel, _) => "A rectangular panel from panel stock. Thickness comes from the stock; banding and oversize change the core cut size.",
+            (Kind::Panel, _) => "A rectangular panel from panel stock. Drag the blue corners or click one to type Length and Width in the viewport. Thickness comes from the stock; edge banding strips and oversize change the core cut size.",
         });
+        if self.kind == Kind::Carcass {
+            // What an edit keeps, adds or removes comes first, before the
+            // choices that change it.
+            self.show_role_changes(ui, document, enabled);
+        }
         ui.label("Name");
-        changed |= ui
+        let typed = ui
             .add_enabled(
                 self.existing.is_none(),
                 egui::TextEdit::singleline(&mut self.name).desired_width(ui.available_width()),
             )
             .changed();
+        self.name_generated &= !typed;
+        changed |= typed;
+        if self.name_generated {
+            ui.small("Named from the panel stock; type to choose your own name.");
+        }
         let stocks = panel_stocks(document);
         if stocks.is_empty() {
             ui.colored_label(
@@ -547,6 +639,9 @@ impl CabinetPanel {
         if create {
             return Some(ModelEvent::CreateStock(crate::materials::ToolStock::Panel));
         }
+        if selected {
+            self.stock_changed(document);
+        }
         changed |= selected;
         ui.separator();
         match self.kind {
@@ -555,7 +650,6 @@ impl CabinetPanel {
         }
         ui.separator();
         if self.kind == Kind::Carcass {
-            self.show_role_changes(ui, document, enabled);
             ui.small("The viewport shows the envelope dimensions and shelf heights of this draft.");
         }
         form::preview_status(ui, self.stamp, preview);
@@ -632,15 +726,83 @@ impl CabinetPanel {
     fn show_band(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = self.band.show(
             ui,
-            "Band thickness",
-            "Outside the core; the finished size includes it",
+            "Edge strip thickness",
+            "Thickness of the glued strip. The finished size includes it, so the core is cut smaller by this amount per banded edge",
         );
         changed |= self.allowance.show(
             ui,
-            "Band allowance",
-            "Extra core per banded edge, trimmed flush after banding",
+            "Strip trim allowance",
+            "Extra core per banded edge, trimmed flush after the strip is applied",
         );
         changed
+    }
+    /// Carcass fields linked to the diagram, in display order.
+    fn linked_fields(&self) -> Vec<(Key, &DimensionField)> {
+        let mut out = vec![
+            (visual::WIDTH, &self.width),
+            (visual::HEIGHT, &self.height),
+            (visual::DEPTH, &self.depth),
+        ];
+        if let Some(options) = &self.options {
+            out.extend(options.linked_fields());
+        }
+        if self.back == BackKind::Inset {
+            out.push((visual::RECESS, &self.recess));
+        }
+        out.push((visual::SETBACK, &self.setback));
+        out.push((visual::CLEARANCE, &self.clearance));
+        if self.banded {
+            out.push((visual::BAND[0], &self.band));
+            out.push((visual::BAND[1], &self.allowance));
+        }
+        out.extend(
+            visual::PLACEMENT
+                .into_iter()
+                .zip(self.origin.iter().chain([&self.rotation])),
+        );
+        out
+    }
+    fn schematic(
+        &self,
+        document: &Document,
+        stocks: &[(EntityId, String, f64)],
+    ) -> diagram::Diagram {
+        let parameters = multicad_core::parameters::evaluate(document).ok();
+        let value = |f: &DimensionField| {
+            parameters
+                .as_ref()
+                .and_then(|p| diagram::value_of(f, document, p))
+        };
+        let thickness = |id: Option<EntityId>| {
+            stocks
+                .iter()
+                .find(|(s, ..)| Some(*s) == id)
+                .map(|(_, _, t)| *t)
+        };
+        let body = thickness(self.stock);
+        let values = visual::Values {
+            width: value(&self.width),
+            height: value(&self.height),
+            depth: value(&self.depth),
+            toe: self.options.as_ref().and_then(|o| value(&o.toe)),
+            body,
+            back: thickness(self.back_stock),
+            recess: value(&self.recess),
+            setback: value(&self.setback),
+            shelves: self
+                .options
+                .as_ref()
+                .map(|o| o.shelf_marks(document, body))
+                .unwrap_or_default(),
+            explicit: self.options.is_some(),
+        };
+        visual::carcass(
+            &visual::Choices {
+                construction: self.construction,
+                back: self.back,
+            },
+            &values,
+        )
     }
     fn show_carcass(
         &mut self,
@@ -649,9 +811,42 @@ impl CabinetPanel {
         stocks: &[(EntityId, String, f64)],
     ) -> bool {
         let mut changed = false;
-        changed |= self.width.show(ui, "Width", "Outside width");
-        changed |= self.height.show(
+        let mut link = std::mem::take(&mut self.link);
+        link.invalid = diagram::first_invalid(document, self.linked_fields());
+        let schematic = self.schematic(document, stocks);
+        let values: Vec<(Key, String)> = self
+            .linked_fields()
+            .into_iter()
+            .map(|(k, f)| (k, diagram::field_value(f)))
+            .collect();
+        let value = |key: Key| {
+            values
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map_or_else(String::new, |(_, v)| v.clone())
+        };
+        link.diagram(
             ui,
+            ("cabinet-diagram", self.feature),
+            &schematic,
+            260.,
+            &value,
+        );
+        ui.small("Schematic of this draft · click a dimension to edit it");
+        ui.strong("Size");
+        changed |= link.field(
+            ui,
+            visual::WIDTH,
+            &mut self.width,
+            "cabinet-width",
+            "Width",
+            "Outside width",
+        );
+        changed |= link.field(
+            ui,
+            visual::HEIGHT,
+            &mut self.height,
+            "cabinet-height",
             if self.options.is_some() {
                 "Floor-to-top height"
             } else {
@@ -659,55 +854,88 @@ impl CabinetPanel {
             },
             "Outside height measured from the local floor datum",
         );
-        changed |= self.depth.show(ui, "Depth", "Outside depth, back included");
+        changed |= link.field(
+            ui,
+            visual::DEPTH,
+            &mut self.depth,
+            "cabinet-depth",
+            "Depth",
+            "Outside depth, back included",
+        );
         if let Some(options) = &mut self.options {
-            changed |= options.toe.show(
+            changed |= link.field(
                 ui,
+                visual::TOE,
+                &mut options.toe,
+                "cabinet-toe",
                 "Toe-kick clearance",
                 "Local floor to the bottom panel underside; no front recess is implied",
             );
-            egui::CollapsingHeader::new("Placement").show(ui, |ui| {
-                changed |= self.show_origin(ui, "World position of the local floor datum");
-                changed |=
-                    self.rotation
-                        .show(ui, "Rotation", "About +Z through the local floor datum");
-            });
-        } else {
-            changed |= self.show_origin(ui, "World position of the front-left-bottom corner");
-            changed |= self.rotation.show(
-                ui,
-                "Rotation",
-                "About +Z through the origin; unrotated, the front faces −Y",
-            );
         }
-        ui.label("Construction");
-        changed |= ui
-            .radio_value(
-                &mut self.construction,
+        ui.separator();
+        ui.strong("Construction");
+        let constructions = [
+            (
                 Construction::SidesFullHeight,
                 "Full-height sides",
-            )
-            .changed();
-        changed |= ui
-            .radio_value(
-                &mut self.construction,
+                "Sides run floor to top; the top and bottom fit between them. Side edges show on top.",
+            ),
+            (
                 Construction::TopBottomFullWidth,
                 "Full-width top and bottom",
-            )
-            .changed();
-        ui.separator();
-        ui.label("Back");
-        ui.horizontal(|ui| {
-            changed |= ui
-                .radio_value(&mut self.back, BackKind::None, "None")
-                .changed();
-            changed |= ui
-                .radio_value(&mut self.back, BackKind::Inset, "Inset")
-                .changed();
-            changed |= ui
-                .radio_value(&mut self.back, BackKind::Overlay, "Overlay")
-                .changed();
-        });
+                "Top and bottom span the full width; the sides fit between them. Top edges show at the sides.",
+            ),
+        ];
+        let choices: Vec<Choice<'_, Construction>> = constructions
+            .iter()
+            .map(|(value, label, hint)| Choice {
+                value: *value,
+                label,
+                hint,
+                art: visual::construction_art(*value),
+            })
+            .collect();
+        changed |= diagram::choice_grid(
+            ui,
+            "cabinet-construction",
+            &mut self.construction,
+            &choices,
+            true,
+        );
+        if let Some((.., hint)) = constructions.iter().find(|c| c.0 == self.construction) {
+            ui.small(*hint);
+        }
+        ui.strong("Back");
+        let backs = [
+            (
+                BackKind::None,
+                "No back",
+                "Open rear; the depth is the sides alone.",
+            ),
+            (
+                BackKind::Inset,
+                "Inset back",
+                "A back panel set into the carcass, the recess in from the rear edges.",
+            ),
+            (
+                BackKind::Overlay,
+                "Overlay back",
+                "A back panel over the rear edges; it is included in the outside depth.",
+            ),
+        ];
+        let choices: Vec<Choice<'_, BackKind>> = backs
+            .iter()
+            .map(|(value, label, hint)| Choice {
+                value: *value,
+                label,
+                hint,
+                art: visual::back_art(*value),
+            })
+            .collect();
+        changed |= diagram::choice_grid(ui, "cabinet-back", &mut self.back, &choices, true);
+        if let Some((.., hint)) = backs.iter().find(|c| c.0 == self.back) {
+            ui.small(*hint);
+        }
         if self.back != BackKind::None {
             ui.label("Back material / stock");
             changed |= stock_combo(
@@ -720,9 +948,14 @@ impl CabinetPanel {
             .0;
         }
         if self.back == BackKind::Inset {
-            changed |= self
-                .recess
-                .show(ui, "Back recess", "Distance in from the rear edges");
+            changed |= link.field(
+                ui,
+                visual::RECESS,
+                &mut self.recess,
+                "cabinet-recess",
+                "Back recess",
+                "Distance in from the rear edges",
+            );
         }
         ui.separator();
         if self.options.is_none() {
@@ -751,15 +984,35 @@ impl CabinetPanel {
                 });
             }
         }
-        changed |= self.setback.show(
-            ui,
-            "Shelf setback",
-            "From the cabinet front to the shelf front",
+        let fit_title = format!(
+            "Shelf setback and end clearance · {} · {}",
+            diagram::field_value(&self.setback),
+            diagram::field_value(&self.clearance)
         );
-        changed |= self.clearance.show(
+        let reveal = link.reveals(&[visual::SETBACK, visual::CLEARANCE]);
+        diagram::section(
             ui,
-            "Adjustable shelf clearance",
-            "Gap at each adjustable shelf end; fixed shelves meet their receiving sides",
+            ("cabinet-shelf-fit", self.feature),
+            &fit_title,
+            reveal,
+            |ui| {
+                changed |= link.field(
+                    ui,
+                    visual::SETBACK,
+                    &mut self.setback,
+                    "cabinet-setback",
+                    "Shelf setback",
+                    "From the cabinet front to the shelf front",
+                );
+                changed |= link.field(
+                    ui,
+                    visual::CLEARANCE,
+                    &mut self.clearance,
+                    "cabinet-clearance",
+                    "Adjustable shelf clearance",
+                    "Gap at each adjustable shelf end; fixed shelves meet their receiving sides",
+                );
+            },
         );
         let parameters = multicad_core::parameters::evaluate(document).ok();
         let numeric = |f: &DimensionField| {
@@ -786,19 +1039,141 @@ impl CabinetPanel {
         });
         let height = numeric(&self.height);
         if let Some(options) = &mut self.options {
-            changed |= options.show(ui, document, stocks, body_t, height, available_depth);
+            changed |= options.show(
+                ui,
+                document,
+                stocks,
+                body_t,
+                height,
+                available_depth,
+                &mut link,
+            );
         }
         ui.separator();
-        changed |= ui
-            .checkbox(&mut self.banded, "Band the front edges")
-            .changed();
-        if self.banded {
-            changed |= self.show_band(ui);
-        }
+        let band_title = if self.banded {
+            format!(
+                "Edge banding · front edges {}",
+                diagram::field_value(&self.band)
+            )
+        } else {
+            "Edge banding · none".to_owned()
+        };
+        let reveal = link.reveals(&visual::BAND);
+        diagram::section(
+            ui,
+            ("cabinet-banding", self.feature),
+            &band_title,
+            reveal,
+            |ui| {
+                changed |= ui
+                    .checkbox(&mut self.banded, "Edge-band the front edges")
+                    .on_hover_text(EDGE_BANDING_HELP)
+                    .changed();
+                if self.banded {
+                    changed |= link.field(
+                        ui,
+                        visual::BAND[0],
+                        &mut self.band,
+                        "cabinet-band",
+                        "Edge strip thickness",
+                        "Thickness of the glued strip. The finished size includes it, so the core is cut smaller by this amount per banded edge",
+                    );
+                    changed |= link.field(
+                        ui,
+                        visual::BAND[1],
+                        &mut self.allowance,
+                        "cabinet-band-allowance",
+                        "Strip trim allowance",
+                        "Extra core per banded edge, trimmed flush after the strip is applied",
+                    );
+                }
+            },
+        );
+        let placement_title = format!(
+            "Placement · origin {}, {}, {} · rotation {}",
+            diagram::field_value(&self.origin[0]),
+            diagram::field_value(&self.origin[1]),
+            diagram::field_value(&self.origin[2]),
+            diagram::field_value(&self.rotation)
+        );
+        let reveal = link.reveals(&visual::PLACEMENT);
+        let explicit = self.options.is_some();
+        diagram::section(
+            ui,
+            ("cabinet-placement", self.feature),
+            &placement_title,
+            reveal,
+            |ui| {
+                let help = if explicit {
+                    "World position of the local floor datum"
+                } else {
+                    "World position of the front-left-bottom corner"
+                };
+                for (index, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
+                    changed |= link.field(
+                        ui,
+                        visual::PLACEMENT[index],
+                        &mut self.origin[index],
+                        ("cabinet-origin", index),
+                        &format!("Origin {axis}"),
+                        help,
+                    );
+                }
+                changed |= link.field(
+                    ui,
+                    visual::PLACEMENT[3],
+                    &mut self.rotation,
+                    "cabinet-rotation",
+                    "Rotation",
+                    if explicit {
+                        "About +Z through the local floor datum"
+                    } else {
+                        "About +Z through the origin; unrotated, the front faces −Y"
+                    },
+                );
+            },
+        );
         if self.existing.is_none() {
             changed |= ui.checkbox(&mut self.group, "Group the panels").changed();
         }
+        self.link = link;
         changed
+    }
+    /// Place the draft by moving one of its points onto other geometry.
+    fn show_point_placement(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Place by point");
+            let label = if self.point_pick.is_some() {
+                "Cancel Points"
+            } else {
+                "Choose Points"
+            };
+            if ui
+                .button(label)
+                .on_hover_text("Click a corner or edge midpoint of the new panel, then a vertex or edge midpoint on another part, or the world origin. Only the origin changes; plane, size and thickness stay.")
+                .clicked()
+            {
+                self.toggle_point_pick();
+            }
+        });
+        match self.point_pick {
+            Some(points::PanelPointPick::Source) => {
+                ui.small("1 · Click a source point on the panel draft (orange square).");
+            }
+            Some(points::PanelPointPick::Target { .. }) => {
+                ui.small(
+                    "2 · Click a target point on other geometry or the world origin (green ring).",
+                );
+            }
+            None => {
+                if let Some(alignment) = self.alignment {
+                    ui.small(format!(
+                        "Placed on {} · Enter applies, Escape cancels",
+                        alignment.target_label.to_lowercase()
+                    ));
+                }
+            }
+        }
     }
     fn show_panel(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
@@ -829,28 +1204,53 @@ impl CabinetPanel {
             "Finished size along the plane's second axis",
         );
         changed |= self.show_origin(ui, "World position of the panel's minimum corner");
-        ui.label("Grain");
-        ui.horizontal(|ui| {
-            changed |= ui
-                .radio_value(&mut self.grain, GrainAxis::U, "Along length")
-                .changed();
-            changed |= ui
-                .radio_value(&mut self.grain, GrainAxis::V, "Along width")
-                .changed();
-            changed |= ui
-                .radio_value(&mut self.grain, GrainAxis::Free, "Any")
-                .changed();
+        self.show_point_placement(ui);
+        ui.label("Grain direction (this panel)");
+        ui.horizontal_wrapped(|ui| {
+            for (axis, label, help) in [
+                (
+                    GrainAxis::U,
+                    "Along length",
+                    "Grain runs along the panel's length (u)",
+                ),
+                (
+                    GrainAxis::V,
+                    "Along width",
+                    "Grain runs along the panel's width (v)",
+                ),
+                (
+                    GrainAxis::Free,
+                    "Any",
+                    "No fixed grain: the cut may be turned either way",
+                ),
+            ] {
+                changed |= ui
+                    .radio_value(&mut self.grain, axis, label)
+                    .on_hover_text(help)
+                    .changed();
+            }
         });
-        changed |= ui.checkbox(&mut self.banded, "Edge banding").changed();
+        ui.small("Saved on this panel; panels sharing a stock keep their own grain.");
+        changed |= panel_face_diagram(ui, &mut self.edges, self.banded, self.grain);
+        ui.separator();
+        changed |= ui
+            .checkbox(&mut self.banded, EDGE_BANDING)
+            .on_hover_text(EDGE_BANDING_HELP)
+            .changed();
+        ui.small(EDGE_BANDING_HELP);
         if self.banded {
+            ui.label("Banded edges");
             ui.horizontal_wrapped(|ui| {
-                for (i, label) in ["Length start", "Length end", "Width start", "Width end"]
-                    .into_iter()
-                    .enumerate()
-                {
-                    changed |= ui.checkbox(&mut self.edges[i], label).changed();
+                for (i, (label, help)) in BAND_EDGES.into_iter().enumerate() {
+                    changed |= ui
+                        .checkbox(&mut self.edges[i], label)
+                        .on_hover_text(help)
+                        .changed();
                 }
             });
+            if !self.edges.contains(&true) {
+                ui.small("Click an edge in the diagram or tick it to add a strip.");
+            }
             changed |= self.show_band(ui);
         }
         changed |= self.oversize.show(
@@ -862,8 +1262,155 @@ impl CabinetPanel {
     }
 }
 
+/// Wood-panel edge banding: a glued strip on a panel edge (CAD-373). Never
+/// sheet-metal bending, which lives in the Sheet metal tool.
+pub(super) const EDGE_BANDING: &str = "Edge banding (glued edge strip)";
+pub(super) const EDGE_BANDING_HELP: &str = "Glues a thin veneer, ABS or PVC strip onto the chosen panel edges to cover the core. The finished size includes the strip; the core is cut smaller. This is wood-panel edge banding, not bending.";
+/// Same order as `PanelEdges::bands` and the machining edge names.
+pub(super) const BAND_EDGES: [(&str, &str); 4] = [
+    (
+        "Length start",
+        "The end edge at length 0, running across the width",
+    ),
+    (
+        "Length end",
+        "The end edge at full length, running across the width",
+    ),
+    (
+        "Width start",
+        "The long side at width 0, running along the length",
+    ),
+    (
+        "Width end",
+        "The long side at full width, running along the length",
+    ),
+];
+
+/// A top view of the panel face: length runs left to right, width bottom to
+/// top. Faint lines show the grain direction (CAD-365); banded edges are drawn
+/// as thick strips and, while banding is on, clicking an edge toggles it
+/// (CAD-373). Returns whether an edge changed.
+fn panel_face_diagram(
+    ui: &mut egui::Ui,
+    edges: &mut [bool; 4],
+    banding: bool,
+    grain: GrainAxis,
+) -> bool {
+    use egui::{Rect, Stroke, pos2, vec2};
+    let width = ui.available_width().clamp(120., 220.);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.5), egui::Sense::hover());
+    let face = rect.shrink2(vec2(22., 14.));
+    let strip = 7.;
+    // u_start (left), u_end (right), v_start (bottom), v_end (top).
+    let targets = [
+        Rect::from_min_max(
+            pos2(face.left() - strip, face.top()),
+            pos2(face.left() + strip, face.bottom()),
+        ),
+        Rect::from_min_max(
+            pos2(face.right() - strip, face.top()),
+            pos2(face.right() + strip, face.bottom()),
+        ),
+        Rect::from_min_max(
+            pos2(face.left(), face.bottom() - strip),
+            pos2(face.right(), face.bottom() + strip),
+        ),
+        Rect::from_min_max(
+            pos2(face.left(), face.top() - strip),
+            pos2(face.right(), face.top() + strip),
+        ),
+    ];
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(
+        face,
+        2.,
+        egui::Color32::from_rgb(196, 154, 108).gamma_multiply(0.55),
+    );
+    let grain_stroke = Stroke::new(1., egui::Color32::from_rgb(120, 86, 52));
+    let lines = 7;
+    match grain {
+        GrainAxis::U => {
+            for i in 1..lines {
+                let y = face.top() + face.height() * i as f32 / lines as f32;
+                painter.line_segment(
+                    [pos2(face.left() + 4., y), pos2(face.right() - 4., y)],
+                    grain_stroke,
+                );
+            }
+        }
+        GrainAxis::V => {
+            for i in 1..(2 * lines) {
+                let x = face.left() + face.width() * i as f32 / (2 * lines) as f32;
+                painter.line_segment(
+                    [pos2(x, face.top() + 4.), pos2(x, face.bottom() - 4.)],
+                    grain_stroke,
+                );
+            }
+        }
+        GrainAxis::Free => {}
+    }
+    painter.text(
+        face.center(),
+        egui::Align2::CENTER_CENTER,
+        match grain {
+            GrainAxis::U => "Grain ⟷",
+            GrainAxis::V => "Grain ↕",
+            GrainAxis::Free => "Grain: any",
+        },
+        egui::FontId::proportional(11.),
+        ui.visuals().strong_text_color(),
+    );
+    let accent = ui.visuals().selection.bg_fill;
+    let mut changed = false;
+    for (i, target) in targets.into_iter().enumerate() {
+        let sense = if banding {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        };
+        let response = ui
+            .interact(target, ui.id().with(("band-edge", i)), sense)
+            .on_hover_text(format!("{}: {}", BAND_EDGES[i].0, BAND_EDGES[i].1));
+        if banding && response.clicked() {
+            edges[i] = !edges[i];
+            changed = true;
+        }
+        let (a, b) = match i {
+            0 => (face.left_top(), face.left_bottom()),
+            1 => (face.right_top(), face.right_bottom()),
+            2 => (face.left_bottom(), face.right_bottom()),
+            _ => (face.left_top(), face.right_top()),
+        };
+        let stroke = if banding && edges[i] {
+            Stroke::new(5., accent)
+        } else if response.hovered() {
+            Stroke::new(2., ui.visuals().strong_text_color())
+        } else {
+            Stroke::new(1., egui::Color32::GRAY)
+        };
+        painter.line_segment([a, b], stroke);
+    }
+    let text = ui.visuals().weak_text_color();
+    let font = egui::FontId::proportional(10.);
+    painter.text(
+        pos2(face.center().x, rect.bottom() - 1.),
+        egui::Align2::CENTER_BOTTOM,
+        "Length →",
+        font.clone(),
+        text,
+    );
+    painter.text(
+        pos2(rect.left() + 1., face.center().y),
+        egui::Align2::LEFT_CENTER,
+        "W",
+        font,
+        text,
+    );
+    changed
+}
+
 #[cfg(test)]
-mod tests {
+pub(in crate::modeling) mod tests {
     use super::*;
     use multicad_core::{
         commands::{Actor, Channel},
@@ -872,7 +1419,7 @@ mod tests {
     };
     use multicad_model::Compiler;
 
-    fn session() -> Session {
+    pub(in crate::modeling) fn session() -> Session {
         let mut s = Session::new(Document::new("Cabinet form").unwrap()).unwrap();
         let birch = Entity::new(
             "Birch",
@@ -971,6 +1518,167 @@ mod tests {
         assert_eq!(command.edit_id(), Some(feature));
         let prepared = command.prepare(&s, Actor::local(Channel::Ui)).unwrap();
         assert_eq!(prepared.outputs[0].feature, feature);
+    }
+
+    #[test]
+    fn edge_banding_is_named_explained_and_toggled_from_the_edge_diagram() {
+        let s = session();
+        let mut form = CabinetPanel::panel(s.document(), "Shelf board".into());
+        let ctx = egui::Context::default();
+        crate::theme::configure(&ctx);
+        for _ in 0..3 {
+            inspector_frame(&ctx, &mut form, &s, vec![]).drop_without_applying_deltas();
+        }
+        let output = inspector_frame(&ctx, &mut form, &s, vec![]);
+        let texts: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => {
+                    Some((text.galley.text().to_owned(), text.pos, text.galley.size()))
+                }
+                _ => None,
+            })
+            .collect();
+        output.drop_without_applying_deltas();
+        let has = |t: &str| texts.iter().any(|(text, ..)| text == t);
+        assert!(has(EDGE_BANDING) && has(EDGE_BANDING_HELP));
+        assert!(
+            !texts
+                .iter()
+                .any(|(t, ..)| t.contains("ending") && !t.contains("not bending"))
+        );
+        assert!(
+            has("Banded edges")
+                && has("Edge strip thickness (mm)")
+                && has("Strip trim allowance (mm)")
+        );
+        assert!(has(
+            "Click an edge in the diagram or tick it to add a strip."
+        ));
+        // Click the left (length start) edge in the diagram.
+        let (_, w, size) = texts.iter().find(|(t, ..)| t == "W").unwrap().clone();
+        let at = egui::pos2(w.x - 1. + 22., w.y + size.y * 0.5);
+        for pressed in [true, false] {
+            inspector_frame(
+                &ctx,
+                &mut form,
+                &s,
+                vec![
+                    egui::Event::PointerMoved(at),
+                    egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            )
+            .drop_without_applying_deltas();
+        }
+        assert_eq!(form.edges, [true, false, false, false]);
+        inspector_click(&ctx, &mut form, &s, "Width start");
+        assert_eq!(form.edges, [true, false, true, false]);
+        let Ok(CabinetCommand::Panel { panel, .. }) = form.request(s.document(), true) else {
+            panic!("panel request")
+        };
+        let [u_start, u_end, v_start, v_end] = panel.edges.bands();
+        assert!(u_start.is_some() && v_start.is_some() && u_end.is_none() && v_end.is_none());
+        // Clicking the edge again removes its strip.
+        for pressed in [true, false] {
+            inspector_frame(
+                &ctx,
+                &mut form,
+                &s,
+                vec![
+                    egui::Event::PointerMoved(at),
+                    egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            )
+            .drop_without_applying_deltas();
+        }
+        assert_eq!(form.edges, [false, false, true, false]);
+    }
+
+    #[test]
+    fn new_panels_default_to_any_grain_and_show_the_chosen_direction_on_the_face() {
+        let mut s = session();
+        let mut form = CabinetPanel::panel(s.document(), "Shelf".into());
+        assert_eq!(form.grain, GrainAxis::Free);
+        let ctx = egui::Context::default();
+        crate::theme::configure(&ctx);
+        let texts = |form: &mut CabinetPanel| -> Vec<String> {
+            let output = inspector_frame(&ctx, form, &s, vec![]);
+            let t = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            t
+        };
+        for _ in 0..2 {
+            texts(&mut form);
+        }
+        let shown = texts(&mut form);
+        assert!(shown.iter().any(|t| t == "Grain direction (this panel)"));
+        assert!(shown.iter().any(|t| t == "Grain: any"));
+        inspector_click(&ctx, &mut form, &s, "Along width");
+        assert_eq!(form.grain, GrainAxis::V);
+        assert!(texts(&mut form).iter().any(|t| t == "Grain ↕"));
+        inspector_click(&ctx, &mut form, &s, "Any");
+        assert_eq!(form.grain, GrainAxis::Free);
+        // Committing and reopening keep Any.
+        let command = form.request(s.document(), true).unwrap();
+        let prepared = command.prepare(&s, Actor::local(Channel::Ui)).unwrap();
+        let feature = prepared.outputs[0].feature;
+        s.commit(prepared.prepared).unwrap();
+        assert_eq!(
+            multicad_core::model::read_panel(s.document(), feature)
+                .unwrap()
+                .grain,
+            GrainAxis::Free
+        );
+        assert_eq!(
+            CabinetPanel::existing(s.document(), feature).unwrap().grain,
+            GrainAxis::Free
+        );
+    }
+
+    #[test]
+    fn reopening_a_banded_panel_keeps_its_saved_banding_and_grain() {
+        let mut s = session();
+        let mut form = CabinetPanel::panel(s.document(), "Side".into());
+        form.edges = [true, false, false, true];
+        form.grain = GrainAxis::V;
+        let command = form.request(s.document(), true).unwrap();
+        let CabinetCommand::Panel { panel: saved, .. } = &command else {
+            panic!("panel")
+        };
+        let saved = saved.clone();
+        let prepared = command.prepare(&s, Actor::local(Channel::Ui)).unwrap();
+        let feature = prepared.outputs[0].feature;
+        s.commit(prepared.prepared).unwrap();
+        let before = s.document().clone();
+        let mut edit = CabinetPanel::existing(s.document(), feature).unwrap();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            inspector_frame(&ctx, &mut edit, &s, vec![]).drop_without_applying_deltas();
+        }
+        assert_eq!(s.document(), &before);
+        let Ok(CabinetCommand::Panel { panel, .. }) = edit.request(s.document(), true) else {
+            panic!("panel")
+        };
+        assert_eq!(panel.edges, saved.edges);
+        assert_eq!(panel.grain, GrainAxis::V);
     }
 
     fn ui() -> Actor {

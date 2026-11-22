@@ -1,7 +1,6 @@
 //! Weldment members: a sketched frame path producing separate tube members,
 //! path edits that keep member identities, Undo, save/reopen, section
-//! orientation, anchors and hollow walls, and explicit diagnostics. Every
-//! size is measured from the native solids.
+//! orientation, anchors and hollow walls, and explicit diagnostics.
 use multicad_core::{
     commands::{Actor, Channel, Prepared, Request, Session},
     constraint_sketch::{Dimension, source::Source},
@@ -20,7 +19,8 @@ use multicad_core::{
     references::ReferenceFrame,
     sketch::Datum,
 };
-use multicad_model::{Compiler, MemberRecord, Model};
+use multicad_kernel::{GeometryPolicy, MeshOptions, Solid};
+use multicad_model::{Compiler, GeometryBackend, MemberRecord, Model};
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -908,6 +908,226 @@ fn long_points_tell_parallel_from_trapezoid_miters() {
 }
 
 #[test]
+fn rust_short_parallel_miters_do_not_require_a_section_between_the_caps() {
+    let mut f = fixture();
+    let (sketch, ..) = path_sketch(
+        &mut f.s,
+        Datum::Xy,
+        &[[0., -100.], [0., 0.], [10., 0.], [10., 100.]],
+        false,
+    );
+    let rails =
+        model::frame_member_requests(f.s.document(), sketch, "Rail", &template(f.shs)).unwrap();
+    create(&mut f, &rails);
+    for pair in rails.windows(2) {
+        connect(
+            &mut f,
+            "Parallel miter",
+            ConnectionKind::Miter,
+            [pair[0].body, pair[1].body],
+            0.,
+        );
+    }
+    let rust = Compiler::default()
+        .compile_with_backend(f.s.document(), f.s.revision(), GeometryBackend::Rust, None)
+        .unwrap();
+    let native = compile(&f.s);
+    let middle = rails[1].body;
+    let rust_bounds = bounds(&rust, middle);
+    let native_bounds = bounds(&native, middle);
+    for i in 0..3 {
+        near(rust_bounds.min[i], native_bounds.min[i]);
+        near(rust_bounds.max[i], native_bounds.max[i]);
+    }
+    let list = rust.member_cut_list(f.s.document()).unwrap();
+    let middle = record(&list, "Rail 2");
+    near(middle.length_mm, 50.);
+    rel(middle.volume_mm3, SHS_AREA * 10.);
+    assert!(
+        middle
+            .ends
+            .iter()
+            .all(|end| end.kind == Some(ConnectionKind::Miter))
+    );
+}
+
+#[test]
+fn rust_reports_curved_miters_and_copes_at_their_connection() {
+    for (kind, diagnostic) in [
+        (ConnectionKind::Miter, "straight-sided section"),
+        (ConnectionKind::Cope, "coped ends"),
+    ] {
+        let mut f = fixture();
+        let main = MemberRequest::new("Main", points(f.chs, [0., 0., 0.], [500., 0., 0.]));
+        let branch = MemberRequest::new("Branch", points(f.chs, [500., 0., 0.], [500., 500., 0.]));
+        let members = [branch.body, main.body];
+        create(&mut f, &[main, branch]);
+        let before = f.s.document().clone();
+        let (connection, prepared) = model::prepare_connection(
+            &f.s,
+            f.s.revision(),
+            actor(),
+            "Joint",
+            &ConnectionDefinition {
+                kind,
+                members,
+                gap: None,
+            },
+        )
+        .unwrap();
+        let refusal = Compiler::default()
+            .compile_with_backend(
+                prepared.document(),
+                f.s.revision() + 1,
+                GeometryBackend::Rust,
+                None,
+            )
+            .err()
+            .expect("unsupported Rust connection");
+        assert_eq!(refusal.entity, Some(connection));
+        assert!(refusal.message.contains(diagnostic), "{}", refusal.message);
+        assert_eq!(f.s.document(), &before);
+    }
+}
+
+#[test]
+fn rust_bundled_workbench_members_preserve_geometry_and_schedules() {
+    let project = project_file::read(
+        &mut &include_bytes!("../../../examples/welded-workbench.tcd")[..],
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project;
+    let document = &project.document;
+    let members: Vec<_> = model::members(document).map(|member| member.id).collect();
+    let evaluate = |backend| {
+        Compiler::default()
+            .compile_sources_with_backend(document, 0, &members, backend, None)
+            .unwrap_or_else(|err| panic!("{backend:?}: {err:?}"))
+    };
+    let rust = evaluate(GeometryBackend::Rust);
+    let rust_cuts = rust.member_cut_list(document).unwrap();
+    assert_eq!(rust_cuts.len(), 19);
+    let expected = workbench::Expected::read(document);
+    assert_eq!(expected.members.len(), 19);
+    for a in &rust_cuts {
+        let member = &expected.members[&a.part];
+        assert_eq!(
+            (a.feature, a.name.as_str()),
+            (member.feature, member.name.as_str())
+        );
+        for (end, expected_end) in a.ends.iter().zip(&member.ends) {
+            assert_eq!(end.kind, expected_end.kind, "{}", a.name);
+            assert_eq!(end.connection, expected_end.connection, "{}", a.name);
+            assert_eq!(end.partner, expected_end.partner, "{}", a.name);
+            assert!(end.terminates, "{}", a.name);
+            near(end.angle_deg, expected_end.angle_deg);
+            assert_eq!(
+                end.long_point.is_some(),
+                expected_end.angle_deg > 0.01,
+                "{}",
+                a.name
+            );
+        }
+        assert!(a.issues.is_empty(), "{}: {:?}", a.name, a.issues);
+        near(a.length_mm, member.length_mm);
+        rel(a.volume_mm3, member.volume_mm3);
+        let a_bounds = bounds(&rust, a.part);
+        for i in 0..3 {
+            near(a_bounds.min[i], member.bounds[0][i]);
+            near(a_bounds.max[i], member.bounds[1][i]);
+        }
+        let solid = rust.solid(rust.snapshot().bodies[&a.part]).unwrap();
+        assert!(solid.uses_rust_geometry(), "{}", a.name);
+        assert_eq!(solid.solid_count().unwrap(), 1, "{}", a.name);
+        rel(solid.volume_mm3().unwrap(), member.volume_mm3);
+        let receipt = solid
+            .manufacturing_mesh_with_receipt(MeshOptions::default())
+            .unwrap_or_else(|err| panic!("{}: {err}", a.name));
+        assert!(receipt.edge_pairs > 0 && receipt.vertex_links > 0);
+    }
+    let welds = rust.weld_schedule(document).unwrap();
+    assert_eq!(welds.len(), 22);
+    assert_eq!(welds.len(), expected.welds.len());
+    for (actual, expected) in welds.iter().zip(&expected.welds) {
+        let ids = |w: &multicad_model::WeldRecord| {
+            (
+                w.weld,
+                w.mark.clone(),
+                w.sequence,
+                w.step,
+                w.step_note.clone(),
+                w.connection,
+                w.connection_name.clone(),
+                w.kind,
+                w.members,
+                w.member_names.clone(),
+            )
+        };
+        assert_eq!(ids(actual), ids(expected), "{}", expected.mark);
+        let attributes = |w: &multicad_model::WeldRecord| {
+            (
+                w.symbol,
+                w.side,
+                w.size_mm,
+                w.length_mm,
+                w.all_around,
+                w.field,
+                w.process.clone(),
+                w.notes.clone(),
+            )
+        };
+        assert_eq!(
+            attributes(actual),
+            attributes(expected),
+            "{}",
+            expected.mark
+        );
+        for i in 0..3 {
+            near(actual.position[i], expected.position[i]);
+            near(actual.joint_plane.0[i], expected.joint_plane.0[i]);
+            near(actual.joint_plane.1[i], expected.joint_plane.1[i]);
+        }
+        near(
+            actual.joint_perimeter_mm.unwrap(),
+            expected.joint_perimeter_mm.unwrap(),
+        );
+    }
+
+    let rail = rust_cuts
+        .iter()
+        .find(|row| {
+            row.ends
+                .iter()
+                .all(|end| end.kind == Some(ConnectionKind::Miter))
+        })
+        .unwrap();
+    let rail = rust.solid(rust.snapshot().bodies[&rail.part]).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("mitered-rail.step");
+    rail.write_step(&path).unwrap();
+    let policy = GeometryPolicy::default();
+    let native_step = Solid::read_step(&path, policy).unwrap();
+    let rust_step = Solid::import_rust_step(
+        &std::fs::read_to_string(&path).unwrap(),
+        EntityId::new(),
+        policy,
+    )
+    .unwrap();
+    let original = rail.bounds().unwrap();
+    for imported in [native_step, rust_step] {
+        assert_eq!(imported.solid_count().unwrap(), 1);
+        rel(imported.volume_mm3().unwrap(), rail.volume_mm3().unwrap());
+        let readback = imported.bounds().unwrap();
+        for i in 0..3 {
+            near(readback.min[i], original.min[i]);
+            near(readback.max[i], original.max[i]);
+        }
+    }
+}
+
+#[test]
 fn butt_joints_identify_the_continuing_member_and_trim_square() {
     let mut f = fixture();
     let rail = MemberRequest::new("Rail", points(f.rhs, [0., 0., 0.], [1000., 0., 0.]));
@@ -965,6 +1185,118 @@ fn butt_joints_identify_the_continuing_member_and_trim_square() {
     create(&mut f, std::slice::from_ref(&crossing));
     let msg = refused(&f, ConnectionKind::Butt, [id(1), crossing.body]);
     assert!(msg.contains("both cut the start of"), "{msg}");
+}
+
+#[test]
+fn rust_straight_copes_keep_clearance_hollow_material_and_reopen() {
+    for gap in [0., 2.] {
+        let mut f = fixture();
+        let beam = MemberRequest::new("Beam", points(f.rhs, [0.; 3], [1000., 0., 0.]));
+        let stud = MemberRequest::new("Stud", points(f.shs, [500., 0., 0.], [500., 500., 0.]));
+        create(&mut f, &[beam.clone(), stud.clone()]);
+        let before = f.s.document().clone();
+        let connection = connect(
+            &mut f,
+            "Stud cope",
+            ConnectionKind::Cope,
+            [stud.body, beam.body],
+            gap,
+        );
+        let evaluate = |document: &Document| {
+            Compiler::default()
+                .compile_with_backend(document, 0, GeometryBackend::Rust, None)
+                .unwrap()
+        };
+        let model = evaluate(f.s.document());
+        let list = model.member_cut_list(f.s.document()).unwrap();
+        let stud_record = record(&list, "Stud");
+        near(stud_record.span_mm[0], 30. + gap);
+        rel(stud_record.volume_mm3, SHS_AREA * (470. - gap));
+        assert_eq!(stud_record.ends[0].kind, Some(ConnectionKind::Cope));
+        assert_eq!(stud_record.ends[0].connection, Some(connection));
+        assert!(stud_record.issues.is_empty());
+        let body = |id| model.solid(model.snapshot().bodies[&id]).unwrap();
+        near(body(stud.body).bounds().unwrap().min[1], 30. + gap);
+        near(
+            body(beam.body).volume_mm3().unwrap(),
+            (60. * 40. - 54. * 34.) * 1000.,
+        );
+        assert!(
+            body(stud.body)
+                .boolean(
+                    body(beam.body),
+                    multicad_kernel::BooleanOperation::Intersect,
+                    GeometryPolicy::default()
+                )
+                .unwrap()
+                .is_none()
+        );
+        body(stud.body)
+            .manufacturing_mesh_with_receipt(MeshOptions::default())
+            .unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("stud.step");
+        body(stud.body).write_step(&path).unwrap();
+        let imported = Solid::import_rust_step(
+            &std::fs::read_to_string(&path).unwrap(),
+            EntityId::new(),
+            GeometryPolicy::default(),
+        )
+        .unwrap();
+        rel(imported.volume_mm3().unwrap(), SHS_AREA * (470. - gap));
+        let project = ProjectFile::new(f.s.document().clone()).unwrap();
+        let mut bytes = Vec::new();
+        project_file::write(&project, &mut bytes, Default::default()).unwrap();
+        let reopened = project_file::read(
+            &mut bytes.as_slice(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project;
+        assert_eq!(
+            evaluate(&reopened.document)
+                .member_cut_list(&reopened.document)
+                .unwrap(),
+            list
+        );
+        let mut edited = model::read_connection(f.s.document(), connection).unwrap();
+        edited.gap = Some(length(gap + 1.));
+        let prepared =
+            model::prepare_connection_edit(&f.s, f.s.revision(), actor(), connection, &edited)
+                .unwrap();
+        let candidate = evaluate(prepared.document());
+        let edited_list = candidate.member_cut_list(prepared.document()).unwrap();
+        near(record(&edited_list, "Stud").span_mm[0], 31. + gap);
+        rel(
+            record(&edited_list, "Stud").volume_mm3,
+            SHS_AREA * (469. - gap),
+        );
+        rel(
+            body(stud.body).volume_mm3().unwrap(),
+            SHS_AREA * (470. - gap),
+        );
+        f.s.commit(prepared).unwrap();
+        f.s.undo(f.s.revision(), actor()).unwrap();
+        assert_eq!(
+            evaluate(f.s.document())
+                .member_cut_list(f.s.document())
+                .unwrap(),
+            list
+        );
+        f.s.undo(f.s.revision(), actor()).unwrap();
+        assert_eq!(f.s.document(), &before);
+        rel(
+            record(
+                &evaluate(f.s.document())
+                    .member_cut_list(f.s.document())
+                    .unwrap(),
+                "Stud",
+            )
+            .volume_mm3,
+            SHS_AREA * 500.,
+        );
+    }
 }
 
 #[test]
@@ -1327,4 +1659,310 @@ fn welds_follow_their_connections_in_authored_order_with_cut_groups_and_a_plan()
             .unwrap(),
         schedule
     );
+}
+
+/// Independent workbench expectations read from the saved document: the
+/// authored member path points (parameter expressions), member stock and
+/// anchors, connections, welds and sequences. Joint geometry is derived here
+/// by intersecting the straight member paths with the section boxes; the
+/// geometry kernel is not consulted.
+mod workbench {
+    use multicad_core::{
+        document::{Document, EntityId},
+        model::{self, ConnectionKind, MemberPath, PathSegment, ResolvedMember},
+        parameters::{self, Unit},
+    };
+    use multicad_model::WeldRecord;
+    use std::collections::BTreeMap;
+
+    type P = [f64; 3];
+    fn sub(a: P, b: P) -> P {
+        std::array::from_fn(|i| a[i] - b[i])
+    }
+    fn add(a: P, b: P) -> P {
+        std::array::from_fn(|i| a[i] + b[i])
+    }
+    fn scale(a: P, k: f64) -> P {
+        a.map(|x| x * k)
+    }
+    fn dot(a: P, b: P) -> f64 {
+        (0..3).map(|i| a[i] * b[i]).sum()
+    }
+    fn unit(a: P) -> P {
+        scale(a, 1. / dot(a, a).sqrt())
+    }
+
+    pub struct End {
+        pub kind: Option<ConnectionKind>,
+        pub connection: Option<EntityId>,
+        pub partner: Option<EntityId>,
+        pub angle_deg: f64,
+    }
+    pub struct Member {
+        pub feature: EntityId,
+        pub name: String,
+        pub ends: [End; 2],
+        pub length_mm: f64,
+        pub volume_mm3: f64,
+        pub bounds: [P; 2],
+    }
+    pub struct Expected {
+        pub members: BTreeMap<EntityId, Member>,
+        pub welds: Vec<WeldRecord>,
+    }
+
+    /// A resolved joint: where the paths meet and member 0's cut plane.
+    struct Joint {
+        position: P,
+        point: P,
+        normal: P,
+    }
+
+    /// Section box corners (section coordinates) placed at axial `s`.
+    fn corners(member: &ResolvedMember, s: f64) -> [P; 4] {
+        let [w, h] = [member.section.width_mm, member.section.height_mm];
+        [[0., 0.], [w, 0.], [w, h], [0., h]].map(|p| member.point(p, s))
+    }
+
+    /// Axial position where the line through `p` along the axis meets the plane.
+    fn on_plane(member: &ResolvedMember, p: P, point: P, normal: P) -> f64 {
+        member.axial(p) + dot(sub(point, p), normal) / dot(member.frame.axis, normal)
+    }
+
+    fn joint(kind: ConnectionKind, a: &ResolvedMember, b: &ResolvedMember) -> Joint {
+        // The straight paths intersect: solve the closest points.
+        let (da, db) = (a.frame.axis, b.frame.axis);
+        let w0 = sub(a.path.start, b.path.start);
+        let (aa, ab, bb) = (dot(da, da), dot(da, db), dot(db, db));
+        let (d, e) = (dot(da, w0), dot(db, w0));
+        let denominator = aa * bb - ab * ab;
+        assert!(denominator > 1e-9, "parallel member paths");
+        let t = (ab * e - bb * d) / denominator;
+        let u = (aa * e - ab * d) / denominator;
+        let position = add(a.path.start, scale(da, t));
+        let other = add(b.path.start, scale(db, u));
+        assert!(dot(sub(position, other), sub(position, other)).sqrt() < 1e-9);
+        let into = |m: &ResolvedMember| {
+            let far = if dot(sub(m.path.start, position), sub(m.path.start, position))
+                > dot(sub(m.path.end, position), sub(m.path.end, position))
+            {
+                m.path.start
+            } else {
+                m.path.end
+            };
+            unit(sub(far, position))
+        };
+        let (ta, tb) = (into(a), into(b));
+        match kind {
+            // The miter plane bisects the corner; its normal points into member 0.
+            ConnectionKind::Miter => Joint {
+                position,
+                point: position,
+                normal: unit(sub(ta, tb)),
+            },
+            // A butt cut lies on the continuing member's face toward member 0.
+            ConnectionKind::Butt => {
+                let reach = corners(b, b.axial(position))
+                    .into_iter()
+                    .map(|c| dot(sub(c, position), ta))
+                    .fold(f64::NEG_INFINITY, f64::max);
+                Joint {
+                    position,
+                    point: add(position, scale(ta, reach)),
+                    normal: ta,
+                }
+            }
+            other => panic!("Unexpected connection {other:?}"),
+        }
+    }
+
+    impl Expected {
+        pub fn read(document: &Document) -> Self {
+            let parameters = parameters::evaluate(document).unwrap();
+            let mm = |d: &multicad_core::constraint_sketch::Dimension| {
+                d.value_in(Unit::Millimeter, Some(&parameters)).unwrap()
+            };
+            let mut resolved: BTreeMap<EntityId, (EntityId, String, ResolvedMember)> =
+                BTreeMap::new();
+            for entity in model::members(document) {
+                let source = model::read_member(document, entity.id).unwrap();
+                let MemberPath::Points { start, end } = &source.path else {
+                    panic!("Expected point paths");
+                };
+                let segment = PathSegment {
+                    start: start.each_ref().map(mm),
+                    end: end.each_ref().map(mm),
+                    reference: None,
+                };
+                let member =
+                    model::resolve_member(document, &parameters, &source, segment).unwrap();
+                let part = source.output.body;
+                let name = document.get(part).unwrap().name.clone();
+                resolved.insert(part, (entity.id, name, member));
+            }
+            let mut joints = BTreeMap::new();
+            for entity in model::connections(document) {
+                let connection = model::read_connection(document, entity.id).unwrap();
+                assert!(connection.gap.as_ref().is_none_or(|gap| mm(gap) == 0.));
+                let [a, b] = connection.members.map(|part| &resolved[&part].2);
+                joints.insert(
+                    entity.id,
+                    (connection.clone(), joint(connection.kind, a, b)),
+                );
+            }
+            let mut members = BTreeMap::new();
+            for (part, (feature, name, member)) in &resolved {
+                let length = member.path_length_mm;
+                // Default flat ends at the extended path ends.
+                let mut planes = [
+                    (
+                        scale(member.frame.axis, -member.extend_mm[0]),
+                        scale(member.frame.axis, -1.),
+                    ),
+                    (
+                        scale(member.frame.axis, length + member.extend_mm[1]),
+                        member.frame.axis,
+                    ),
+                ]
+                .map(|(offset, normal)| (add(member.path.start, offset), normal));
+                let mut ends = [0, 1].map(|_| End {
+                    kind: None,
+                    connection: None,
+                    partner: None,
+                    angle_deg: 0.,
+                });
+                for (id, (connection, joint)) in &joints {
+                    let Some(index) = connection.members.iter().position(|m| m == part) else {
+                        continue;
+                    };
+                    let s = member.axial(joint.position);
+                    let at_end = if s.abs() < 1e-9 {
+                        0
+                    } else if (s - length).abs() < 1e-9 {
+                        1
+                    } else {
+                        // A continuing member met along its length is not cut.
+                        assert_eq!(index, 1);
+                        continue;
+                    };
+                    if connection.kind == ConnectionKind::Butt && index == 1 {
+                        continue;
+                    }
+                    assert_eq!(member.extend_mm[at_end], 0.);
+                    planes[at_end] = (joint.point, joint.normal);
+                    let cosine = dot(joint.normal, member.frame.axis).abs();
+                    ends[at_end] = End {
+                        kind: Some(connection.kind),
+                        connection: Some(*id),
+                        partner: Some(connection.members[1 - index]),
+                        angle_deg: cosine.min(1.).acos().to_degrees(),
+                    };
+                }
+                // The solid's vertices are the section box edges cut by the
+                // two end planes; its volume is the section area times the
+                // centroid line's length between the planes.
+                let mut bounds = [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]];
+                let mut reach = [f64::INFINITY, f64::NEG_INFINITY];
+                for (end, (point, normal)) in planes.iter().enumerate() {
+                    for corner in corners(member, 0.) {
+                        let s = on_plane(member, corner, *point, *normal);
+                        reach[end] = if end == 0 {
+                            reach[0].min(s)
+                        } else {
+                            reach[1].max(s)
+                        };
+                        let vertex = add(corner, scale(member.frame.axis, s));
+                        for i in 0..3 {
+                            bounds[0][i] = bounds[0][i].min(vertex[i]);
+                            bounds[1][i] = bounds[1][i].max(vertex[i]);
+                        }
+                    }
+                }
+                let [w, h] = [member.section.width_mm, member.section.height_mm];
+                let area = match member.section.wall_mm {
+                    Some(t) => w * h - (w - 2. * t) * (h - 2. * t),
+                    None => w * h,
+                };
+                let centroid = member.point([w / 2., h / 2.], 0.);
+                let span = planes.map(|(point, normal)| on_plane(member, centroid, point, normal));
+                members.insert(
+                    *part,
+                    Member {
+                        feature: *feature,
+                        name: name.clone(),
+                        ends,
+                        length_mm: reach[1] - reach[0],
+                        volume_mm3: area * (span[1] - span[0]),
+                        bounds,
+                    },
+                );
+            }
+            // Sequenced welds in step order, then the rest by mark.
+            let mut order = vec![];
+            for sequence in model::sequences(document) {
+                let definition = model::read_sequence(document, sequence.id).unwrap();
+                for (i, step) in definition.steps.into_iter().enumerate() {
+                    order.push((step.weld, Some((sequence.id, i + 1, step.note))));
+                }
+            }
+            let mut rest: Vec<_> = model::welds(document)
+                .filter(|w| !order.iter().any(|(id, _)| *id == w.id))
+                .map(|w| {
+                    (
+                        model::read_weld(document, w.id)
+                            .unwrap()
+                            .mark
+                            .trim()
+                            .to_owned(),
+                        w.id,
+                    )
+                })
+                .collect();
+            rest.sort();
+            order.extend(rest.into_iter().map(|(_, id)| (id, None)));
+            let name = |id: EntityId| document.get(id).unwrap().name.clone();
+            let welds = order
+                .into_iter()
+                .map(|(id, step)| {
+                    let weld = model::read_weld(document, id).unwrap();
+                    let (connection, joint) = &joints[&weld.connection];
+                    let a = &resolved[&connection.members[0]].2;
+                    // Member 0's outside outline projected along its axis onto
+                    // the cut plane.
+                    let along = dot(a.frame.axis, joint.normal);
+                    let stretch = |d: P| (1. + (dot(d, joint.normal) / along).powi(2)).sqrt();
+                    let perimeter = 2. * a.section.width_mm * stretch(a.frame.x)
+                        + 2. * a.section.height_mm * stretch(a.frame.y);
+                    let (sequence, step, step_note) = match step {
+                        Some((s, i, note)) => (Some(s), Some(i), note),
+                        None => (None, None, String::new()),
+                    };
+                    WeldRecord {
+                        weld: id,
+                        mark: weld.mark.trim().to_owned(),
+                        sequence,
+                        step,
+                        step_note,
+                        connection: weld.connection,
+                        connection_name: name(weld.connection),
+                        kind: connection.kind,
+                        members: connection.members,
+                        member_names: connection.members.map(name),
+                        position: joint.position,
+                        joint_plane: (joint.point, joint.normal),
+                        joint_perimeter_mm: Some(perimeter),
+                        symbol: weld.symbol,
+                        side: weld.side,
+                        size_mm: weld.size.as_ref().map(mm),
+                        length_mm: weld.length.as_ref().map(mm),
+                        all_around: weld.all_around,
+                        field: weld.field,
+                        process: weld.process,
+                        notes: weld.notes,
+                    }
+                })
+                .collect();
+            Self { members, welds }
+        }
+    }
 }

@@ -46,8 +46,11 @@ use multicad_core::{
 };
 use multicad_kernel::Solid;
 use multicad_model::{
-    Compiler, Model,
-    export::{Exporter, sheet_dxf::SheetDxfLayers},
+    Compiler, GeometryBackend, Model,
+    export::{
+        Exporter,
+        sheet_dxf::{SheetDxfLayers, SheetDxfOptions},
+    },
     schedules::{BomOptions, Schedule, bend_schedule, bom_schedule},
 };
 use multicad_ui::egui::{Color32, ColorImage};
@@ -1618,12 +1621,15 @@ pub fn developed_dxf(
     session: &Session,
     sheet: EntityId,
 ) -> Result<multicad_model::export::sheet_dxf::SheetDxf, Error> {
-    let dxf = Exporter::default().developed_sheet_dxf(
+    let dxf = Exporter::default().developed_sheet_dxf_with_backend(
         session.document(),
         session.revision(),
         sheet,
-        LengthUnit::Millimeter,
-        &SheetDxfLayers::default(),
+        SheetDxfOptions {
+            backend: GeometryBackend::Rust,
+            units: LengthUnit::Millimeter,
+            layers: &SheetDxfLayers::default(),
+        },
         None,
     )?;
     dxf.check_current(session.document(), session.revision())?;

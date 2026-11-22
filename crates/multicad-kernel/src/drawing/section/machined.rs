@@ -1,0 +1,610 @@
+//! Exact plane intersections of independent machined stock and insert bodies.
+use super::*;
+use multicad_rust_kernel::{
+    curved_projection::{Curve, Edge as ProjectedEdge, Ellipse},
+    orthogonal_section::{self, Edge, Options, SectionError},
+};
+use std::f64::consts::FRAC_PI_2;
+
+type Point = [f64; 2];
+type Segment = [Point; 2];
+
+pub(super) fn needs_analytic_section(solid: &Solid) -> bool {
+    solid.herringbone_body().is_some()
+        || solid
+            .orthogonal_body()
+            .is_some_and(|(body, _)| body.has_curved_cuts())
+        || solid
+            .polygon_prism()
+            .is_some_and(|body| !body.pockets.is_empty())
+        || solid.rounded_slot_body().is_some()
+        || solid.warped_union_body().is_some()
+        || curved::warped::is_curved_sweep(solid)
+        || solid.nonplanar_loft_body().is_some()
+        || solid.sphere_body().is_some()
+        || solid.torus_body().is_some()
+        || curved::is_round(solid)
+        || solid
+            .rust_compound()
+            .is_some_and(|body| body.members().any(needs_analytic_section))
+}
+
+pub(super) fn project(
+    solids: &[DrawingSolid<'_>],
+    options: DrawingProjection,
+    depth: f64,
+) -> Result<Vec<ProjectedVector>, GeometryError> {
+    project_members(
+        solids.iter().enumerate().map(|(source, input)| {
+            (
+                source,
+                DrawingSolid {
+                    solid: input.solid,
+                    hatch: input.hatch,
+                },
+            )
+        }),
+        options,
+        depth,
+    )
+}
+
+pub(super) fn project_members<'a>(
+    members: impl IntoIterator<Item = (usize, DrawingSolid<'a>)>,
+    options: DrawingProjection,
+    depth: f64,
+) -> Result<Vec<ProjectedVector>, GeometryError> {
+    let mut output = SectionOutput {
+        options,
+        vectors: Vec::new(),
+        hatch_budget: section_hatch::Budget::default(),
+    };
+    for (source, input) in members {
+        output.body(input.solid, input.hatch, source, depth)?;
+    }
+    Ok(output.vectors)
+}
+
+struct SectionOutput {
+    options: DrawingProjection,
+    vectors: Vec<ProjectedVector>,
+    hatch_budget: section_hatch::Budget,
+}
+
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a.into_iter().zip(b).map(|(a, b)| a * b).sum()
+}
+
+fn difference(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    std::array::from_fn(|i| a[i] - b[i])
+}
+
+fn limit() -> GeometryError {
+    err(
+        GeometryErrorKind::Limit,
+        "Rust section exceeded its curve or point budget",
+    )
+}
+
+fn unsupported(message: &str) -> GeometryError {
+    err(GeometryErrorKind::Unsupported, message)
+}
+
+fn cut_error(cause: SectionError) -> GeometryError {
+    match cause {
+        SectionError::Limit => limit(),
+        SectionError::Invalid => err(
+            GeometryErrorKind::InvalidResult,
+            "Invalid exact machined section boundary",
+        ),
+        SectionError::Unsupported => {
+            unsupported("Rust section cannot yet trim this exact curved boundary")
+        }
+    }
+}
+
+impl SectionOutput {
+    fn extend(&mut self, vectors: Vec<ProjectedVector>) -> Result<(), GeometryError> {
+        self.options.maximum_curves = self
+            .options
+            .maximum_curves
+            .checked_sub(vectors.len() as u32)
+            .ok_or_else(limit)?;
+        let points = vectors
+            .iter()
+            .map(|v| v.preview_mm.len() as u32)
+            .sum::<u32>();
+        self.options.maximum_points = self
+            .options
+            .maximum_points
+            .checked_sub(points)
+            .ok_or_else(limit)?;
+        self.vectors.extend(vectors);
+        Ok(())
+    }
+
+    fn body(
+        &mut self,
+        solid: &Solid,
+        hatch: Option<DrawingHatch>,
+        source: usize,
+        depth: f64,
+    ) -> Result<(), GeometryError> {
+        if let Some(compound) = solid.rust_compound() {
+            for member in compound.members() {
+                self.body(member, hatch, source, depth)?;
+            }
+            return Ok(());
+        }
+        let policy = solid.geometry_policy();
+        let tolerance = policy.linear_tolerance_mm;
+        if let Some(vectors) =
+            panel::section_herringbone(&DrawingSolid { solid, hatch }, self.options, depth)
+        {
+            let mut vectors = vectors?;
+            for vector in &mut vectors {
+                vector.source_index = source;
+            }
+            return self.extend(vectors);
+        }
+        if solid.nonplanar_loft_body().is_some() {
+            let vectors = loft::project(solid, self.options, source, depth)?;
+            let hatch = hatch.filter(|h| h.pattern != HatchPattern::None);
+            let boundary = hatch.map(|_| {
+                vectors
+                    .iter()
+                    .flat_map(|vector| vector.preview_mm.windows(2))
+                    .map(|points| [points[0], points[1]])
+                    .collect::<Vec<_>>()
+            });
+            self.extend(vectors)?;
+            if let Some((hatch, boundary)) = hatch.zip(boundary) {
+                self.hatch(source, hatch, &boundary, tolerance)?;
+            }
+            return Ok(());
+        }
+        let screen = planar::view_axes(self.options.frame);
+        let bounds = solid.bounds()?;
+        let ends = [false, true].map(|upper| {
+            let corner = std::array::from_fn(|i| {
+                if upper == (screen[2][i] >= 0.) {
+                    bounds.max[i]
+                } else {
+                    bounds.min[i]
+                }
+            });
+            dot(difference(corner, self.options.frame.origin), screen[2])
+        });
+        if depth < ends[0] - tolerance || depth > ends[1] + tolerance {
+            return Ok(());
+        }
+        let promoted = solid
+            .polygon_prism()
+            .filter(|body| !body.pockets.is_empty())
+            .map(|_| solid.orthogonal_stock())
+            .transpose()?;
+        let solid = promoted.as_ref().unwrap_or(solid);
+        if let Some((body, placement)) = solid.orthogonal_body()
+            && body.has_curved_cuts()
+        {
+            let frame = match SliceFrame::new(placement, self.options, depth) {
+                Err(error) if error.kind == GeometryErrorKind::Unsupported => {
+                    // A plane inclined to the stock chart cuts box stock with
+                    // through bores in the exact oblique section.
+                    let Some((stock, bores)) = oblique_stock(solid) else {
+                        return Err(error);
+                    };
+                    let Some(section) =
+                        oblique::section(&stock, &bores, self.options, depth, tolerance)?
+                    else {
+                        return Ok(());
+                    };
+                    let vectors =
+                        oblique::publish(section, hatch, self.options, source, tolerance)?;
+                    return self.extend(vectors);
+                }
+                frame => frame?,
+            };
+            let loops = body
+                .section(frame.options(self.options, tolerance)?)
+                .map_err(cut_error)?;
+            return self.publish(source, hatch, policy, &loops, frame, true);
+        }
+        if let Some((body, placement)) = solid.rounded_slot_body() {
+            let frame = SliceFrame::new(placement, self.options, depth)?;
+            let (profile, axial) = body.section_profile();
+            let windows = frame.windows(self.options)?;
+            let loops =
+                stadium_section(profile, axial, frame.axis, frame.depth, windows, tolerance)?;
+            return self.publish(source, hatch, policy, &loops, frame, false);
+        }
+
+        let built;
+        let shell = match solid.drawing_warped_shell() {
+            Some(found) => Some(found),
+            None => match curved::warped::curved_sweep_shell(solid).transpose()? {
+                Some((shell, placement)) => {
+                    built = shell;
+                    Some((&built, placement))
+                }
+                None => None,
+            },
+        };
+        if let Some((shell, placement)) = shell {
+            let hatch = hatch.filter(|h| h.pattern != HatchPattern::None);
+            let (vectors, boundary) = warped::project(
+                shell,
+                placement,
+                self.options,
+                policy,
+                source,
+                depth,
+                hatch.is_some(),
+            )?;
+            self.extend(vectors)?;
+            if let Some(hatch) = hatch {
+                self.hatch(source, hatch, &boundary, tolerance)?;
+            }
+            return Ok(());
+        }
+
+        let input = DrawingSolid { solid, hatch };
+        let mut vectors = if let Some((body, frame)) = solid.sphere_body() {
+            sphere::project(&input, frame.origin, body.radius_mm(), self.options)?
+        } else if let Some((body, frame)) = solid.torus_body() {
+            torus::project(&input, frame, body.radii_mm(), self.options)?
+        } else if curved::is_round(solid) {
+            project_circular(&input, self.options, depth)?
+        } else {
+            project_planar(&[input], self.options, depth)?
+        };
+        for vector in &mut vectors {
+            vector.source_index = source;
+        }
+        self.extend(vectors)
+    }
+
+    fn publish(
+        &mut self,
+        source: usize,
+        hatch: Option<DrawingHatch>,
+        policy: GeometryPolicy,
+        loops: &[Vec<Edge>],
+        frame: SliceFrame,
+        enlarge_voids: bool,
+    ) -> Result<(), GeometryError> {
+        let edges = loops
+            .iter()
+            .flatten()
+            .map(|&edge| ProjectedEdge {
+                hidden: false,
+                curve: frame.curve(edge),
+            })
+            .collect();
+        let mut vectors = curved::publish(edges, self.options, source)?;
+        for vector in &mut vectors {
+            vector.role = VectorRole::Section;
+        }
+        self.extend(vectors)?;
+
+        if let Some(hatch) = hatch.filter(|h| h.pattern != HatchPattern::None) {
+            let mut deflection = self.options.chord_tolerance_mm;
+            if enlarge_voids {
+                deflection = deflection.min(policy.minimum_feature_mm / 4.);
+            }
+            let boundary = hatch_segments(loops, frame, enlarge_voids, deflection)?;
+            self.hatch(source, hatch, &boundary, policy.linear_tolerance_mm)?;
+        }
+        Ok(())
+    }
+    fn hatch(
+        &mut self,
+        source: usize,
+        hatch: DrawingHatch,
+        boundary: &[Segment],
+        tolerance: f64,
+    ) -> Result<(), GeometryError> {
+        if boundary.is_empty() {
+            return Ok(());
+        }
+        let mut curves = self.options.maximum_curves as usize;
+        let mut points = self.options.maximum_points as usize;
+        let strokes = publish_hatch(
+            source,
+            hatch,
+            boundary,
+            tolerance,
+            &mut curves,
+            &mut points,
+            &mut self.hatch_budget,
+        )?;
+        self.extend(strokes)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SliceFrame {
+    axis: usize,
+    depth: f64,
+    origin: Point,
+    directions: [Point; 2],
+}
+
+impl SliceFrame {
+    fn new(
+        placement: PlaneFrame,
+        options: DrawingProjection,
+        depth: f64,
+    ) -> Result<Self, GeometryError> {
+        let screen = planar::view_axes(options.frame);
+        let local = planar::view_axes(placement);
+        let components = local.map(|axis| dot(axis, screen[2]));
+        let Some(axis) = components.iter().position(|value| value.abs() > 0.5) else {
+            return Err(unsupported(
+                "Rust machined sections require a stock-aligned cutting plane",
+            ));
+        };
+        if components
+            .iter()
+            .enumerate()
+            .any(|(i, value)| i != axis && value.abs() > 32. * f64::EPSILON)
+        {
+            return Err(unsupported(
+                "Rust machined sections require a stock-aligned cutting plane",
+            ));
+        }
+        let offset = difference(placement.origin, options.frame.origin);
+        let depth = (depth - dot(offset, screen[2])) / components[axis];
+        let slice = std::array::from_fn(|i| local[axis][i].mul_add(depth, offset[i]));
+        let project = |vector| [dot(vector, screen[0]), dot(vector, screen[1])];
+        Ok(Self {
+            axis,
+            depth,
+            origin: project(slice),
+            directions: [local[(axis + 1) % 3], local[(axis + 2) % 3]].map(project),
+        })
+    }
+
+    fn point(self, [a, b]: Point) -> Point {
+        let vector = self.vector([a, b]);
+        std::array::from_fn(|i| self.origin[i] + vector[i])
+    }
+
+    fn vector(self, [a, b]: Point) -> Point {
+        std::array::from_fn(|i| a.mul_add(self.directions[0][i], b * self.directions[1][i]))
+    }
+
+    fn curve(self, edge: Edge) -> Curve {
+        match edge {
+            Edge::Line(ends) => Curve::Line(ends.map(|point| self.point(point))),
+            Edge::Arc {
+                center,
+                radius,
+                start_rad,
+                sweep_rad,
+            } => {
+                let (sin, cos) = start_rad.sin_cos();
+                let sign = sweep_rad.signum();
+                Curve::Ellipse(Ellipse {
+                    center: self.point(center),
+                    u: self.vector([cos, sin]),
+                    v: self.vector([-sign * sin, sign * cos]),
+                    major: radius,
+                    minor: radius,
+                    trim: [0., sweep_rad.abs()],
+                })
+            }
+        }
+    }
+
+    fn options(self, view: DrawingProjection, tolerance: f64) -> Result<Options, GeometryError> {
+        Ok(Options {
+            axis: self.axis,
+            depth_mm: self.depth,
+            tolerance_mm: tolerance,
+            segment_limit: view.maximum_curves as usize,
+            windows_mm: self.windows(view)?,
+        })
+    }
+
+    fn windows(self, options: DrawingProjection) -> Result<[Option<Point>; 2], GeometryError> {
+        let mut local = [None; 2];
+        for (screen, window) in [options.section_u_mm, options.section_v_mm]
+            .into_iter()
+            .enumerate()
+        {
+            let Some([a, b]) = window else { continue };
+            let components = self.directions.map(|direction| direction[screen]);
+            let axis = usize::from(components[1].abs() > components[0].abs());
+            if components[1 - axis].abs() > 32. * f64::EPSILON {
+                return Err(unsupported(
+                    "Rust machined section windows must align with the cut's stock axes",
+                ));
+            }
+            let [a, b] = [a, b].map(|x| (x - self.origin[screen]) / components[axis]);
+            local[axis] = Some([a.min(b), a.max(b)]);
+        }
+        Ok(local)
+    }
+}
+
+fn stadium_section(
+    profile: multicad_rust_kernel::stadium::Stadium,
+    axial: Point,
+    axis: usize,
+    depth: f64,
+    windows: [Option<Point>; 2],
+    tolerance: f64,
+) -> Result<Vec<Vec<Edge>>, GeometryError> {
+    if axis == 2 {
+        if depth < axial[0] - tolerance || depth > axial[1] + tolerance {
+            return Ok(Vec::new());
+        }
+        for (axis, window) in windows.into_iter().enumerate() {
+            let Some([lo, hi]) = window else { continue };
+            let direction = |sign| std::array::from_fn(|i| if i == axis { sign } else { 0. });
+            let min = -profile.support(direction(-1.));
+            let max = profile.support(direction(1.));
+            if max <= lo || min >= hi {
+                return Ok(Vec::new());
+            }
+            if min < lo || max > hi {
+                return Err(unsupported(
+                    "Rust section cannot yet clip a rounded insert perimeter",
+                ));
+            }
+        }
+        return Ok(vec![orthogonal_section::stadium_edges(profile).to_vec()]);
+    }
+    let Some(side) =
+        orthogonal_section::stadium_interval(profile, axis, depth).map_err(cut_error)?
+    else {
+        return Ok(Vec::new());
+    };
+    let mut intervals = if axis == 0 {
+        [side, axial]
+    } else {
+        [axial, side]
+    };
+    for (interval, window) in intervals.iter_mut().zip(windows) {
+        if let Some([lo, hi]) = window {
+            interval[0] = interval[0].max(lo);
+            interval[1] = interval[1].min(hi);
+        }
+    }
+    let [[a, b], [c, d]] = intervals;
+    if b - a <= tolerance || d - c <= tolerance {
+        return Ok(Vec::new());
+    }
+    let corners = [[a, c], [b, c], [b, d], [a, d]];
+    Ok(vec![
+        (0..4)
+            .map(|i| Edge::Line([corners[i], corners[(i + 1) % 4]]))
+            .collect(),
+    ])
+}
+
+const HATCH_SEGMENT_LIMIT: usize = 100_000;
+
+fn hatch_segments(
+    loops: &[Vec<Edge>],
+    frame: SliceFrame,
+    enlarge_voids: bool,
+    deflection: f64,
+) -> Result<Vec<Segment>, GeometryError> {
+    let mut segments = Vec::new();
+    for ring in loops {
+        let first = segments.len();
+        hatch_ring(ring, frame, enlarge_voids, deflection, &mut segments)?;
+        // Each edge starts where its predecessor ends. Independently evaluated
+        // arc endpoints differ only by rounding; a real gap is not a region.
+        let count = segments.len() - first;
+        for index in 0..count {
+            let end = segments[first + index][1];
+            let next = &mut segments[first + (index + 1) % count][0];
+            let gap = (end[0] - next[0]).hypot(end[1] - next[1]);
+            if gap > deflection {
+                return Err(err(
+                    GeometryErrorKind::InvalidResult,
+                    "Rust machined section loop is not closed",
+                ));
+            }
+            *next = end;
+        }
+    }
+    Ok(segments)
+}
+
+fn hatch_ring(
+    ring: &[Edge],
+    frame: SliceFrame,
+    enlarge_voids: bool,
+    deflection: f64,
+    segments: &mut Vec<Segment>,
+) -> Result<(), GeometryError> {
+    const LIMIT: usize = HATCH_SEGMENT_LIMIT;
+    for edge in ring {
+        match *edge {
+            Edge::Line(ends) => segments.push(ends.map(|point| frame.point(point))),
+            Edge::Arc {
+                center,
+                radius,
+                start_rad,
+                sweep_rad,
+            } => {
+                // Keep chord approximations within material. A void uses the
+                // outer tangent polygon, while an insert uses inner chords.
+                let target = 4. * (deflection / (4. * (radius + deflection))).sqrt().asin();
+                let count = (sweep_rad.abs() / target.min(FRAC_PI_2)).ceil() as usize;
+                let points = if enlarge_voids { 2 } else { 1 };
+                if count > (LIMIT - segments.len()) / points {
+                    return Err(limit());
+                }
+                let step = sweep_rad / count as f64;
+                let at = |angle: f64, radius: f64| {
+                    let (sin, cos) = angle.sin_cos();
+                    frame.point([
+                        radius.mul_add(cos, center[0]),
+                        radius.mul_add(sin, center[1]),
+                    ])
+                };
+                let mut last = at(start_rad, radius);
+                for i in 0..count {
+                    let start = step.mul_add(i as f64, start_rad);
+                    let next = at(step.mul_add((i + 1) as f64, start_rad), radius);
+                    if enlarge_voids {
+                        let tip = at(start + step / 2., radius / (step / 2.).cos());
+                        segments.push([last, tip]);
+                        last = tip;
+                    }
+                    segments.push([last, next]);
+                    last = next;
+                }
+            }
+        }
+        if segments.len() >= LIMIT {
+            return Err(limit());
+        }
+    }
+    Ok(())
+}
+
+/// Single-box orthogonal stock whose only curved cuts are full through
+/// bores, as world-space box and cylinders for an oblique section.
+fn oblique_stock(solid: &Solid) -> Option<(oblique::Stock, Vec<oblique::Bore>)> {
+    let (body, placement) = solid.orthogonal_body()?;
+    let drawing = body.drawing_stock();
+    let [cell] = drawing.cells else {
+        return None;
+    };
+    if !drawing.pockets.is_empty() || !drawing.slots.is_empty() {
+        return None;
+    }
+    let normal = placement.normal();
+    let world = |p: [f64; 3]| -> [f64; 3] {
+        std::array::from_fn(|i| {
+            placement.origin[i] + placement.u[i] * p[0] + placement.v[i] * p[1] + normal[i] * p[2]
+        })
+    };
+    let stock = oblique::Stock {
+        origin: world(cell.min),
+        axes: [placement.u, placement.v, normal],
+        size: std::array::from_fn(|i| cell.max[i] - cell.min[i]),
+    };
+    let bores = drawing
+        .through_bores
+        .iter()
+        .map(|bore| {
+            let [a, b] = bore.centers_mm.map(world);
+            let delta: [f64; 3] = std::array::from_fn(|i| b[i] - a[i]);
+            let height = dot(delta, delta).sqrt();
+            oblique::Bore {
+                base: a,
+                axis: delta.map(|x| x / height),
+                radius: bore.radius_mm,
+                height,
+            }
+        })
+        .collect();
+    Some((stock, bores))
+}

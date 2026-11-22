@@ -1,5 +1,5 @@
 //! Native supporting-face boundaries, published as owned sketch receipts.
-use crate::{ModelError, error, external::Sources};
+use crate::{GeometryBackend, ModelError, error, external::Sources};
 use multicad_core::{
     document::{EntityData, EntityId},
     model,
@@ -21,13 +21,58 @@ impl crate::Compiler {
         sketch: EntityId,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<ReferenceReport, ModelError> {
-        let Some(multicad_core::document::EntityData::Sketch { plane, .. }) =
-            document.get(sketch).map(|e| &e.data)
+        self.sketch_reference_report_with_backend(
+            document,
+            revision,
+            sketch,
+            GeometryBackend::default(),
+            interrupt,
+        )
+    }
+
+    pub fn sketch_reference_report_with_backend(
+        &self,
+        document: &multicad_core::document::Document,
+        revision: u64,
+        sketch: EntityId,
+        backend: GeometryBackend,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<ReferenceReport, ModelError> {
+        let Some(EntityData::Sketch { plane, inputs, .. }) = document.get(sketch).map(|e| &e.data)
         else {
             return Err(error(Some(sketch), "Sketch is missing"));
         };
-        let native =
-            self.compile_sources_interruptible(document, revision, &[*plane], interrupt)?;
+        let mut roots = BTreeSet::from([*plane]);
+        for link in inputs
+            .iter()
+            .filter(|link| link.role == multicad_core::sketch_external::ROLE)
+        {
+            roots.extend(
+                document
+                    .evaluation_dependencies(link.target)
+                    .map_err(|e| error(Some(link.target), e))?
+                    .into_iter()
+                    .filter(|id| {
+                        matches!(
+                            document.get(*id).map(|entity| &entity.data),
+                            Some(
+                                EntityData::Feature { .. }
+                                    | EntityData::Part { .. }
+                                    | EntityData::Instance { .. }
+                                    | EntityData::Assembly { .. }
+                                    | EntityData::Plane { .. }
+                            )
+                        )
+                    }),
+            );
+        }
+        let native = self.compile_sources_with_backend(
+            document,
+            revision,
+            &roots.into_iter().collect::<Vec<_>>(),
+            backend,
+            interrupt,
+        )?;
         let context = multicad_solver::SketchEvaluationContext::new(document, revision)
             .map_err(|e| error(Some(sketch), e))?;
         let topologies = crate::external::topologies(&native);
@@ -76,14 +121,9 @@ impl Sources<'_> {
             .get(&link.target)
             .ok_or_else(|| failure("Supporting face has no native topology".into()))?;
         let frame = self.frame(sketch, report)?;
-        let face = solid
-            .faces()
+        let (origin, normal) = solid
+            .face_plane(key.ordinal)
             .map_err(|e| failure(e.to_string()))?
-            .into_iter()
-            .find(|f| f.index == key.ordinal)
-            .ok_or_else(|| failure("Supporting native face is missing".into()))?;
-        let (origin, normal) = face
-            .plane
             .ok_or_else(|| failure("Sketch region support must be planar".into()))?;
         let dot = |a: [f64; 3], b: [f64; 3]| a.into_iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
         if dot(normal, frame.n).abs() < 1. - 1e-8 {

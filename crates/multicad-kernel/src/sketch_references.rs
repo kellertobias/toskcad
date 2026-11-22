@@ -5,13 +5,11 @@ use crate::{
     BRepSelection, BSpline2d, CurvedEdge2d, GeometryError, GeometryErrorKind, GeometryPolicy,
     PlaneFrame, Solid, ffi,
 };
-use multicad_core::references::{TopologyKey, TopologyKind};
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SketchReferenceMethod {
-    Coplanar,
-    Project,
-    Intersect,
-}
+use multicad_core::references::{AnalyticGeometry, ReferenceFrame, TopologyKey, TopologyKind};
+pub use multicad_rust_kernel::sketch_reference::Method as SketchReferenceMethod;
+use multicad_rust_kernel::sketch_reference::{self, Geometry, Outcome, conic};
+
+mod section;
 #[derive(Clone, Debug, PartialEq)]
 pub enum SketchReferenceGeometry {
     Point([f64; 2]),
@@ -21,7 +19,8 @@ pub enum SketchReferenceGeometry {
 pub struct SketchReferenceResult {
     pub geometry: SketchReferenceGeometry,
     pub support: Vec<TopologyKey>,
-    /// Parameter on the original finite native edge, never a result ordinal.
+    /// Parameter on the original finite edge, never a result ordinal.
+    /// Analytic Rust line and conic edges use a directed unit interval.
     pub source_parameter: Option<f64>,
     /// Native source interval; rational conversion may reparameterize output.
     pub source_interval: Option<[f64; 2]>,
@@ -55,6 +54,9 @@ impl Solid {
     ) -> Result<SketchReferenceCatalog, GeometryError> {
         policy.validate()?;
         let native_frame = frame.checked(policy)?;
+        if self.uses_rust_geometry() {
+            return self.rust_sketch_reference(selection, frame, method, policy);
+        }
         let (kind, index) = match selection {
             BRepSelection::Whole => (0, 0),
             BRepSelection::Face(i) => (1, i),
@@ -67,7 +69,7 @@ impl Solid {
             SketchReferenceMethod::Intersect => 2,
         };
         let out = ffi::sketch_reference_geometry(
-            &self.native.0,
+            self.occt()?,
             kind,
             index,
             &native_frame,
@@ -165,4 +167,418 @@ impl Solid {
             coincident: out.coincident,
         })
     }
+
+    fn rust_sketch_reference(
+        &self,
+        selection: BRepSelection,
+        frame: PlaneFrame,
+        method: SketchReferenceMethod,
+        policy: GeometryPolicy,
+    ) -> Result<SketchReferenceCatalog, GeometryError> {
+        let unsupported = || {
+            GeometryError {
+            operation: "sketch reference",
+            kind: GeometryErrorKind::Unsupported,
+            message: "Rust sketch references support finite vertices, lines and conics, and can project involute flanks".into(),
+        }
+        };
+        let topology = self.rust_topology().ok_or_else(unsupported)??;
+        let (kind, ordinal) = match selection {
+            BRepSelection::Vertex(index) => (TopologyKind::Vertex, index),
+            BRepSelection::Edge(index) => (TopologyKind::Edge, index),
+            BRepSelection::Face(index) => {
+                return section::face(self, &topology, index, frame, method, policy);
+            }
+            BRepSelection::Whole => {
+                return section::whole(self, &topology, frame, method, policy);
+            }
+        };
+        let key = TopologyKey { kind, ordinal };
+        let element = topology
+            .elements
+            .iter()
+            .find(|element| element.key == key)
+            .ok_or_else(|| error("Selected Rust reference topology is missing"))?;
+        if kind == TopologyKind::Edge
+            && element.geometry.is_none()
+            && let Some(span) = self.spline_rim_bezier(ordinal)
+        {
+            return spline_reference(span, frame, method, key, policy);
+        }
+        rust_element_reference(element, frame, method, policy)
+    }
+}
+
+pub(crate) fn rust_element_reference(
+    element: &multicad_core::references::TopologyElement,
+    frame: PlaneFrame,
+    method: SketchReferenceMethod,
+    policy: GeometryPolicy,
+) -> Result<SketchReferenceCatalog, GeometryError> {
+    {
+        let unsupported = || {
+            GeometryError {
+            operation: "sketch reference",
+            kind: GeometryErrorKind::Unsupported,
+            message: "Rust sketch references support finite vertices, lines and conics, and can project involute flanks".into(),
+        }
+        };
+        let key = element.key;
+        let kind = key.kind;
+        let axes = [frame.u, frame.v, frame.normal()];
+        let direction = |vector: [f64; 3]| {
+            axes.map(|axis| vector.into_iter().zip(axis).map(|(a, b)| a * b).sum())
+        };
+        let local =
+            |point: [f64; 3]| direction(std::array::from_fn(|i| point[i] - frame.origin[i]));
+        let conic_edge = |source: ReferenceFrame, semiaxes_mm, start_rad, sweep_rad| conic::Conic {
+            center: local(source.origin_mm),
+            axes: [source.u, source.v].map(direction),
+            semiaxes_mm,
+            start_rad,
+            sweep_rad,
+        };
+        let tolerance = policy.linear_tolerance_mm;
+        let outcome = match (kind, element.geometry) {
+            (TopologyKind::Vertex, Some(AnalyticGeometry::Point { position_mm })) => {
+                sketch_reference::vertex(local(position_mm), method, tolerance)
+            }
+            (TopologyKind::Edge, Some(AnalyticGeometry::Line { a_mm, b_mm })) => {
+                sketch_reference::edge([a_mm, b_mm].map(local), method, tolerance)
+            }
+            (
+                TopologyKind::Edge,
+                Some(AnalyticGeometry::CircularArc {
+                    frame: source,
+                    radius_mm,
+                    start_rad,
+                    sweep_rad,
+                }),
+            ) => {
+                return conic_reference(
+                    conic_edge(source, [radius_mm; 2], start_rad, sweep_rad),
+                    method,
+                    key,
+                    policy,
+                );
+            }
+            (
+                TopologyKind::Edge,
+                Some(AnalyticGeometry::EllipticArc {
+                    frame: source,
+                    semiaxes_mm,
+                    start_rad,
+                    sweep_rad,
+                }),
+            ) => {
+                return conic_reference(
+                    conic_edge(source, semiaxes_mm, start_rad, sweep_rad),
+                    method,
+                    key,
+                    policy,
+                );
+            }
+            (
+                TopologyKind::Edge,
+                Some(AnalyticGeometry::InvoluteArc {
+                    frame: source,
+                    base_radius_mm,
+                    parameters,
+                }),
+            ) => {
+                return involute_reference(
+                    source,
+                    base_radius_mm,
+                    parameters,
+                    frame,
+                    method,
+                    key,
+                    policy,
+                );
+            }
+            _ => return Err(unsupported()),
+        }
+        .map_err(|cause| match cause {
+            sketch_reference::Error::Invalid => error("Invalid finite Rust sketch reference"),
+            sketch_reference::Error::OffPlane => {
+                error("Selected finite Rust reference is not coplanar with the sketch plane")
+            }
+        })?;
+        let mut results = Vec::new();
+        if let Outcome::Hit { geometry, contact } = outcome {
+            let geometry = match geometry {
+                Geometry::Point(point) => {
+                    policy.point([point[0], point[1], 0.])?;
+                    SketchReferenceGeometry::Point(point)
+                }
+                Geometry::Line([a, b]) => {
+                    let curve = CurvedEdge2d::Line { a, b };
+                    curve.data(policy, 0)?;
+                    SketchReferenceGeometry::Curve(curve)
+                }
+            };
+            results.push(SketchReferenceResult {
+                geometry,
+                support: vec![key],
+                source_parameter: contact.map(|contact| contact.parameter),
+                source_interval: (kind == TopologyKind::Edge).then_some([0., 1.]),
+                tangent: contact.is_some_and(|contact| contact.crossing.is_none()),
+                crossing: contact.and_then(|contact| contact.crossing),
+            });
+        }
+        Ok(SketchReferenceCatalog {
+            results,
+            coincident: outcome == Outcome::Coincident,
+        })
+    }
+}
+
+fn conic_reference(
+    edge: conic::Conic,
+    method: SketchReferenceMethod,
+    key: TopologyKey,
+    policy: GeometryPolicy,
+) -> Result<SketchReferenceCatalog, GeometryError> {
+    use conic::{Error, Outcome, Projection};
+    let outcome = edge
+        .query(method, policy.linear_tolerance_mm)
+        .map_err(|cause| {
+            error(match cause {
+                Error::Invalid => "Invalid finite Rust conic reference",
+                Error::OffPlane => {
+                    "Selected finite Rust conic is not coplanar with the sketch plane"
+                }
+                Error::Singular => "Edge-on conic projection is singular",
+                Error::Unresolved => "Rust conic contact is not resolved within sketch precision",
+            })
+        })?;
+    let result = |geometry, contact: Option<sketch_reference::Contact>| SketchReferenceResult {
+        geometry,
+        support: vec![key],
+        source_parameter: contact.map(|c| c.parameter),
+        source_interval: Some([0., 1.]),
+        tangent: contact.is_some_and(|c| c.crossing.is_none()),
+        crossing: contact.and_then(|c| c.crossing),
+    };
+    let (results, coincident) = match outcome {
+        Outcome::Coincident => (vec![], true),
+        Outcome::Contacts(contacts) => (
+            contacts
+                .into_iter()
+                .map(|(point, contact)| {
+                    policy.point([point[0], point[1], 0.])?;
+                    Ok(result(SketchReferenceGeometry::Point(point), Some(contact)))
+                })
+                .collect::<Result<_, GeometryError>>()?,
+            false,
+        ),
+        Outcome::Projection(projection) => {
+            let curve = match projection {
+                Projection::Circle { center, radius_mm } => {
+                    CurvedEdge2d::Circle { center, radius_mm }
+                }
+                Projection::Arc {
+                    center,
+                    a,
+                    b,
+                    clockwise,
+                } => CurvedEdge2d::Arc {
+                    center,
+                    a,
+                    b,
+                    clockwise,
+                },
+                Projection::RationalQuadratic { poles, weights } => {
+                    let spans = (poles.len() - 1) / 2;
+                    let mut multiplicities = vec![2; spans + 1];
+                    multiplicities[0] = 3;
+                    multiplicities[spans] = 3;
+                    CurvedEdge2d::BSpline(BSpline2d {
+                        degree: 2,
+                        poles,
+                        knots: (0..=spans).map(|i| i as f64 / spans as f64).collect(),
+                        multiplicities,
+                        weights: Some(weights),
+                    })
+                }
+            };
+            curve.data(policy, 0)?;
+            (
+                vec![result(SketchReferenceGeometry::Curve(curve), None)],
+                false,
+            )
+        }
+    };
+    Ok(SketchReferenceCatalog {
+        results,
+        coincident,
+    })
+}
+
+/// An exact source Bézier rim span: the consumer frame maps its poles
+/// affinely and keeps its weights, so the projection is the same basis.
+/// Parameters are mapped into the span's authored knot interval.
+fn spline_reference(
+    span: crate::geometry::RimSpan,
+    frame: PlaneFrame,
+    method: SketchReferenceMethod,
+    key: TopologyKey,
+    policy: GeometryPolicy,
+) -> Result<SketchReferenceCatalog, GeometryError> {
+    use multicad_rust_kernel::sketch_reference::rational::{Bezier, Error, Outcome};
+    let axes = [frame.u, frame.v, frame.normal()];
+    let local = |point: [f64; 3]| {
+        axes.map(|axis| {
+            (0..3)
+                .map(|i| (point[i] - frame.origin[i]) * axis[i])
+                .sum::<f64>()
+        })
+    };
+    let crate::geometry::RimSpan {
+        poles,
+        weights,
+        interval,
+    } = span;
+    let curve = Bezier {
+        poles: poles.into_iter().map(local).collect(),
+        weights,
+    };
+    let authored = |t: f64| interval[0] + t * (interval[1] - interval[0]);
+    let outcome = curve
+        .query(method, policy.linear_tolerance_mm)
+        .map_err(|cause| {
+            error(match cause {
+                Error::Invalid => "Invalid finite Rust spline reference",
+                Error::OffPlane => {
+                    "Selected finite Rust spline is not coplanar with the sketch plane"
+                }
+                Error::Collapsed => "The spline projection collapses into a point",
+                Error::Retraced => "The spline projection retraces itself",
+                Error::Unresolved => "Rust spline contact is not resolved within sketch precision",
+            })
+        })?;
+    let result = |geometry, contact: Option<sketch_reference::Contact>| SketchReferenceResult {
+        geometry,
+        support: vec![key],
+        source_parameter: contact.map(|c| authored(c.parameter)),
+        source_interval: Some(interval),
+        tangent: contact.is_some_and(|c| c.crossing.is_none()),
+        crossing: contact.and_then(|c| c.crossing),
+    };
+    let (results, coincident) = match outcome {
+        Outcome::Coincident => (vec![], true),
+        Outcome::Contacts(contacts) => (
+            contacts
+                .into_iter()
+                .map(|(point, contact)| {
+                    policy.point([point[0], point[1], 0.])?;
+                    Ok(result(SketchReferenceGeometry::Point(point), Some(contact)))
+                })
+                .collect::<Result<_, GeometryError>>()?,
+            false,
+        ),
+        Outcome::Projection { poles, weights } => {
+            let degree = poles.len() as u32 - 1;
+            let curve = CurvedEdge2d::BSpline(BSpline2d {
+                degree,
+                poles,
+                knots: interval.to_vec(),
+                multiplicities: vec![degree + 1; 2],
+                weights: weights
+                    .windows(2)
+                    .any(|pair| pair[0] != pair[1])
+                    .then_some(weights),
+            });
+            curve.data(policy, 0)?;
+            (
+                vec![result(SketchReferenceGeometry::Curve(curve), None)],
+                false,
+            )
+        }
+    };
+    Ok(SketchReferenceCatalog {
+        results,
+        coincident,
+    })
+}
+
+fn involute_reference(
+    source: ReferenceFrame,
+    radius: f64,
+    [a, b]: [f64; 2],
+    target: PlaneFrame,
+    method: SketchReferenceMethod,
+    key: TopologyKey,
+    policy: GeometryPolicy,
+) -> Result<SketchReferenceCatalog, GeometryError> {
+    use multicad_rust_kernel::spur_gear::{Edge, Involute};
+
+    let curve = Involute::new(radius, [a.min(b), a.max(b)], 0.)
+        .map_err(|_| error("Invalid Rust involute reference"))?;
+    let curve = if a > b { curve.reversed() } else { curve };
+    let dot = |a: [f64; 3], b: [f64; 3]| a.into_iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+    let n = target.normal();
+    let axial = [dot(source.u, n), dot(source.v, n)];
+    let delta = std::array::from_fn(|i| source.origin_mm[i] - target.origin[i]);
+    let offset = dot(delta, n);
+    let edge = Edge::Involute(curve);
+    let lo = offset - edge.support(axial.map(|v| -v));
+    let hi = offset + edge.support(axial);
+    let tolerance = policy.linear_tolerance_mm;
+    let coplanar = lo.abs().max(hi.abs()) <= tolerance;
+    if method == SketchReferenceMethod::Intersect {
+        if coplanar || lo > tolerance || hi < -tolerance {
+            return Ok(SketchReferenceCatalog {
+                results: vec![],
+                coincident: coplanar,
+            });
+        }
+        return Err(GeometryError {
+            operation: "sketch reference",
+            kind: GeometryErrorKind::Unsupported,
+            message: "Rust sketch references cannot yet isolate an involute plane intersection"
+                .into(),
+        });
+    }
+    if method == SketchReferenceMethod::Coplanar && !coplanar {
+        return Err(error(
+            "Selected involute is not coplanar with the sketch plane",
+        ));
+    }
+    if dot(source.normal(), n).abs() <= 1e-10 {
+        return Err(error("The involute projection collapses into a line"));
+    }
+    let spline = curve.cubic_spline(tolerance / 2.).map_err(|cause| {
+        error(format!(
+            "Cannot approximate the involute within sketch precision: {cause:?}"
+        ))
+    })?;
+    let axes = [target.u, target.v];
+    let poles = spline
+        .poles_mm
+        .into_iter()
+        .map(|[x, y]| {
+            let point = std::array::from_fn(|i| delta[i] + x * source.u[i] + y * source.v[i]);
+            axes.map(|axis| dot(point, axis))
+        })
+        .collect();
+    let curve = CurvedEdge2d::BSpline(BSpline2d {
+        degree: 3,
+        poles,
+        knots: spline.knots,
+        multiplicities: spline.multiplicities.into_iter().map(u32::from).collect(),
+        weights: None,
+    });
+    curve.data(policy, 0)?;
+    Ok(SketchReferenceCatalog {
+        results: vec![SketchReferenceResult {
+            geometry: SketchReferenceGeometry::Curve(curve),
+            support: vec![key],
+            source_parameter: None,
+            source_interval: Some([0., 1.]),
+            tangent: false,
+            crossing: None,
+        }],
+        coincident: false,
+    })
 }

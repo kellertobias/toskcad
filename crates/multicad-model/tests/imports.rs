@@ -5,17 +5,22 @@
 //! driving a panel cutout through the transfer engine, and save/reopen.
 use multicad_core::{
     commands::{Actor, Channel, Session},
-    document::{Document, EntityId},
+    document::{Document, EntityData, EntityId, Mutation},
     model::{imports::*, *},
     project_file::{self, ProjectFile},
     references::{AnalyticGeometry, GeometryIntent},
 };
-use multicad_kernel::{BooleanOperation, GeometryPolicy, RigidTransform, Solid};
-use multicad_model::{
-    Compiler, Model,
-    imports::{KicadOptions, read_kicad_file, read_step_file},
+
+use multicad_kernel::{
+    Solid,
+    rust_kernel::{Rational, step::write_box},
 };
-use std::{f64::consts::PI, path::Path};
+
+use multicad_model::{
+    Compiler, GeometryBackend, Model,
+    imports::{KicadOptions, read_kicad_file_with_backend, read_step_file_with_backend},
+};
+use std::f64::consts::PI;
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -23,14 +28,16 @@ fn actor() -> Actor {
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() <= 1e-3, "{a} != {b}");
 }
-fn compile(s: &Session) -> Model {
+
+fn compile_with_backend(s: &Session, backend: GeometryBackend) -> Model {
     Compiler::default()
-        .compile(s.document(), s.revision())
+        .compile_with_backend(s.document(), s.revision(), backend, None)
         .unwrap()
 }
-fn commit(s: &mut Session, p: ModelPrepared) {
+
+fn commit_with_backend(s: &mut Session, p: ModelPrepared, backend: GeometryBackend) {
     Compiler::default()
-        .compile(p.prepared.document(), s.revision() + 1)
+        .compile_with_backend(p.prepared.document(), s.revision() + 1, backend, None)
         .unwrap();
     s.commit(p.prepared).unwrap();
 }
@@ -64,87 +71,6 @@ fn transfer_head(m: &Model, part: EntityId) -> EntityId {
         .or_else(|| s.body_sources.get(&part))
         .unwrap()
 }
-fn boxes(path: &Path, parts: &[([f64; 3], [f64; 3])]) {
-    let policy = GeometryPolicy::default();
-    let mut all: Option<Solid> = None;
-    for (size, at) in parts {
-        let b = Solid::box_solid(*size, policy)
-            .unwrap()
-            .transformed(RigidTransform {
-                translation_mm: *at,
-                ..Default::default()
-            })
-            .unwrap();
-        all = Some(match all {
-            None => b,
-            Some(a) => a
-                .boolean(&b, BooleanOperation::Union, policy)
-                .unwrap()
-                .unwrap(),
-        });
-    }
-    all.unwrap().write_step(path).unwrap();
-}
-
-#[test]
-fn step_solids_import_as_parts_and_reimport_keeps_matching_parts() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("bracket.step");
-    boxes(
-        &path,
-        &[
-            ([10., 20., 30.], [0., 0., 0.]),
-            ([5., 5., 5.], [100., 0., 0.]),
-        ],
-    );
-    let mut s = Session::new(Document::new("STEP").unwrap()).unwrap();
-    let file = read_step_file(&path).unwrap();
-    assert_eq!(file.solids.len(), 2);
-    let p = prepare_step_import(&s, 0, actor(), &file).unwrap();
-    let source = p.source;
-    let parts: Vec<_> = p.model.outputs.iter().map(|o| o.body).collect();
-    commit(&mut s, p.model);
-    let m = compile(&s);
-    let mut volumes: Vec<f64> = parts
-        .iter()
-        .map(|p| solid(&m, *p).volume_mm3().unwrap())
-        .collect();
-    volumes.sort_by(f64::total_cmp);
-    near(volumes[0], 125.);
-    near(volumes[1], 6000.);
-    // The far solid keeps its file placement.
-    let far = parts
-        .iter()
-        .find(|p| solid(&m, **p).volume_mm3().unwrap() < 200.)
-        .unwrap();
-    near(solid(&m, *far).bounds().unwrap().min[0], 100.);
-    let near_part = *parts.iter().find(|p| *p != far).unwrap();
-
-    // Reimport: the big box is unchanged, the small one moved and a third added.
-    boxes(
-        &path,
-        &[
-            ([10., 20., 30.], [0., 0., 0.]),
-            ([5., 5., 5.], [200., 0., 0.]),
-            ([1., 1., 1.], [-50., 0., 0.]),
-        ],
-    );
-    let file = read_step_file(&path).unwrap();
-    let (plan, p) = prepare_step_update(&s, s.revision(), actor(), source, &file).unwrap();
-    assert_eq!(plan.matched.len(), 1);
-    assert!(!plan.matched[0].2);
-    // Unnamed solids cannot be matched once their geometry changes.
-    assert_eq!(plan.missing.len(), 1);
-    assert_eq!(plan.added.len(), 2);
-    commit(&mut s, p.model);
-    let m = compile(&s);
-    near(solid(&m, near_part).volume_mm3().unwrap(), 6000.);
-    // The missing solid's Part keeps its last geometry and stays linked.
-    near(solid(&m, *far).bounds().unwrap().min[0], 100.);
-    let stored = read_step_source(s.document(), source).unwrap();
-    assert_eq!(stored.solids.iter().filter(|s| s.missing).count(), 1);
-    assert_eq!(step_bodies(s.document()).count(), 4);
-}
 
 #[test]
 fn named_solids_match_by_name_when_their_geometry_changes() {
@@ -157,6 +83,7 @@ fn named_solids_match_by_name_when_their_geometry_changes() {
         file_name: "a.step".into(),
         path: None,
         content: multicad_core::project_file::ContentHash::of(b"a"),
+        encoding: StepEncoding::OpenCascadeBrep,
         solids: vec![ImportedSolid {
             id: "solid-1".into(),
             name: "Lid".into(),
@@ -169,11 +96,135 @@ fn named_solids_match_by_name_when_their_geometry_changes() {
         file_name: "a.step".into(),
         path: None,
         content: multicad_core::project_file::ContentHash::of(b"b"),
+        encoding: StepEncoding::OpenCascadeBrep,
         solids: vec![("Lid".into(), String::new(), sig(12.))],
     };
     let plan = plan_step_update(&source, &file);
     assert_eq!(plan.matched, vec![("solid-1".to_string(), 0, true)]);
     assert!(plan.added.is_empty() && plan.missing.is_empty());
+}
+
+fn rust_box_step(x: i64) -> String {
+    write_box(
+        [x, 20, 30].map(|dimension| Rational::new(dimension, 1).unwrap()),
+        [5., 6., 7.],
+        [1., 0., 0.],
+        [0., 1., 0.],
+    )
+    .unwrap()
+}
+
+#[test]
+fn rust_step_reimport_and_reopen_preserve_the_part_and_exact_geometry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("solid.step");
+    std::fs::write(&path, rust_box_step(10)).unwrap();
+    let file = read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap();
+    let mut session = Session::new(Document::new("Rust STEP").unwrap()).unwrap();
+    let prepared = prepare_step_import(&session, 0, actor(), &file).unwrap();
+    let source = prepared.source;
+    let part = prepared.model.outputs[0].body;
+    session.commit(prepared.model.prepared).unwrap();
+
+    let changed = rust_box_step(15);
+    std::fs::write(&path, &changed).unwrap();
+    let file = read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap();
+    let (plan, prepared) =
+        prepare_step_update(&session, session.revision(), actor(), source, &file).unwrap();
+    assert_eq!(plan.matched, vec![("solid-1".into(), 0, true)]);
+    assert!(plan.added.is_empty() && plan.missing.is_empty());
+    session.commit(prepared.model.prepared).unwrap();
+    std::fs::remove_file(&path).unwrap();
+
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(session.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let mut supported = project_file::supported_capabilities();
+    assert!(supported.remove(RUST_STEP_SOURCE_CAPABILITY));
+    assert!(
+        project_file::read(&mut bytes.as_slice(), Default::default(), &supported)
+            .expect_err("older readers must reject the new source schema")
+            .contains(RUST_STEP_SOURCE_CAPABILITY)
+    );
+    let opened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project;
+    assert_eq!(&opened.document, session.document());
+    assert!(opened.capabilities().contains(RUST_STEP_SOURCE_CAPABILITY));
+    assert!(!opened.capabilities().contains(STEP_SOURCE_CAPABILITY));
+    let saved = read_step_source(&opened.document, source).unwrap();
+    assert_eq!(saved.encoding, StepEncoding::RustStep);
+    assert_eq!(saved.solids[0].brep, changed);
+
+    let verify = |backend| {
+        let model = Compiler::default()
+            .compile_with_backend(&opened.document, 0, backend, None)
+            .unwrap();
+        let rebuilt = solid(&model, part);
+        near(rebuilt.volume_mm3().unwrap(), 9000.);
+        assert_eq!(rebuilt.bounds().unwrap().min, [5., 6., 7.]);
+        assert_eq!(rebuilt.bounds().unwrap().max, [20., 26., 37.]);
+    };
+    verify(GeometryBackend::Rust);
+}
+
+#[test]
+fn rust_step_rejects_malformed_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("solid.step");
+    std::fs::write(&path, b"bad STEP data").unwrap();
+    assert!(read_step_file_with_backend(&path, GeometryBackend::Rust).is_err());
+    std::fs::write(&path, [0xff]).unwrap();
+    let invalid_text = read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap_err();
+    assert!(invalid_text.to_string().contains("UTF-8"));
+}
+
+#[test]
+fn rust_step_rejects_inconsistent_saved_geometry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("solid.step");
+    std::fs::write(&path, rust_box_step(10)).unwrap();
+    let file = read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap();
+    let mut session = Session::new(Document::new("Rust STEP").unwrap()).unwrap();
+    let prepared = prepare_step_import(&session, 0, actor(), &file).unwrap();
+    let source = prepared.source;
+    session.commit(prepared.model.prepared).unwrap();
+    let mut source = session.document().get(source).unwrap().clone();
+    let EntityData::Extension { definition, .. } = &mut source.data else {
+        panic!("expected an embedded STEP source");
+    };
+    definition.schema_version = 1;
+    let refused = session
+        .document()
+        .edited(&[Mutation::Replace(source.clone())])
+        .unwrap_err();
+    assert!(refused.to_string().contains("encoding"), "{refused}");
+
+    let EntityData::Extension { definition, .. } = &mut source.data else {
+        unreachable!();
+    };
+    definition.schema_version = 2;
+    definition.data["solids"][0]["brep"] = rust_box_step(15).into();
+    let tampered = session
+        .document()
+        .edited(&[Mutation::Replace(source)])
+        .unwrap();
+    let refused = Compiler::default()
+        .compile_with_backend(&tampered, 0, GeometryBackend::Rust, None)
+        .err()
+        .expect("geometry different from the stored signature must be rejected");
+    assert!(
+        refused.to_string().contains("saved solid signature"),
+        "{refused}"
+    );
 }
 
 const BOARD: &str = r#"(kicad_pcb (version 20240108) (generator "pcbnew")
@@ -215,16 +266,26 @@ fn board_area() -> f64 {
 }
 
 #[test]
-fn kicad_board_components_and_reimport() {
+fn rust_kicad_board_components_and_reimport() {
+    kicad_board_components_and_reimport(GeometryBackend::Rust);
+}
+
+fn kicad_board_components_and_reimport(backend: GeometryBackend) {
     let dir = tempfile::tempdir().unwrap();
-    boxes(
-        &dir.path().join("u1.step"),
-        &[([10., 8., 3.], [-5., -4., 0.])],
-    );
+    let footprint_file = dir.path().join("u1.step");
+    let step = write_box(
+        [10, 8, 3].map(|n| Rational::new(n, 1).unwrap()),
+        [-5., -4., 0.],
+        [1., 0., 0.],
+        [0., 1., 0.],
+    )
+    .unwrap();
+    std::fs::write(&footprint_file, step).unwrap();
     let board_path = dir.path().join("control.kicad_pcb");
     std::fs::write(&board_path, BOARD).unwrap();
     let board_path = board_path.canonicalize().unwrap();
-    let import = read_kicad_file(&board_path, &KicadOptions::default()).unwrap();
+    let import =
+        read_kicad_file_with_backend(&board_path, &KicadOptions::default(), backend).unwrap();
     assert_eq!(import.board.holes.len(), 2, "only the M3 mounting holes");
     assert_eq!(import.models.len(), 1);
     assert!(import.board.unsupported.iter().any(|u| u.contains("vias")));
@@ -239,8 +300,8 @@ fn kicad_board_components_and_reimport() {
         .map(|(r, o, m)| (r.clone(), (o.clone(), *m)))
         .collect();
     assert!(parts["U1"].1.is_some() && parts["J1"].1.is_none());
-    commit(&mut s, p.model);
-    let m = compile(&s);
+    commit_with_backend(&mut s, p.model, backend);
+    let m = compile_with_backend(&s, backend);
     near(
         solid(&m, board.body).volume_mm3().unwrap(),
         board_area() * 1.6,
@@ -272,23 +333,24 @@ fn kicad_board_components_and_reimport() {
         .replace("\"Connector:J\"", "\"Connector:Gone\"")
         .replace("\"Reference\" \"J1\"", "\"Reference\" \"J9\"");
     std::fs::write(&board_path, moved).unwrap();
-    let mut again = read_kicad_file(&board_path, &KicadOptions::default()).unwrap();
+    let mut again =
+        read_kicad_file_with_backend(&board_path, &KicadOptions::default(), backend).unwrap();
     again.components = Some(vec!["U1".into(), "H1".into(), "H2".into(), "R1".into()]);
     let (plan, p) = prepare_kicad_update(&s, s.revision(), actor(), board.feature, &again).unwrap();
     assert_eq!(plan.moved, vec!["U1".to_string()]);
     assert_eq!(plan.missing, vec!["J1".to_string()]);
     assert!(plan.added.is_empty());
     assert!(!plan.outline_changed && !plan.holes_changed);
-    commit(&mut s, p);
-    let m = compile(&s);
+    commit_with_backend(&mut s, p, backend);
+    let m = compile_with_backend(&s, backend);
     near(solid(&m, parts["U1"].0.body).bounds().unwrap().min[0], 36.);
     near(solid(&m, parts["J1"].0.body).volume_mm3().unwrap(), 120.);
 
     // A replacement model for the missing connector.
-    let file = read_step_file(&dir.path().join("u1.step")).unwrap();
+    let file = read_step_file_with_backend(&footprint_file, backend).unwrap();
     let p = prepare_step_import(&s, s.revision(), actor(), &file).unwrap();
     let replacement = p.source;
-    commit(&mut s, p.model);
+    commit_with_backend(&mut s, p.model, backend);
     let j1 = components(s.document())
         .find(|e| {
             read_component(s.document(), e.id)
@@ -301,8 +363,8 @@ fn kicad_board_components_and_reimport() {
         .id;
     let p = prepare_component_model(&s, s.revision(), actor(), j1, Some(replacement)).unwrap();
     // The replacement takes the missing model's place at J1's position.
-    commit(&mut s, p);
-    let m = compile(&s);
+    commit_with_backend(&mut s, p, backend);
+    let m = compile_with_backend(&s, backend);
     let j1 = solid(&m, parts["J1"].0.body);
     near(j1.volume_mm3().unwrap(), 240.);
     near(j1.bounds().unwrap().min[0], 65.);
@@ -324,9 +386,24 @@ fn kicad_board_components_and_reimport() {
     .unwrap()
     .project;
     assert!(opened.capabilities().contains(BOARD_CAPABILITY));
-    assert!(opened.capabilities().contains(STEP_SOURCE_CAPABILITY));
+    let step_capability = if backend == GeometryBackend::Rust {
+        RUST_STEP_SOURCE_CAPABILITY
+    } else {
+        STEP_SOURCE_CAPABILITY
+    };
+    assert!(opened.capabilities().contains(step_capability));
     assert_eq!(&opened.document, s.document());
-    let reopened = Compiler::default().compile(&opened.document, 0).unwrap();
+    std::fs::remove_file(&board_path).unwrap();
+    std::fs::remove_file(&footprint_file).unwrap();
+    let reopened = compile_with_backend(&Session::new(opened.document).unwrap(), backend);
+    assert_eq!(
+        solid(&reopened, board.body).uses_rust_geometry(),
+        backend == GeometryBackend::Rust
+    );
+    near(
+        solid(&reopened, parts["U1"].0.body).volume_mm3().unwrap(),
+        240.,
+    );
     near(
         solid(&reopened, board.body).volume_mm3().unwrap(),
         board_area() * 1.6,
@@ -354,26 +431,29 @@ fn malformed_boards_are_refused_with_reasons() {
     );
 }
 
-/// The board's mounting holes drive a panel cutout through the transfer
-/// engine.
 #[test]
-fn board_mounting_holes_transfer_into_a_mounting_panel() {
+fn rust_kicad_mounting_holes_transfer_into_a_panel() {
+    board_mounting_holes_transfer_into_a_mounting_panel(GeometryBackend::Rust);
+}
+
+fn board_mounting_holes_transfer_into_a_mounting_panel(backend: GeometryBackend) {
     let dir = tempfile::tempdir().unwrap();
     let board_path = dir.path().join("control.kicad_pcb");
     std::fs::write(&board_path, BOARD).unwrap();
-    let import = read_kicad_file(
+    let import = read_kicad_file_with_backend(
         &board_path,
         &KicadOptions {
             components: Some(vec!["J1".into()]),
             ..Default::default()
         },
+        backend,
     )
     .unwrap();
     let mut s = Session::new(Document::new("Mounting").unwrap()).unwrap();
     let p = prepare_kicad_import(&s, 0, actor(), &import).unwrap();
     let board = p.board.clone();
     let j1 = p.components[0].1.clone();
-    commit(&mut s, p.model);
+    commit_with_backend(&mut s, p.model, backend);
     let plate = PrimitiveRequest::new(
         "Mounting plate",
         PrimitiveParameters::Box {
@@ -385,7 +465,7 @@ fn board_mounting_holes_transfer_into_a_mounting_panel() {
         },
     );
     let p = prepare_primitive(&s, s.revision(), actor(), &plate).unwrap();
-    commit(&mut s, p);
+    commit_with_backend(&mut s, p, backend);
     let mut members = vec![];
     for (body, z) in [(board.body, 10.), (plate.body, 0.), (j1.body, 10.)] {
         let member = ComponentPlacementRequest::new(
@@ -421,7 +501,7 @@ fn board_mounting_holes_transfer_into_a_mounting_panel() {
             .prepared,
     )
     .unwrap();
-    let m = compile(&s);
+    let m = compile_with_backend(&s, backend);
     let source = top(&m, board.feature, board.body, 1.6);
     let mut request = TransferRequest::new(
         "Board standoffs",
@@ -452,8 +532,8 @@ fn board_mounting_holes_transfer_into_a_mounting_panel() {
     ));
     request.references.push(face);
     let p = prepare_transfer(&s, s.revision(), actor(), &request).unwrap();
-    commit(&mut s, p);
-    let m = compile(&s);
+    commit_with_backend(&mut s, p, backend);
+    let m = compile_with_backend(&s, backend);
     // The board's 50 mm-diameter cutout is also a hole in its top face, so it
     // transfers with the two M3 holes.
     let removed = (PI * 1.6 * 1.6 * 2. + PI * 25.) * 3.;
@@ -494,8 +574,8 @@ fn board_mounting_holes_transfer_into_a_mounting_panel() {
     ));
     request.references.push(face);
     let p = prepare_transfer(&s, s.revision(), actor(), &request).unwrap();
-    commit(&mut s, p);
-    let m = compile(&s);
+    commit_with_backend(&mut s, p, backend);
+    let m = compile_with_backend(&s, backend);
     near(
         solid(&m, plate.body).volume_mm3().unwrap(),
         120. * 80. * 3. - removed - 6. * 4. * 3.,

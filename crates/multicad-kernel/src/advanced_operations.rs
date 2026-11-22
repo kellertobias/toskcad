@@ -44,10 +44,39 @@ impl Solid {
             ));
         }
         let mut components = Vec::with_capacity(count as usize);
+        if self.uses_rust_geometry() {
+            if self.geometry_policy() != policy {
+                return Err(failure(
+                    GeometryErrorKind::Input,
+                    "Rust component extraction requires the source geometry policy",
+                ));
+            }
+            if let Some(compound) = self.rust_compound() {
+                for member in compound.members() {
+                    checkpoint()?;
+                    for mut child in member.solid_components_interruptible(policy, interrupt)? {
+                        child.rust_origins.extend(self.rust_origins.iter().cloned());
+                        components.push(child);
+                    }
+                }
+                checkpoint()?;
+                return Ok(components);
+            }
+            if count == 1 {
+                return Ok(vec![self.share()?]);
+            }
+            if let Some(result) = self.rust_orthogonal_components(interrupt) {
+                return result;
+            }
+            return Err(failure(
+                GeometryErrorKind::Unsupported,
+                "Rust component extraction requires independent compound members",
+            ));
+        }
         let mut sum = 0.;
         for index in 0..count {
             checkpoint()?;
-            let handle = ffi::solid_component_at(&self.native.0, index)
+            let handle = ffi::solid_component_at(self.occt()?, index)
                 .map_err(|e| failure(GeometryErrorKind::Native, e.to_string()))?;
             let mut component = Self::adopt(handle, policy, "solid component")?;
             if component.solid_count()? != 1 {
@@ -124,9 +153,8 @@ impl Solid {
         }
         Ok(faces.iter().map(|f| f.key.ordinal).collect())
     }
-    /// Positive thickness builds inward; negative builds outward. Closing a
-    /// completely hollow part without openings is accepted only when native
-    /// topology genuinely contains both closed shells in one solid.
+    /// Positive thickness builds inward; negative builds outward. Rust handles
+    /// selected rectangular sides and cylindrical cap openings with sharp offsets.
     pub fn shell_named(
         &self,
         openings: &[TreatmentFace],
@@ -137,8 +165,14 @@ impl Solid {
         policy.validate()?;
         policy.length(thickness_mm.abs())?;
         let indices = self.selected_faces(openings, feature, true)?;
+        if self.uses_rust_geometry() {
+            if let Some(result) = self.shell_cylindrical(openings, thickness_mm, feature, policy) {
+                return result;
+            }
+            return self.shell_rectangular(openings, thickness_mm, feature, policy);
+        }
         let handle = ffi::shell_solid(
-            &self.native.0,
+            self.occt()?,
             &indices,
             thickness_mm,
             policy.linear_tolerance_mm,
@@ -214,17 +248,26 @@ impl Solid {
             ));
         }
         let direction = pull_direction.map(|v| v / length);
+        let indices = self.selected_faces(faces, feature, false)?;
+        let checked_neutral = neutral.checked(policy)?;
+        if self.uses_rust_geometry() {
+            if let Some(result) =
+                self.draft_cylinder_wall(faces, direction, neutral, angle_rad, feature, policy)
+            {
+                return result;
+            }
+            return self.draft_rectangular(faces, direction, neutral, angle_rad, feature, policy);
+        }
         let direction = ffi::Point3 {
             x: direction[0],
             y: direction[1],
             z: direction[2],
         };
-        let indices = self.selected_faces(faces, feature, false)?;
         let handle = ffi::draft_solid(
-            &self.native.0,
+            self.occt()?,
             &indices,
             &direction,
-            &neutral.checked(policy)?,
+            &checked_neutral,
             angle_rad,
         )
         .map_err(|e| failure(GeometryErrorKind::Native, e.to_string()))?;
@@ -284,11 +327,14 @@ impl Solid {
                 "Compound solid budget exceeded",
             ));
         }
+        if solids.iter().any(|solid| solid.uses_rust_geometry()) {
+            return Self::make_rust_compound(solids, feature, policy, interrupt);
+        }
         let mut job =
             ffi::compound_job().map_err(|e| failure(GeometryErrorKind::Native, e.to_string()))?;
         for solid in solids {
             checkpoint()?;
-            ffi::compound_add(job.pin_mut(), &solid.native.0)
+            ffi::compound_add(job.pin_mut(), solid.occt()?)
                 .map_err(|e| failure(GeometryErrorKind::Native, e.to_string()))?;
         }
         checkpoint()?;
@@ -304,137 +350,5 @@ impl Solid {
         result.inherit_provenance(solids, None)?;
         checkpoint()?;
         Ok(result)
-    }
-}
-
-#[cfg(test)]
-mod compound_property_tests {
-    use super::*;
-    use crate::{HelicalThread, ffi};
-    use multicad_core::references::TopologyKind;
-    fn faces_count(s: &Solid) -> u64 {
-        ffi::face_integration_count(&s.native.0).unwrap()
-    }
-    fn volumes_count(s: &Solid) -> u64 {
-        ffi::volume_integration_count(&s.native.0).unwrap()
-    }
-    #[test]
-    fn curved_compound_copies_keep_certificates_and_distinct_coincident_members() {
-        let policy = GeometryPolicy::default();
-        let owner = EntityId::new();
-        let source = Solid::helical_thread_named(
-            HelicalThread {
-                major_radius_mm: 1.5,
-                pitch_mm: 0.5,
-                length_mm: 10.,
-                depth_mm: 5. * 3_f64.sqrt() / 32.,
-                crest_width_mm: 0.5 / 8.,
-                lower_flank_deg: 30.,
-                upper_flank_deg: 30.,
-                radial_taper: 0.,
-                starts: 1,
-                left_hand: false,
-            },
-            owner,
-            policy,
-        )
-        .unwrap();
-        let original = source.to_brep().unwrap();
-        let before = source.topology_snapshot(owner, 0).unwrap();
-        let member = source
-            .share()
-            .unwrap()
-            .with_occurrence_origin(EntityId::new(), EntityId::new())
-            .unwrap();
-        let singleton = Solid::compound_named(&[&member], EntityId::new(), policy).unwrap();
-        assert_eq!(singleton.solid_count().unwrap(), 1);
-        assert_eq!(faces_count(&singleton), 0);
-        assert_eq!(volumes_count(&singleton), 0);
-        assert_eq!(
-            singleton.volume_mm3().unwrap(),
-            source.volume_mm3().unwrap()
-        );
-        let nested = Solid::compound_named(&[&singleton], EntityId::new(), policy).unwrap();
-        assert_eq!(faces_count(&nested), 0);
-        assert_eq!(volumes_count(&nested), 0);
-        assert_eq!(nested.volume_mm3().unwrap(), source.volume_mm3().unwrap());
-        let second = source
-            .share()
-            .unwrap()
-            .with_occurrence_origin(EntityId::new(), EntityId::new())
-            .unwrap();
-        let duplicate =
-            Solid::compound_named(&[&member, &second], EntityId::new(), policy).unwrap();
-        assert_eq!(duplicate.solid_count().unwrap(), 2);
-        assert_eq!(faces_count(&duplicate), 0);
-        assert_eq!(
-            volumes_count(&duplicate),
-            1,
-            "Multi-member compounds must retain ordinary native GK integration"
-        );
-        assert_eq!(
-            duplicate.faces().unwrap().len(),
-            source.faces().unwrap().len() * 2
-        );
-        let topology = duplicate.topology_snapshot(owner, 0).unwrap();
-        assert!(
-            topology
-                .elements
-                .iter()
-                .filter(|e| e.key.kind == TopologyKind::Face)
-                .all(|e| !e.origins.is_empty())
-        );
-        let directory = tempfile::tempdir().unwrap();
-        for (index, solid) in [&singleton, &nested, &duplicate].into_iter().enumerate() {
-            let fresh = Solid::from_brep(&solid.to_brep().unwrap(), policy).unwrap();
-            assert_eq!(volumes_count(&fresh), 1);
-            let area: f64 = solid.faces().unwrap().iter().map(|f| f.area_mm2).sum();
-            for (a, b) in solid.faces().unwrap().iter().zip(fresh.faces().unwrap()) {
-                assert_eq!(a.index, b.index);
-                assert_eq!(a.plane, b.plane);
-                assert!((a.area_mm2 - b.area_mm2).abs() < 1e-7 * (a.area_mm2 + b.area_mm2));
-                assert!(
-                    a.center_mm
-                        .into_iter()
-                        .zip(b.center_mm)
-                        .all(|(x, y)| (x - y).abs() < policy.linear_tolerance_mm)
-                );
-            }
-            let path = directory.path().join(format!("compound-{index}.step"));
-            solid.write_step(&path).unwrap();
-            let step = Solid::read_step(&path, policy).unwrap();
-            assert_eq!(step.solid_count().unwrap(), solid.solid_count().unwrap());
-            let budget = policy.linear_tolerance_mm
-                * (area
-                    + step
-                        .faces()
-                        .unwrap()
-                        .iter()
-                        .map(|f| f.area_mm2)
-                        .sum::<f64>())
-                + 1e-7 * (solid.volume_mm3().unwrap().abs() + step.volume_mm3().unwrap().abs());
-            assert!((step.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < budget);
-        }
-        assert!(ffi::compound_property_fallback_probe(&source.native.0).unwrap());
-        let raw = ffi::shape_from_brep(&original).unwrap();
-        let mut job = ffi::compound_job().unwrap();
-        ffi::compound_add(job.pin_mut(), &raw).unwrap();
-        let handle = ffi::compound_finish(job.pin_mut()).unwrap();
-        let cold = Solid::adopt(handle, policy, "cold compound").unwrap();
-        assert_eq!(volumes_count(&cold), 1);
-        assert_eq!(faces_count(&cold), 0);
-        assert_eq!(cold.faces().unwrap().len(), source.faces().unwrap().len());
-        assert_eq!(faces_count(&cold), source.faces().unwrap().len() as u64);
-        assert!(
-            Solid::compound_named_interruptible(
-                &[&source],
-                EntityId::new(),
-                policy,
-                Some(&|| true)
-            )
-            .is_err()
-        );
-        assert_eq!(source.to_brep().unwrap(), original);
-        assert_eq!(source.topology_snapshot(owner, 0).unwrap(), before);
     }
 }

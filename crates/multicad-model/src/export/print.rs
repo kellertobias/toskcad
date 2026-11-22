@@ -3,11 +3,11 @@
 //! current exact solids into one 3MF and, on request, one binary STL per
 //! packaged object. The 3MF holds one mesh resource per producing solid and
 //! one build item per world Part or placed occurrence at its world
-//! placement, in millimeters, so copies of one Part share their mesh. The
-//! A saved print plate instead uses independent, native-checked bed placements.
+//! placement, in millimeters, so copies of one Part share their mesh.
+//! A saved print plate uses independent, geometry-checked bed placements.
 //! Neither path slices, drives a printer or establishes printability.
-use super::{Exporter, checkpoint, failure, mesh};
-use crate::Model;
+use super::{Exporter, GeometryExporter, checkpoint, failure, mesh};
+use crate::{GeometryBackend, Model};
 use multicad_core::{
     commands::Actor,
     document::{Document, EntityData, EntityId},
@@ -15,7 +15,7 @@ use multicad_core::{
     model::{self, RigidPose},
     project_file::ContentHash,
 };
-use multicad_kernel::{GeometryPolicy, RigidTransform, Solid};
+use multicad_kernel::{BooleanOperation, GeometryErrorKind, GeometryPolicy, RigidTransform, Solid};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
@@ -45,6 +45,38 @@ enum Arrangement<'a> {
     PlateWrite(&'a PrintPlateDefinition),
 }
 
+fn direct_part_head(document: &Document, part: EntityId) -> Option<EntityId> {
+    let EntityData::Part { features, .. } = &document.get(part)?.data else {
+        return None;
+    };
+    features.iter().rev().copied().find(|feature| {
+        matches!(
+            document.get(*feature).map(|entity| &entity.data),
+            Some(EntityData::Feature {
+                suppressed: false,
+                ..
+            })
+        )
+    })
+}
+fn check_manufacturing_history(document: &Document, producer: EntityId) -> Result<(), ExportError> {
+    if let Some(limitation) = model::manufacturing_limitation_in_history(document, producer)
+        .map_err(|e| failure(ErrorKind::Invalid, Some(producer), e))?
+    {
+        let name = document
+            .get(limitation.feature)
+            .map_or_else(|| limitation.feature.to_string(), |e| e.name.clone());
+        return Err(failure(
+            ErrorKind::Unsupported,
+            Some(limitation.feature),
+            format!(
+                "{name}: {} Creating a print package is unavailable.",
+                limitation.message()
+            ),
+        ));
+    }
+    Ok(())
+}
 fn direct_plate_roots(document: &Document, selection: &PrintSelection) -> Option<Vec<EntityId>> {
     let mut roots = Vec::new();
     let mut heads = BTreeSet::new();
@@ -52,20 +84,9 @@ fn direct_plate_roots(document: &Document, selection: &PrintSelection) -> Option
         if !part.occurrence_path.is_empty() || part.role != PrintRole::Finished {
             return None;
         }
-        let EntityData::Part { features, .. } = &document.get(part.part)?.data else {
-            return None;
-        };
-        let head = features.iter().rev().find(|feature| {
-            matches!(
-                document.get(**feature).map(|entity| &entity.data),
-                Some(EntityData::Feature {
-                    suppressed: false,
-                    ..
-                })
-            )
-        })?;
+        let head = direct_part_head(document, part.part)?;
         roots.push(part.part);
-        heads.insert(*head);
+        heads.insert(head);
     }
     // A consumer outside the direct input closure can remove a body from the
     // final assembly. Keep the full membership check for those plates.
@@ -220,6 +241,21 @@ fn transformed(local: &Solid, pose: RigidPose) -> Result<Solid, multicad_kernel:
     })
 }
 
+fn plate_rotation(placement: &PrintPlatePlacement, backend: GeometryBackend) -> [[f64; 3]; 3] {
+    let rotation = placement.rotation();
+    if backend == GeometryBackend::Rust
+        && placement
+            .rotation_deg
+            .iter()
+            .all(|angle| angle.rem_euclid(90.) == 0.)
+    {
+        // A composition of exact quarter turns is a signed permutation.
+        rotation.map(|row| row.map(f64::round))
+    } else {
+        rotation
+    }
+}
+
 fn plate_pose(
     local: &Solid,
     rotation: [[f64; 3]; 3],
@@ -246,11 +282,51 @@ fn plate_pose(
     ))
 }
 
+enum Clearance {
+    Separate,
+    Overlap,
+    Unresolved,
+}
+
+/// The caller has already found positive overlap of the Z intervals. For
+/// parallel vertical cylinders the remaining exact geometric test is whether
+/// the interiors of their two circular cross sections overlap in XY.
+fn upright_cylinder_clearance(
+    first: (&Solid, RigidPose),
+    second: (&Solid, RigidPose),
+    objects: [&PrintObject; 2],
+    tolerance: f64,
+) -> Option<Clearance> {
+    let upright_radius = |(solid, pose): (&Solid, RigidPose)| {
+        let [x, y, z] = pose.rotation[2];
+        if x != 0. || y != 0. || z.abs() != 1. {
+            return None;
+        }
+        Some(solid.axial_cylinder()?.circle().radius().as_f64())
+    };
+    let combined = upright_radius(first)? + upright_radius(second)?;
+    let [a, b] = objects.map(|object| {
+        let [min, max] = object.bounds_mm;
+        [min[0].midpoint(max[0]), min[1].midpoint(max[1])]
+    });
+    let distance = (a[0] - b[0]).hypot(a[1] - b[1]);
+    // Around tangency the computed distance cannot certify either result at
+    // the modeling tolerance. Preserve the blocked preview in that case.
+    Some(if distance < combined - tolerance {
+        Clearance::Overlap
+    } else if distance > combined + tolerance {
+        Clearance::Separate
+    } else {
+        Clearance::Unresolved
+    })
+}
+
 fn check_plate(
     [width, depth]: [f64; 2],
     objects: &[PrintObject],
     solids: &[(&Solid, RigidPose)],
     policy: GeometryPolicy,
+    backend: GeometryBackend,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<Option<String>, ExportError> {
     for object in objects {
@@ -291,6 +367,32 @@ fn check_plate(
                     "Too many overlapping part envelopes to finish the collision check. Spread the parts apart and preview again.".into(),
                 ));
             }
+            let overlap = || {
+                format!(
+                    "{} overlaps {} on the print bed. Move or rotate one of them.",
+                    object.name, other.name
+                )
+            };
+            let unverified = || {
+                format!(
+                    "The Rust kernel cannot verify clearance between {} and {} while their bounds overlap. Separate their bounds and preview again.",
+                    object.name, other.name
+                )
+            };
+            if backend == GeometryBackend::Rust
+                && let Some(clearance) = upright_cylinder_clearance(
+                    solids[a],
+                    solids[b],
+                    [object, other],
+                    policy.linear_tolerance_mm,
+                )
+            {
+                match clearance {
+                    Clearance::Separate => continue,
+                    Clearance::Overlap => return Ok(Some(overlap())),
+                    Clearance::Unresolved => return Ok(Some(unverified())),
+                }
+            }
             let inspect_error = |e: multicad_kernel::GeometryError| {
                 failure(
                     ErrorKind::Invalid,
@@ -307,18 +409,24 @@ fn check_plate(
                     posed[index] = Some(transformed(solid, pose).map_err(inspect_error)?);
                 }
             }
-            let common = posed[a]
-                .as_ref()
-                .expect("plate pose")
-                .intersect_parallel(posed[b].as_ref().expect("plate pose"), policy)
-                .map_err(inspect_error)?;
+            let first = posed[a].as_ref().expect("plate pose");
+            let second = posed[b].as_ref().expect("plate pose");
+            let common = match backend {
+                GeometryBackend::OpenCascade => first.intersect_parallel(second, policy),
+                GeometryBackend::Rust => {
+                    match first.boolean(second, BooleanOperation::Intersect, policy) {
+                        Err(error) if error.kind == GeometryErrorKind::Unsupported => {
+                            return Ok(Some(unverified()));
+                        }
+                        checked => checked,
+                    }
+                }
+            }
+            .map_err(inspect_error)?;
             if let Some(common) = common
                 && common.volume_mm3().map_err(inspect_error)? > 0.
             {
-                return Ok(Some(format!(
-                    "{} overlaps {} on the print bed. Move or rotate one of them.",
-                    object.name, other.name
-                )));
+                return Ok(Some(overlap()));
             }
         }
     }
@@ -420,7 +528,7 @@ fn verify(
     }
     Ok(read.volume_mm3())
 }
-impl Exporter {
+impl GeometryExporter<'_> {
     fn print_provider(&self) -> String {
         format!("print-3mf-stl.1;{}", self.provider())
     }
@@ -451,6 +559,18 @@ impl Exporter {
         };
         let manufacturing_limitations = model::has_manufacturing_limitations(document)
             .map_err(|e| failure(ErrorKind::Invalid, None, e))?;
+        // A direct, unconsumed selection has known canonical producers before
+        // geometry exists. Refuse display-only manufacturing here instead of
+        // building unrelated or unsupported physical geometry first. Placed,
+        // aid and consumed-body cases retain the authoritative check below.
+        if manufacturing_limitations && direct_plate_roots(document, &selection).is_some() {
+            for part in &selection.parts {
+                checkpoint(interrupt)?;
+                if let Some(producer) = direct_part_head(document, part.part) {
+                    check_manufacturing_history(document, producer)?;
+                }
+            }
+        }
         let parameters = multicad_core::parameters::evaluate(document)
             .map_err(|e| failure(ErrorKind::Invalid, None, e))?;
         let mut processes = vec![];
@@ -472,30 +592,34 @@ impl Exporter {
         let mut items = vec![];
         let mut plate_blocked = None;
         if !selection.parts.is_empty() {
-            let compiler = if plate.is_some() {
+            let compiler = if plate.is_some() || self.backend == GeometryBackend::Rust {
                 crate::Compiler {
                     omit_display: true,
-                    ..self.compiler
+                    ..self.exporter.compiler
                 }
             } else {
-                self.compiler
+                self.exporter.compiler
             };
             let roots = match arrangement {
                 Arrangement::PlatePreview(_) => direct_plate_roots(document, &selection),
                 _ => None,
             };
             let model = match roots {
-                Some(roots) => {
-                    compiler.compile_sources_interruptible(document, revision, &roots, interrupt)
-                }
-                None => compiler.compile_interruptible(document, revision, interrupt),
+                Some(roots) => compiler.compile_sources_with_backend(
+                    document,
+                    revision,
+                    &roots,
+                    self.backend,
+                    interrupt,
+                ),
+                None => compiler.compile_with_backend(document, revision, self.backend, interrupt),
             }
             .map_err(|e| failure(ErrorKind::Invalid, e.entity, e.message))?;
             if model.snapshot().stamp.source_hash != selection.stamp.source_hash {
                 return Err(failure(
                     ErrorKind::Stale,
                     None,
-                    "Native model source differs from the print selection",
+                    "Model source differs from the print selection",
                 ));
             }
             let mut unavailable = vec![];
@@ -561,22 +685,8 @@ impl Exporter {
                     }));
                     continue;
                 };
-                if manufacturing_limitations
-                    && let Some(limitation) =
-                        model::manufacturing_limitation_in_history(document, producer)
-                            .map_err(|e| invalid(e.to_string()))?
-                {
-                    let name = document
-                        .get(limitation.feature)
-                        .map_or_else(|| limitation.feature.to_string(), |e| e.name.clone());
-                    return Err(failure(
-                        ErrorKind::Unsupported,
-                        Some(limitation.feature),
-                        format!(
-                            "{name}: {} Creating a print package is unavailable.",
-                            limitation.message()
-                        ),
-                    ));
+                if manufacturing_limitations {
+                    check_manufacturing_history(document, producer)?;
                 }
                 let (pose, bounds_mm, volume) = if let Some(plate) = plate {
                     let placement = plate
@@ -589,9 +699,9 @@ impl Exporter {
                         .ok_or_else(|| {
                             invalid("Print plate placement and resolved Part disagree".into())
                         })?;
-                    let (pose, bounds) =
-                        plate_pose(local, placement.rotation(), placement.position_mm)
-                            .map_err(|e| invalid(e.to_string()))?;
+                    let rotation = plate_rotation(placement, self.backend);
+                    let (pose, bounds) = plate_pose(local, rotation, placement.position_mm)
+                        .map_err(|e| invalid(e.to_string()))?;
                     plate_solids.push((local, pose));
                     (
                         pose,
@@ -664,7 +774,8 @@ impl Exporter {
                         plate.bed_mm,
                         &objects,
                         &plate_solids,
-                        self.compiler.policy,
+                        self.exporter.compiler.policy,
+                        self.backend,
                         interrupt,
                     )?
                 };
@@ -721,6 +832,14 @@ impl Exporter {
                 for ((object, item), suffix) in objects.iter().zip(&items).zip(stl_suffixes(&names))
                 {
                     checkpoint(interrupt)?;
+                    if self.backend == GeometryBackend::Rust {
+                        mesh::validate_float_positions(
+                            &meshes[item.object],
+                            LengthUnit::Millimeter,
+                            Some(item),
+                        )
+                        .map_err(|e| failure(ErrorKind::Invalid, Some(object.part), e))?;
+                    }
                     generated.push(mesh::stl(
                         std::slice::from_ref(&meshes[item.object]),
                         &[mesh::BuildItem {
@@ -794,8 +913,7 @@ impl Exporter {
             plate_meshes: plate.map(|_| (meshes, items)),
         })
     }
-    /// Resolve and tessellate the package without writing anything.
-    pub fn print_preview(
+    fn print_preview(
         &self,
         document: &Document,
         revision: u64,
@@ -814,8 +932,7 @@ impl Exporter {
             )?
             .preview)
     }
-    /// Verify and tessellate a saved plate without changing its source model.
-    pub fn print_plate_preview(
+    fn print_plate_preview(
         &self,
         document: &Document,
         revision: u64,
@@ -835,12 +952,8 @@ impl Exporter {
             .preview)
     }
 
-    /// Rebuild the package from the snapshot, require the previewed plan,
-    /// verify every generated file by reading it back, and only then replace
-    /// the chosen 3MF (and its STL siblings) atomically. A stale source, a
-    /// changed plan, a failed evaluation or a failed readback writes nothing.
     #[allow(clippy::too_many_arguments)]
-    pub fn write_print(
+    fn write_print(
         &self,
         document: &Document,
         revision: u64,
@@ -855,9 +968,8 @@ impl Exporter {
         )
     }
 
-    /// Write the exact arrangement from the preview, verifying each placement.
     #[allow(clippy::too_many_arguments)]
-    pub fn write_print_plate(
+    fn write_print_plate(
         &self,
         document: &Document,
         revision: u64,
@@ -1034,6 +1146,69 @@ impl Exporter {
         })
     }
 }
+
+impl Exporter {
+    /// Resolve and tessellate the package without writing anything.
+    pub fn print_preview(
+        &self,
+        document: &Document,
+        revision: u64,
+        request: &PrintRequest,
+        actor: &Actor,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<PrintPreview, ExportError> {
+        self.with_backend(GeometryBackend::default(), None)
+            .print_preview(document, revision, request, actor, interrupt)
+    }
+
+    /// Verify and tessellate a saved plate without changing its source model.
+    pub fn print_plate_preview(
+        &self,
+        document: &Document,
+        revision: u64,
+        plate: &PrintPlateDefinition,
+        actor: &Actor,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<PrintPreview, ExportError> {
+        self.with_backend(GeometryBackend::default(), None)
+            .print_plate_preview(document, revision, plate, actor, interrupt)
+    }
+
+    /// Rebuild and verify the previewed package before publishing its files.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_print(
+        &self,
+        document: &Document,
+        revision: u64,
+        request: &PrintRequest,
+        expected: &PrintKey,
+        path: &Path,
+        actor: &Actor,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<PrintReceipt, ExportError> {
+        self.with_backend(GeometryBackend::default(), None)
+            .write_print(
+                document, revision, request, expected, path, actor, interrupt,
+            )
+    }
+
+    /// Write the exact arrangement from the preview, verifying each placement.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_print_plate(
+        &self,
+        document: &Document,
+        revision: u64,
+        plate: &PrintPlateDefinition,
+        expected: &PrintKey,
+        path: &Path,
+        actor: &Actor,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<PrintReceipt, ExportError> {
+        self.with_backend(GeometryBackend::default(), None)
+            .write_print_plate(document, revision, plate, expected, path, actor, interrupt)
+    }
+}
+
 /// The existing directory and file stem of a chosen absolute `.3mf` path.
 fn package_target(path: &Path) -> Result<(PathBuf, String), ExportError> {
     let invalid = |m: &str| failure(ErrorKind::Invalid, None, m);
@@ -1142,7 +1317,7 @@ impl Drop for Exit {
         self.0.wake.notify_all();
     }
 }
-/// A bounded FIFO owner thread for print previews and writes. Native models
+/// A bounded FIFO owner thread for print previews and writes. Exact models
 /// are built and dropped on this thread only; the UI thread polls replies.
 pub struct PrintWorker {
     shared: Arc<Shared>,
@@ -1150,60 +1325,69 @@ pub struct PrintWorker {
 const MAX_OUTSTANDING: usize = 4;
 impl PrintWorker {
     pub fn new(exporter: Exporter) -> Result<Self, String> {
-        Self::spawn(move |job, interrupt| match job {
-            Job::Preview {
-                document,
-                revision,
-                request,
-                actor,
-            } => {
-                let preview = match request {
-                    JobRequest::Package(request) => exporter.print_preview(
-                        &document,
-                        revision,
-                        &request,
-                        &actor,
-                        Some(interrupt),
-                    ),
-                    JobRequest::Plate(plate) => exporter.print_plate_preview(
-                        &document,
-                        revision,
-                        &plate,
-                        &actor,
-                        Some(interrupt),
-                    ),
-                };
-                PrintResult::Preview(preview.map(Box::new))
-            }
-            Job::Write {
-                document,
-                revision,
-                request,
-                expected,
-                path,
-                actor,
-            } => {
-                let write = match request {
-                    JobRequest::Package(request) => exporter.write_print(
-                        &document,
-                        revision,
-                        &request,
-                        &expected,
-                        &path,
-                        &actor,
-                        Some(interrupt),
-                    ),
-                    JobRequest::Plate(plate) => exporter.write_print_plate(
-                        &document,
-                        revision,
-                        &plate,
-                        &expected,
-                        &path,
-                        &actor,
-                        Some(interrupt),
-                    ),
-                };
-                PrintResult::Write(write)
+        Self::with_geometry_backend(exporter, GeometryBackend::default())
+    }
+    pub fn with_geometry_backend(
+        exporter: Exporter,
+        backend: GeometryBackend,
+    ) -> Result<Self, String> {
+        Self::spawn(move |job, interrupt| {
+            let exporter = exporter.with_backend(backend, None);
+            match job {
+                Job::Preview {
+                    document,
+                    revision,
+                    request,
+                    actor,
+                } => {
+                    let preview = match request {
+                        JobRequest::Package(request) => exporter.print_preview(
+                            &document,
+                            revision,
+                            &request,
+                            &actor,
+                            Some(interrupt),
+                        ),
+                        JobRequest::Plate(plate) => exporter.print_plate_preview(
+                            &document,
+                            revision,
+                            &plate,
+                            &actor,
+                            Some(interrupt),
+                        ),
+                    };
+                    PrintResult::Preview(preview.map(Box::new))
+                }
+                Job::Write {
+                    document,
+                    revision,
+                    request,
+                    expected,
+                    path,
+                    actor,
+                } => {
+                    let write = match request {
+                        JobRequest::Package(request) => exporter.write_print(
+                            &document,
+                            revision,
+                            &request,
+                            &expected,
+                            &path,
+                            &actor,
+                            Some(interrupt),
+                        ),
+                        JobRequest::Plate(plate) => exporter.write_print_plate(
+                            &document,
+                            revision,
+                            &plate,
+                            &expected,
+                            &path,
+                            &actor,
+                            Some(interrupt),
+                        ),
+                    };
+                    PrintResult::Write(write)
+                }
             }
         })
     }

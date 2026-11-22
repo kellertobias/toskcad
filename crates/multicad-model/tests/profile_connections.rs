@@ -1,3 +1,11 @@
+#[path = "profile_connections/line8_angles.rs"]
+mod line8_angles;
+#[path = "profile_connections/line8_cache.rs"]
+mod line8_cache;
+#[path = "profile_connections/line8_nuts.rs"]
+mod line8_nuts;
+#[path = "profile_connections/line8_screws.rs"]
+mod line8_screws;
 use multicad_core::{
     commands::{Actor, Channel, Request, Session},
     document::{Document, Entity, EntityData, EntityId, Mutation},
@@ -9,7 +17,8 @@ use multicad_core::{
     },
     project_file::{self, ProjectFile},
 };
-use multicad_model::{Compiler, Model, schedules::BomOptions};
+use multicad_kernel::{GeometryPolicy, Solid};
+use multicad_model::{Compiler, GeometryBackend, Model, schedules::BomOptions};
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -105,6 +114,239 @@ fn compile(document: &Document, revision: u64) -> Result<Model, multicad_model::
 }
 
 #[test]
+fn rust_profile_screws_use_retained_modeled_hardware_after_project_reopen() {
+    for rotated in [false, true] {
+        let pose = |[x, y, z]: [f64; 3]| {
+            if rotated {
+                [11. + 0.8 * x - 0.6 * y, -7. + 0.6 * x + 0.8 * y, 5. + z]
+            } else {
+                [x, y, z]
+            }
+        };
+        let (mut session, members) = prepare_members([
+            (pose([0., 0., 0.]), pose([100., 0., 0.])),
+            (pose([0., 40., 0.]), pose([100., 40., 0.])),
+        ]);
+        let request = ProfileConnectionRequest::new(
+            "Rust mounting screws",
+            ProfileConnectionKind::JoiningPlate,
+            groove(&members[0], ProfileGrooveSide::MaxY, 40.),
+            groove(&members[1], ProfileGrooveSide::MaxY, 40.),
+        );
+        let draft =
+            model::prepare_profile_connection(&session, session.revision(), actor(), &request)
+                .unwrap();
+        let screws = [draft.outputs[1].feature, draft.outputs[3].feature];
+        session.commit(draft.prepared).unwrap();
+        let before = session.document().clone();
+        let mut bytes = Vec::new();
+        project_file::write(
+            &ProjectFile::new(before.clone()).unwrap(),
+            &mut bytes,
+            Default::default(),
+        )
+        .unwrap();
+        let reopened = project_file::read(
+            &mut bytes.as_slice(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap();
+        let compiler = Compiler {
+            omit_display: true,
+            ..Default::default()
+        };
+        for feature in screws {
+            let mut volumes = Vec::new();
+            for document in [&before, &reopened.project.document] {
+                let model = compiler
+                    .compile_sources_with_backend(
+                        document,
+                        session.revision(),
+                        &[feature],
+                        GeometryBackend::Rust,
+                        None,
+                    )
+                    .unwrap();
+                let solid = model.solid(feature).unwrap();
+                assert!(solid.uses_rust_geometry());
+                let (source, _) = solid.rust_profiled_screw_geometry().unwrap();
+                assert!(source.thread().spec().length_mm > 0.);
+                assert_eq!(solid.solid_count().unwrap(), 1);
+                let volume = solid.volume_mm3().unwrap();
+                assert!(volume > 0. && volume.is_finite());
+                let manufacturing = solid
+                    .manufacturing_mesh_with_receipt(Default::default())
+                    .unwrap();
+                assert!(!manufacturing.mesh.indices.is_empty());
+                assert_eq!(
+                    manufacturing.edge_pairs as usize * 2,
+                    manufacturing.mesh.indices.len()
+                );
+                solid
+                    .topology_snapshot(feature, session.revision())
+                    .unwrap()
+                    .validate()
+                    .unwrap();
+                volumes.push(volume);
+            }
+            assert_eq!(volumes[0], volumes[1]);
+        }
+        assert_eq!(session.document(), &before);
+    }
+}
+
+#[test]
+fn joining_plate_uses_exact_rust_bores_and_countersinks_on_rotated_profile_stock() {
+    let rotate = |[x, y, z]: [f64; 3]| [0.8 * x - 0.6 * y, 0.6 * x + 0.8 * y, z];
+    let (mut session, members) = prepare_members(
+        [
+            ([0., 0., 0.], [100., 0., 0.]),
+            ([0., 40., 0.], [100., 40., 0.]),
+        ]
+        .map(|(a, b)| (rotate(a), rotate(b))),
+    );
+    let request = ProfileConnectionRequest::new(
+        "Joining plate",
+        ProfileConnectionKind::JoiningPlate,
+        groove(&members[0], ProfileGrooveSide::MaxY, 40.),
+        groove(&members[1], ProfileGrooveSide::MaxY, 40.),
+    );
+    let draft =
+        model::prepare_profile_connection(&session, session.revision(), actor(), &request).unwrap();
+    let connector = draft.outputs[0].feature;
+    let screw = draft.outputs[1].feature;
+    let nut = draft.outputs[2].feature;
+    session.commit(draft.prepared).unwrap();
+    let compiler = Compiler::default();
+    let scoped = |feature, backend| {
+        compiler.compile_sources_with_backend(
+            session.document(),
+            session.revision(),
+            &[feature],
+            backend,
+            None,
+        )
+    };
+    let rust = scoped(connector, GeometryBackend::Rust).unwrap_or_else(|e| panic!("Rust: {e}"));
+    let actual = rust.solid(connector).unwrap();
+    assert!(actual.uses_rust_geometry());
+    assert_eq!(actual.solid_count().unwrap(), 1);
+    let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-6, "{a} differs from {b}");
+    // Independent expectation. Both MaxY grooves are the members' +Z support
+    // planes (centered 40 mm Line 8 sections, world-up reference) at z = 20,
+    // so before the plan rotation the 80 x 40 x 5 mm plate spans
+    // x 20..60 (station 40 +- 20), y -20..60 (from the first groove across
+    // the second) and z 20..25. Each of its two 4.9 mm bores carries a 45
+    // degree countersink whose mouth on the top face has radius 8.02 mm.
+    let (sheet, r, mouth) = (5., 4.9, 8.02);
+    let chamfer = mouth - r;
+    let pi = std::f64::consts::PI;
+    let expected_volume = 80. * 40. * sheet
+        - 2. * (pi * r * r * (sheet - chamfer)
+            + pi * chamfer / 3. * (mouth * mouth + mouth * r + r * r));
+    let expected_area = 2. * 80. * 40. - 2. * pi * (mouth * mouth + r * r)
+        + 2. * (80. + 40.) * sheet
+        + 2. * (2. * pi * r * (sheet - chamfer)
+            + pi * (mouth + r) * chamfer * std::f64::consts::SQRT_2);
+    let mut expected_min = [f64::INFINITY; 3];
+    let mut expected_max = [f64::NEG_INFINITY; 3];
+    for x in [20., 60.] {
+        for y in [-20., 60.] {
+            for z in [20., 25.] {
+                let p = rotate([x, y, z]);
+                for i in 0..3 {
+                    expected_min[i] = expected_min[i].min(p[i]);
+                    expected_max[i] = expected_max[i].max(p[i]);
+                }
+            }
+        }
+    }
+    let compare = |actual: &Solid| {
+        near(actual.volume_mm3().unwrap(), expected_volume);
+        let area = actual
+            .faces()
+            .unwrap()
+            .iter()
+            .map(|face| face.area_mm2)
+            .sum::<f64>();
+        near(area, expected_area);
+        let actual = actual.bounds().unwrap();
+        for i in 0..3 {
+            near(actual.min[i], expected_min[i]);
+            near(actual.max[i], expected_max[i]);
+        }
+    };
+    compare(actual);
+    let topology = actual
+        .topology_snapshot(connector, session.revision())
+        .unwrap();
+    let radii: Vec<_> = topology
+        .elements
+        .iter()
+        .filter_map(|element| match element.geometry {
+            Some(multicad_core::references::AnalyticGeometry::CircularArc {
+                radius_mm, ..
+            }) => Some(radius_mm),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(radii.len(), 6);
+    assert_eq!(
+        radii
+            .iter()
+            .filter(|&&radius| (radius - 4.9).abs() < 1e-9)
+            .count(),
+        4
+    );
+    assert_eq!(
+        radii
+            .iter()
+            .filter(|&&radius| (radius - 8.02).abs() < 1e-9)
+            .count(),
+        2
+    );
+    // The plate never machines the members: each keeps its full 100 mm
+    // Line 8 section.
+    let section = model::ProfileSection {
+        designation: "item 0.0.026.03".into(),
+        shape: ProfileShape::ItemLine8_40x40,
+        width_mm: 40.,
+        height_mm: 40.,
+        wall_mm: None,
+        stock_length_mm: 6000.,
+    };
+    for member in members {
+        let stock = rust.solid(member.feature).unwrap();
+        assert!(stock.uses_rust_geometry());
+        near(stock.volume_mm3().unwrap(), section.area_mm2() * 100.);
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("joining-plate.step");
+    actual.write_step(&path).unwrap();
+    compare(&Solid::read_step(&path, GeometryPolicy::default()).unwrap());
+    let text = std::fs::read_to_string(path).unwrap();
+    compare(&Solid::import_rust_step(&text, connector, GeometryPolicy::default()).unwrap());
+
+    let screw_model = scoped(screw, GeometryBackend::Rust).unwrap();
+    assert!(
+        screw_model
+            .solid(screw)
+            .unwrap()
+            .rust_profiled_screw_geometry()
+            .is_some()
+    );
+    let nut_model = scoped(nut, GeometryBackend::Rust).unwrap();
+    assert!(
+        nut_model
+            .solid(nut)
+            .unwrap()
+            .rust_line8_nut_source()
+            .is_some()
+    );
+}
+
+#[test]
 fn angle_and_flat_connections_create_five_parts_and_never_machine_the_profiles() {
     use ProfileConnectionKind::{AngleBracket, JoiningPlate};
     use ProfileGrooveSide::{MaxX, MaxY};
@@ -143,6 +385,24 @@ fn angle_and_flat_connections_create_five_parts_and_never_machine_the_profiles()
         let native = compile(draft.prepared.document(), session.revision() + 1).unwrap();
         assert_eq!(native.snapshot().leaf_occurrences.len(), 7);
         assert_eq!(draft.outputs.len(), 5);
+        if kind == AngleBracket {
+            let scoped = Compiler::default()
+                .compile_sources_with_backend(
+                    draft.prepared.document(),
+                    session.revision() + 1,
+                    &[draft.outputs[0].feature],
+                    GeometryBackend::Rust,
+                    None,
+                )
+                .unwrap();
+            assert!(
+                scoped
+                    .solid(draft.outputs[0].feature)
+                    .unwrap()
+                    .rust_orthogonal_countersink_source()
+                    .is_some()
+            );
+        }
         for member in &members {
             let id = member.member.output.body;
             assert_eq!(original.get(id), draft.prepared.document().get(id));
@@ -210,6 +470,25 @@ fn paired_end_connection_machines_only_the_host_and_survives_reopen_and_undo() {
     let host = members[0].member.output.body;
     let cut = native.snapshot().bodies[&host];
     assert_ne!(cut, members[0].feature);
+    let rust = Compiler::default()
+        .compile_sources_with_backend(
+            draft.prepared.document(),
+            session.revision() + 1,
+            &[cut],
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let rust_cut = rust.solid(cut).unwrap();
+    assert_eq!(rust_cut.solid_count().unwrap(), 1);
+    assert!(
+        rust.solid(members[0].feature)
+            .unwrap()
+            .volume_mm3()
+            .unwrap()
+            - rust_cut.volume_mm3().unwrap()
+            > 100.
+    );
     assert_eq!(native.solid(cut).unwrap().solid_count().unwrap(), 1);
     let volume = |feature| native.solid(feature).unwrap().volume_mm3().unwrap();
     assert!(volume(members[0].feature) - volume(cut) > 100.);

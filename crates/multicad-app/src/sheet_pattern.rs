@@ -3,21 +3,25 @@ use multicad_core::{
     document::{Document, EntityId},
     model,
 };
-use multicad_model::{Compiler, PairCycleProofStore, Runtime, with_pair_cycle_proofs};
+use multicad_model::{
+    Compiler, GeometryBackend, PairCycleProofStore, Runtime, with_pair_cycle_proofs,
+};
 use multicad_ui::sheet_pattern::{self, Bend, Chart, Pattern};
 
 type PatternResult = Result<Pattern, String>;
 
 pub(crate) struct Backend {
     proofs: PairCycleProofStore,
+    geometry_backend: GeometryBackend,
     runtime: Option<Runtime<PatternResult>>,
     expected: Option<u64>,
 }
 
 impl Backend {
-    pub(crate) fn new(proofs: PairCycleProofStore) -> Self {
+    pub(crate) fn new(proofs: PairCycleProofStore, geometry_backend: GeometryBackend) -> Self {
         Self {
             proofs,
+            geometry_backend,
             runtime: None,
             expected: None,
         }
@@ -26,12 +30,14 @@ impl Backend {
     fn runtime(&mut self) -> Result<&mut Runtime<PatternResult>, String> {
         if self.runtime.is_none() {
             self.runtime = Some(with_pair_cycle_proofs(self.proofs.clone(), || {
-                Runtime::with_cached_model_publisher(
+                Runtime::with_scoped_cached_model_publisher(
                     Compiler {
                         omit_display: true,
                         ..Default::default()
                     },
+                    self.geometry_backend,
                     |_, _, _| None,
+                    |_, _| None,
                     |document, evaluated, tag| {
                         // The tag is the selected Part's ordinal in the exact
                         // immutable Document captured by this worker request.
@@ -178,7 +184,7 @@ mod tests {
                 .id
         };
         let part = entity("Front panel sheet");
-        let mut backend = Backend::new(Default::default());
+        let mut backend = Backend::new(Default::default(), GeometryBackend::Rust);
 
         backend.request(&document, 0, part).unwrap();
         backend.cancel();
@@ -222,12 +228,15 @@ mod tests {
         );
 
         let exported = multicad_model::export::Exporter::default()
-            .developed_sheet_dxf(
+            .developed_sheet_dxf_with_backend(
                 &document,
                 0,
                 part,
-                multicad_core::exchange::LengthUnit::Millimeter,
-                &Default::default(),
+                multicad_model::export::sheet_dxf::SheetDxfOptions {
+                    backend: GeometryBackend::Rust,
+                    units: multicad_core::exchange::LengthUnit::Millimeter,
+                    layers: &Default::default(),
+                },
                 None,
             )
             .unwrap();

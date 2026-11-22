@@ -1,13 +1,15 @@
 //! Native mounting geometry and nut threads from retained canonical parameters.
 mod custom_connection;
+mod pipe_hardware;
+mod profiled_heads;
 mod screw_profiles;
 mod wood_screws;
 use crate::{ModelError, error};
 use multicad_core::{
     document::EntityId,
     model::{
-        MechanicalPartDefinition, ResolvedMechanicalPart, ResolvedScrewDrive, ResolvedScrewHead,
-        ThreadMode,
+        MechanicalPartDefinition, MechanicalPartParameters, ResolvedMechanicalPart,
+        ResolvedScrewDrive, ResolvedScrewHead, ResolvedThread, ThreadMode, ThreadRepresentation,
     },
     parameters::EvaluatedParameters,
     references::Origin,
@@ -16,6 +18,10 @@ use multicad_core::{
 use multicad_kernel::{
     BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, RigidTransform,
     Solid,
+    rust_kernel::{
+        cosmetic_fastener::Countersunk,
+        headed_screw::{ScrewHead, ScrewSpec},
+    },
 };
 
 use std::{cell::RefCell, collections::BTreeMap};
@@ -196,6 +202,10 @@ fn cached_screw(key: &ScrewKey, feature: EntityId) -> Option<Solid> {
 fn remember_screw(key: ScrewKey, feature: EntityId, solid: &Solid) {
     // Retain only an already completed, fully owned native result. Optional
     // bookkeeping errors cannot turn successful geometry into a model error.
+    // Rust solids rebuild exactly and are not retained as native text.
+    if solid.uses_rust_geometry() {
+        return;
+    }
     let Ok(owned) = solid.rebind_exclusive_owner(feature, feature) else {
         return;
     };
@@ -394,6 +404,401 @@ pub(crate) fn build(
         .map_err(|e| error(Some(feature), e))?;
     build_resolved(feature, resolved, policy)
 }
+
+pub(crate) fn build_rust_with_pipe_factory(
+    feature: EntityId,
+    source: &MechanicalPartDefinition,
+    evaluated: &EvaluatedParameters,
+    policy: GeometryPolicy,
+    factory: Option<&mut multicad_kernel::PipeThreadFactory>,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<Solid, ModelError> {
+    if let MechanicalPartParameters::MachineScrew { thread, .. }
+    | MechanicalPartParameters::HexNut { thread, .. } = &source.parameters
+        && !matches!(
+            thread.family,
+            multicad_core::model::ThreadFamily::Npt | multicad_core::model::ThreadFamily::Bspt
+        )
+    {
+        // Double-rounded families build their own hex closures below.
+        if !matches!(
+            thread.family,
+            multicad_core::model::ThreadFamily::Round
+                | multicad_core::model::ThreadFamily::Bsw
+                | multicad_core::model::ThreadFamily::Bsf
+                | multicad_core::model::ThreadFamily::Bspp
+        ) {
+            crate::threads::validate_rust_family(feature, thread.family)?;
+        }
+    }
+    let resolved = source
+        .parameters
+        .resolve(evaluated)
+        .map_err(|cause| error(Some(feature), cause))?;
+    build_rust_resolved_with_pipe_factory(feature, resolved, policy, factory, interrupt)
+}
+
+pub(crate) fn build_rust_resolved(
+    feature: EntityId,
+    resolved: ResolvedMechanicalPart,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    build_rust_resolved_with_pipe_factory(feature, resolved, policy, None, None)
+}
+fn build_rust_resolved_with_pipe_factory(
+    feature: EntityId,
+    resolved: ResolvedMechanicalPart,
+    policy: GeometryPolicy,
+    factory: Option<&mut multicad_kernel::PipeThreadFactory>,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<Solid, ModelError> {
+    if let Some(result) = pipe_hardware::build(feature, &resolved, policy, factory, interrupt) {
+        return result;
+    }
+    match resolved {
+        ResolvedMechanicalPart::CustomConnection { parameters } => {
+            custom_connection::build_rust(feature, *parameters, policy)
+        }
+        ResolvedMechanicalPart::WoodScrew { parameters } => {
+            wood_screws::build_rust(feature, &parameters, policy)
+        }
+        ResolvedMechanicalPart::MachineScrew {
+            underhead_length_mm,
+            shank_radius_mm,
+            head,
+            drive,
+            thread,
+            ..
+        } => rust_machine_screw(
+            feature,
+            underhead_length_mm,
+            shank_radius_mm,
+            head,
+            drive,
+            &thread,
+            policy,
+        ),
+        ResolvedMechanicalPart::HexNut {
+            across_flats_mm,
+            thread,
+        } => {
+            if thread.representation == ThreadRepresentation::CosmeticEnvelope {
+                let frame = rust_cosmetic_frame(feature, &thread)?;
+                return Solid::rust_cosmetic_hex_nut(
+                    across_flats_mm,
+                    thread.major_radius_mm - thread.profile.depth_mm,
+                    thread.length_mm,
+                    thread.minimum_wall_mm + thread.profile.depth_mm,
+                    feature,
+                    frame,
+                    policy,
+                )
+                .map_err(|cause| error(Some(feature), cause));
+            }
+            if rounded(&thread) {
+                let (spec, frame) = rounded_modeled(feature, &thread)?;
+                return Solid::rust_rounded_hex_nut(
+                    spec,
+                    across_flats_mm,
+                    thread.minimum_wall_mm,
+                    feature,
+                    frame,
+                    policy,
+                )
+                .map_err(|cause| error(Some(feature), cause));
+            }
+            let (profile, _, frame) = crate::threads::rust_profile(feature, &thread)?;
+            Solid::rust_hex_nut(
+                profile,
+                across_flats_mm,
+                thread.minimum_wall_mm,
+                feature,
+                frame,
+                policy,
+            )
+            .map_err(|cause| error(Some(feature), cause))
+        }
+        ResolvedMechanicalPart::Washer {
+            bore_radius_mm,
+            outside_radius_mm,
+            thickness_mm,
+            frame,
+        }
+        | ResolvedMechanicalPart::BearingEnvelope {
+            bore_radius_mm,
+            outside_radius_mm,
+            width_mm: thickness_mm,
+            frame,
+        } => Solid::rust_annulus(
+            bore_radius_mm,
+            outside_radius_mm,
+            thickness_mm,
+            feature,
+            PlaneFrame {
+                origin: frame.origin,
+                u: frame.u,
+                v: frame.v,
+            },
+            policy,
+        )
+        .map_err(|cause| error(Some(feature), cause)),
+    }
+}
+
+fn rust_cosmetic_frame(
+    feature: EntityId,
+    thread: &ResolvedThread,
+) -> Result<PlaneFrame, ModelError> {
+    if thread.profile.radial_taper != 0. || thread.end_treatments.is_some() {
+        return Err(error(
+            Some(feature),
+            "Rust cosmetic fasteners require a cylindrical thread envelope without end treatments",
+        ));
+    }
+    Ok(PlaneFrame {
+        origin: thread.frame.origin,
+        u: thread.frame.u,
+        v: thread.frame.v,
+    })
+}
+
+fn rust_machine_screw(
+    feature: EntityId,
+    underhead_length_mm: f64,
+    shank_radius_mm: f64,
+    head: ResolvedScrewHead,
+    drive: ResolvedScrewDrive,
+    thread: &ResolvedThread,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    let legacy_head = rust_legacy_head(&head, &drive);
+    if thread.representation == ThreadRepresentation::CosmeticEnvelope {
+        let frame = rust_cosmetic_frame(feature, thread)?;
+        if shank_radius_mm != thread.major_radius_mm {
+            return Err(error(
+                Some(feature),
+                "Rust cosmetic screws require matching shank and thread envelope diameters",
+            ));
+        }
+        if let Some(head) = legacy_head {
+            return Solid::rust_cosmetic_headed_screw(
+                head,
+                shank_radius_mm,
+                underhead_length_mm,
+                feature,
+                frame,
+                policy,
+            )
+            .map_err(|cause| error(Some(feature), cause));
+        }
+        if matches!(drive, ResolvedScrewDrive::Hexalobular { .. }) {
+            let mut physical = thread.clone();
+            physical.representation = ThreadRepresentation::Modeled;
+            let source = profiled_heads::build(
+                feature,
+                underhead_length_mm,
+                shank_radius_mm,
+                &head,
+                &drive,
+                &physical,
+                policy,
+            )?
+            .ok_or_else(|| error(Some(feature), "Unsupported cosmetic physical head"))?;
+            return source
+                .cosmetic_profiled_screw_envelope()
+                .map_err(|cause| error(Some(feature), cause));
+        }
+        if matches!(drive, ResolvedScrewDrive::PhillipsH { .. }) {
+            let mut physical = thread.clone();
+            physical.representation = ThreadRepresentation::Modeled;
+            return profiled_heads::build_cosmetic_phillips(
+                feature,
+                underhead_length_mm,
+                shank_radius_mm,
+                &head,
+                &drive,
+                &physical,
+                policy,
+            )?
+            .ok_or_else(|| {
+                error(
+                    Some(feature),
+                    "Rust cosmetic Phillips screws support countersunk and pan heads",
+                )
+            });
+        }
+        let (
+            ResolvedScrewHead::Countersunk {
+                radius_mm,
+                height_mm,
+                included_angle_deg,
+                edge_chamfer_mm,
+                neck_radius_mm: 0.,
+            },
+            ResolvedScrewDrive::HexSocket {
+                across_flats_mm,
+                depth_mm,
+            },
+        ) = (head, drive)
+        else {
+            return Err(error(
+                Some(feature),
+                "Rust cosmetic screws support external hex heads, socket-cap and straight countersunk heads with flat hex sockets, hexalobular and Phillips drives",
+            ));
+        };
+        return Solid::rust_cosmetic_countersunk_screw(
+            Countersunk {
+                head_radius_mm: radius_mm,
+                head_height_mm: height_mm,
+                included_angle_deg,
+                edge_chamfer_mm,
+                shaft_radius_mm: shank_radius_mm,
+                shaft_length_mm: underhead_length_mm,
+                socket_across_flats_mm: across_flats_mm,
+                socket_depth_mm: depth_mm,
+            },
+            feature,
+            frame,
+            policy,
+        )
+        .map_err(|cause| error(Some(feature), cause));
+    }
+    if rounded(thread) {
+        return rust_rounded_machine_screw(
+            feature,
+            underhead_length_mm,
+            shank_radius_mm,
+            &head,
+            &drive,
+            thread,
+            policy,
+        );
+    }
+    if let Some(solid) = profiled_heads::build(
+        feature,
+        underhead_length_mm,
+        shank_radius_mm,
+        &head,
+        &drive,
+        thread,
+        policy,
+    )? {
+        return Ok(solid);
+    }
+    let (profile, root_radius, frame) = crate::threads::rust_profile(feature, thread)?;
+    let head = legacy_head.ok_or_else(|| {
+        error(
+            Some(feature),
+            "Rust machine screws support a socket cap with a flat hex socket or an external hex head",
+        )
+    })?;
+    Solid::rust_machine_screw(
+        profile,
+        root_radius,
+        ScrewSpec {
+            head,
+            shank_length_mm: underhead_length_mm - thread.length_mm,
+            shank_radius_mm,
+        },
+        feature,
+        frame,
+        policy,
+    )
+    .map_err(|cause| error(Some(feature), cause))
+}
+
+/// Round (DIN 405), BSW, BSF and BSPP threads carry a circular crest/root
+/// profile that the trapezoidal helical bodies do not represent.
+fn rounded(thread: &ResolvedThread) -> bool {
+    thread.round.is_some() || thread.profile.rounding_radius_mm.is_some()
+}
+fn rounded_modeled(
+    feature: EntityId,
+    thread: &ResolvedThread,
+) -> Result<
+    (
+        multicad_kernel::rust_kernel::rounded_thread::Spec,
+        PlaneFrame,
+    ),
+    ModelError,
+> {
+    if thread.representation != ThreadRepresentation::Modeled {
+        return Err(error(
+            Some(feature),
+            "Rust double-rounded hardware currently requires the Modeled representation",
+        ));
+    }
+    crate::threads::rounded_spec(feature, thread)
+}
+/// A fully threaded double-rounded screw seated on an external hex head.
+fn rust_rounded_machine_screw(
+    feature: EntityId,
+    underhead_length_mm: f64,
+    shank_radius_mm: f64,
+    head: &ResolvedScrewHead,
+    drive: &ResolvedScrewDrive,
+    thread: &ResolvedThread,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    let fail = |message| error(Some(feature), message);
+    let (
+        ResolvedScrewHead::ExternalHex {
+            across_flats_mm,
+            height_mm,
+        },
+        ResolvedScrewDrive::ExternalHex,
+    ) = (head, drive)
+    else {
+        return Err(fail(
+            "Rust double-rounded machine screws support an external hex head",
+        ));
+    };
+    let tolerance = policy.linear_tolerance_mm;
+    if (underhead_length_mm - thread.length_mm).abs() > tolerance {
+        return Err(fail(
+            "Rust double-rounded machine screws require a fully threaded shank (thread length equal to the underhead length)",
+        ));
+    }
+    if shank_radius_mm < thread.major_radius_mm - tolerance {
+        return Err(fail(
+            "The screw shank is smaller than the rounded thread's major diameter",
+        ));
+    }
+    let (spec, frame) = rounded_modeled(feature, thread)?;
+    Solid::rust_rounded_hex_head_screw(spec, *across_flats_mm, *height_mm, feature, frame, policy)
+        .map_err(|cause| error(Some(feature), cause))
+}
+fn rust_legacy_head(head: &ResolvedScrewHead, drive: &ResolvedScrewDrive) -> Option<ScrewHead> {
+    Some(match (head, drive) {
+        (
+            ResolvedScrewHead::SocketCap {
+                radius_mm,
+                height_mm,
+            },
+            ResolvedScrewDrive::HexSocket {
+                across_flats_mm,
+                depth_mm,
+            },
+        ) => ScrewHead::SocketCap {
+            radius_mm: *radius_mm,
+            height_mm: *height_mm,
+            socket_across_flats_mm: *across_flats_mm,
+            socket_depth_mm: *depth_mm,
+        },
+        (
+            ResolvedScrewHead::ExternalHex {
+                across_flats_mm,
+                height_mm,
+            },
+            ResolvedScrewDrive::ExternalHex,
+        ) => ScrewHead::ExternalHex {
+            across_flats_mm: *across_flats_mm,
+            height_mm: *height_mm,
+        },
+        _ => return None,
+    })
+}
+
 pub(super) fn build_resolved(
     feature: EntityId,
     resolved: ResolvedMechanicalPart,
@@ -617,14 +1022,13 @@ pub(super) fn build_resolved(
 #[cfg(test)]
 mod screw_factory_tests {
     use super::*;
+
     use multicad_core::{
         document::Document,
-        model::{self, BodyOutput, MechanicalPartParameters, ThreadRepresentation, length},
+        model::{self, BodyOutput, ThreadRepresentation},
         parameters,
     };
-    fn reset() {
-        SCREWS.with(|slot| *slot.borrow_mut() = ScrewFactory::default());
-    }
+
     fn source() -> MechanicalPartDefinition {
         MechanicalPartDefinition {
             output: BodyOutput {
@@ -633,228 +1037,6 @@ mod screw_factory_tests {
             parameters: model::default_machine_screw(),
             provenance: None,
         }
-    }
-    fn stats() -> (u64, u64, u64, usize, usize) {
-        SCREWS.with(|slot| {
-            let c = slot.borrow();
-            (c.requests, c.hits, c.builds, c.entries.len(), c.bytes)
-        })
-    }
-    #[test]
-    fn completed_screw_reuses_full_native_result_for_fresh_owners_and_isolated_threads() {
-        reset();
-        let document = Document::new("Whole screw factory").unwrap();
-        let values = parameters::evaluate(&document).unwrap();
-        let recipe = source();
-        let policy = GeometryPolicy::default();
-        let first = EntityId::new();
-        let second = EntityId::new();
-        let a = build(first, &recipe, &values, policy).unwrap();
-        let geometry = a.to_brep().unwrap();
-        let before = a.topology_snapshot(first, 0).unwrap();
-        let native_before = multicad_kernel::thread_factory_stats().unwrap();
-        let b = build(second, &recipe, &values, policy).unwrap();
-        assert_eq!(stats().0, 2);
-        assert_eq!(stats().1, 1);
-        assert_eq!(stats().2, 1);
-        assert_eq!(
-            multicad_kernel::thread_factory_stats().unwrap(),
-            native_before,
-            "Whole screw hit must not even request a thread subshape"
-        );
-        assert_eq!(b.to_brep().unwrap(), geometry);
-        assert_eq!(a.topology_snapshot(first, 0).unwrap(), before);
-        let rebound = b.topology_snapshot(second, 0).unwrap();
-        assert_eq!(before.elements.len(), rebound.elements.len());
-        for (a, b) in before.elements.iter().zip(&rebound.elements) {
-            assert_eq!(a.key, b.key);
-            assert_eq!(a.geometry, b.geometry);
-            assert_eq!(
-                a.origins.iter().map(|o| &o.role).collect::<Vec<_>>(),
-                b.origins.iter().map(|o| &o.role).collect::<Vec<_>>()
-            );
-            assert_eq!(
-                a.boundary.iter().map(|o| &o.role).collect::<Vec<_>>(),
-                b.boundary.iter().map(|o| &o.role).collect::<Vec<_>>()
-            );
-            assert_eq!(
-                a.frames
-                    .iter()
-                    .map(|f| (&f.origin.role, f.frame))
-                    .collect::<Vec<_>>(),
-                b.frames
-                    .iter()
-                    .map(|f| (&f.origin.role, f.frame))
-                    .collect::<Vec<_>>()
-            );
-        }
-        let independent = Solid::from_brep(&b.to_brep().unwrap(), policy).unwrap();
-        for (a, b) in b.faces().unwrap().iter().zip(independent.faces().unwrap()) {
-            assert_eq!(a.index, b.index);
-            assert_eq!(a.plane, b.plane);
-            assert!((a.area_mm2 - b.area_mm2).abs() < 1e-7 * (a.area_mm2 + b.area_mm2));
-            assert!(
-                a.center_mm
-                    .into_iter()
-                    .zip(b.center_mm)
-                    .all(|(x, y)| (x - y).abs() < policy.linear_tolerance_mm)
-            );
-        }
-
-        assert!(
-            rebound
-                .elements
-                .iter()
-                .flat_map(|e| e
-                    .origins
-                    .iter()
-                    .chain(&e.boundary)
-                    .chain(e.frames.iter().map(|f| &f.origin)))
-                .all(|o| o.source == second)
-        );
-        assert!(
-            rebound
-                .elements
-                .iter()
-                .any(|e| e.origins.iter().any(|o| o.role.starts_with("screw.head/")))
-        );
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("whole-screw.step");
-        b.write_step(&path).unwrap();
-        let read = Solid::read_step(&path, policy).unwrap();
-        // Match the established new-screw metrology policy: boundary error
-        // is bounded by linear tolerance times measured surface area, plus
-        // the unchanged native GK relative convergence budget for each solid.
-        let volume_budget = policy.linear_tolerance_mm
-            * (b.faces().unwrap().iter().map(|f| f.area_mm2).sum::<f64>()
-                + read
-                    .faces()
-                    .unwrap()
-                    .iter()
-                    .map(|f| f.area_mm2)
-                    .sum::<f64>())
-            + 1e-7 * (b.volume_mm3().unwrap().abs() + read.volume_mm3().unwrap().abs());
-        assert!((read.volume_mm3().unwrap() - b.volume_mm3().unwrap()).abs() < volume_budget);
-        assert_eq!(a.volume_mm3().unwrap(), b.volume_mm3().unwrap());
-        assert_eq!(a.bounds().unwrap(), b.bounds().unwrap());
-        let uncached_path = directory.path().join("ordinary-first-build.step");
-        a.write_step(&uncached_path).unwrap();
-        let uncached_read = Solid::read_step(&uncached_path, policy).unwrap();
-        assert_eq!(
-            read.volume_mm3().unwrap(),
-            uncached_read.volume_mm3().unwrap(),
-            "Cached and ordinary first-build exports must retain identical geometry"
-        );
-        let detached = std::thread::spawn(|| {
-            reset();
-            assert_eq!(stats(), (0, 0, 0, 0, 0));
-            let document = Document::new("Independent screw owner thread").unwrap();
-            let values = parameters::evaluate(&document).unwrap();
-            let recipe = source();
-            let first =
-                build(EntityId::new(), &recipe, &values, GeometryPolicy::default()).unwrap();
-            let second =
-                build(EntityId::new(), &recipe, &values, GeometryPolicy::default()).unwrap();
-            assert_eq!(first.to_brep().unwrap(), second.to_brep().unwrap());
-            let state = stats();
-            (state.0, state.1, state.2, state.3)
-        })
-        .join()
-        .unwrap();
-        assert_eq!(detached, (2, 1, 1, 1));
-        assert_eq!(stats().1, 1);
-        assert!(stats().3 <= SCREW_FACTORY_ENTRIES && stats().4 <= SCREW_FACTORY_BYTES);
-        let mut bad = recipe.clone();
-        if let MechanicalPartParameters::MachineScrew { head, .. } = &mut bad.parameters {
-            *head = model::ScrewHead::SocketCap {
-                diameter: length(0.001),
-                height: length(0.001),
-            };
-        }
-        let stable = stats();
-        assert!(build(EntityId::new(), &bad, &values, policy).is_err());
-        assert_eq!(stats(), stable);
-        assert_eq!(a.to_brep().unwrap(), geometry);
-    }
-    #[test]
-    fn superseded_compilation_reuses_only_complete_geometry_without_publishing_document_edits() {
-        use multicad_core::commands::{Actor, Channel, Session};
-        reset();
-        let mut session = Session::new(Document::new("Interrupted whole screw").unwrap()).unwrap();
-        let request = model::MechanicalPartRequest::new("Screw", model::default_machine_screw());
-        let prepared =
-            model::prepare_mechanical_part(&session, 0, Actor::local(Channel::Mcp), &request)
-                .unwrap();
-        session.commit(prepared.prepared).unwrap();
-        let source_before = serde_json::to_vec(session.document()).unwrap();
-        let compiler = crate::Compiler::default();
-        assert!(
-            compiler
-                .compile_interruptible(session.document(), session.revision(), Some(&|| true))
-                .is_err()
-        );
-        assert_eq!(stats(), (0, 0, 0, 0, 0));
-        // Once the provider starts, its native build is synchronous. A later
-        // supersession may retain the completely checked immutable geometry,
-        // but cannot publish a model or canonical document mutation.
-        let interrupted = compiler.compile_interruptible(
-            session.document(),
-            session.revision(),
-            Some(&|| stats().0 > 0),
-        );
-        assert!(interrupted.is_err());
-        assert_eq!(stats().2, 1);
-        assert_eq!(stats().3, 1);
-        assert_eq!(
-            serde_json::to_vec(session.document()).unwrap(),
-            source_before
-        );
-        let values = parameters::evaluate(session.document()).unwrap();
-        let source = model::read_mechanical_part(session.document(), request.feature).unwrap();
-        let complete = build(EntityId::new(), &source, &values, GeometryPolicy::default()).unwrap();
-        assert_eq!(stats().1, 1);
-        assert!(complete.volume_mm3().unwrap() > 0.);
-        assert_eq!(
-            serde_json::to_vec(session.document()).unwrap(),
-            source_before
-        );
-    }
-
-    #[test]
-    fn full_screw_factory_evicts_old_geometry_and_never_retains_failed_or_foreign_results() {
-        reset();
-        let document = Document::new("Bounded whole screw cache").unwrap();
-        let values = parameters::evaluate(&document).unwrap();
-        let policy = GeometryPolicy::default();
-        let original = source();
-        let owner = EntityId::new();
-        let retained = build(owner, &original, &values, policy).unwrap();
-        let geometry = retained.to_brep().unwrap();
-        let foreign = retained
-            .share()
-            .unwrap()
-            .with_occurrence_origin(EntityId::new(), EntityId::new())
-            .unwrap();
-        let key = screw_key(&original.parameters.resolve(&values).unwrap(), policy).unwrap();
-        let before = stats();
-        remember_screw(key.clone(), owner, &foreign);
-        assert_eq!(stats(), before);
-        for index in 1..=SCREW_FACTORY_ENTRIES {
-            let mut recipe = original.clone();
-            if let MechanicalPartParameters::MachineScrew {
-                underhead_length, ..
-            } = &mut recipe.parameters
-            {
-                *underhead_length = Some(length(10. + index as f64 * 0.1));
-            }
-            build(EntityId::new(), &recipe, &values, policy).unwrap();
-            assert!(stats().3 <= SCREW_FACTORY_ENTRIES && stats().4 <= SCREW_FACTORY_BYTES);
-        }
-        assert!(SCREWS.with(|slot| !slot.borrow().entries.contains_key(&key)));
-        assert_eq!(retained.to_brep().unwrap(), geometry);
-        let hits = stats().1;
-        build(EntityId::new(), &original, &values, policy).unwrap();
-        assert_eq!(stats().1, hits);
     }
 
     #[test]
@@ -922,112 +1104,5 @@ mod screw_factory_tests {
             *value = f64::from_bits(value.to_bits() + 1);
             assert!(screw_key(&resolved, p).unwrap() != base);
         }
-    }
-}
-
-#[cfg(test)]
-mod screw_profile_shared_thread_tests {
-    use super::*;
-    use multicad_core::{
-        document::Document,
-        model::{self, BodyOutput, MechanicalPartParameters, ScrewDrive, ScrewHead, length},
-        parameters,
-    };
-    #[test]
-    fn new_screw_profile_booleans_and_step_preserve_shared_native_thread_factory_source() {
-        SCREWS.with(|cache| *cache.borrow_mut() = ScrewFactory::default());
-        let doc = Document::new("Shared thread source").unwrap();
-        let evaluated = parameters::evaluate(&doc).unwrap();
-        let mut p = model::default_machine_screw();
-        let MechanicalPartParameters::MachineScrew {
-            underhead_length,
-            head,
-            drive,
-            thread,
-            ..
-        } = &mut p
-        else {
-            unreachable!()
-        };
-        *underhead_length = Some(length(6.));
-        thread.length = length(3.);
-        *head = ScrewHead::Pan {
-            profile: Box::new(model::CrownedScrewHeadParameters {
-                diameter: length(5.6),
-                height: length(2.4),
-                crown_radius: length(5.),
-                top_land_diameter: length(4.1),
-                neck_radius: length(0.1),
-            }),
-        };
-        *drive = ScrewDrive::Hexalobular {
-            profile: Box::new(model::HexalobularDriveParameters {
-                major_diameter: length(2.8),
-                minor_diameter: length(2.05),
-                outer_lobe_radius: length(0.28),
-                depth: length(1.1),
-                bottom_angle: model::angle(120.),
-            }),
-        };
-        let resolved = thread.resolve(&evaluated, ThreadMode::NewExternal).unwrap();
-        let spec = multicad_kernel::HelicalThread {
-            major_radius_mm: resolved.major_radius_mm,
-            pitch_mm: resolved.pitch_mm,
-            length_mm: resolved.length_mm,
-            depth_mm: resolved.profile.depth_mm,
-            crest_width_mm: resolved.profile.crest_width_mm,
-            lower_flank_deg: resolved.profile.lower_flank_deg,
-            upper_flank_deg: resolved.profile.upper_flank_deg,
-            radial_taper: resolved.profile.radial_taper,
-            starts: resolved.starts,
-            left_hand: false,
-        };
-        let owner = EntityId::new();
-        let policy = GeometryPolicy::default();
-        let retained = Solid::helical_thread_named(spec, owner, policy).unwrap();
-        let topology = retained.topology_snapshot(owner, 0).unwrap();
-        let volume = retained.volume_mm3().unwrap();
-        let bounds = retained.bounds().unwrap();
-        let faces = retained.faces().unwrap();
-        let bytes = retained.to_brep().unwrap();
-        let before = multicad_kernel::thread_factory_stats().unwrap();
-        let feature = EntityId::new();
-        let source = MechanicalPartDefinition {
-            output: BodyOutput {
-                body: EntityId::new(),
-            },
-            parameters: p,
-            provenance: None,
-        };
-        let completed = build(feature, &source, &evaluated, policy).unwrap();
-        assert!(
-            multicad_kernel::thread_factory_stats().unwrap().hits > before.hits,
-            "Actual construction must exercise a shared thread factory hit"
-        );
-        assert_eq!(
-            retained.to_brep().unwrap(),
-            bytes,
-            "Constructing a new head/recess must not modify the cached thread's native source"
-        );
-        let dir = tempfile::tempdir().unwrap();
-        completed
-            .write_step(&dir.path().join("profile.step"))
-            .unwrap();
-        assert_eq!(
-            retained.to_brep().unwrap(),
-            bytes,
-            "Exporting the completed screw must not modify its shared thread source"
-        );
-        assert_eq!(retained.volume_mm3().unwrap(), volume);
-        assert_eq!(retained.bounds().unwrap(), bounds);
-        assert_eq!(retained.faces().unwrap(), faces);
-        assert_eq!(retained.topology_snapshot(owner, 0).unwrap(), topology);
-        let own = completed.topology_snapshot(feature, 0).unwrap();
-        assert!(
-            own.elements
-                .iter()
-                .filter(|e| e.key.kind == multicad_core::references::TopologyKind::Face)
-                .all(|e| !e.origins.is_empty() && e.origins.iter().all(|o| o.source == feature))
-        );
     }
 }

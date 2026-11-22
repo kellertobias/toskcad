@@ -9,21 +9,22 @@ export const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const run=(command,args=[],options={})=>execFileSync(command,args,{cwd:root,stdio:'inherit',...options});
 const capture=(command,args=[])=>execFileSync(command,args,{cwd:root,encoding:'utf8'}).trim();
 
-export function bootstrap(){
-  const [major,minor]=process.versions.node.split('.').map(Number);
+export function bootstrap({runCommand=run,captureCommand=capture,platform=process.platform,nodeVersion=process.versions.node}={}){
+  const [major,minor]=nodeVersion.split('.').map(Number);
   if(major<22||(major===22&&minor<14))throw new Error('Install Node.js 22.14 or newer');
   for(const [command,args,hint] of [
     ['rustup',['--version'],'Install Rust from https://rustup.rs/'],
-    ['cmake',['--version'],'Install CMake 3.16+ (macOS: brew install cmake)'],
     ['tar',['--version'],'Install tar (included with supported macOS/Windows/Linux)'],
-  ]){try{capture(command,args);}catch{throw new Error(hint);}}
-  if(process.platform==='darwin'){
-    try{capture('xcrun',['--find','clang++']);}catch{throw new Error('Install Apple Command Line Tools: xcode-select --install');}
+  ]){try{captureCommand(command,args);}catch{throw new Error(hint);}}
+  if(platform==='darwin'){
+    try{captureCommand('xcrun',['--find','clang++']);}catch{throw new Error('Install Apple Command Line Tools: xcode-select --install');}
   }
   // rustup selects/installs the repository pin without changing global defaults.
-  run('rustup',['show','active-toolchain']);
-  run(process.execPath,[join(root,'tools/foundation-deps.mjs')]);
-  run('cargo',['fetch','--locked']);
+  runCommand('rustup',['show','active-toolchain']);
+  runCommand('cargo',['fetch','--locked']);
+}
+export function assembleDevelopmentRuntime(stage,binary,releaseVersion=version(),assemble=assembleRuntime){
+  return assemble(stage,binary,releaseVersion);
 }
 export function version(){
   return readFileSync(join(root,'Cargo.toml'),'utf8').match(/\[workspace\.package\][\s\S]*?^version = "([^"]+)"/m)?.[1]??'0.1.0-dev';
@@ -73,7 +74,7 @@ async function main(){
   run('cargo',['build','--workspace','--locked']);
   const binary=developmentExecutable();
   const parent=join(root,'artifacts/development');mkdirSync(parent,{recursive:true});
-  const bundle=mkdtempSync(join(parent,'build-'));assembleRuntime(bundle,binary,version());
+  const bundle=mkdtempSync(join(parent,'build-'));assembleDevelopmentRuntime(bundle,binary);
   writeFileSync(join(parent,'latest.json'),JSON.stringify({bundle,executable:executable(bundle)}));
   console.log(`Native application: ${executable(bundle)}`);
   if(args[0]==='open'){

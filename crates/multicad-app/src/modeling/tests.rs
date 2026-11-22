@@ -20,8 +20,705 @@ fn box_session() -> (Session, PrimitiveRequest) {
     session.commit(prepared.prepared).unwrap();
     (session, request)
 }
+
 #[test]
-fn native_reusable_assembly_publishes_one_root_and_exact_explodable_leaf_receipts() {
+fn rust_existing_mixed_sweep_previews_a_pickable_wall_in_the_app() {
+    use multicad_core::{
+        constraint_sketch::{Curve, CurveKind, source::Source},
+        model::{AdvancedParameters, AdvancedRequest, ProfileSource, SketchPathSource},
+        sketch::Datum,
+        sketch_regions,
+    };
+    use multicad_ui::modeling::ModelToolController;
+
+    let document = Document::new("Rust miter sweep").unwrap();
+    let (sketch, edits) = Source::create(Datum::Xy, "Stadium").unwrap();
+    let document = document.edited(&edits).unwrap();
+    let mut profile = Source::read(&document, sketch).unwrap().0;
+    let [a, b, c, d] = [[-3., -1.], [3., -1.], [3., 1.], [-3., 1.]].map(|p| profile.add_point(p));
+    profile.add_line(a, b);
+    let straight = profile.add_line(c, d);
+    for (center, start, end) in [([3., 0.], b, c), ([-3., 0.], d, a)] {
+        let center = profile.add_point(center);
+        profile.sketch.curves.push(Curve {
+            id: EntityId::new(),
+            construction: false,
+            kind: CurveKind::Arc {
+                center,
+                start,
+                end,
+                clockwise: false,
+            },
+        });
+    }
+    let region = sketch_regions::extract(&profile).regions[0].intent();
+    let document = document
+        .edited(&profile.replace(&document, sketch).unwrap())
+        .unwrap();
+    let (path, edits) = Source::create(Datum::Xz, "Two legs").unwrap();
+    let document = document.edited(&edits).unwrap();
+    let mut wire = Source::read(&document, path).unwrap().0;
+    let [a, b, c] = [[0., 0.], [0., 20.], [20., 20.]].map(|p| wire.add_point(p));
+    let curves = vec![wire.add_line(a, b), wire.add_line(b, c)];
+    let middle = curves[1];
+    let document = document
+        .edited(&wire.replace(&document, path).unwrap())
+        .unwrap();
+    let mut session = Session::new(document).unwrap();
+    let request = AdvancedRequest::new_body(
+        "Sweep",
+        AdvancedParameters::Sweep(Default::default()),
+        vec![ProfileSource { sketch, region }],
+        Some(SketchPathSource {
+            sketch: path,
+            curves,
+        }),
+    );
+    let prepared =
+        model::prepare_advanced(&session, 0, Actor::local(Channel::Ui), &request).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let before = session.document().clone();
+    let resources = ProjectResources::default();
+    let mut tool = ModelToolController::default();
+    tool.set_backend(Backend::factory(GeometryBackend::Rust).unwrap()());
+    tool.begin_existing(&session, &resources, request.feature, Channel::Ui)
+        .unwrap();
+    tool.preview(&session, &resources, Channel::Ui).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while tool.pending() {
+        tool.poll(&session, &resources);
+        assert!(Instant::now() < deadline, "Rust sweep preview timed out");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(tool.can_apply(&session, &resources), "{:?}", tool.error());
+    let scene = tool.display_scene(&session, &resources).unwrap();
+    let hit = scene
+        .pick_face(viewport::Ray::new([10., 5., 20.], [0., -1., 0.]).unwrap())
+        .unwrap();
+    assert_eq!(hit.geometry, request.feature);
+    assert!((hit.point_mm[1] - 1.).abs() < 1e-6);
+    let intent = hit.intent.unwrap();
+    for source in [straight, middle] {
+        assert!(intent.origins.iter().any(|origin| origin.source == source));
+    }
+    tool.cancel();
+    assert_eq!(session.revision(), 1);
+    assert_eq!(session.document(), &before);
+}
+
+#[test]
+fn rust_smooth_polygon_loft_publishes_its_taper_in_the_app() {
+    use multicad_core::{
+        constraint_sketch::source::Source,
+        document::Mutation,
+        model::{AdvancedParameters, AdvancedRequest, LoftParameters, ProfileSource},
+        sketch::Datum,
+        sketch_regions,
+    };
+
+    let mut document = Document::new("Rust default polygon loft").unwrap();
+    let mut profiles = Vec::new();
+    let mut seams = Vec::new();
+    for (name, z, origin, size) in [
+        ("Start", 0., [0., 0.], [6., 4.]),
+        ("Station", 4., [1., 0.5], [5., 3.]),
+        ("End", 8., [2., 1.], [4., 2.]),
+    ] {
+        let (sketch, mut edits) = Source::create(Datum::Xy, name).unwrap();
+        for edit in &mut edits {
+            if let Mutation::Insert(entity) = edit
+                && let EntityData::Plane { origin_mm, .. } = &mut entity.data
+            {
+                origin_mm[2] = z;
+            }
+        }
+        document = document.edited(&edits).unwrap();
+        let mut source = Source::read(&document, sketch).unwrap().0;
+        source.add_rectangle(origin, size).unwrap();
+        seams.push(source.sketch.curves[0].id);
+        let region = sketch_regions::extract(&source).regions[0].intent();
+        profiles.push(ProfileSource { sketch, region });
+        document = document
+            .edited(&source.replace(&document, sketch).unwrap())
+            .unwrap();
+    }
+    let mut session = Session::new(document).unwrap();
+    let request = AdvancedRequest::new_body(
+        "Default polygon loft",
+        AdvancedParameters::Loft(LoftParameters {
+            seams,
+            ..Default::default()
+        }),
+        profiles,
+        None,
+    );
+    let prepared =
+        model::prepare_advanced(&session, 0, Actor::local(Channel::Ui), &request).unwrap();
+    session.commit(prepared.prepared).unwrap();
+
+    let mut backend = Backend::factory(GeometryBackend::Rust).unwrap()();
+    let stamp = SceneStamp {
+        document: session.document().id(),
+        revision: session.revision(),
+        generation: 1,
+    };
+    backend.request(session.document(), stamp).unwrap();
+    let scene = wait_for_scene(&mut *backend).result.unwrap();
+    assert_eq!(scene.stamp(), stamp);
+    assert_eq!(
+        scene.native_instance_bounds(request.body),
+        Some([[0., 0., 0.], [6., 4., 8.]])
+    );
+    let topology = scene.geometry_snapshot(request.feature).unwrap();
+    assert_eq!(
+        topology
+            .elements
+            .iter()
+            .filter(|item| item.key.kind == TopologyKind::Face)
+            .count(),
+        6
+    );
+    let hit = scene
+        .pick_face(viewport::Ray::new([-10., 2., 4.], [1., 0., 0.]).unwrap())
+        .unwrap();
+    assert_eq!(hit.geometry, request.feature);
+    assert!((hit.point_mm[0] - 1.).abs() < 1e-6);
+    assert_eq!(
+        hit.intent
+            .unwrap()
+            .origins
+            .iter()
+            .filter(|origin| origin.role.starts_with("side/"))
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn rust_twisted_loft_preview_publishes_a_pickable_wall_and_drawing_section() {
+    use multicad_core::{
+        constraint_sketch::source::Source,
+        document::Mutation,
+        model::{AdvancedParameters, AdvancedRequest, LoftParameters, ProfileSource},
+        sketch::Datum,
+        sketch_regions,
+    };
+    use multicad_ui::modeling::ModelToolController;
+
+    let bottom = [[-2., -1.], [2., -1.], [2., 1.], [-2., 1.]];
+    let (sin, cos) = std::f64::consts::FRAC_PI_6.sin_cos();
+    let top = bottom.map(|[x, y]| [cos * x - sin * y + 1., sin * x + cos * y + 0.5]);
+    let mut document = Document::new("Twisted loft preview").unwrap();
+    let mut profiles = Vec::new();
+    let mut seams = Vec::new();
+    for (name, z, ring) in [("Start", 0., bottom), ("Rotated end", 6., top)] {
+        let (sketch, mut edits) = Source::create(Datum::Xy, name).unwrap();
+        for edit in &mut edits {
+            if let Mutation::Insert(entity) = edit
+                && let EntityData::Plane { origin_mm, .. } = &mut entity.data
+            {
+                origin_mm[2] = z;
+            }
+        }
+        document = document.edited(&edits).unwrap();
+        let mut source = Source::read(&document, sketch).unwrap().0;
+        let ids = ring.map(|p| source.add_point(p));
+        for i in 0..4 {
+            source.add_line(ids[i], ids[(i + 1) % 4]);
+        }
+        seams.push(source.sketch.curves[0].id);
+        let region = sketch_regions::extract(&source).regions[0].intent();
+        profiles.push(ProfileSource { sketch, region });
+        document = document
+            .edited(&source.replace(&document, sketch).unwrap())
+            .unwrap();
+    }
+    let mut session = Session::new(document).unwrap();
+    let request = AdvancedRequest::new_body(
+        "Twisted loft",
+        AdvancedParameters::Loft(LoftParameters {
+            seams: seams.clone(),
+            ..Default::default()
+        }),
+        profiles,
+        None,
+    );
+    let prepared =
+        model::prepare_advanced(&session, 0, Actor::local(Channel::Ui), &request).unwrap();
+    session.commit(prepared.prepared).unwrap();
+
+    let resources = ProjectResources::default();
+    let mut tool = ModelToolController::default();
+    tool.set_backend(Backend::factory(GeometryBackend::Rust).unwrap()());
+    tool.begin_existing(&session, &resources, request.feature, Channel::Ui)
+        .unwrap();
+    tool.preview(&session, &resources, Channel::Ui).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while tool.pending() {
+        tool.poll(&session, &resources);
+        assert!(Instant::now() < deadline, "Rust loft preview timed out");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(tool.can_apply(&session, &resources), "{:?}", tool.error());
+    let scene = tool.display_scene(&session, &resources).unwrap();
+    let hit = scene
+        .pick_face(viewport::Ray::new([0.75, -10., 3.], [0., 1., 0.]).unwrap())
+        .unwrap();
+    assert_eq!(hit.geometry, request.feature);
+    assert!((hit.point_mm[1] - (-1. + 0.5 - cos) * 0.5).abs() < 0.1);
+    let intent = hit.intent.unwrap();
+    for seam in seams {
+        assert!(intent.origins.iter().any(|origin| origin.source == seam));
+    }
+    assert!(intent.attachment.is_none());
+    tool.cancel();
+    assert_eq!(session.revision(), 1);
+    check_twisted_loft_drawing_worker(&mut session, request.body);
+}
+
+fn check_twisted_loft_drawing_worker(session: &mut Session, body: EntityId) {
+    use multicad_core::{drawings, project_file::ContentHash, references::ReferenceFrame};
+    use multicad_ui::drawings::DrawingBackend;
+
+    let rear = PrimitiveRequest::new(
+        "Rear drawing stock",
+        PrimitiveParameters::Box {
+            size: [7., 1., 1.].map(length),
+            frame: multicad_core::model::PrimitiveFrame {
+                origin: [-3., 0.4, -2.].map(length),
+                ..Default::default()
+            },
+        },
+    );
+    let prepared = model::prepare_primitive(
+        session,
+        session.revision(),
+        Actor::local(Channel::Ui),
+        &rear,
+    )
+    .unwrap();
+    session.commit(prepared.prepared).unwrap();
+
+    let cylinder = PrimitiveRequest::new(
+        "Round drawing stock",
+        PrimitiveParameters::Cylinder {
+            radius: length(1.4),
+            height: length(1.5),
+            frame: multicad_core::model::PrimitiveFrame {
+                origin: [1., -0.5, 7.].map(length),
+                ..Default::default()
+            },
+        },
+    );
+    let prepared = model::prepare_primitive(
+        session,
+        session.revision(),
+        Actor::local(Channel::Ui),
+        &cylinder,
+    )
+    .unwrap();
+    session.commit(prepared.prepared).unwrap();
+
+    let mut page = drawings::Page::new("1");
+    let view = EntityId::new();
+    page.views.push(drawings::DrawingView {
+        id: view,
+        name: "Oblique cut".into(),
+        source: drawings::ViewSource::Model {
+            entities: vec![body],
+        },
+        frame: ReferenceFrame {
+            origin_mm: [0., 0., 3.],
+            u: [1., 0., 0.],
+            v: [0., 0.8, 0.6],
+        },
+        kind: drawings::ViewKind::Section {
+            offset_mm: 0.,
+            range: drawings::SectionRange::SectionOnly,
+            window: drawings::SectionWindow {
+                u_mm: Some([-0.5, 0.5]),
+                v_mm: None,
+            },
+        },
+        position_mm: [50., 50.],
+        scale: drawings::Scale {
+            numerator: 1,
+            denominator: 1,
+        },
+        hidden_lines: false,
+        tangent_edges: false,
+        paper_chord_tolerance_mm: 0.001,
+        guide: None,
+        equipment_categories: None,
+    });
+    let mut ordinary = page.views[0].clone();
+    ordinary.id = EntityId::new();
+    ordinary.name = "Loft projection".into();
+    ordinary.kind = drawings::ViewKind::Projection;
+    ordinary.hidden_lines = true;
+    let mut retained = ordinary.clone();
+    retained.id = EntityId::new();
+    retained.name = "Loft depth section".into();
+    retained.frame = ReferenceFrame {
+        origin_mm: [0.; 3],
+        u: [1., 0., 0.],
+        v: [0., 1., 0.],
+    };
+    retained.kind = drawings::ViewKind::Section {
+        offset_mm: 4.,
+        range: drawings::SectionRange::Depth { depth_mm: 2.5 },
+        window: drawings::SectionWindow::default(),
+    };
+    let mut oblique = ordinary.clone();
+    oblique.id = EntityId::new();
+    oblique.name = "Oblique depth section".into();
+    oblique.kind = drawings::ViewKind::Section {
+        offset_mm: 0.6,
+        range: drawings::SectionRange::Depth { depth_mm: 1.8 },
+        window: drawings::SectionWindow::default(),
+    };
+    let mut bounded = oblique.clone();
+    bounded.id = EntityId::new();
+    bounded.name = "Windowed depth section".into();
+    bounded.kind = drawings::ViewKind::Section {
+        offset_mm: 0.6,
+        range: drawings::SectionRange::Depth { depth_mm: 1.8 },
+        window: drawings::SectionWindow {
+            u_mm: Some([-0.65, 1.5]),
+            v_mm: Some([-0.8, 1.5]),
+        },
+    };
+    let bounded_id = bounded.id;
+    let mut assembly = ordinary.clone();
+    assembly.id = EntityId::new();
+    assembly.name = "Assembly projection".into();
+    assembly.frame.v = [0., 1., 0.];
+    assembly.source = drawings::ViewSource::Model {
+        entities: vec![rear.body, body],
+    };
+    let mut section = assembly.clone();
+    section.id = EntityId::new();
+    section.name = "Assembly depth section".into();
+    section.kind = drawings::ViewKind::Section {
+        offset_mm: 0.,
+        range: drawings::SectionRange::Depth { depth_mm: 5.5 },
+        window: drawings::SectionWindow {
+            u_mm: Some([-2.5, 1.5]),
+            v_mm: None,
+        },
+    };
+    let mut round = assembly.clone();
+    round.id = EntityId::new();
+    round.name = "Round stock projection".into();
+    round.source = drawings::ViewSource::Model {
+        entities: vec![body, rear.body, cylinder.body],
+    };
+    let mut round_section = round.clone();
+    round_section.id = EntityId::new();
+    round_section.name = "Round stock depth section".into();
+    round_section.frame.origin_mm = [0.; 3];
+    round_section.kind = drawings::ViewKind::Section {
+        offset_mm: 7.8,
+        range: drawings::SectionRange::Depth { depth_mm: 4. },
+        window: drawings::SectionWindow::default(),
+    };
+    let round_section_id = round_section.id;
+    let round_id = round.id;
+    let section_id = section.id;
+    let assembly_id = assembly.id;
+    let oblique_id = oblique.id;
+    let ordinary_id = ordinary.id;
+    let retained_id = retained.id;
+    page.views.extend([
+        ordinary,
+        retained,
+        oblique,
+        bounded,
+        assembly,
+        section,
+        round,
+        round_section,
+    ]);
+    let page_id = page.id;
+    let (_, prepared) = drawings::prepare_create(
+        session,
+        session.revision(),
+        Actor::local(Channel::Ui),
+        "Twisted loft drawing",
+        Some(page),
+    )
+    .unwrap();
+    session.commit(prepared).unwrap();
+    let stamp = drawings::DrawingStamp {
+        document: session.document().id(),
+        revision: session.revision(),
+        source_hash: ContentHash::document(session.document()).unwrap(),
+    };
+    let mut worker = crate::drawings::Backend::with_cache_and_backend(None, GeometryBackend::Rust);
+    worker
+        .request_page(session.document(), stamp, page_id)
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let result = loop {
+        if let Some(reply) = worker.poll() {
+            break reply.result.unwrap();
+        }
+        assert!(Instant::now() < deadline, "Rust loft drawing timed out");
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    let drawings::ViewEvaluation::Ready { vectors, .. } = &result.views[&view] else {
+        panic!("{:?}", result.views[&view]);
+    };
+    assert_eq!(vectors.len(), 4);
+    assert!(
+        vectors
+            .iter()
+            .all(|v| v.source == body && v.role == drawings::VectorRole::Section)
+    );
+    assert_eq!(
+        vectors
+            .iter()
+            .filter(|v| matches!(v.curve, drawings::VectorCurve::BSpline { degree: 2, .. }))
+            .count(),
+        2
+    );
+    for (id, sections) in [(ordinary_id, 0), (retained_id, 4), (oblique_id, 4)] {
+        let drawings::ViewEvaluation::Ready { vectors, .. } = &result.views[&id] else {
+            panic!("{:?}", result.views[&id]);
+        };
+        assert!(vectors.iter().all(|v| v.source == body));
+        assert!(
+            vectors
+                .iter()
+                .any(|v| v.role == drawings::VectorRole::Visible)
+        );
+        assert!(
+            vectors
+                .iter()
+                .any(|v| v.role == drawings::VectorRole::Hidden)
+        );
+        assert_eq!(
+            vectors
+                .iter()
+                .filter(|v| v.role == drawings::VectorRole::Section)
+                .count(),
+            sections
+        );
+    }
+    let drawings::ViewEvaluation::Ready { vectors, .. } = &result.views[&oblique_id] else {
+        unreachable!("oblique depth section was checked above");
+    };
+    assert_eq!(
+        vectors
+            .iter()
+            .filter(|vector| vector.role == drawings::VectorRole::Section
+                && matches!(
+                    vector.curve,
+                    drawings::VectorCurve::BSpline { degree: 2, .. }
+                ))
+            .count(),
+        4
+    );
+    let drawings::ViewEvaluation::Ready { vectors, .. } = &result.views[&bounded_id] else {
+        panic!("{:?}", result.views[&bounded_id]);
+    };
+    assert!(
+        vectors
+            .iter()
+            .any(|vector| vector.role == drawings::VectorRole::Hidden)
+    );
+    assert!(
+        vectors
+            .iter()
+            .any(|vector| vector.role == drawings::VectorRole::Section
+                && matches!(
+                    vector.curve,
+                    drawings::VectorCurve::BSpline { degree: 2, .. }
+                ))
+    );
+    assert!(vectors.iter().all(|v| v.source == body));
+    let drawings::ViewEvaluation::Ready { vectors, .. } = &result.views[&assembly_id] else {
+        panic!("{:?}", result.views[&assembly_id]);
+    };
+    for source in [rear.body, body] {
+        for role in [drawings::VectorRole::Visible, drawings::VectorRole::Hidden] {
+            assert!(vectors.iter().any(|v| v.source == source && v.role == role));
+        }
+    }
+    let drawings::ViewEvaluation::Ready { vectors, .. } = &result.views[&round_id] else {
+        panic!("{:?}", result.views[&round_id]);
+    };
+    assert!(vectors.iter().any(|v| v.source == cylinder.body
+        && v.role == drawings::VectorRole::Visible
+        && matches!(v.curve, drawings::VectorCurve::Ellipse { .. })));
+    assert!(
+        vectors
+            .iter()
+            .any(|v| v.source == body && v.role == drawings::VectorRole::Hidden)
+    );
+    let drawings::ViewEvaluation::Ready { vectors, .. } = &result.views[&round_section_id] else {
+        panic!("{:?}", result.views[&round_section_id]);
+    };
+    assert!(vectors.iter().any(|v| v.source == cylinder.body
+        && v.role == drawings::VectorRole::Section
+        && matches!(v.curve, drawings::VectorCurve::Ellipse { .. })));
+    assert!(
+        vectors
+            .iter()
+            .any(|v| v.source == body && v.role == drawings::VectorRole::Visible)
+    );
+    let drawings::ViewEvaluation::Ready { vectors, .. } = &result.views[&section_id] else {
+        panic!("{:?}", result.views[&section_id]);
+    };
+    assert!(
+        vectors
+            .iter()
+            .any(|v| v.source == body && v.role == drawings::VectorRole::Section)
+    );
+    assert!(
+        vectors
+            .iter()
+            .any(|v| v.source == rear.body && v.role == drawings::VectorRole::Hidden)
+    );
+    assert!(
+        vectors.iter().all(|v| v.source == body
+            || (v.source == rear.body && v.role != drawings::VectorRole::Section))
+    );
+}
+
+#[test]
+fn rust_thread_tool_previews_real_m8_ridges_and_cancel_keeps_the_document() {
+    use multicad_ui::modeling::ModelToolController;
+
+    let mut session = Session::new(Document::new("Rust thread tool").unwrap()).unwrap();
+    let resources = ProjectResources::default();
+    let before = session.document().clone();
+    let mut tool = ModelToolController::default();
+    tool.set_backend(Backend::factory(GeometryBackend::Rust).unwrap()());
+    for cancel in [true, false] {
+        tool.begin_thread(&session, &resources, None, &Default::default(), Channel::Ui)
+            .unwrap();
+        assert!(!tool.can_apply(&session, &resources));
+        assert!(tool.pending(), "the default thread should preview on open");
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while tool.pending() {
+            tool.poll(&session, &resources);
+            assert!(Instant::now() < deadline, "Rust thread preview timed out");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(tool.can_apply(&session, &resources), "{:?}", tool.error());
+        let scene = tool.display_scene(&session, &resources).unwrap();
+        assert_eq!(scene.instances().len(), 1);
+        let hit = |z| {
+            scene
+                .pick_face(viewport::Ray::new([10., 0., z], [-1., 0., 0.]).unwrap())
+                .unwrap()
+        };
+        let crest = hit(2.5);
+        let root = hit(3.125);
+        assert!(crest.point_mm[0] > 3.9, "{:?}", crest.point_mm);
+        assert!(root.point_mm[0] < 3.6, "{:?}", root.point_mm);
+        assert_ne!(crest.key, root.key);
+        // A right-hand turn advances the crest by one quarter pitch from +X to +Y.
+        let y_hit = |z| {
+            scene
+                .pick_face(viewport::Ray::new([0., 10., z], [0., -1., 0.]).unwrap())
+                .unwrap()
+                .point_mm[1]
+        };
+        assert!(y_hit(2.5 + 1.25 / 4.) > 3.9);
+        assert!(y_hit(2.5 - 1.25 / 4.) < 3.6);
+        assert_eq!(session.document(), &before);
+        if cancel {
+            tool.cancel();
+            assert!(tool.display_scene(&session, &resources).is_none());
+            assert_eq!(session.revision(), 0);
+        } else {
+            let outputs = tool.apply(&mut session, &resources).unwrap();
+            assert_eq!(outputs.len(), 1);
+            assert_eq!(session.revision(), 1);
+            let source = model::read_thread(session.document(), outputs[0].feature).unwrap();
+            assert_eq!(source.output.body, outputs[0].body);
+            assert_eq!(source.parameters, model::ThreadParameters::default());
+        }
+    }
+}
+
+#[test]
+fn rust_existing_internal_thread_previews_the_open_bore_and_its_helical_wall() {
+    use multicad_core::model::{BodyInput, ThreadFit, ThreadMode, ThreadParameters, ThreadRequest};
+    use multicad_ui::modeling::ModelToolController;
+
+    let mut session = Session::new(Document::new("Rust threaded receiver").unwrap()).unwrap();
+    let stock = PrimitiveRequest::new(
+        "Receiver",
+        PrimitiveParameters::Cylinder {
+            radius: length(5.),
+            height: length(6.6),
+            frame: Default::default(),
+        },
+    );
+    let prepared =
+        model::prepare_primitive(&session, 0, Actor::local(Channel::Ui), &stock).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let cut = ThreadRequest::receiving(
+        "M6 × 1 6H",
+        ThreadMode::CutInternal,
+        BodyInput {
+            body: stock.body,
+            producer: stock.feature,
+        },
+        ThreadParameters {
+            major_diameter: length(6.),
+            pitch: length(1.),
+            length: length(6.6),
+            minimum_wall: length(1.),
+            fit: ThreadFit::Metric6HInternal,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let prepared = model::prepare_thread(&session, 1, Actor::local(Channel::Ui), &cut).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let before = session.document().clone();
+    let resources = ProjectResources::default();
+    let mut tool = ModelToolController::default();
+    tool.set_backend(Backend::factory(GeometryBackend::Rust).unwrap()());
+    tool.begin_existing(&session, &resources, cut.feature, Channel::Ui)
+        .unwrap();
+    tool.preview(&session, &resources, Channel::Ui).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while tool.pending() {
+        tool.poll(&session, &resources);
+        assert!(
+            Instant::now() < deadline,
+            "Rust threaded receiver preview timed out"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(tool.can_apply(&session, &resources), "{:?}", tool.error());
+    let scene = tool.display_scene(&session, &resources).unwrap();
+    assert_eq!(scene.instances().len(), 1);
+    let pick = |origin, direction| scene.pick_face(viewport::Ray::new(origin, direction).unwrap());
+    assert!(pick([0., 0., 10.], [0., 0., -1.]).is_none());
+    let cap = pick([4., 0., 10.], [0., 0., -1.]).unwrap();
+    assert!((cap.point_mm[2] - 6.6).abs() < 1e-6);
+    let deep = pick([0., 0., 2.], [1., 0., 0.]).unwrap();
+    let shallow = pick([0., 0., 2.5], [1., 0., 0.]).unwrap();
+    assert!(deep.point_mm[0] > 2.95, "{:?}", deep.point_mm);
+    assert!(shallow.point_mm[0] < 2.6, "{:?}", shallow.point_mm);
+    assert_ne!(deep.key, shallow.key);
+    tool.cancel();
+    assert_eq!(session.revision(), 2);
+    assert_eq!(session.document(), &before);
+}
+
+#[test]
+fn rust_reusable_assembly_publishes_one_root_and_exact_explodable_leaf_receipts() {
+    reusable_assembly_scene(GeometryBackend::Rust);
+}
+
+fn reusable_assembly_scene(geometry_backend: GeometryBackend) {
     use std::collections::BTreeMap;
     let (mut session, stock) = box_session();
     let actor = || Actor::local(Channel::CommandLine);
@@ -66,10 +763,26 @@ fn native_reusable_assembly_publishes_one_root_and_exact_explodable_leaf_receipt
         )
         .unwrap();
     let original = session.document().clone();
-    let native = Compiler::default()
-        .compile(session.document(), session.revision())
+    let model = Compiler::default()
+        .compile_with_backend(
+            session.document(),
+            session.revision(),
+            geometry_backend,
+            None,
+        )
         .unwrap();
-    let scene = scene(session.document(), native.snapshot(), 7).unwrap();
+    let mut worker = Backend::factory(geometry_backend).unwrap()();
+    worker
+        .request(
+            session.document(),
+            SceneStamp {
+                document: session.document().id(),
+                revision: session.revision(),
+                generation: 7,
+            },
+        )
+        .unwrap();
+    let scene = wait_for_scene(&mut *worker).result.unwrap();
     assert!(scene.transfer_evaluation().unwrap().counts.is_empty());
     assert_eq!(scene.instances().len(), 1);
     assert_eq!(scene.instances()[0].id, placed.instance);
@@ -96,7 +809,7 @@ fn native_reusable_assembly_publishes_one_root_and_exact_explodable_leaf_receipt
     assert!(matches!(
         multicad_core::references::resolve(
             &intent,
-            &native.snapshot().occurrences[&placed.instance].topology,
+            &model.snapshot().occurrences[&placed.instance].topology,
             session.revision()
         ),
         multicad_core::references::Resolution::Resolved { .. }
@@ -478,6 +1191,37 @@ fn native_architecture_plan_exposes_real_opening_gaps_symbols_and_source_bound_p
     );
     context.set_plan(false, &mut camera);
     assert!(Arc::ptr_eq(&context.scene(&copy).unwrap(), &copy));
+    let next = SceneStamp {
+        generation: stamp.generation + 1,
+        ..stamp
+    };
+    backend.request(session.document(), next).unwrap();
+    let repeated = receive(&mut backend).result.unwrap();
+    assert_eq!(repeated.stamp(), next);
+    assert!(repeated.model_evaluation().unwrap().cut_targets.is_empty());
+    assert!(std::ptr::eq(
+        native.architecture_plan().unwrap(),
+        repeated.architecture_plan().unwrap(),
+    ));
+
+    // Candidate documents can share the same base revision. A changed
+    // source must still generate its own plan and receive its own stamp.
+    let mut candidate = before.clone();
+    candidate.rename("Renamed authoring plan").unwrap();
+    backend
+        .request(
+            &candidate,
+            SceneStamp {
+                generation: next.generation + 1,
+                ..next
+            },
+        )
+        .unwrap();
+    let changed = receive(&mut backend).result.unwrap();
+    let changed_plan = changed.architecture_plan().unwrap().as_ref().unwrap();
+    assert_ne!(changed_plan.source_hash, plan.source_hash);
+    assert_eq!(changed_plan.sources, plan.sources);
+    assert_eq!(changed_plan.vectors, plan.vectors);
     assert_eq!(session.document(), &before);
 }
 #[test]
@@ -1151,14 +1895,16 @@ fn shared_native_owner_reuses_default_screw_preview_for_authoritative_apply() {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
-    let owner = Backend::runtime().unwrap();
+    let owner = Backend::runtime(GeometryBackend::Rust).unwrap();
     let mut preview = Backend {
         runtime: owner.fork(),
         expected: None,
+        geometry_backend: GeometryBackend::Rust,
     };
     let mut canonical = Backend {
         runtime: owner.fork(),
         expected: None,
+        geometry_backend: GeometryBackend::Rust,
     };
     let mut session = Session::new(Document::new("Default M3 shared owner").unwrap()).unwrap();
     let resources = Default::default();
@@ -1272,9 +2018,11 @@ fn shared_native_owner_reuses_default_screw_preview_for_authoritative_apply() {
 
 #[test]
 fn app_backend_factory_keeps_candidate_and_canonical_publications_separate() {
-    let factory = Backend::factory().unwrap();
+    let factory = Backend::factory(GeometryBackend::Rust).unwrap();
     let mut candidate = factory();
     let mut canonical = factory();
+    assert!(candidate.supports_fast_hardware_preview());
+    assert!(canonical.supports_fast_hardware_preview());
     let (session, _) = box_session();
     let stamp = SceneStamp {
         document: session.document().id(),
@@ -1434,7 +2182,7 @@ mod painted_default_screw {
                                 })
                         })
                 })
-                .unwrap_or_else(|| panic!("Missing painted hardware control {label}"));
+                .unwrap_or_else(|| panic!("Missing painted model control {label}"));
             output.drop_without_applying_deltas();
             for pressed in [true, false] {
                 self.frame(vec![
@@ -1469,7 +2217,7 @@ mod painted_default_screw {
                 }
                 assert!(
                     Instant::now() < deadline,
-                    "Painted default screw timed out: canonical={} controller={:?} scene={:?}",
+                    "Painted model tool timed out: canonical={} controller={:?} scene={:?}",
                     canonical,
                     self.controller.error(),
                     self.canonical.error()
@@ -1480,8 +2228,291 @@ mod painted_default_screw {
     }
 
     #[test]
+    fn painted_rust_revolve_uses_the_sketch_axis_and_applies_an_open_annular_solid() {
+        use multicad_core::{constraint_sketch::source::Source, sketch::Datum, sketch_regions};
+
+        let (sketch, edits) = Source::create(Datum::Xz, "Meridian rectangle").unwrap();
+        let document = Document::new("Painted Rust revolution")
+            .unwrap()
+            .edited(&edits)
+            .unwrap();
+        let mut source = Source::read(&document, sketch).unwrap().0;
+        source.add_rectangle([2., 1.], [5., 6.]).unwrap();
+        let profile = sketch_regions::extract(&source).regions[0].intent();
+        let document = document
+            .edited(&source.replace(&document, sketch).unwrap())
+            .unwrap();
+        let before = document.clone();
+        let session = Session::new(document).unwrap();
+        let factory = Backend::factory(GeometryBackend::Rust).unwrap();
+        let mut controller = ModelToolController::default();
+        controller.set_backend(factory());
+        let mut canonical = SceneFeed::default();
+        canonical.set_backend(factory());
+        let mut painted = Painted {
+            ctx: egui::Context::default(),
+            controller,
+            canonical,
+            session,
+            applied: Vec::new(),
+            clock: Instant::now(),
+        };
+        painted.wait(true);
+        painted
+            .controller
+            .begin_revolve(
+                &painted.session,
+                &Default::default(),
+                sketch,
+                vec![profile],
+                Channel::Ui,
+            )
+            .unwrap();
+        painted.click("Sketch V axis");
+        painted.click("Preview");
+        painted.wait(false);
+        assert_eq!(painted.session.document(), &before);
+        painted.click("Apply");
+        painted.wait(true);
+        let [created] = painted.applied.as_slice() else {
+            panic!("Revolve did not produce one canonical body");
+        };
+        let resolved = model::read_revolve(painted.session.document(), created.feature).unwrap();
+        assert_eq!(resolved.output.body, created.body);
+        assert_eq!(resolved.profile.sketch_id(), Some(sketch));
+        assert_eq!(painted.session.document().get(sketch), before.get(sketch));
+        let scene = painted.canonical.visible().unwrap();
+        let pick = |x| scene.pick_face(viewport::Ray::new([x, 0., 12.], [0., 0., -1.]).unwrap());
+        assert!(
+            pick(0.).is_none(),
+            "Revolved bore should be open along the axis"
+        );
+        let cap = pick(3.).unwrap();
+        assert_eq!(cap.point_mm, [3., 0., 6.]);
+    }
+
+    #[test]
+    fn painted_rust_thread_controls_create_and_apply_an_internal_bore() {
+        let factory = Backend::factory(GeometryBackend::Rust).unwrap();
+        let mut controller = ModelToolController::default();
+        controller.set_backend(factory());
+        let mut canonical = SceneFeed::default();
+        canonical.set_backend(factory());
+        let mut session = Session::new(Document::new("Painted Rust receiver").unwrap()).unwrap();
+        let stock = PrimitiveRequest::new(
+            "Cylindrical receiver",
+            PrimitiveParameters::Cylinder {
+                radius: length(6.),
+                height: model::ThreadParameters::default().length,
+                frame: Default::default(),
+            },
+        );
+        let prepared =
+            model::prepare_primitive(&session, 0, Actor::local(Channel::Ui), &stock).unwrap();
+        session.commit(prepared.prepared).unwrap();
+        let before = session.document().clone();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut painted = Painted {
+            ctx,
+            controller,
+            canonical,
+            session,
+            applied: vec![],
+            clock: Instant::now(),
+        };
+        painted.wait(true);
+        painted
+            .controller
+            .begin_thread(
+                &painted.session,
+                &Default::default(),
+                painted.canonical.visible().map(Arc::as_ref),
+                &[stock.body].into(),
+                Channel::Ui,
+            )
+            .unwrap();
+        painted.click("New threaded shaft");
+        painted.click("Cut internal thread");
+        painted.click("Preview");
+        painted.wait(false);
+        assert_eq!(painted.session.document(), &before);
+        painted.click("Apply");
+        assert_eq!(painted.session.revision(), 2);
+        painted.wait(true);
+        let [created] = painted.applied.as_slice() else {
+            panic!("Expected one applied receiving feature");
+        };
+        assert_eq!(created.body, stock.body);
+        let source = model::read_thread(painted.session.document(), created.feature).unwrap();
+        assert_eq!(source.mode, model::ThreadMode::CutInternal);
+        assert_eq!(source.target.unwrap().producer, stock.feature);
+        let scene = painted.canonical.visible().unwrap();
+        assert_eq!(scene.instances().len(), 1);
+        let axis = viewport::Ray::new([0., 0., 20.], [0., 0., -1.]).unwrap();
+        assert!(scene.pick_face(axis).is_none());
+        let inside = viewport::Ray::new([0., 0., 2.5], [1., 0., 0.]).unwrap();
+        assert!(scene.pick_face(inside).unwrap().point_mm[0] > 3.9);
+    }
+
+    #[test]
+    fn painted_rust_machine_screw_has_a_real_socket_and_applies_as_one_part() {
+        let factory = Backend::factory(GeometryBackend::Rust).unwrap();
+        let mut controller = ModelToolController::default();
+        controller.set_backend(factory());
+        let mut canonical = SceneFeed::default();
+        canonical.set_backend(factory());
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let session = Session::new(Document::new("Painted Rust socket screw").unwrap()).unwrap();
+        let before = session.document().clone();
+        let mut painted = Painted {
+            ctx,
+            controller,
+            canonical,
+            session,
+            applied: vec![],
+            clock: Instant::now(),
+        };
+        painted.wait(true);
+        painted
+            .controller
+            .begin_mechanical_part(&painted.session, &Default::default(), Channel::Ui)
+            .unwrap();
+        assert!(painted.controller.pending());
+        painted.wait(false);
+        assert_eq!(painted.session.document(), &before);
+        painted.click("Plain washer");
+        painted.click("Machine screw");
+        painted.click("Preview");
+        painted.wait(false);
+        assert_eq!(painted.session.document(), &before);
+        painted.click("Apply");
+        painted.wait(true);
+        let [created] = painted.applied.as_slice() else {
+            panic!("Expected one applied machine screw");
+        };
+        let source =
+            model::read_mechanical_part(painted.session.document(), created.feature).unwrap();
+        assert_eq!(source.parameters, model::default_machine_screw());
+        assert_eq!(source.output.body, created.body);
+        let scene = painted.canonical.visible().unwrap();
+        assert_eq!(scene.instances().len(), 1);
+        for (x, y, z) in [(0., 0., -1.7), (0., 1.35, -1.7), (1.35, 0., -3.)] {
+            let ray = viewport::Ray::new([x, y, -10.], [0., 0., 1.]).unwrap();
+            let hit = scene.pick_face(ray).unwrap();
+            assert_eq!(hit.instance, created.body);
+            assert!((hit.point_mm[2] - z).abs() < 1e-5, "{:?}", hit.point_mm);
+        }
+    }
+
+    #[test]
+    fn painted_rust_hex_nut_applies_with_open_bore_and_planar_flats() {
+        let factory = Backend::factory(GeometryBackend::Rust).unwrap();
+        let mut controller = ModelToolController::default();
+        controller.set_backend(factory());
+        let mut canonical = SceneFeed::default();
+        canonical.set_backend(factory());
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let session = Session::new(Document::new("Painted Rust hex nut").unwrap()).unwrap();
+        let before = session.document().clone();
+        let mut painted = Painted {
+            ctx,
+            controller,
+            canonical,
+            session,
+            applied: vec![],
+            clock: Instant::now(),
+        };
+        painted.wait(true);
+        painted
+            .controller
+            .begin_mechanical_part(&painted.session, &Default::default(), Channel::Ui)
+            .unwrap();
+        painted.click("Plain washer");
+        painted.click("Hex nut");
+        painted.click("Modeled helix");
+        painted.click("Preview");
+        painted.wait(false);
+        assert_eq!(painted.session.document(), &before);
+        painted.click("Apply");
+        painted.wait(true);
+        let [created] = painted.applied.as_slice() else {
+            panic!("Expected one applied hex nut");
+        };
+        let source =
+            model::read_mechanical_part(painted.session.document(), created.feature).unwrap();
+        let model::MechanicalPartParameters::HexNut { thread, .. } = source.parameters else {
+            panic!("Expected the selected hex nut recipe");
+        };
+        assert_eq!(thread.representation, model::ThreadRepresentation::Modeled);
+        let scene = painted.canonical.visible().unwrap();
+        assert_eq!(scene.instances().len(), 1);
+        let ray = |origin, direction| viewport::Ray::new(origin, direction).unwrap();
+        assert!(scene.pick_face(ray([0., 0., 20.], [0., 0., -1.])).is_none());
+        let bore = scene.pick_face(ray([0., 0., 2.], [1., 0., 0.])).unwrap();
+        assert!((2.45..3.05).contains(&bore.point_mm[0]));
+        let flat = scene.pick_face(ray([10., 0.5, 2.], [-1., 0., 0.])).unwrap();
+        assert_eq!(flat.instance, created.body);
+        assert!((flat.point_mm[0] - 5.).abs() < 1e-6);
+    }
+
+    #[test]
+    fn painted_rust_bearing_envelope_applies_with_a_pickable_bore() {
+        let factory = Backend::factory(GeometryBackend::Rust).unwrap();
+        let mut controller = ModelToolController::default();
+        controller.set_backend(factory());
+        let mut canonical = SceneFeed::default();
+        canonical.set_backend(factory());
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let session =
+            Session::new(Document::new("Painted Rust bearing envelope").unwrap()).unwrap();
+        let before = session.document().clone();
+        let mut painted = Painted {
+            ctx,
+            controller,
+            canonical,
+            session,
+            applied: vec![],
+            clock: Instant::now(),
+        };
+        painted.wait(true);
+        painted
+            .controller
+            .begin_mechanical_part(&painted.session, &Default::default(), Channel::Ui)
+            .unwrap();
+        painted.click("Plain washer");
+        painted.click("Bearing mounting envelope");
+        painted.click("Preview");
+        painted.wait(false);
+        assert_eq!(painted.session.document(), &before);
+        painted.click("Apply");
+        painted.wait(true);
+        let [created] = painted.applied.as_slice() else {
+            panic!("Expected one applied bearing envelope");
+        };
+        let source =
+            model::read_mechanical_part(painted.session.document(), created.feature).unwrap();
+        assert!(matches!(
+            source.parameters,
+            model::MechanicalPartParameters::BearingEnvelope { .. }
+        ));
+        let scene = painted.canonical.visible().unwrap();
+        let ray = |origin, direction| viewport::Ray::new(origin, direction).unwrap();
+        assert!(scene.pick_face(ray([0., 0., 20.], [0., 0., -1.])).is_none());
+        let inside = scene.pick_face(ray([0., 0., 4.], [1., 0., 0.])).unwrap();
+        let outside = scene.pick_face(ray([20., 0., 4.], [-1., 0., 0.])).unwrap();
+        assert_eq!(inside.instance, created.body);
+        assert_eq!(outside.instance, created.body);
+        assert!((inside.point_mm[0] - 5.).abs() < 1e-6);
+        assert!((outside.point_mm[0] - 15.).abs() < 1e-6);
+    }
+
+    #[test]
     fn actual_default_m3_controls_measure_preview_unchanged_and_apply_to_canonical_ready() {
-        let owner = Backend::runtime().unwrap();
+        let owner = Backend::runtime(GeometryBackend::Rust).unwrap();
         let preview_records: Records = Default::default();
         let canonical_records: Records = Default::default();
         let factory = |records| {
@@ -1489,6 +2520,7 @@ mod painted_default_screw {
                 backend: Backend {
                     runtime: owner.fork(),
                     expected: None,
+                    geometry_backend: GeometryBackend::Rust,
                 },
                 records,
             }) as Box<dyn SceneBackend>
@@ -1580,5 +2612,553 @@ mod painted_default_screw {
                 created.feature
             );
         }
+    }
+}
+
+#[path = "../../../multicad-model/tests/support/rust_panel.rs"]
+mod rust_panel;
+#[path = "../../../multicad-model/tests/support/rust_polygon.rs"]
+mod rust_polygon;
+
+fn wait_for_scene(backend: &mut dyn SceneBackend) -> SceneReply {
+    wait_for_scene_with_timeout(backend, Duration::from_secs(10))
+}
+
+fn wait_for_scene_with_timeout(backend: &mut dyn SceneBackend, timeout: Duration) -> SceneReply {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(reply) = backend.poll() {
+            return reply;
+        }
+        assert!(Instant::now() < deadline, "scene did not arrive");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn rust_model_worker_publishes_all_bundled_project_scenes() {
+    use multicad_ui::application::DocumentStorage;
+    use std::path::Path;
+
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let scratch = tempfile::tempdir().unwrap();
+    let mut store = crate::files::ProjectStore::new(scratch.path().join("recovery"));
+    let mut worker = Backend::factory(GeometryBackend::Rust).unwrap()();
+    for (index, (name, expected_leaves)) in [
+        ("apartment.tcd", 107),
+        ("cabinet.tcd", 64),
+        ("front-panel.tcd", 13),
+        ("toolcase.tcd", 169),
+        ("welded-workbench.tcd", 32),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let loaded = store.open_project(&examples.join(name)).unwrap();
+        let document = &loaded.file.document;
+        let stamp = SceneStamp {
+            document: document.id(),
+            revision: 0,
+            generation: index as u64 + 1,
+        };
+        worker
+            .request_evaluation(
+                document,
+                &loaded.file.resources,
+                stamp,
+                &EvaluationOptions::default(),
+            )
+            .unwrap();
+        let reply = wait_for_scene_with_timeout(&mut *worker, Duration::from_secs(30));
+        let scene = reply
+            .result
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(scene.stamp(), stamp, "{name}");
+        assert!(scene.is_full_model(), "{name}");
+        let physical = scene.assembly_evaluation().unwrap();
+        assert_eq!(physical.leaves.len(), expected_leaves, "{name}");
+        for leaf in &physical.leaves {
+            let geometry = &scene.geometries()[&leaf.producer];
+            assert!(!geometry.indices().is_empty(), "{name} {}", leaf.component);
+            let [min, max] = scene.native_instance_bounds(leaf.path.root).unwrap();
+            assert!(
+                min.into_iter()
+                    .zip(max)
+                    .all(|(a, b)| a.is_finite() && b.is_finite() && a < b),
+                "{name} {}",
+                leaf.path.root
+            );
+        }
+    }
+}
+
+#[test]
+fn rust_model_worker_publishes_the_exact_boolean_pocket_without_mutating_source() {
+    let (mut session, stock) = box_session();
+    let actor = Actor::local(Channel::Ui);
+    let cutter = PrimitiveRequest::new(
+        "Through-pocket cutter",
+        PrimitiveParameters::Box {
+            size: [length(4.), length(4.), length(32.)],
+            frame: model::PrimitiveFrame {
+                origin: [length(3.), length(5.), length(-1.)],
+                ..Default::default()
+            },
+        },
+    );
+    let prepared =
+        model::prepare_primitive(&session, session.revision(), actor.clone(), &cutter).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let before = session.document().clone();
+    let cut = model::BooleanRequest::new(
+        model::Operation::Cut,
+        model::BodyInput {
+            body: stock.body,
+            producer: stock.feature,
+        },
+        vec![model::BodyInput {
+            body: cutter.body,
+            producer: cutter.feature,
+        }],
+    );
+    let prepared = model::prepare_boolean(&session, session.revision(), actor, &cut).unwrap();
+    let mut worker = Backend::factory(GeometryBackend::Rust).unwrap()();
+    let stamp = SceneStamp {
+        document: before.id(),
+        revision: session.revision() + 1,
+        generation: 1,
+    };
+    worker.request(prepared.prepared.document(), stamp).unwrap();
+    let scene = wait_for_scene(&mut *worker).result.unwrap();
+    assert_eq!(scene.instances().len(), 1);
+    assert_eq!(scene.instances()[0].id, stock.body);
+    assert!(
+        scene
+            .pick_face(viewport::Ray::new([5., 7., 100.], [0., 0., -1.]).unwrap())
+            .is_none()
+    );
+    let cap = scene
+        .pick_face(viewport::Ray::new([1., 1., 100.], [0., 0., -1.]).unwrap())
+        .unwrap();
+    assert_eq!(cap.point_mm, [1., 1., 30.]);
+    assert!(cap.intent.is_some());
+    assert_eq!(session.document(), &before);
+}
+
+#[test]
+fn rust_model_worker_reuses_unchanged_viewport_geometry_across_revisions() {
+    use multicad_core::document::Mutation;
+
+    let (session, height, _, body, cutter, cut) = rust_panel::fixture(false, 28.);
+    let factory = Backend::factory(GeometryBackend::Rust).unwrap();
+    let mut backend = factory();
+    let first_stamp = SceneStamp {
+        document: session.document().id(),
+        revision: session.revision(),
+        generation: 1,
+    };
+    backend.request(session.document(), first_stamp).unwrap();
+    let first = wait_for_scene(&mut *backend).result.unwrap();
+    let mut parameter = session.document().get(height).unwrap().clone();
+    let EntityData::Parameter { expression, .. } = &mut parameter.data else {
+        unreachable!()
+    };
+    *expression = "4".into();
+    let document = session
+        .document()
+        .edited(&[Mutation::Replace(parameter)])
+        .unwrap();
+    let edited_stamp = SceneStamp {
+        revision: first_stamp.revision + 1,
+        generation: 2,
+        ..first_stamp
+    };
+    backend.request(&document, edited_stamp).unwrap();
+    let edited = wait_for_scene(&mut *backend).result.unwrap();
+    assert!(Arc::ptr_eq(
+        &first.geometries()[&cutter],
+        &edited.geometries()[&cutter]
+    ));
+    assert!(!Arc::ptr_eq(
+        &first.geometries()[&cut],
+        &edited.geometries()[&cut]
+    ));
+    assert_eq!(
+        edited.geometry_snapshot(cutter).unwrap().revision,
+        edited_stamp.revision
+    );
+    assert_eq!(
+        first.geometry_snapshot(cutter).unwrap().revision,
+        first_stamp.revision
+    );
+    assert_eq!(
+        edited.native_instance_bounds(body),
+        Some([[0., 0., 0.], [50., 20., 4.]])
+    );
+    let cap = edited
+        .pick_face(viewport::Ray::new([5., 5., 20.], [0., 0., -1.]).unwrap())
+        .unwrap();
+    assert_eq!(cap.point_mm, [5., 5., 4.]);
+}
+
+#[test]
+fn cached_viewport_geometry_respects_face_colors_and_document() {
+    let (session, request) = box_session();
+    let model = Compiler::default()
+        .compile(session.document(), session.revision())
+        .unwrap();
+    let shape = &model.snapshot().shapes[&request.feature];
+    let face = shape.mesh.face_indices[0];
+    let red = [255, 0, 0, 255];
+    let blue = [0, 0, 255, 255];
+    let mut cache = DisplayCache::default();
+    cache.prepare(session.document().id());
+    let before = cache
+        .geometry(request.feature, shape, [(face, red)].into())
+        .unwrap();
+    let after = cache
+        .geometry(request.feature, shape, [(face, blue)].into())
+        .unwrap();
+    let same = cache
+        .geometry(request.feature, shape, [(face, blue)].into())
+        .unwrap();
+    assert!(!Arc::ptr_eq(&before, &after));
+    assert!(Arc::ptr_eq(&after, &same));
+    assert_eq!(before.face_color(face), Some(red));
+    assert_eq!(after.face_color(face), Some(blue));
+
+    let next_document = EntityId::new();
+    cache.prepare(next_document);
+    let next = cache
+        .geometry(request.feature, shape, [(face, blue)].into())
+        .unwrap();
+    assert!(!Arc::ptr_eq(&next, &after));
+    drop(next);
+    cache.prepare(next_document);
+    assert!(cache.entries.is_empty());
+}
+
+#[test]
+fn rust_model_worker_publishes_pickable_panel_and_isolates_preview_failures() {
+    let (session, _, extrusion, body, cutter, _) = rust_panel::fixture(true, 28.);
+    let factory = Backend::factory(GeometryBackend::Rust).unwrap();
+    let mut canonical = factory();
+    let mut preview = factory();
+    let stamp = SceneStamp {
+        document: session.document().id(),
+        revision: session.revision(),
+        generation: 1,
+    };
+    canonical.request(session.document(), stamp).unwrap();
+    let inspection_stamp = SceneStamp {
+        generation: 2,
+        ..stamp
+    };
+    preview
+        .request_sources(
+            session.document(),
+            &ProjectResources::default(),
+            inspection_stamp,
+            &[cutter],
+        )
+        .unwrap();
+
+    let canonical_reply = wait_for_scene(&mut *canonical);
+    assert_eq!(canonical_reply.stamp, stamp);
+    let scene = canonical_reply.result.unwrap();
+    assert!(scene.is_full_model());
+    assert_eq!(
+        scene.native_instance_bounds(body),
+        Some([[0., 0., 0.], [50., 20., 8.]])
+    );
+    assert_eq!(scene.instances().len(), 1);
+    assert_eq!(scene.instances()[0].id, body);
+    let hit_from_above =
+        |x, y| scene.pick_face(viewport::Ray::new([x, y, 20.], [0., 0., -1.]).unwrap());
+    assert!(hit_from_above(12., 10.).is_none());
+    assert!(hit_from_above(28., 10.).is_none());
+    let cap = hit_from_above(5., 5.).unwrap().intent.unwrap();
+    assert!(
+        cap.origins
+            .iter()
+            .any(|origin| origin.source == extrusion && origin.role == "cap.end")
+    );
+
+    let inspection_reply = wait_for_scene(&mut *preview);
+    assert_eq!(inspection_reply.stamp, inspection_stamp);
+    let inspection = inspection_reply.result.unwrap();
+    assert!(!inspection.is_full_model());
+    assert!(
+        inspection.reference_snapshots()[&cutter]
+            .elements
+            .iter()
+            .any(|e| {
+                e.origins
+                    .iter()
+                    .any(|origin| origin.source == cutter && origin.role == "side.cylinder")
+            })
+    );
+
+    let (mut box_doc, box_source) = box_session();
+    let box_stamp = SceneStamp {
+        document: box_doc.document().id(),
+        revision: box_doc.revision(),
+        generation: 3,
+    };
+    preview.request(box_doc.document(), box_stamp).unwrap();
+    let box_scene = wait_for_scene(&mut *preview).result.unwrap();
+    assert_eq!(box_scene.stamp(), box_stamp);
+    let box_cap = box_scene
+        .pick_face(viewport::Ray::new([5., 5., 40.], [0., 0., -1.]).unwrap())
+        .unwrap();
+    assert_eq!(box_cap.geometry, box_source.feature);
+    assert_eq!(box_cap.point_mm, [5., 5., 30.]);
+
+    let sphere_at_height = |height| PrimitiveParameters::Sphere {
+        radius: length(4.),
+        frame: multicad_core::model::PrimitiveFrame {
+            origin: [5., 5., height].map(length),
+            ..Default::default()
+        },
+    };
+    let sphere = PrimitiveRequest::new("Sphere", sphere_at_height(40.));
+    let create = model::prepare_primitive(
+        &box_doc,
+        box_doc.revision(),
+        Actor::local(Channel::Ui),
+        &sphere,
+    )
+    .unwrap();
+    box_doc.commit(create.prepared).unwrap();
+    let sphere_stamp = SceneStamp {
+        revision: box_doc.revision(),
+        generation: 4,
+        ..box_stamp
+    };
+    preview.request(box_doc.document(), sphere_stamp).unwrap();
+    let sphere_scene = wait_for_scene(&mut *preview).result.unwrap();
+    assert_eq!(sphere_scene.stamp(), sphere_stamp);
+    let picked = sphere_scene
+        .pick_face(viewport::Ray::new([5., 5., 50.], [0., 0., -1.]).unwrap())
+        .unwrap();
+    assert_eq!(picked.geometry, sphere.feature);
+    assert!((picked.point_mm[2] - 44.).abs() < 1e-8);
+
+    let invalid = model::prepare_primitive_edit(
+        &box_doc,
+        box_doc.revision(),
+        Actor::local(Channel::Ui),
+        sphere.feature,
+        &sphere_at_height(1e7),
+    )
+    .unwrap();
+    box_doc.commit(invalid.prepared).unwrap();
+    let bad_stamp = SceneStamp {
+        revision: box_doc.revision(),
+        generation: 5,
+        ..box_stamp
+    };
+    preview.request(box_doc.document(), bad_stamp).unwrap();
+    let rejected = wait_for_scene(&mut *preview);
+    assert_eq!(rejected.stamp, bad_stamp);
+    assert!(
+        rejected
+            .result
+            .err()
+            .unwrap()
+            .contains("outside model bounds")
+    );
+    assert!(canonical.poll().is_none());
+    assert_eq!(scene.stamp(), stamp);
+}
+
+#[test]
+fn rust_model_worker_picks_a_directed_draft_around_its_through_hole() {
+    let (session, feature, _) = rust_polygon::drafted_fixture();
+    let mut backend = Backend::factory(GeometryBackend::Rust).unwrap()();
+    let stamp = SceneStamp {
+        document: session.document().id(),
+        revision: session.revision(),
+        generation: 1,
+    };
+    backend.request(session.document(), stamp).unwrap();
+    let scene = wait_for_scene(&mut *backend).result.unwrap();
+    assert_eq!(scene.stamp(), stamp);
+    assert_eq!(scene.instances().len(), 1);
+
+    // Travel back along the oblique extrusion vector, looking at the end cap first.
+    let pick =
+        |x: f64, y| scene.pick_face(viewport::Ray::new([x - 10., y, -8.], [1., 0., 1.]).unwrap());
+    assert!(
+        pick(6., 5.).is_none(),
+        "ray must pass through both cap holes"
+    );
+    let cap = pick(2., 2.).unwrap();
+    let end = 2. - 6. * std::f64::consts::FRAC_1_SQRT_2;
+    for (a, b) in cap.point_mm.into_iter().zip([end, 2., end]) {
+        assert!((a - b).abs() < 1e-6, "{a} != {b}");
+    }
+    assert!(
+        cap.intent
+            .unwrap()
+            .origins
+            .iter()
+            .any(|origin| origin.source == feature && origin.role == "cap.end")
+    );
+}
+
+#[test]
+fn rust_model_worker_picks_the_moving_associative_cap_around_its_hole() {
+    use multicad_core::{
+        commands::Request,
+        document::{Entity, EntityData, Mutation},
+        model::{Extent, Termination},
+    };
+
+    let (mut session, feature, mut parameters) = rust_polygon::drafted_fixture();
+    let scale = 1_f64.hypot(0.5);
+    let mut plane = Entity::new(
+        "Sloped end",
+        EntityData::Plane {
+            origin_mm: [0., 0., 8.],
+            normal: [-0.5 / scale, 0., 1. / scale],
+            anchor: None,
+        },
+    );
+    session
+        .apply(Request {
+            expected_revision: session.revision(),
+            actor: Actor::local(Channel::Ui),
+            label: "Add the termination plane".into(),
+            edits: vec![Mutation::Insert(plane.clone())],
+        })
+        .unwrap();
+    parameters.direction = Default::default();
+    parameters.taper = model::angle(0.);
+    parameters.extent = Extent::OneSided {
+        end: Termination::ToPlane {
+            plane: plane.id,
+            offset: length(0.),
+        },
+    };
+    let prepared = model::prepare_extrude_edit(
+        &session,
+        session.revision(),
+        Actor::local(Channel::Ui),
+        feature,
+        &parameters,
+    )
+    .unwrap();
+    session.commit(prepared.prepared).unwrap();
+
+    let mut backend = Backend::factory(GeometryBackend::Rust).unwrap()();
+    let ray = |x, y| viewport::Ray::new([x, y, 30.], [0., 0., -1.]).unwrap();
+    for (generation, z) in [(1, 9.), (2, 16.)] {
+        if generation == 2 {
+            let EntityData::Plane { origin_mm, .. } = &mut plane.data else {
+                unreachable!()
+            };
+            origin_mm[2] = 15.;
+            session
+                .apply(Request {
+                    expected_revision: session.revision(),
+                    actor: Actor::local(Channel::Ui),
+                    label: "Move the termination plane".into(),
+                    edits: vec![Mutation::Replace(plane.clone())],
+                })
+                .unwrap();
+        }
+        let stamp = SceneStamp {
+            document: session.document().id(),
+            revision: session.revision(),
+            generation,
+        };
+        backend.request(session.document(), stamp).unwrap();
+        let scene = wait_for_scene(&mut *backend).result.unwrap();
+        assert_eq!(scene.stamp(), stamp);
+        assert_eq!(scene.instances().len(), 1);
+        assert!(scene.pick_face(ray(6., 5.)).is_none());
+        let cap = scene.pick_face(ray(2., 2.)).unwrap();
+        assert!((cap.point_mm[2] - z).abs() < 1e-6);
+        assert!(
+            cap.intent
+                .unwrap()
+                .origins
+                .iter()
+                .any(|origin| origin.source == feature && origin.role == "cap.end")
+        );
+    }
+}
+
+#[test]
+fn rust_model_worker_picks_a_sketch_extrusion_around_its_holes_and_notch() {
+    let factory = Backend::factory(GeometryBackend::Rust).unwrap();
+    let mut backend = factory();
+    for (i, ((session, _, feature, _), has_circle, reverse)) in [
+        (rust_polygon::fixture(), false, false),
+        (rust_polygon::fixture_with_circle(), true, false),
+        (rust_polygon::fixture_with_height("-6"), false, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let stamp = SceneStamp {
+            document: session.document().id(),
+            revision: session.revision(),
+            generation: i as u64 + 1,
+        };
+        backend.request(session.document(), stamp).unwrap();
+        let scene = wait_for_scene(&mut *backend).result.unwrap();
+        assert_eq!(scene.stamp(), stamp);
+        assert_eq!(scene.instances().len(), 1);
+        let (start_y, end_y, cap_role) = if reverse {
+            (-2., 4., "cap.start")
+        } else {
+            (-8., -2., "cap.end")
+        };
+        assert_eq!(
+            scene.native_instance_bounds(scene.instances()[0].id),
+            Some([[0., start_y, 0.], [12., end_y, 10.]])
+        );
+        let pick = |x, z| scene.pick_face(viewport::Ray::new([x, -20., z], [0., 1., 0.]).unwrap());
+        assert!(pick(3., 3.).is_none(), "straight-edged through-hole");
+        assert_eq!(pick(9., 3.).is_none(), has_circle, "circular through-hole");
+        assert!(pick(9., 8.).is_none(), "concave notch");
+        let cap = pick(11., 3.).unwrap();
+        assert_eq!(cap.point_mm, [11., start_y, 3.]);
+        assert!(
+            cap.intent
+                .unwrap()
+                .origins
+                .iter()
+                .any(|origin| origin.source == feature && origin.role == cap_role)
+        );
+    }
+}
+
+#[test]
+fn default_scene_backend_publishes_with_the_linked_geometry_provider() {
+    let (session, stock) = box_session();
+    let mut backend = Backend::new();
+    assert_eq!(backend.geometry_backend, GeometryBackend::default());
+    assert_eq!(
+        backend.supports_fast_hardware_preview(),
+        !multicad_kernel::OCCT_LINKED
+    );
+    let stamp = SceneStamp {
+        document: session.document().id(),
+        revision: session.revision(),
+        generation: 1,
+    };
+    backend.request(session.document(), stamp).unwrap();
+    let scene = receive(&mut backend).result.unwrap();
+    assert_eq!(scene.stamp(), stamp);
+    assert!(scene.is_full_model());
+    assert!(scene.geometries().contains_key(&stock.feature));
+    if !multicad_kernel::OCCT_LINKED {
+        let mut native = Backend::factory(GeometryBackend::OpenCascade).unwrap()();
+        native.request(session.document(), stamp).unwrap();
+        let failure = wait_for_scene(&mut *native).result.err().unwrap();
+        assert!(failure.contains("OpenCascade is unavailable"), "{failure}");
     }
 }

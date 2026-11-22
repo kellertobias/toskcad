@@ -25,10 +25,10 @@ fn curved(edge: &PlanarEdge) -> CurvedEdge2d {
         PlanarEdge::Line { a, b } => CurvedEdge2d::Line { a, b },
         PlanarEdge::Arc {
             a,
+            b,
             center,
             sweep_rad,
-            ..
-        } if (sweep_rad.abs() - std::f64::consts::TAU).abs() < 1e-9 => CurvedEdge2d::Circle {
+        } if a == b && sweep_rad.abs() == std::f64::consts::TAU => CurvedEdge2d::Circle {
             center,
             radius_mm: (a[0] - center[0]).hypot(a[1] - center[1]),
         },
@@ -47,6 +47,7 @@ fn curved(edge: &PlanarEdge) -> CurvedEdge2d {
 }
 
 pub(crate) struct ResolvedFaceProfile {
+    pub face_index: u32,
     pub profile: CurvedProfile,
     pub origins: Vec<Origin>,
     pub bounds_mm: [[f64; 2]; 2],
@@ -108,14 +109,9 @@ impl FaceProfileInputs<'_> {
             .solids
             .get(&link.target)
             .ok_or_else(|| self.failure("Profile face producer has no current solid"))?;
-        let face = solid
-            .faces()
+        let (origin, outward) = solid
+            .face_plane(key.ordinal)
             .map_err(|e| self.failure(e))?
-            .into_iter()
-            .find(|face| face.index == key.ordinal)
-            .ok_or_else(|| self.failure("Profile face is missing from the current solid"))?;
-        let (origin, outward) = face
-            .plane
             .ok_or_else(|| self.failure("This face is curved. Choose a planar face."))?;
         let normal = frame.normal();
         if dot(normal, outward).abs() < 1. - 1e-8
@@ -141,9 +137,15 @@ impl FaceProfileInputs<'_> {
                 frame.v
             },
         };
-        let sourced = solid
-            .planar_face_contours_with_sources(key.ordinal, plane)
-            .map_err(|e| self.failure(format!("Profile face boundary is unsupported: {e}")))?;
+        let sourced = match solid
+            .rust_retained_cap_contours(key.ordinal, plane)
+            .map_err(|e| self.failure(format!("Profile source chart is unsupported: {e}")))?
+        {
+            Some(contours) => contours,
+            None => solid
+                .planar_face_contours_with_sources(key.ordinal, plane)
+                .map_err(|e| self.failure(format!("Profile face boundary is unsupported: {e}")))?,
+        };
         let mut outer = None;
         let mut holes = vec![];
         let mut keys = vec![];
@@ -168,6 +170,7 @@ impl FaceProfileInputs<'_> {
             .bounds_mm()
             .ok_or_else(|| self.failure("The native planar face has no finite boundary extent"))?;
         Ok(ResolvedFaceProfile {
+            face_index: key.ordinal,
             profile: CurvedProfile {
                 frame: plane,
                 outer,
@@ -228,5 +231,30 @@ impl FaceProfileInputs<'_> {
                 role: format!("profile.face.edge.{i}"),
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn near_full_arc_keeps_its_finite_gap_in_a_large_face_profile() {
+        let radius = 10_000_000.;
+        let sweep = std::f64::consts::TAU - 5e-10;
+        let a = [radius, 0.];
+        let b = [radius * sweep.cos(), radius * sweep.sin()];
+        let converted = curved(&PlanarEdge::Arc {
+            a,
+            b,
+            center: [0.; 2],
+            sweep_rad: sweep,
+        });
+        assert!(matches!(converted,CurvedEdge2d::Arc { a:x,b:y,.. } if x==a && y==b));
+        assert!((b[1] - a[1]).abs() > 0.001);
+        for sweep_rad in [std::f64::consts::TAU, -std::f64::consts::TAU] {
+            assert!(
+                matches!(curved(&PlanarEdge::Arc { a,b:a,center:[0.;2],sweep_rad }),CurvedEdge2d::Circle { radius_mm,.. } if radius_mm==radius)
+            );
+        }
     }
 }

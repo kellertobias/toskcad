@@ -8,7 +8,7 @@ use super::{
     dxf::{MAX_DXF_BYTES, Writer, unit_scale, vertices},
     failure,
 };
-use crate::{DevelopedPattern, Model};
+use crate::{DevelopedPattern, GeometryBackend, Model};
 use multicad_core::{
     document::{Document, EntityId},
     exchange::{ErrorKind, ExportError, ExportStamp, LengthUnit, StampedPlanarContours},
@@ -260,10 +260,18 @@ impl DevelopedContourProvider for SheetFlatProvider {
     }
 }
 
+/// Exact backend and presentation settings for a developed sheet DXF.
+pub struct SheetDxfOptions<'a> {
+    pub backend: GeometryBackend,
+    pub units: LengthUnit,
+    pub layers: &'a SheetDxfLayers,
+}
+
 impl Exporter {
     /// Unfold one sheet Part from a fresh evaluation of `document` at
-    /// `revision` and encode its DXF. A failed evaluation or unfolding
-    /// produces no file.
+    /// `revision` and encode its DXF. OpenCascade evaluates it when it is
+    /// linked, otherwise the Rust kernel does. A failed evaluation or
+    /// unfolding produces no file.
     pub fn developed_sheet_dxf(
         &self,
         document: &Document,
@@ -273,10 +281,36 @@ impl Exporter {
         layers: &SheetDxfLayers,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<SheetDxf, ExportError> {
+        self.developed_sheet_dxf_with_backend(
+            document,
+            revision,
+            part,
+            SheetDxfOptions {
+                backend: if multicad_kernel::OCCT_LINKED {
+                    GeometryBackend::OpenCascade
+                } else {
+                    GeometryBackend::Rust
+                },
+                units,
+                layers,
+            },
+            interrupt,
+        )
+    }
+
+    /// Evaluate and export the developed blank with an explicitly selected backend.
+    pub fn developed_sheet_dxf_with_backend(
+        &self,
+        document: &Document,
+        revision: u64,
+        part: EntityId,
+        options: SheetDxfOptions<'_>,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<SheetDxf, ExportError> {
         checkpoint(interrupt)?;
         let model = self
             .compiler
-            .compile_interruptible(document, revision, interrupt)
+            .compile_with_backend(document, revision, options.backend, interrupt)
             .map_err(|e| failure(ErrorKind::Invalid, e.entity, e.message))?;
         checkpoint(interrupt)?;
         let pattern = model.unfold(document, part).map_err(|e| {
@@ -288,8 +322,8 @@ impl Exporter {
         })?;
         let bytes = encode_developed(
             &pattern,
-            units,
-            layers,
+            options.units,
+            options.layers,
             self.compiler.policy.linear_tolerance_mm,
         )
         .map_err(|e| failure(ErrorKind::Invalid, Some(pattern.feature), e))?;

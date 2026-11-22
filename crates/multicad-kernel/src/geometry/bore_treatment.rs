@@ -1,0 +1,355 @@
+//! Apply a certified symmetric bevel to a through-bore's circular cap edge.
+use super::*;
+use crate::TreatmentEdge;
+use multicad_rust_kernel::{
+    chamfered_bores::{BoreChamfer, ChamferedBores},
+    circular_pockets::PocketError,
+};
+use std::collections::BTreeMap;
+
+const OPERATION: &str = "Rust edge treatment";
+
+#[derive(Clone)]
+pub(crate) struct BoreTreatments {
+    pub(crate) geometry: ChamferedBores,
+    pub(crate) origins: BTreeMap<(usize, bool), Origin>,
+    pub(crate) face_origins: Option<Vec<Vec<Origin>>>,
+}
+
+/// Actual finite receiving support retained by a countersunk prism.
+/// Its cavity chart maps as `frame * (offset_mm + local_point)`, with
+/// local +Z into the stock. No world-origin reassociation is performed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConicalSeatGeometry {
+    pub origin: Origin,
+    pub frame: PlaneFrame,
+    pub offset_mm: [f64; 3],
+    pub bore_radius_mm: f64,
+    pub mouth_radius_mm: f64,
+    pub depth_mm: f64,
+    /// Combined source-coordinate conversion and finite-span arithmetic bound.
+    pub source_error_mm: f64,
+}
+
+impl Solid {
+    /// Read actual retained cone supports and their physical source origins.
+    pub fn rust_countersink_geometry(&self) -> Option<Vec<ConicalSeatGeometry>> {
+        let stock = self.polygon_prism()?;
+        let treatments = stock.bore_treatments.as_ref()?;
+        let cuts = treatments.geometry.countersinks();
+        if cuts.is_empty() {
+            return None;
+        }
+        cuts.iter()
+            .map(|cut| {
+                let stack = treatments.geometry.stacks().get(cut.hole)?;
+                let [x, y] = stack.center_mm;
+                let pair = if cut.end {
+                    let end = stack.layers.len().checked_sub(1)?;
+                    [
+                        stack.layers.get(end)?,
+                        stack.layers.get(end.checked_sub(1)?)?,
+                    ]
+                } else {
+                    [stack.layers.first()?, stack.layers.get(1)?]
+                };
+                let mouth = pair[0];
+                let inner = pair[1];
+                let radius = inner.radius_mm;
+                let depth = (inner.z_mm - mouth.z_mm).abs();
+                let reverse = if stock.reverse_sweep { -1. } else { 1. };
+                let direction = reverse * if cut.end { -1. } else { 1. };
+                let frame = PlaneFrame {
+                    origin: stock.frame.origin,
+                    u: stock.frame.u,
+                    v: stock.frame.v.map(|v| direction * v),
+                };
+                let offset_mm = [
+                    x,
+                    direction * y,
+                    if cut.end { -mouth.z_mm } else { mouth.z_mm },
+                ];
+                // Retain the actual finite support layers, not requested cut
+                // dimensions. Two adjacent spacings per operand cover the
+                // single rational conversion and subsequent finite subtraction;
+                // outward L1 accumulation covers their combined spatial effect.
+                let source_error_mm =
+                    [x, y, mouth.z_mm, inner.z_mm, depth, radius, mouth.radius_mm]
+                        .into_iter()
+                        .fold(0_f64, |sum, v| {
+                            let spacing = (v.next_up() - v).abs().max((v - v.next_down()).abs());
+                            (sum + (2. * spacing).next_up()).next_up()
+                        });
+                Some(ConicalSeatGeometry {
+                    origin: treatments.origins.get(&(cut.hole, cut.end))?.clone(),
+                    frame,
+                    offset_mm,
+                    bore_radius_mm: radius,
+                    mouth_radius_mm: mouth.radius_mm,
+                    depth_mm: depth,
+                    source_error_mm,
+                })
+            })
+            .collect()
+    }
+    pub(crate) fn chamfer_polygon_bores(
+        &self,
+        edges: &[TreatmentEdge],
+        size_mm: f64,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        let unsupported = || {
+            error(
+                OPERATION,
+                GeometryErrorKind::Unsupported,
+                "Rust chamfer requires circular through-bore edges on a polygon stock cap",
+            )
+        };
+        let stock = self
+            .polygon_prism()
+            .filter(|stock| stock.pockets.is_empty())
+            .ok_or_else(unsupported)?;
+        if stock.bore_treatments.as_ref().is_some_and(|t| {
+            !t.geometry.counterbores().is_empty() || !t.geometry.countersinks().is_empty()
+        }) {
+            return Err(error(
+                OPERATION,
+                GeometryErrorKind::Unsupported,
+                "Combined counterbore and chamfer treatments are not yet supported",
+            ));
+        }
+        if self.policy != policy {
+            return Err(input("Rust chamfer requires the source geometry policy"));
+        }
+        let count = stock.edges.len();
+        let straight = count - stock.prism.circular_holes().len();
+        let mut chamfers = Vec::new();
+        let mut origins = BTreeMap::new();
+        if let Some(previous) = &stock.bore_treatments {
+            chamfers.extend_from_slice(previous.geometry.chamfers());
+            origins.clone_from(&previous.origins);
+        }
+        for edge in edges {
+            let index = edge.key.ordinal as usize;
+            if index >= 2 * count || index % count < straight {
+                return Err(unsupported());
+            }
+            let hole = index % count - straight;
+            let end = index >= count;
+            if origins.contains_key(&(hole, end)) {
+                return Err(error(
+                    OPERATION,
+                    GeometryErrorKind::Unsupported,
+                    "This circular bore mouth already has a chamfer",
+                ));
+            }
+            origins.insert((hole, end), edge.origin.clone());
+            chamfers.push(BoreChamfer { hole, end, size_mm });
+        }
+        self.with_polygon_bore_treatments(&chamfers, origins, policy)
+    }
+
+    pub(super) fn with_polygon_bore_treatments(
+        &self,
+        chamfers: &[BoreChamfer],
+        origins: BTreeMap<(usize, bool), Origin>,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        let stock = self
+            .polygon_prism()
+            .filter(|stock| stock.pockets.is_empty())
+            .ok_or_else(|| {
+                input("Circular bore chamfers require polygon stock without blind cuts")
+            })?;
+        if stock.bore_treatments.as_ref().is_some_and(|t| {
+            !t.geometry.counterbores().is_empty() || !t.geometry.countersinks().is_empty()
+        }) {
+            return Err(error(
+                OPERATION,
+                GeometryErrorKind::Unsupported,
+                "Combined counterbore and chamfer treatments are not yet supported",
+            ));
+        }
+        if origins.len() != chamfers.len()
+            || chamfers
+                .iter()
+                .any(|c| !origins.contains_key(&(c.hole, c.end)))
+        {
+            return Err(input(
+                "Each circular bore chamfer needs an exact authored origin",
+            ));
+        }
+        let geometry = ChamferedBores::new(
+            &stock.prism,
+            chamfers,
+            policy.linear_tolerance_mm,
+            policy.minimum_feature_mm,
+        )
+        .map_err(|cause| {
+            error(
+                OPERATION,
+                match cause {
+                    PocketError::BudgetExceeded => GeometryErrorKind::Limit,
+                    _ => GeometryErrorKind::InvalidResult,
+                },
+                format!("Invalid circular bore chamfer: {cause:?}"),
+            )
+        })?;
+        let mut stock = stock.clone();
+        stock.bore_treatments = Some(Rc::new(BoreTreatments {
+            geometry,
+            origins,
+            face_origins: None,
+        }));
+        Ok(Self {
+            body: SolidBody::PolygonPrism(Rc::new(stock)),
+            policy,
+            provenance: vec![],
+            rust_origins: self.rust_origins.clone(),
+            retained_placement: None,
+        })
+    }
+
+    /// Apply cylindrical seats to a certified polygonal stock with existing
+    /// through-bores. The original small bore and all stock sides remain.
+    pub fn rust_counterbore_polygon(
+        &self,
+        cuts: &[multicad_rust_kernel::chamfered_bores::Counterbore],
+        origins: &[Origin],
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        self.with_polygon_counterbores(cuts, origins, policy, None)
+    }
+
+    pub(super) fn with_polygon_counterbores(
+        &self,
+        cuts: &[multicad_rust_kernel::chamfered_bores::Counterbore],
+        origins: &[Origin],
+        policy: GeometryPolicy,
+        opaque_faces: Option<Vec<Vec<u8>>>,
+    ) -> Result<Self, GeometryError> {
+        if self.policy != policy {
+            return Err(input("Counterbores require the stock geometry policy"));
+        }
+        circular_pocket_body::check_origins(cuts.len(), origins)?;
+        let stock = self
+            .polygon_prism()
+            .filter(|s| s.pockets.is_empty() && s.bore_treatments.is_none())
+            .ok_or_else(|| input("Counterbores require untreated polygonal through-bore stock"))?;
+        let geometry = ChamferedBores::counterbored(
+            &stock.prism,
+            cuts,
+            policy.linear_tolerance_mm,
+            policy.minimum_feature_mm,
+        )
+        .map_err(|cause| {
+            error(
+                "Rust counterbore",
+                GeometryErrorKind::InvalidResult,
+                format!("Invalid counterbore: {cause:?}"),
+            )
+        })?;
+        let cut_origins = cuts
+            .iter()
+            .zip(origins)
+            .map(|(cut, origin)| ((cut.hole, cut.end), origin.clone()))
+            .collect();
+        self.install_polygon_seats(geometry, cut_origins, origins, policy, opaque_faces)
+    }
+
+    /// Retain a conical seat with independent mouth radius and axial depth.
+    pub fn rust_countersink_polygon(
+        &self,
+        cuts: &[multicad_rust_kernel::chamfered_bores::Countersink],
+        origins: &[Origin],
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        self.with_polygon_countersinks(cuts, origins, policy, None)
+    }
+
+    pub(super) fn with_polygon_countersinks(
+        &self,
+        cuts: &[multicad_rust_kernel::chamfered_bores::Countersink],
+        origins: &[Origin],
+        policy: GeometryPolicy,
+        opaque_faces: Option<Vec<Vec<u8>>>,
+    ) -> Result<Self, GeometryError> {
+        if self.policy != policy {
+            return Err(input("Countersinks require the stock geometry policy"));
+        }
+        circular_pocket_body::check_origins(cuts.len(), origins)?;
+        let stock = self
+            .polygon_prism()
+            .filter(|s| s.pockets.is_empty() && s.bore_treatments.is_none())
+            .ok_or_else(|| input("Countersinks require untreated polygonal through-bore stock"))?;
+        let geometry = ChamferedBores::countersunk(
+            &stock.prism,
+            cuts,
+            policy.linear_tolerance_mm,
+            policy.minimum_feature_mm,
+        )
+        .map_err(|cause| {
+            error(
+                "Rust countersink",
+                GeometryErrorKind::InvalidResult,
+                format!("Invalid countersink: {cause:?}"),
+            )
+        })?;
+        let cut_origins = cuts
+            .iter()
+            .zip(origins)
+            .map(|(cut, origin)| ((cut.hole, cut.end), origin.clone()))
+            .collect();
+        self.install_polygon_seats(geometry, cut_origins, origins, policy, opaque_faces)
+    }
+
+    fn install_polygon_seats(
+        &self,
+        geometry: ChamferedBores,
+        cut_origins: BTreeMap<(usize, bool), Origin>,
+        origins: &[Origin],
+        policy: GeometryPolicy,
+        opaque_faces: Option<Vec<Vec<u8>>>,
+    ) -> Result<Self, GeometryError> {
+        let mut stock = self
+            .polygon_prism()
+            .expect("validated untreated seat stock")
+            .clone();
+        stock.bore_treatments = Some(Rc::new(BoreTreatments {
+            geometry,
+            origins: cut_origins,
+            face_origins: None,
+        }));
+        if let Some(keys) = &opaque_faces {
+            if keys.len() != stock.faces().len() {
+                return Err(input("Counterbore source face count differs"));
+            }
+            let identities = keys
+                .iter()
+                .map(|key| {
+                    vec![Origin {
+                        source: stock.feature,
+                        role: format!(
+                            "step.counterbore-finite-face/{}",
+                            multicad_core::project_file::ContentHash::of(key)
+                        ),
+                    }]
+                })
+                .collect();
+            Rc::make_mut(stock.bore_treatments.as_mut().expect("new treatments")).face_origins =
+                Some(identities);
+        }
+        let result = Self {
+            body: SolidBody::PolygonPrism(Rc::new(stock)),
+            policy,
+            provenance: vec![],
+            rust_origins: self.rust_origins.clone(),
+            retained_placement: None,
+        };
+        if opaque_faces.is_none() && self.has_authored_metadata_override() {
+            result.retain_authored_sources_with_generated(&[self], origins)
+        } else {
+            Ok(result)
+        }
+    }
+}

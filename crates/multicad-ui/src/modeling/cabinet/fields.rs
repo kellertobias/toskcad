@@ -1,7 +1,11 @@
 //! Explicit Cabinet controls. Each row keeps its canonical shelf slot while
 //! the shared typed definition drives Preview, Apply and the viewport guide.
 use super::*;
-use crate::modeling::{joinery_fields::DowelFields, joint::TenonFields};
+use crate::modeling::{
+    diagram::{DiagramLink, Key},
+    joinery_fields::DowelFields,
+    joint::TenonFields,
+};
 use multicad_core::{
     model::{CabinetJoinery, CabinetOptions, CabinetPins, CabinetShelf, ShelfSupport},
     parameters::{self, EvaluatedParameters},
@@ -220,6 +224,50 @@ impl CabinetFields {
         }
         Ok((largest.0 + largest.1 - thickness) / 2.)
     }
+    /// Shelf rows for the diagram: underside heights resolve exactly as the
+    /// rows below display them (System 32 rows from their grid level).
+    pub(super) fn shelf_marks(
+        &self,
+        d: &Document,
+        body_t: Option<f64>,
+    ) -> Vec<super::visual::Shelf> {
+        let parameters = parameters::evaluate(d).ok();
+        let value_of = |f: &DimensionField| parameters.as_ref().and_then(|p| value(f, d, p).ok());
+        let first = (|| {
+            Some(
+                value_of(&self.toe)?
+                    + body_t?
+                    + value_of(&self.pins.start)?
+                    + value_of(&self.pins.diameter)? / 2.,
+            )
+        })();
+        self.shelves
+            .iter()
+            .map(|s| super::visual::Shelf {
+                slot: s.key,
+                underside: if s.adjustable {
+                    first.map(|f| f + s.level as f64 * model::SYSTEM32_PITCH_MM)
+                } else {
+                    value_of(&s.underside)
+                },
+                depth: value_of(&s.depth),
+                adjustable: s.adjustable,
+            })
+            .collect()
+    }
+    /// Linked shelf fields in display order, for validation targeting.
+    pub(super) fn linked_fields(&self) -> Vec<(Key, &DimensionField)> {
+        let mut out = vec![(super::visual::TOE, &self.toe)];
+        for s in &self.shelves {
+            let (underside, depth) = super::visual::shelf_keys(s.key);
+            if !s.adjustable {
+                out.push((underside, &s.underside));
+            }
+            out.push((depth, &s.depth));
+        }
+        out
+    }
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -228,6 +276,7 @@ impl CabinetFields {
         body_t: Option<f64>,
         height: Option<f64>,
         available_depth: Option<f64>,
+        link: &mut DiagramLink,
     ) -> bool {
         let mut changed = false;
         ui.strong("Individual shelves");
@@ -264,8 +313,11 @@ impl CabinetFields {
                         "Fixed"
                     }
                 );
+                let (underside_key, depth_key) = super::visual::shelf_keys(shelf.key);
+                let reveal = link.reveals(&[underside_key, depth_key]);
                 egui::CollapsingHeader::new(title)
                     .default_open(true)
+                    .open(reveal.then_some(true))
                     .show(ui, |ui| {
                         let previous = shelf.adjustable;
                         let effective = if shelf.adjustable {
@@ -315,14 +367,20 @@ impl CabinetFields {
                                 ));
                             }
                         } else {
-                            changed |= shelf.underside.show(
+                            changed |= link.field(
                                 ui,
+                                super::visual::shelf_keys(shelf.key).0,
+                                &mut shelf.underside,
+                                "underside",
                                 "Underside from floor",
                                 "Local floor datum to this shelf underside",
                             );
                         }
-                        changed |= shelf.depth.show(
+                        changed |= link.field(
                             ui,
+                            super::visual::shelf_keys(shelf.key).1,
+                            &mut shelf.depth,
+                            "depth",
                             "Shelf depth",
                             "Finished front-to-back dimension; never shortened silently",
                         );

@@ -8,19 +8,23 @@ use multicad_core::{
     project_file::{self, FileLimits, ProjectFile},
 };
 use multicad_kernel::{GeometryPolicy, Solid};
-use multicad_model::Compiler;
+use multicad_model::{Compiler, GeometryBackend};
 use std::io::Cursor;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
-fn compile(session: &Session) -> multicad_model::Model {
+fn compile(session: &Session, backend: GeometryBackend) -> multicad_model::Model {
     Compiler::default()
-        .compile(session.document(), session.revision())
+        .compile_with_backend(session.document(), session.revision(), backend, None)
         .unwrap()
 }
 #[test]
-fn exact_part_rotation_keeps_upstream_source_and_real_frames_step_and_reopen() {
-    let mut session = Session::new(Document::new("Native exact placement").unwrap()).unwrap();
+fn rust_part_rotation_keeps_upstream_source_and_real_frames_step_and_reopen() {
+    exact_part_rotation(GeometryBackend::Rust);
+}
+
+fn exact_part_rotation(backend: GeometryBackend) {
+    let mut session = Session::new(Document::new("Exact placement").unwrap()).unwrap();
     let box_ = PrimitiveRequest::new(
         "Original box",
         PrimitiveParameters::Box {
@@ -45,16 +49,16 @@ fn exact_part_rotation_keeps_upstream_source_and_real_frames_step_and_reopen() {
     );
     let revision = session.revision();
     let prepared = model::prepare_transform(&session, revision, actor(), &request).unwrap();
-    let native = Compiler::default()
-        .compile(prepared.prepared.document(), revision + 1)
+    let evaluated = Compiler::default()
+        .compile_with_backend(prepared.prepared.document(), revision + 1, backend, None)
         .unwrap();
     assert_eq!(session.document(), &original);
-    let shape = &native.snapshot().shapes[&request.feature];
+    let shape = &evaluated.snapshot().shapes[&request.feature];
     assert_eq!(shape.bounds.min, [10., 1., 5.]);
     assert_eq!(shape.bounds.max, [13., 3., 9.]);
     assert!((shape.volume_mm3 - 24.).abs() < 1e-9);
     assert_eq!(shape.solid_count, 1);
-    assert_eq!(native.snapshot().bodies[&box_.body], request.feature);
+    assert_eq!(evaluated.snapshot().bodies[&box_.body], request.feature);
     assert!(shape.topology.elements.iter().any(|element| {
         element
             .frames
@@ -65,7 +69,7 @@ fn exact_part_rotation_keeps_upstream_source_and_real_frames_step_and_reopen() {
         "multicad-transform-{}.step",
         multicad_core::document::EntityId::new()
     ));
-    native
+    evaluated
         .solid(request.feature)
         .unwrap()
         .write_step(&path)
@@ -95,7 +99,7 @@ fn exact_part_rotation_keeps_upstream_source_and_real_frames_step_and_reopen() {
     .unwrap();
     assert_eq!(reopened.project.document, *session.document());
     let reopened = Session::new(reopened.project.document).unwrap();
-    let rebuilt = compile(&reopened);
+    let rebuilt = compile(&reopened, backend);
     assert_eq!(
         rebuilt.snapshot().shapes[&request.feature].bounds.min,
         shape.bounds.min
@@ -113,7 +117,7 @@ fn exact_part_rotation_keeps_upstream_source_and_real_frames_step_and_reopen() {
     )
     .unwrap();
     session.commit(prepared.prepared).unwrap();
-    let rebuilt = compile(&session);
+    let rebuilt = compile(&session, backend);
     let shape = &rebuilt.snapshot().shapes[&request.feature];
     assert_eq!(shape.bounds.min, [10., 1., 5.]);
     assert_eq!(shape.bounds.max, [13., 5., 9.]);
@@ -127,7 +131,7 @@ fn exact_part_rotation_keeps_upstream_source_and_real_frames_step_and_reopen() {
     );
     session.undo(session.revision(), actor()).unwrap();
     assert_eq!(
-        compile(&session).snapshot().shapes[&request.feature]
+        compile(&session, backend).snapshot().shapes[&request.feature]
             .bounds
             .max,
         [13., 3., 9.]

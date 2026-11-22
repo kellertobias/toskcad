@@ -1,0 +1,1143 @@
+use super::*;
+use crate::{
+    Rational,
+    spur_gear::{Profile, Spec},
+    step::{Writer, write_spur_gear},
+};
+use std::f64::consts::{FRAC_1_SQRT_2, PI};
+
+const ORIGIN: Point = [11., -7., 23.];
+const U: Point = [FRAC_1_SQRT_2, 0., FRAC_1_SQRT_2];
+const V: Point = [0., 1., 0.];
+const TOL: f64 = 1e-7;
+
+fn profile(teeth: u32, bore_radius_mm: f64) -> Profile {
+    let pressure = 20_f64.to_radians();
+    let pitch = f64::from(teeth);
+    Profile::new(
+        Spec {
+            teeth,
+            pitch_radius_mm: pitch,
+            base_radius_mm: pitch * pressure.cos(),
+            tip_radius_mm: pitch + 2.,
+            root_radius_mm: pitch - 2.5,
+            root_fillet_radius_mm: 0.4,
+            half_base_angle_rad: PI / (2. * pitch) + pressure.tan()
+                - pressure
+                - 0.05 / (2. * pitch),
+            face_width_mm: 8.,
+            bore_radius_mm,
+        },
+        1e-5,
+        1e7,
+    )
+    .unwrap()
+}
+
+#[test]
+fn independent_reader_verifies_placed_spur_shells_and_mixed_compounds() {
+    let n = cross(U, V);
+    for (teeth, bore) in [(20, 2.), (64, 0.)] {
+        let profile = profile(teeth, bore);
+        let source = write_spur_gear(&profile, ORIGIN, U, V, TOL).unwrap();
+        let shape = read_analytic_solid(&source, TOL).unwrap();
+        assert_eq!(shape.solid_count, 1);
+        assert_eq!(
+            shape.face_count,
+            2 + profile.outline().len() + usize::from(bore != 0.)
+        );
+        assert_eq!(shape.splines.len(), 4 * teeth as usize);
+        assert_eq!(shape.circles.len(), 2 * usize::from(bore != 0.));
+        assert!((shape.volume_mm3 - profile.volume_mm3()).abs() < 1e-5);
+        let expected: [Point; 2] = [false, true].map(|upper| {
+            std::array::from_fn(|i| {
+                let s = if upper { 1. } else { -1. };
+                ORIGIN[i] + s * profile.support([s * U[i], s * V[i], s * n[i]])
+            })
+        });
+        for (actual, expected) in shape
+            .bounds_mm
+            .into_iter()
+            .flatten()
+            .zip(expected.into_iter().flatten())
+        {
+            assert!((actual - expected).abs() < TOL, "{actual} != {expected}");
+        }
+        let (checked, rebuilt) = read_import_solid(&source, TOL).unwrap();
+        assert_eq!(checked, shape);
+        assert!(matches!(rebuilt.profile, ImportProfile::SplineSweep { .. }));
+    }
+
+    let mut writer = Writer::new();
+    writer
+        .append_box([Rational::new(2, 1).unwrap(); 3], ORIGIN, U, V)
+        .unwrap();
+    writer
+        .append_spur_gear(&profile(20, 2.), ORIGIN, U, V, TOL)
+        .unwrap();
+    let compound = writer.finish().unwrap();
+    let members = read_analytic_compound(&compound, TOL).unwrap();
+    assert_eq!(members.len(), 2);
+    assert!(members[0].splines.is_empty());
+    assert_eq!(members[1].splines.len(), 80);
+}
+
+type Records<'a> = BTreeMap<u32, Vec<Entity<'a>>>;
+
+struct Fixture<'a> {
+    records: Records<'a>,
+    faces: Vec<u32>,
+    extrusions: Vec<u32>,
+    cylinders: Vec<u32>,
+    splines: Vec<u32>,
+}
+
+impl<'a> Fixture<'a> {
+    fn new(source: &'a str) -> Self {
+        let records = parse_entities(source, TOL).unwrap();
+        let matching = |kind| {
+            records
+                .iter()
+                .filter_map(|(&id, e)| (e[0].name == kind).then_some(id))
+                .collect()
+        };
+        let (extrusions, cylinders, splines) = (
+            matching("SURFACE_OF_LINEAR_EXTRUSION"),
+            matching("CYLINDRICAL_SURFACE"),
+            matching("B_SPLINE_CURVE_WITH_KNOTS"),
+        );
+        let reader = Shell::new(&records, TOL, true);
+        let faces = reader.shell_faces().unwrap();
+        Self {
+            records,
+            faces,
+            extrusions,
+            cylinders,
+            splines,
+        }
+    }
+    fn args(&self, id: u32) -> &[Value<'a>] {
+        &self.records[&id][0].args
+    }
+    fn edit(&mut self, id: u32) -> &mut Vec<Value<'a>> {
+        &mut self.records.get_mut(&id).unwrap()[0].args
+    }
+    fn id(&self, id: u32, field: usize) -> u32 {
+        reference(&self.args(id)[field]).unwrap()
+    }
+    fn list(&self, id: u32, field: usize) -> Vec<u32> {
+        refs(&self.args(id)[field]).unwrap()
+    }
+    /// Copy a face with fresh bounds, loops and edges over the same vertices
+    /// and geometry.
+    fn duplicate(&mut self, id: u32) -> u32 {
+        let entity = &self.records[&id][0];
+        let name = entity.name;
+        if !matches!(
+            name,
+            "ADVANCED_FACE" | "FACE_BOUND" | "FACE_OUTER_BOUND" | "EDGE_LOOP" | "ORIENTED_EDGE"
+        ) && name != "EDGE_CURVE"
+        {
+            return id;
+        }
+        let mut args = entity.args.iter().map(copied).collect::<Vec<_>>();
+        if name == "EDGE_CURVE" {
+            // The vertices and the curve stay shared.
+            args.truncate(5);
+        } else {
+            for value in &mut args {
+                self.remap(value);
+            }
+        }
+        let copy = self.records.keys().next_back().unwrap() + 1;
+        let source = None;
+        self.records
+            .insert(copy, vec![Entity { source, name, args }]);
+        copy
+    }
+    fn remap(&mut self, value: &mut Value<'a>) {
+        match value {
+            Value::Reference(id) => *id = self.duplicate(*id),
+            Value::List(items) => items.iter_mut().for_each(|item| self.remap(item)),
+            _ => {}
+        }
+    }
+    fn cap_plane(&self, cap: usize) -> u32 {
+        self.id(self.faces[cap], 2)
+    }
+    fn face_for(&self, surface: u32) -> u32 {
+        *self
+            .faces
+            .iter()
+            .find(|&&face| self.id(face, 2) == surface)
+            .unwrap()
+    }
+    fn read(&self) -> Result<Readback> {
+        read_member(
+            &mut Shell::new(&self.records, TOL, true),
+            self.faces.clone(),
+        )
+    }
+}
+
+fn copied<'a>(value: &Value<'a>) -> Value<'a> {
+    match value {
+        Value::Reference(id) => Value::Reference(*id),
+        Value::List(items) => Value::List(items.iter().map(copied).collect()),
+        Value::String(text) => Value::String(text),
+        Value::Enum(flag) => Value::Enum(flag),
+        _ => Value::Derived,
+    }
+}
+
+#[test]
+fn only_excessive_face_and_edge_counts_are_resource_refusals() {
+    damaged(
+        |f| f.faces = vec![f.faces[0]; MAX_VERTICES + 8],
+        ReadError::Limit,
+    );
+    let long = |f: &mut Fixture<'_>| {
+        let bound = f.list(f.faces[0], 1)[0];
+        let wire = f.id(bound, 1);
+        let first = f.list(wire, 1)[0];
+        let repeated = (0..=MAX_VERTICES).map(|_| Value::Reference(first));
+        f.edit(wire)[1] = Value::List(repeated.collect());
+        wire
+    };
+    damaged(
+        |f| {
+            long(f);
+        },
+        ReadError::Limit,
+    );
+    // The same refusal reaches both entry points through the flat reader.
+    let source = write_spur_gear(&profile(20, 2.), ORIGIN, U, V, TOL).unwrap();
+    let mut f = Fixture::new(&source);
+    let wire = long(&mut f);
+    let first = f.list(wire, 1)[0];
+    let record = source
+        .lines()
+        .find(|line| line.starts_with(&format!("#{wire}=")))
+        .unwrap();
+    let repeated = vec![format!("#{first}"); MAX_VERTICES + 1].join(",");
+    let oversized = source.replacen(record, &format!("#{wire}=EDGE_LOOP('',({repeated}));"), 1);
+    assert_eq!(
+        read_import_solid(&oversized, TOL).err(),
+        Some(ReadError::Limit)
+    );
+    assert_eq!(
+        read_analytic_solid(&oversized, TOL).err(),
+        Some(ReadError::Limit)
+    );
+}
+
+#[test]
+fn a_second_positive_cap_is_a_stepped_solid_outside_this_family() {
+    for cap in [0, 1] {
+        damaged(
+            |f| {
+                let copy = f.duplicate(f.faces[cap]);
+                f.faces.push(copy);
+            },
+            ReadError::Unsupported,
+        );
+    }
+    // Unlabeled bounds are valid, but the exterior is not derived here.
+    damaged(
+        |f| {
+            let bound = f.list(f.faces[0], 1)[0];
+            let copy = f.duplicate(bound);
+            for bound in [bound, copy] {
+                f.records.get_mut(&bound).unwrap()[0].name = "FACE_BOUND";
+            }
+            f.edit(f.faces[0])[1] = Value::List([bound, copy].map(Value::Reference).into());
+        },
+        ReadError::Unsupported,
+    );
+}
+
+fn damaged(edit: impl FnOnce(&mut Fixture<'_>), error: ReadError) {
+    let source = write_spur_gear(&profile(20, 2.), ORIGIN, U, V, TOL).unwrap();
+    let mut f = Fixture::new(&source);
+    edit(&mut f);
+    assert_eq!(f.read().err(), Some(error));
+}
+
+#[test]
+fn rejects_missing_and_duplicate_topology_or_invalid_cap_geometry() {
+    damaged(|f| f.faces.truncate(3), ReadError::Unsupported);
+    damaged(|f| f.faces.truncate(4), ReadError::Unsupported);
+    damaged(|f| f.faces.push(f.faces[0]), ReadError::Invalid);
+    damaged(
+        |f| {
+            f.edit(f.faces[0]).pop();
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            f.edit(f.faces[0])[3] = Value::Enum("F");
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            f.faces.pop();
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let vector = f.id(f.extrusions[0], 2);
+            let dir = f.id(vector, 1);
+            f.edit(dir)[1] = Value::List([0.3, 0.4, 0.5].map(Value::Number).into());
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let axis = f.id(f.cap_plane(1), 1);
+            let point = f.records.keys().next_back().copied().unwrap() + 1;
+            f.records.insert(
+                point,
+                vec![Entity {
+                    source: None,
+                    name: "CARTESIAN_POINT",
+                    args: vec![
+                        Value::String(""),
+                        Value::List([22., 0., 40.].map(Value::Number).into()),
+                    ],
+                }],
+            );
+            // Keep the cap's displaced support separate from the shared
+            // circle and vertex coordinates so rim validation still succeeds.
+            f.edit(axis)[1] = Value::Reference(point);
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let base_origin = f.id(f.id(f.cap_plane(0), 1), 1);
+            let top_axis = f.id(f.cap_plane(1), 1);
+            f.edit(top_axis)[1] = Value::Reference(base_origin);
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let point = f.list(f.splines[0], 2)[2];
+            f.edit(point)[1] = Value::List([23., 0., 44.].map(Value::Number).into());
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let point = f.list(f.splines[0], 2)[2];
+            let Value::List(v) = &mut f.edit(point)[1] else {
+                panic!()
+            };
+            let Value::Number(y) = &mut v[1] else {
+                panic!()
+            };
+            *y += 0.001;
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let plane = f.cap_plane(0);
+            f.edit(plane).pop();
+        },
+        ReadError::Invalid,
+    );
+}
+
+#[test]
+fn rejects_invalid_face_edge_and_extrusion_records() {
+    damaged(
+        |f| {
+            f.edit(f.faces[0])[1] = Value::List(vec![]);
+        },
+        ReadError::Unsupported,
+    );
+    damaged(
+        |f| {
+            let bound = f.list(f.faces[0], 1)[0];
+            f.edit(f.faces[0])[1] =
+                Value::List(vec![Value::Reference(bound), Value::Reference(bound)]);
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let bound = f.list(f.faces[0], 1)[0];
+            let loop_ = f.id(bound, 1);
+            f.edit(loop_).pop();
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let bound = f.list(f.faces[0], 1)[0];
+            let loop_ = f.id(bound, 1);
+            f.edit(loop_)[1] = Value::List(vec![]);
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let bound = f.list(f.faces[0], 1)[0];
+            f.edit(bound)[2] = Value::Enum("F");
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let bound = f.list(f.faces[0], 1)[0];
+            let loop_ = f.id(bound, 1);
+            let edge = f.list(loop_, 1)[0];
+            f.edit(edge).pop();
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let bound = f.list(f.faces[0], 1)[0];
+            let loop_ = f.id(bound, 1);
+            let edges = f.list(loop_, 1);
+            f.edit(loop_)[1] =
+                Value::List(vec![Value::Reference(edges[0]), Value::Reference(edges[0])]);
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let bound = f.list(f.faces[0], 1)[0];
+            let loop_ = f.id(bound, 1);
+            let Value::List(edges) = &mut f.edit(loop_)[1] else {
+                panic!()
+            };
+            edges.swap(0, 1);
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let bound = f.list(f.faces[0], 1)[0];
+            let loop_ = f.id(bound, 1);
+            let edge = f.id(f.list(loop_, 1)[0], 3);
+            f.edit(edge).pop();
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let spline = f.splines[0];
+            let edge = f
+                .records
+                .iter()
+                .find_map(|(&id, e)| {
+                    (e[0].name == "EDGE_CURVE" && f.id(id, 3) == spline).then_some(id)
+                })
+                .unwrap();
+            f.edit(edge)[4] = Value::Enum("F");
+        },
+        ReadError::Unsupported,
+    );
+    damaged(
+        |f| {
+            let spline = f.splines[0];
+            let replacement = f.list(f.splines[1], 2)[2];
+            let Value::List(poles) = &mut f.edit(spline)[2] else {
+                panic!()
+            };
+            poles[0] = Value::Reference(replacement);
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let first = f.extrusions[0];
+            f.edit(first)[1] = Value::Reference(f.splines[1]);
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let first = f.cylinders[0];
+            f.edit(first)[2] = Value::Number(100.);
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let first = f.cylinders[0];
+            f.edit(first).pop();
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let face = f.face_for(f.cylinders[0]);
+            let before = sense(&f.args(face)[3]).unwrap();
+            f.edit(face)[3] = Value::Enum(if before { "F" } else { "T" });
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let wall = f
+                .faces
+                .iter()
+                .copied()
+                .skip(2)
+                .find(|&face| f.records[&f.id(face, 2)][0].name == "PLANE")
+                .unwrap();
+            f.edit(wall)[3] = Value::Enum("F");
+        },
+        ReadError::Invalid,
+    );
+}
+
+#[test]
+fn rejects_duplicate_outer_bounds_and_unequal_cap_areas() {
+    damaged(
+        |f| {
+            f.edit(f.faces[0])[2] = Value::Reference(f.extrusions[0]);
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let inner = f.list(f.faces[0], 1)[1];
+            f.records.get_mut(&inner).unwrap()[0].name = "FACE_OUTER_BOUND";
+        },
+        ReadError::Invalid,
+    );
+    damaged(
+        |f| {
+            let poles = f.list(f.splines[0], 2);
+            let point = poles[poles.len() / 2];
+            let Value::List(v) = &mut f.edit(point)[1] else {
+                panic!()
+            };
+            let Value::Number(y) = &mut v[1] else {
+                panic!()
+            };
+            *y += 0.005;
+        },
+        ReadError::Invalid,
+    );
+}
+
+fn cap_and_wall<'a, 'input>(
+    f: &'a Fixture<'input>,
+    surface: u32,
+) -> (Shell<'a, 'input>, Edges, FaceWire, FaceWire, FaceWire) {
+    let mut reader = Shell::new(&f.records, TOL, true);
+    let mut edges = Edges::new();
+    let [low, high] = [0, 1].map(|i| read_face(&mut reader, f.faces[i], &mut edges).unwrap());
+    let wall = read_face(&mut reader, f.face_for(surface), &mut edges).unwrap();
+    (reader, edges, low, high, wall)
+}
+
+#[test]
+fn side_check_rejects_inconsistent_supports_and_trim_incidence() {
+    let source = write_spur_gear(&profile(20, 2.), ORIGIN, U, V, TOL).unwrap();
+    let f = Fixture::new(&source);
+    let (reader, mut edges, low, high, mut wall) = cap_and_wall(&f, f.cylinders[0]);
+    let normal = cross(U, V);
+    let delta = normal.map(|n| n * 8.);
+    let verify = |edges: &Edges, wall: &FaceWire, low_uses| {
+        verify_wall(
+            &reader,
+            edges,
+            wall,
+            &mut rim_uses(&low),
+            &mut rim_uses(&high),
+            &mut BTreeSet::new(),
+            low_uses,
+            normal,
+        )
+    };
+    assert_eq!(verify(&edges, &wall, delta), Ok(()));
+    assert_eq!(verify(&edges, &wall, [0.; 3]), Err(ReadError::Invalid));
+
+    let extra = wall.outer.pop().unwrap();
+    assert_eq!(verify(&edges, &wall, delta), Err(ReadError::Unsupported));
+    wall.outer.push(extra);
+    wall.holes = vec![vec![]];
+    assert_eq!(verify(&edges, &wall, delta), Err(ReadError::Unsupported));
+    wall.holes.clear();
+
+    let down = wall.outer[3].edge;
+    wall.outer[3].edge = wall.outer[1].edge;
+    assert_eq!(verify(&edges, &wall, delta), Err(ReadError::Invalid));
+    wall.outer[3].edge = down;
+
+    let up = wall.outer[2].edge;
+    edges.get_mut(&up).unwrap().geometry = Geometry::Analytic(Curve::Line);
+    assert_eq!(verify(&edges, &wall, delta), Err(ReadError::Invalid));
+    let spline = reader.spline_curve(f.splines[0]).unwrap();
+    edges.get_mut(&up).unwrap().geometry = Geometry::Cubic {
+        id: f.splines[0],
+        curve: spline,
+    };
+    assert_eq!(verify(&edges, &wall, delta), Err(ReadError::Invalid));
+}
+
+#[test]
+fn cap_check_rejects_bad_winding_nonplanarity_and_hole_escapes() {
+    let source = write_spur_gear(&profile(20, 2.), ORIGIN, U, V, TOL).unwrap();
+    let f = Fixture::new(&source);
+    let (mut reader, mut edges, mut low, _, _) = cap_and_wall(&f, f.cylinders[0]);
+    let plane = face_plane(&reader, &low).unwrap();
+    let hole = low.holes.first_mut().unwrap();
+    let bore = hole[0].edge;
+    let Geometry::Analytic(Curve::Circle(mut circle)) = edges[&bore].geometry else {
+        panic!()
+    };
+    let original = circle;
+    hole.push(Traversal {
+        edge: bore,
+        start: hole[0].start,
+        end: hole[0].end,
+        forward: hole[0].forward,
+    });
+    assert_eq!(
+        section::verify(&reader, &edges, &plane, &low),
+        Err(ReadError::Invalid)
+    );
+    low.holes.first_mut().unwrap().pop();
+    edges.get_mut(&bore).unwrap().geometry = Geometry::Analytic(Curve::Line);
+    assert_eq!(
+        section::verify(&reader, &edges, &plane, &low),
+        Err(ReadError::Invalid)
+    );
+    edges.get_mut(&bore).unwrap().geometry = Geometry::Analytic(Curve::Circle(circle));
+    low.holes.first_mut().unwrap()[0].forward ^= true;
+    assert_eq!(
+        section::verify(&reader, &edges, &plane, &low),
+        Err(ReadError::Invalid)
+    );
+    low.holes.first_mut().unwrap()[0].forward ^= true;
+    circle.center_mm = std::array::from_fn(|i| original.center_mm[i] + 100. * plane.u[i]);
+    edges.get_mut(&bore).unwrap().geometry = Geometry::Analytic(Curve::Circle(circle));
+    assert_eq!(
+        section::verify(&reader, &edges, &plane, &low),
+        Err(ReadError::Invalid)
+    );
+    edges.get_mut(&bore).unwrap().geometry = Geometry::Analytic(Curve::Circle(original));
+
+    let vertex = low.outer[0].start;
+    let position = reader.points[&vertex];
+    reader.points.insert(
+        vertex,
+        std::array::from_fn(|i| position[i] + plane.normal[i]),
+    );
+    assert_eq!(
+        section::verify(&reader, &edges, &plane, &low),
+        Err(ReadError::Invalid)
+    );
+    reader.points.insert(vertex, position);
+
+    low.holes.clear();
+    let reverse = Plane {
+        normal: plane.normal.map(|v| -v),
+        v: plane.v.map(|v| -v),
+        ..plane
+    };
+    assert_eq!(
+        section::verify(&reader, &edges, &reverse, &low),
+        Err(ReadError::Invalid)
+    );
+    let plane = face_plane(&reader, &low).unwrap();
+    let edge = low.outer[0].edge;
+    edges.get_mut(&edge).unwrap().geometry = Geometry::Analytic(Curve::Circle(original));
+    assert_eq!(
+        section::verify(&reader, &edges, &plane, &low),
+        Err(ReadError::Invalid)
+    );
+    low.outer.truncate(2);
+    assert_eq!(
+        section::verify(&reader, &edges, &plane, &low),
+        Err(ReadError::Unsupported)
+    );
+}
+
+#[test]
+fn semicircle_metrics_preserve_trim_extents_and_refuse_invalid_volume() {
+    let source = write_spur_gear(&profile(20, 2.), ORIGIN, U, V, TOL).unwrap();
+    let f = Fixture::new(&source);
+    let (reader, _, low, _, _) = cap_and_wall(&f, f.cylinders[0]);
+    let arc = SemicircleEdge {
+        center_mm: [0.; 3],
+        normal: [0., 0., 1.],
+        radius_mm: 100.,
+        radial_mid: [0., 1., 0.],
+    };
+    assert_eq!(round_geometry(Curve::Semicircle(arc)).unwrap().sweep, PI);
+    let edges = Edges::from([(
+        0,
+        EdgeData {
+            vertices: [low.outer[0].start, low.outer[0].end],
+            geometry: Geometry::Analytic(Curve::Semicircle(arc)),
+            uses: [1; 2],
+        },
+    )]);
+    let shape = metrics(&reader, edges, &BTreeSet::new(), 1, 1.).unwrap();
+    assert_eq!(shape.semicircles, [arc]);
+    assert_eq!(shape.bounds_mm[1][1], 100.);
+    assert_eq!(
+        metrics(&reader, Edges::new(), &BTreeSet::new(), 1, 0.).err(),
+        Some(ReadError::Invalid)
+    );
+}
+
+#[test]
+fn refuses_a_nonmonotone_cubic_even_when_its_endpoints_still_match() {
+    damaged(
+        |f| {
+            let points = f.list(f.splines[0], 2);
+            let point = points[2];
+            let start = points[0];
+            let end = *points.last().unwrap();
+            let point_at = |id| numbers(&f.args(id)[1]).unwrap();
+            let [a, b] = [point_at(start), point_at(end)];
+            f.edit(point)[1] = Value::List(
+                std::array::from_fn::<_, 3, _>(|i| Value::Number(a[i] - (b[i] - a[i]))).into(),
+            );
+        },
+        ReadError::Unsupported,
+    );
+}
+
+fn hub_profile(teeth: u32, bore: f64, lower: f64, upper: f64) -> Profile {
+    use crate::spur_gear::Hub;
+    profile(teeth, bore)
+        .with_hub(
+            Hub {
+                radius_mm: 12.,
+                axial_start_mm: lower,
+                axial_end_mm: upper,
+            },
+            1e-5,
+            1e7,
+        )
+        .unwrap()
+}
+
+#[test]
+fn independently_verifies_hub_extensions_and_a_continuous_bore() {
+    let normal = cross(U, V);
+    for (teeth, bore, lower, upper) in [
+        (20, 2., -3., 11.),
+        (20, 0., -3., 6.),
+        (64, 2., 3., 11.),
+        (20, 0., -4., 9.),
+    ] {
+        let gear = hub_profile(teeth, bore, lower, upper);
+        let source = write_spur_gear(&gear, ORIGIN, U, V, TOL).unwrap();
+        let actual = read_analytic_solid(&source, TOL).unwrap();
+        let extensions = gear.hub_extensions().into_iter().flatten().count();
+        assert_eq!(actual.solid_count, 1);
+        assert_eq!(
+            actual.face_count,
+            2 + gear.outline().len() + usize::from(bore > 0.) + 2 * extensions
+        );
+        assert_eq!(actual.splines.len(), 4 * teeth as usize);
+        assert_eq!(
+            actual.circles.len(),
+            2 * usize::from(bore > 0.) + 2 * extensions
+        );
+        assert!((actual.volume_mm3 - gear.volume_mm3()).abs() < 1e-5);
+        let expected: [Point; 2] = [false, true].map(|upper| {
+            std::array::from_fn(|i| {
+                let s = if upper { 1. } else { -1. };
+                ORIGIN[i] + s * gear.support([s * U[i], s * V[i], s * normal[i]])
+            })
+        });
+        for (actual, expected) in actual
+            .bounds_mm
+            .into_iter()
+            .flatten()
+            .zip(expected.into_iter().flatten())
+        {
+            assert!((actual - expected).abs() < TOL, "{actual} != {expected}");
+        }
+        let bore_levels: Vec<_> = actual
+            .circles
+            .iter()
+            .filter(|circle| circle.radius_mm == bore)
+            .map(|circle| dot(sub(circle.center_mm, ORIGIN), normal))
+            .collect();
+        if bore > 0. {
+            assert_eq!(bore_levels.len(), 2);
+            for (actual, expected) in bore_levels.into_iter().zip(gear.axial_bounds()) {
+                assert!((actual - expected).abs() < TOL);
+            }
+        } else {
+            assert!(bore_levels.is_empty());
+        }
+    }
+}
+
+#[test]
+fn independently_verifies_hub_in_a_compound() {
+    let mut writer = Writer::new();
+    let gear = hub_profile(20, 2., -3., 11.);
+    writer.append_spur_gear(&gear, ORIGIN, U, V, TOL).unwrap();
+    writer
+        .append_box([Rational::new(2, 1).unwrap(); 3], [100., 0., 0.], U, V)
+        .unwrap();
+    let source = writer.finish().unwrap();
+    let members = read_analytic_compound(&source, TOL).unwrap();
+    assert_eq!(members.len(), 2);
+    assert_eq!(members[0].circles.len(), 6);
+    assert!((members[0].volume_mm3 - gear.volume_mm3()).abs() < 1e-5);
+    assert!((members[1].volume_mm3 - 8.).abs() < TOL);
+}
+
+struct ParsedHub {
+    edges: Edges,
+    shoulders: [(Plane, FaceWire); 2],
+    ends: [Option<(Plane, FaceWire)>; 2],
+    walls: Vec<FaceWire>,
+    areas: [f64; 2],
+}
+
+fn reject_hub(edit: impl FnOnce(&mut ParsedHub), error: ReadError) {
+    let gear = hub_profile(20, 2., -3., 11.);
+    let source = write_spur_gear(&gear, ORIGIN, U, V, TOL).unwrap();
+    let f = Fixture::new(&source);
+    let mut reader = Shell::new(&f.records, TOL, true);
+    let mut edges = Edges::new();
+    let normal = cross(U, V);
+    let shoulders = [f.faces[0], f.faces[1]].map(|id| {
+        let face = read_face(&mut reader, id, &mut edges).unwrap();
+        (face_plane(&reader, &face).unwrap(), face)
+    });
+    let mut ends = [None, None];
+    let mut walls = Vec::new();
+    for &id in &f.faces[2..] {
+        let face = read_face(&mut reader, id, &mut edges).unwrap();
+        if let Some(plane) = normal_cap(&reader, &face, normal).unwrap() {
+            let side = usize::from(dot(plane.normal, normal) > 0.);
+            ends[side] = Some((plane, face));
+        } else {
+            walls.push(face);
+        }
+    }
+    let areas = shoulders
+        .each_ref()
+        .map(|(plane, face)| section::verify(&reader, &edges, plane, face).unwrap());
+    let mut fixture = ParsedHub {
+        edges,
+        shoulders,
+        ends,
+        walls,
+        areas,
+    };
+    edit(&mut fixture);
+    let result = hub::verify(
+        &reader,
+        &fixture.edges,
+        fixture
+            .shoulders
+            .each_ref()
+            .map(|(plane, face)| (plane, face)),
+        fixture.areas,
+        &fixture.ends,
+        &fixture.walls,
+        normal,
+        8.,
+    );
+    assert_eq!(result.err(), Some(error));
+}
+
+impl ParsedHub {
+    fn circle(&mut self, edge: u32) -> &mut CircleEdge {
+        let Geometry::Analytic(Curve::Circle(circle)) =
+            &mut self.edges.get_mut(&edge).unwrap().geometry
+        else {
+            panic!("fixture circle missing");
+        };
+        circle
+    }
+
+    fn outer(&self, end: usize) -> u32 {
+        self.ends[end].as_ref().unwrap().1.outer[0].edge
+    }
+
+    fn bore(&self, end: usize) -> u32 {
+        self.ends[end].as_ref().unwrap().1.holes.first().unwrap()[0].edge
+    }
+}
+
+#[test]
+fn hub_requires_concentric_end_rings_outside_the_tooth_band() {
+    reject_hub(
+        |f| {
+            let extra = f.shoulders[0].1.holes[0]
+                .iter()
+                .map(copy_traversal)
+                .collect();
+            f.shoulders[0].1.holes.push(extra);
+        },
+        ReadError::Unsupported,
+    );
+    reject_hub(|f| f.shoulders[0].1.holes.clear(), ReadError::Invalid);
+    reject_hub(|f| f.areas[1] += 1., ReadError::Invalid);
+    reject_hub(
+        |f| {
+            let end = f.ends[1].as_mut().unwrap();
+            end.1.outer.clear();
+        },
+        ReadError::Unsupported,
+    );
+    reject_hub(
+        |f| {
+            let end = f.outer(1);
+            f.edges.get_mut(&end).unwrap().geometry = Geometry::Analytic(Curve::Line);
+        },
+        ReadError::Unsupported,
+    );
+    reject_hub(
+        |f| f.ends[1].as_mut().unwrap().1.outer[0].forward ^= true,
+        ReadError::Invalid,
+    );
+    reject_hub(
+        |f| {
+            let edge = f.outer(1);
+            f.circle(edge).center_mm[1] += 1.;
+        },
+        ReadError::Invalid,
+    );
+    reject_hub(
+        |f| {
+            let [outer, bore] = [f.outer(1), f.bore(1)];
+            f.ends[1].as_mut().unwrap().0.origin[1] += 1.;
+            for edge in [outer, bore] {
+                f.circle(edge).center_mm[1] += 1.;
+            }
+        },
+        ReadError::Invalid,
+    );
+    reject_hub(
+        |f| {
+            let [outer, bore] = [f.outer(1), f.bore(1)];
+            let normal = cross(U, V);
+            let move_in = |point: &mut Point| {
+                for i in 0..3 {
+                    point[i] -= 4. * normal[i];
+                }
+            };
+            move_in(&mut f.ends[1].as_mut().unwrap().0.origin);
+            for edge in [outer, bore] {
+                move_in(&mut f.circle(edge).center_mm);
+            }
+        },
+        ReadError::Invalid,
+    );
+    reject_hub(|f| f.circle(f.outer(1)).radius_mm += 1., ReadError::Invalid);
+}
+
+#[test]
+fn hub_requires_exactly_one_continuous_bore_and_all_supports() {
+    reject_hub(
+        |f| f.ends[1].as_mut().unwrap().1.holes.clear(),
+        ReadError::Invalid,
+    );
+    reject_hub(|f| f.circle(f.bore(1)).radius_mm += 1., ReadError::Invalid);
+    reject_hub(|f| f.circle(f.bore(1)).radius_mm = 12., ReadError::Invalid);
+    reject_hub(
+        |f| {
+            let edge = f.outer(0);
+            let wall = f
+                .walls
+                .iter_mut()
+                .find(|wall| wall.outer.iter().any(|use_| use_.edge == edge))
+                .unwrap();
+            wall.forward ^= true;
+        },
+        ReadError::Invalid,
+    );
+    reject_hub(
+        |f| {
+            let edge = f.outer(0);
+            f.walls
+                .retain(|wall| !wall.outer.iter().any(|use_| use_.edge == edge));
+        },
+        ReadError::Invalid,
+    );
+
+    reject_hub(
+        |f| {
+            let edge = f.shoulders[0].1.outer[0].edge;
+            let wall = f
+                .walls
+                .iter_mut()
+                .find(|wall| wall.outer.iter().any(|use_| use_.edge == edge))
+                .unwrap();
+            wall.forward ^= true;
+        },
+        ReadError::Invalid,
+    );
+
+    let gear = hub_profile(20, 2., -3., 11.);
+    let source = write_spur_gear(&gear, ORIGIN, U, V, TOL).unwrap();
+    let support = source
+        .lines()
+        .find(|line| line.contains("=CYLINDRICAL_SURFACE("))
+        .unwrap();
+    let (start, _) = support.rsplit_once(',').unwrap();
+    let changed = source.replacen(support, &format!("{start},3.0);"), 1);
+    assert_eq!(
+        read_analytic_solid(&changed, TOL).err(),
+        Some(ReadError::Invalid)
+    );
+}
+
+#[test]
+fn generic_counter_caps_require_every_circle_to_be_a_separate_coplanar_bound() {
+    use crate::{
+        normal_sweep,
+        spline_sweep::{Cubic, Edge, Sweep},
+    };
+    let line = |a, b| Edge::Analytic(normal_sweep::Edge::Line { a, b });
+    let outer = vec![
+        line([0., 0.], [4., 0.]),
+        line([4., 0.], [4., 4.]),
+        Edge::Cubic(
+            Cubic::new(
+                vec![[4., 4.], [3., 4.], [1., 4.], [0., 4.]],
+                vec![0., 1.],
+                false,
+            )
+            .unwrap(),
+        ),
+        line([0., 4.], [0., 0.]),
+    ];
+    let square = vec![
+        line([0.5, 0.5], [0.5, 1.]),
+        line([0.5, 1.], [1., 1.]),
+        line([1., 1.], [1., 0.5]),
+        line([1., 0.5], [0.5, 0.5]),
+    ];
+    let circle = vec![Edge::Analytic(normal_sweep::Edge::Circle {
+        center: [3., 2.],
+        radius_mm: 0.25,
+        clockwise: true,
+    })];
+    let body = Sweep::new_rings(outer, vec![square, circle], 3., TOL).unwrap();
+    let source = crate::step::write_spline_sweep(&body, ORIGIN, U, V, TOL).unwrap();
+    let f = Fixture::new(&source);
+    let (reader, mut edges, mut low, _, _) = cap_and_wall(&f, f.cylinders[0]);
+    let plane = face_plane(&reader, &low).unwrap();
+    assert!(
+        (section::verify(&reader, &edges, &plane, &low).unwrap() - body.area_mm2()).abs() < 1e-8
+    );
+    let hole = low.holes.iter().position(|ring| ring.len() == 1).unwrap();
+    let edge = low.holes[hole][0].edge;
+    let Geometry::Analytic(Curve::Circle(original)) = edges[&edge].geometry else {
+        panic!()
+    };
+    let mut changed = original;
+    changed.center_mm = std::array::from_fn(|i| original.center_mm[i] + plane.normal[i] * 0.005);
+    edges.get_mut(&edge).unwrap().geometry = Geometry::Analytic(Curve::Circle(changed));
+    assert_eq!(
+        section::verify(&reader, &edges, &plane, &low),
+        Err(ReadError::Invalid)
+    );
+    edges.get_mut(&edge).unwrap().geometry = Geometry::Analytic(Curve::Circle(original));
+    let extra = copy_traversal(&low.outer[0]);
+    low.holes[hole].push(extra);
+    assert_eq!(
+        section::verify(&reader, &edges, &plane, &low),
+        Err(ReadError::Invalid)
+    );
+    low.holes[hole].pop();
+    // An unqualified outer-circle / multiple-cavity class must not run the
+    // old one-cavity ring proof while ignoring all additional inner bounds.
+    low.outer = low.holes[hole].iter().map(copy_traversal).collect();
+    assert_eq!(
+        section::verify(&reader, &edges, &plane, &low),
+        Err(ReadError::Unsupported)
+    );
+}
+
+fn copy_traversal(edge: &Traversal) -> Traversal {
+    Traversal {
+        edge: edge.edge,
+        start: edge.start,
+        end: edge.end,
+        forward: edge.forward,
+    }
+}
+
+/// OpenCascade 7.9.3: the cubic Bezier (20,0) (20,12) (0,12) (0,0) closed by
+/// its chord and extruded 6 mm, with parameter-space master curves.
+const PRISM: &str = include_str!("../tests/fixtures/occt-spline-prism.step");
+
+#[test]
+fn a_cubic_and_chord_prism_imports_with_its_exact_area_and_master_rims() {
+    let (proof, body) = read_import_solid(PRISM, TOL).unwrap();
+    assert_eq!(read_analytic_solid(PRISM, TOL).unwrap(), proof);
+    assert!((proof.volume_mm3 - 864.).abs() < 1e-9);
+    assert_eq!([proof.face_count, proof.splines.len()], [4, 2]);
+    for (actual, expected) in proof
+        .bounds_mm
+        .into_iter()
+        .flatten()
+        .zip([0., 0., 0., 20., 9., 6.])
+    {
+        assert!((actual - expected).abs() < 1e-12);
+    }
+    let ImportProfile::SplineSweep { sweep } = &body.profile else {
+        panic!("{:?}", body.profile)
+    };
+    assert!((sweep.area_mm2() - 144.).abs() < 1e-9);
+    assert_eq!(sweep.height_mm(), 6.);
+    let edit = |from: &str, to: &str| {
+        let changed = PRISM.replacen(from, to, 1);
+        assert_ne!(changed, PRISM, "{from}");
+        read_import_solid(&changed, TOL).err()
+    };
+    // A master line that is not the unit-speed rim parameter is outside the proof.
+    for (from, to) in [
+        (
+            "#174 = CARTESIAN_POINT('',(0.,0.));",
+            "#174 = CARTESIAN_POINT('',(0.5,0.));",
+        ),
+        ("#175 = VECTOR('',#176,1.);", "#175 = VECTOR('',#176,2.);"),
+    ] {
+        assert_eq!(edit(from, to), Some(ReadError::Unsupported));
+    }
+    // A rim that leaves its master, or a swept curve that leaves the rims, is invalid.
+    for (from, to) in [
+        (
+            "#168 = CARTESIAN_POINT('',(20.,12.,0.));",
+            "#168 = CARTESIAN_POINT('',(20.,12.5,0.));",
+        ),
+        (
+            "#47 = CARTESIAN_POINT('',(20.,12.,0.));",
+            "#47 = CARTESIAN_POINT('',(20.,12.5,0.));",
+        ),
+    ] {
+        assert_eq!(edit(from, to), Some(ReadError::Invalid));
+    }
+    // Without master curves the swept curve is still compared with the rims.
+    let plain = PRISM
+        .replacen("#60,#24,#141,.T.", "#60,#24,#142,.T.", 1)
+        .replacen("#88,#22,#165,.T.", "#88,#22,#166,.T.", 1);
+    assert_eq!(read_import_solid(&plain, TOL).unwrap().0, proof);
+    let moved = plain.replacen(
+        "#47 = CARTESIAN_POINT('',(20.,12.,0.));",
+        "#47 = CARTESIAN_POINT('',(20.,12.5,0.));",
+        1,
+    );
+    assert_eq!(
+        read_import_solid(&moved, TOL).err(),
+        Some(ReadError::Invalid)
+    );
+}

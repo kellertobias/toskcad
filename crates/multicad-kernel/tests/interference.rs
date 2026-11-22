@@ -14,6 +14,132 @@ fn moved(solid: &Solid, offset: [f64; 3]) -> Solid {
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-6, "{a} != {b}");
 }
+
+fn rust_stock(size: [i64; 3], offset: [f64; 3]) -> Solid {
+    Solid::rust_box(
+        EntityId::new().uuid_bits(),
+        size.map(|n| rust_kernel::Rational::new(n, 1).unwrap()),
+        PlaneFrame {
+            origin: offset,
+            ..Default::default()
+        },
+        p(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn rust_pair_verifies_gap_contact_interference_and_containment() {
+    let a = rust_stock([10; 3], [0.; 3]);
+    for (b, expected, volume, clearance) in [
+        (
+            rust_stock([10; 3], [10.5, 0., 0.]),
+            SolidPairRelation::Separated,
+            0.,
+            0.5,
+        ),
+        (
+            rust_stock([10; 3], [10.; 3]),
+            SolidPairRelation::ContactWithinTolerance,
+            0.,
+            0.,
+        ),
+        (
+            rust_stock([10; 3], [5., 0., 0.]),
+            SolidPairRelation::Overlapping,
+            500.,
+            0.,
+        ),
+        (
+            rust_stock([2; 3], [2.; 3]),
+            SolidPairRelation::Overlapping,
+            8.,
+            0.,
+        ),
+    ] {
+        let result = a.inspect_pair(&b, 1e-7, p()).unwrap();
+        assert_eq!(result.relation, expected);
+        near(result.common_volume_mm3, volume);
+        near(result.minimum_distance.distance_mm, clearance);
+        assert!(!result.minimum_distance.witnesses.is_empty());
+    }
+    // The canonical box constructor is owned Rust geometry, so it inspects
+    // exactly like the rational stock instead of being a mixed-kernel pair.
+    let canonical = Solid::box_solid([10.; 3], p()).unwrap();
+    let result = a.inspect_pair(&canonical, 1e-7, p()).unwrap();
+    assert_eq!(result.relation, SolidPairRelation::Overlapping);
+    near(result.common_volume_mm3, 1000.);
+    near(result.minimum_distance.distance_mm, 0.);
+    assert!(!result.minimum_distance.witnesses.is_empty());
+    // Material outside the certified prism and parallel-cylinder families is
+    // still refused rather than estimated.
+    let s = 2f64.sqrt().recip();
+    let oblique = Solid::cylinder(
+        PlaneFrame {
+            origin: [5., 5., -5.],
+            u: [1., 0., 0.],
+            v: [0., s, s],
+        },
+        2.,
+        20.,
+        p(),
+    )
+    .unwrap();
+    assert_eq!(
+        a.inspect_pair(&oblique, 1e-7, p()).unwrap_err().kind,
+        GeometryErrorKind::Unsupported
+    );
+}
+
+#[test]
+fn rust_pair_does_not_fill_cavities_or_double_count_compound_members() {
+    let box_ = rust_stock([20; 3], [0.; 3]);
+    let cavity = rust_stock([8; 3], [6.; 3]);
+    let hollow = box_
+        .boolean(&cavity, BooleanOperation::Subtract, p())
+        .unwrap()
+        .unwrap();
+    let probe = rust_stock([4; 3], [8.; 3]);
+    let clear = hollow.inspect_pair(&probe, 1e-7, p()).unwrap();
+    assert_eq!(clear.relation, SolidPairRelation::Separated);
+    near(clear.common_volume_mm3, 0.);
+    near(clear.minimum_distance.distance_mm, 2.);
+
+    let a = rust_stock([10; 3], [0.; 3]);
+    let b = rust_stock([10; 3], [5., 0., 0.]);
+    let compound = Solid::compound_named(&[&a, &b], EntityId::new(), p()).unwrap();
+    let probe = rust_stock([4, 10, 10], [8., 0., 0.]);
+    let overlap = compound.inspect_pair(&probe, 1e-7, p()).unwrap();
+    assert_eq!(overlap.relation, SolidPairRelation::Overlapping);
+    near(overlap.common_volume_mm3, 400.);
+}
+
+#[test]
+fn rust_pair_certifies_rotated_clearance_even_when_world_bounds_overlap() {
+    let d = 0.5_f64.sqrt();
+    let rotation = [[d, -d, 0.], [d, d, 0.], [0., 0., 1.]];
+    let measure = |solid: Solid| {
+        let a = solid
+            .transformed(RigidTransform {
+                rotation,
+                ..Default::default()
+            })
+            .unwrap();
+        let b = moved(&a, [-3. * d, 3. * d, 0.]);
+        let [a_box, b_box] = [&a, &b].map(|body| body.bounds().unwrap());
+        assert!((0..3).all(|i| a_box.min[i] < b_box.max[i] && b_box.min[i] < a_box.max[i]));
+        a.inspect_pair(&b, 1e-7, p()).unwrap()
+    };
+    let rust = measure(rust_stock([10, 2, 2], [0.; 3]));
+    let native = measure(Solid::box_solid([10., 2., 2.], p()).unwrap());
+    assert_eq!(rust.relation, SolidPairRelation::Separated);
+    near(rust.minimum_distance.distance_mm, 1.);
+    near(
+        rust.minimum_distance.distance_mm,
+        native.minimum_distance.distance_mm,
+    );
+    near(rust.common_volume_mm3, 0.);
+}
 #[test]
 fn exact_common_distinguishes_gap_touching_overlap_and_containment_without_mutation() {
     let owner = EntityId::new();
@@ -129,9 +255,13 @@ fn rotated_intersecting_solids_keep_only_consistent_native_witnesses() {
             0.,
         );
     }
-    assert!(!result.minimum_distance.witnesses_complete);
-    assert!(
-        result.minimum_distance.total_solutions > result.minimum_distance.witnesses.len() as u32
+    // The owned kernel reports every distinct exact witness it enumerates;
+    // completeness is exactly the published total matching the retained list.
+    let total = result.minimum_distance.total_solutions.unwrap() as usize;
+    assert!(total > 0);
+    assert_eq!(
+        result.minimum_distance.witnesses_complete,
+        total == result.minimum_distance.witnesses.len()
     );
 }
 #[test]
@@ -159,4 +289,48 @@ fn independent_native_owners_inspect_pairs_concurrently_without_source_mutation(
     for worker in workers {
         worker.join().unwrap();
     }
+}
+
+#[test]
+fn rust_machined_frame_certifies_an_empty_window_from_stock_cells() {
+    use multicad_core::references::Origin;
+    let base = rust_stock([30, 20, 4], [0.; 3]);
+    let window = rust_stock([20, 10, 6], [5., 5., -1.]);
+    let frame = base
+        .boolean(&window, BooleanOperation::Subtract, p())
+        .unwrap()
+        .unwrap();
+    let hole_frame = PlaneFrame {
+        origin: [2.5, 10., -1.],
+        ..Default::default()
+    };
+    let drill = CircularPocketTool {
+        frame: hole_frame,
+        center_uv: [0.; 2],
+        radius_mm: 1.,
+        displacement_mm: [0., 0., 6.],
+        origin: Origin {
+            source: EntityId::new(),
+            role: "mounting hole".into(),
+        },
+    };
+    let drilled = frame
+        .rust_drill_circular_machining(&[drill], &[true], p())
+        .unwrap();
+    let clear = rust_stock([5, 3, 5], [8., 7., -0.5]);
+    let collision = rust_stock([5, 3, 5], [2., 7., -0.5]);
+    let [a, b] = [drilled.bounds().unwrap(), clear.bounds().unwrap()];
+    assert!((0..3).all(|axis| a.min[axis] < b.max[axis] && b.min[axis] < a.max[axis]));
+    near(
+        drilled.rust_occupied_overlap_volume(&clear, p()).unwrap(),
+        0.,
+    );
+    near(
+        clear.rust_occupied_overlap_volume(&drilled, p()).unwrap(),
+        0.,
+    );
+    let collision = drilled
+        .rust_occupied_overlap_volume(&collision, p())
+        .unwrap_err();
+    assert_eq!(collision.kind, GeometryErrorKind::Unsupported);
 }

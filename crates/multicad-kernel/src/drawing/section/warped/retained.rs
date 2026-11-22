@@ -1,0 +1,904 @@
+//! Clip exact shell edges and blockers to a section's retained depth.
+use super::*;
+mod torus_side;
+use multicad_rust_kernel::{
+    planar_projection::{
+        self, AnalyticFace, Body, ContourCandidate, DepthRange, FaceTrim, HiddenCandidate,
+        LineCandidate, SpatialEllipseCandidate, SpatialRimCandidate,
+    },
+    planar_section, section_hatch,
+    trim_curve::{Ellipse as SpatialEllipse, EllipseArc},
+};
+
+pub(in crate::drawing::section) fn project(
+    solids: &[DrawingSolid<'_>],
+    options: DrawingProjection,
+    near: f64,
+) -> Option<Result<Vec<ProjectedVector>, GeometryError>> {
+    let members = projection_members(solids);
+    let has_torus = members
+        .iter()
+        .any(|(_, solid)| solid.torus_body().is_some());
+    if !has_torus
+        && members.iter().any(|(_, solid)| {
+            solid.drawing_warped_shell().is_none() && !curved::warped::is_curved_sweep(solid)
+        })
+    {
+        return None;
+    }
+    Some((|| {
+        let mut scene = Retained {
+            options,
+            lines: Vec::new(),
+            contours: Vec::new(),
+            hidden: Vec::new(),
+            rims: Vec::new(),
+            ellipses: Vec::new(),
+            blockers: Vec::new(),
+            output: Vec::new(),
+            hatch_budget: section_hatch::Budget::default(),
+        };
+        let far = options.section_depth_mm.map(|distance| near - distance);
+        let windows = [options.section_u_mm, options.section_v_mm];
+        let depth = DepthRange::new(near, far)
+            .and_then(|depth| depth.with_lateral(windows))
+            .map_err(planar::projection_error)?;
+        let tolerance = members.iter().fold(
+            GeometryPolicy::default().linear_tolerance_mm,
+            |tolerance, (_, solid)| tolerance.max(solid.geometry_policy().linear_tolerance_mm),
+        );
+        let mut planar = Vec::new();
+        for (source, solid) in members {
+            let policy = solid.geometry_policy();
+            let hatch = solids[source].hatch;
+            if let Some((body, placement)) = solid.torus_body() {
+                let input = DrawingSolid { solid, hatch };
+                let (center, axis) = torus::drawing_frame(placement, options.frame);
+                if axis[0].hypot(axis[1]) <= torus::ANGULAR {
+                    scene.axial_torus(input, placement, body.radii_mm(), source, depth)?;
+                } else if axis[2].abs() > torus::ANGULAR {
+                    scene.oblique_torus(
+                        input,
+                        placement,
+                        (center, axis),
+                        body.radii_mm(),
+                        source,
+                        depth,
+                    )?;
+                } else {
+                    scene.transverse_torus(
+                        input,
+                        placement,
+                        center,
+                        body.radii_mm(),
+                        source,
+                        depth,
+                    )?;
+                }
+                continue;
+            }
+            let built;
+            let (shell, placement) = match solid.drawing_warped_shell() {
+                Some(found) => found,
+                None => match curved::warped::curved_sweep_shell(solid).transpose()? {
+                    Some((shell, placement)) => {
+                        built = shell;
+                        (&built, placement)
+                    }
+                    None => {
+                        planar.push((source, DrawingSolid { solid, hatch }));
+                        continue;
+                    }
+                },
+            };
+            let frame = Frame::new(placement, options.frame);
+            let Some(sides) = window_sides(shell, &frame, windows, near, far) else {
+                continue;
+            };
+            let elevation = curved::warped::elevation(
+                shell,
+                placement,
+                source,
+                policy.linear_tolerance_mm,
+                options,
+            )?;
+            for line in elevation.lines {
+                scene
+                    .lines
+                    .extend(depth.clip_line(line).map_err(planar::projection_error)?);
+            }
+            for rim in elevation.rims {
+                scene
+                    .rims
+                    .extend(depth.clip_rim(rim).map_err(planar::projection_error)?);
+            }
+            for ellipse in elevation.spatial_ellipses {
+                scene.ellipses.extend(
+                    depth
+                        .clip_ellipse(ellipse)
+                        .map_err(planar::projection_error)?,
+                );
+            }
+            scene.blockers.extend(
+                elevation
+                    .blockers
+                    .into_iter()
+                    .filter_map(|face| face.retained(depth)),
+            );
+            let cut = frame.clip(
+                frame.intersection(shell, near, scene.options.maximum_curves, policy)?,
+                options,
+                policy,
+            )?;
+            scene.near_cut(&frame, &cut, near, source, policy, hatch)?;
+            if let Some(far) = far {
+                let cut = frame.clip(
+                    frame.intersection(shell, far, scene.options.maximum_curves, policy)?,
+                    options,
+                    policy,
+                )?;
+                scene.far_cut(&frame, &cut, far, source);
+            }
+            for (axis, coordinates) in sides.into_iter().enumerate() {
+                for coordinate in coordinates.into_iter().flatten() {
+                    let cut = frame.section_at(
+                        shell,
+                        axis,
+                        coordinate,
+                        options.maximum_curves,
+                        policy,
+                    )?;
+                    scene.side_cut(&frame, cut, axis, coordinate, depth, source)?;
+                }
+            }
+        }
+        if planar.is_empty() {
+            return scene.finish(tolerance, &[], &[]);
+        }
+        let planar_inputs: Vec<_> = planar
+            .iter()
+            .map(|(_, input)| DrawingSolid {
+                solid: input.solid,
+                hatch: input.hatch,
+            })
+            .collect();
+        let (bodies, _) = planar::prepare(&planar_inputs, options.frame)?;
+        let retained = planar_section::retain(
+            bodies,
+            planar_section::Options {
+                depth: near,
+                windows,
+                tolerance,
+                segment_limit: (scene.options.maximum_curves as usize)
+                    .min(scene.options.maximum_points as usize / 2),
+            },
+            far,
+        )
+        .map_err(planar::projection_error)?;
+        let sources: Vec<_> = planar.iter().map(|(source, _)| *source).collect();
+        let cut_members = planar
+            .into_iter()
+            .zip(retained.trimmed)
+            .zip(&retained.bodies)
+            .filter_map(|((member, trimmed), body)| {
+                (trimmed && !body.faces.is_empty()).then_some(member)
+            });
+        scene.extend(machined::project_members(
+            cut_members,
+            DrawingProjection {
+                section_only: true,
+                section_depth_mm: None,
+                ..scene.options
+            },
+            near,
+        )?)?;
+        scene.finish(tolerance, &retained.bodies, &sources)
+    })())
+}
+
+struct Retained {
+    options: DrawingProjection,
+    lines: Vec<LineCandidate>,
+    contours: Vec<ContourCandidate>,
+    hidden: Vec<HiddenCandidate>,
+    rims: Vec<SpatialRimCandidate>,
+    ellipses: Vec<SpatialEllipseCandidate>,
+    blockers: Vec<AnalyticFace>,
+    output: Vec<ProjectedVector>,
+    hatch_budget: section_hatch::Budget,
+}
+
+impl Retained {
+    fn oblique_torus(
+        &mut self,
+        input: DrawingSolid<'_>,
+        placement: PlaneFrame,
+        (center, axis): (Point, Point),
+        radii: [f64; 2],
+        source: usize,
+        depth: DepthRange,
+    ) -> Result<(), GeometryError> {
+        let Some(blocker) = AnalyticFace::retained_torus(center, axis, radii, depth)
+            .map_err(planar::projection_error)?
+        else {
+            return Ok(());
+        };
+        let [major, minor] = radii;
+        let bounds: [[f64; 2]; 2] = std::array::from_fn(|i| {
+            let extent = major * axis[(i + 1) % 3].hypot(axis[(i + 2) % 3]) + minor;
+            [center[i] - extent, center[i] + extent]
+        });
+        let Some(sides) = self.torus_window_sides(bounds) else {
+            return Ok(());
+        };
+        let face = self.blockers.len();
+        self.blockers.push(blocker);
+        let used = (self.contours.len() + self.hidden.len()) as u32;
+        let (visible, hidden) = torus::oblique::contours(
+            center,
+            axis,
+            radii,
+            DrawingProjection {
+                maximum_curves: self.options.maximum_curves.saturating_sub(used),
+                maximum_points: self.options.maximum_points.saturating_sub(2 * used),
+                ..self.options
+            },
+            source,
+            face,
+        )?;
+        for candidate in visible {
+            if let Some(line) = depth
+                .clip_line(candidate.line)
+                .map_err(planar::projection_error)?
+            {
+                self.contours.push(ContourCandidate { line, ..candidate });
+            }
+        }
+        for line in hidden {
+            self.hidden.extend(
+                depth
+                    .clip_line(line)
+                    .map_err(planar::projection_error)?
+                    .map(HiddenCandidate::Line),
+            );
+        }
+        let near = self
+            .options
+            .section_offset_mm
+            .expect("retained section depth");
+        let far = self
+            .options
+            .section_depth_mm
+            .map(|distance| near - distance);
+        self.torus_sides(&input, placement, radii, (source, face), sides)?;
+        self.torus_caps(input, placement, radii, source, near, far)
+    }
+
+    fn transverse_torus(
+        &mut self,
+        input: DrawingSolid<'_>,
+        placement: PlaneFrame,
+        center: Point,
+        radii: [f64; 2],
+        source: usize,
+        depth: DepthRange,
+    ) -> Result<(), GeometryError> {
+        let near = self
+            .options
+            .section_offset_mm
+            .expect("retained section depth");
+        let far = self
+            .options
+            .section_depth_mm
+            .map(|distance| near - distance);
+        let (_, rims) = torus::scene_member(placement, radii, self.options.frame, source)?;
+        let [major, minor] = radii;
+        let outer = major + minor;
+        let nearest = center[2].clamp(far.unwrap_or(f64::NEG_INFINITY), near);
+        let delta = (nearest - center[2]).abs();
+        if delta >= outer {
+            return Ok(());
+        }
+        let (_, axis) = torus::drawing_frame(placement, self.options.frame);
+        let Some(blocker) = AnalyticFace::retained_torus(center, axis, radii, depth)
+            .map_err(planar::projection_error)?
+        else {
+            return Ok(());
+        };
+        let [a, b, _] = axis;
+        let across = [b.abs(), a.abs()];
+        let width = ((outer - delta) * (outer + delta)).sqrt();
+        let axial = if delta <= major {
+            minor
+        } else {
+            ((outer - delta) * (delta - major + minor)).sqrt()
+        };
+        let bounds: [[f64; 2]; 2] = std::array::from_fn(|i| {
+            let extent = axis[i].abs() * axial + across[i] * width;
+            [center[i] - extent, center[i] + extent]
+        });
+        let Some(sides) = self.torus_window_sides(bounds) else {
+            return Ok(());
+        };
+        let face = self.blockers.len();
+        self.blockers.push(blocker);
+        let at_midplane = |z: f64| {
+            (z - center[2]).abs() <= torus::ANGULAR * z.abs().max(center[2].abs()).max(major)
+        };
+        for rim in rims {
+            if rim.depth_sine == 0. {
+                if !at_midplane(near) && !far.is_some_and(at_midplane) {
+                    self.rims
+                        .extend(depth.clip_rim(rim).map_err(planar::projection_error)?);
+                }
+            } else {
+                self.add_torus_rail(rim, depth)?;
+            }
+        }
+        self.torus_sides(&input, placement, radii, (source, face), sides)?;
+        self.torus_caps(input, placement, radii, source, near, far)
+    }
+
+    fn torus_window_sides(&self, bounds: [[f64; 2]; 2]) -> Option<[[Option<f64>; 2]; 2]> {
+        let windows = [self.options.section_u_mm, self.options.section_v_mm];
+        if windows
+            .into_iter()
+            .zip(bounds)
+            .any(|(window, [min, max])| window.is_some_and(|[lo, hi]| lo >= max || hi <= min))
+        {
+            return None;
+        }
+        Some(std::array::from_fn(|i| {
+            windows[i].map_or([None; 2], |[lo, hi]| {
+                [
+                    (lo > bounds[i][0]).then_some(lo),
+                    (hi < bounds[i][1]).then_some(hi),
+                ]
+            })
+        }))
+    }
+
+    fn torus_sides(
+        &mut self,
+        input: &DrawingSolid<'_>,
+        placement: PlaneFrame,
+        radii: [f64; 2],
+        owner: (usize, usize),
+        sides: [[Option<f64>; 2]; 2],
+    ) -> Result<(), GeometryError> {
+        let view = self.options.frame;
+        let axes = planar::view_axes(view);
+        let (center, axis) = torus::drawing_frame(placement, view);
+        let near = self
+            .options
+            .section_offset_mm
+            .expect("retained section depth");
+        let minimum = center[2] - radii[0] * axis[0].hypot(axis[1]) - radii[1];
+        let far = self
+            .options
+            .section_depth_mm
+            .map_or(minimum - 1., |distance| near - distance);
+        let windows = [self.options.section_u_mm, self.options.section_v_mm];
+        let tolerance = input.solid.geometry_policy().linear_tolerance_mm;
+        let side_input = DrawingSolid {
+            solid: input.solid,
+            hatch: None,
+        };
+        for (axis, coordinates) in sides.into_iter().enumerate() {
+            for coordinate in coordinates.into_iter().flatten() {
+                let used = (self.contours.len() + self.hidden.len()) as u32;
+                let maximum_curves = self.options.maximum_curves.saturating_sub(used);
+                let maximum_points = self.options.maximum_points.saturating_sub(2 * used);
+                if maximum_curves == 0 || maximum_points < 2 {
+                    return Err(limit());
+                }
+                // The other paper axis becomes U and view depth becomes V
+                // in the window plane. Its normal points toward +U or -V.
+                let section = torus::project(
+                    &side_input,
+                    placement,
+                    radii,
+                    DrawingProjection {
+                        frame: PlaneFrame {
+                            u: axes[1 - axis],
+                            v: axes[2],
+                            ..view
+                        },
+                        section_offset_mm: Some(if axis == 0 { coordinate } else { -coordinate }),
+                        section_u_mm: windows[1 - axis],
+                        section_v_mm: Some([far, near]),
+                        section_only: true,
+                        section_depth_mm: None,
+                        maximum_curves,
+                        maximum_points,
+                        ..self.options
+                    },
+                )?;
+                self.contours.extend(torus_side::contours(
+                    &section,
+                    axis,
+                    coordinate,
+                    near,
+                    tolerance,
+                    owner,
+                    (maximum_curves as usize).min(maximum_points as usize / 2),
+                )?);
+            }
+        }
+        Ok(())
+    }
+
+    fn torus_caps(
+        &mut self,
+        input: DrawingSolid<'_>,
+        placement: PlaneFrame,
+        radii: [f64; 2],
+        source: usize,
+        near: f64,
+        far: Option<f64>,
+    ) -> Result<(), GeometryError> {
+        let cut_options = |z, options: DrawingProjection| DrawingProjection {
+            section_offset_mm: Some(z),
+            section_only: true,
+            section_depth_mm: None,
+            ..options
+        };
+        let mut near_vectors =
+            torus::project(&input, placement, radii, cut_options(near, self.options))?;
+        for vector in &mut near_vectors {
+            vector.source_index = source;
+        }
+        self.extend(near_vectors)?;
+        if let Some(far) = far {
+            let far_input = DrawingSolid {
+                hatch: None,
+                ..input
+            };
+            for vector in
+                torus::project(&far_input, placement, radii, cut_options(far, self.options))?
+            {
+                match vector.curve {
+                    VectorCurve::Line { a, b } => self.lines.push(LineCandidate {
+                        source,
+                        points: [a, b].map(|[x, y]| [x, y, far]),
+                    }),
+                    VectorCurve::Ellipse {
+                        center,
+                        u,
+                        v,
+                        major_mm,
+                        minor_mm,
+                        start_rad,
+                        end_rad,
+                    } => {
+                        self.rims.push(SpatialRimCandidate {
+                            source,
+                            ellipse: Ellipse {
+                                center,
+                                u,
+                                v,
+                                major: major_mm,
+                                minor: minor_mm,
+                                trim: [start_rad, end_rad],
+                            },
+                            depth: far,
+                            depth_sine: 0.,
+                        });
+                    }
+                    _ => return Err(invalid_cap()),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn add_torus_rail(
+        &mut self,
+        rim: SpatialRimCandidate,
+        depth: DepthRange,
+    ) -> Result<(), GeometryError> {
+        let front = depth.clip_rim(rim).map_err(planar::projection_error)?;
+        let rear = depth
+            .clip_rim(SpatialRimCandidate {
+                depth_sine: -rim.depth_sine,
+                ..rim
+            })
+            .map_err(planar::projection_error)?;
+        // Both 3D rails project onto the same line. Keep the nearer rail
+        // where both survive and the rear rail where clipping removed it.
+        for rear in rear {
+            let [mut lo, hi] = rear.ellipse.trim;
+            let mut add = |trim| {
+                self.rims.push(SpatialRimCandidate {
+                    ellipse: Ellipse {
+                        trim,
+                        ..rear.ellipse
+                    },
+                    ..rear
+                })
+            };
+            for edge in &front {
+                let [a, b] = edge.ellipse.trim;
+                if lo < a.min(hi) {
+                    add([lo, a.min(hi)]);
+                }
+                lo = lo.max(b);
+            }
+            if lo < hi {
+                add([lo, hi]);
+            }
+        }
+        self.rims.extend(front);
+        Ok(())
+    }
+
+    fn axial_torus(
+        &mut self,
+        input: DrawingSolid<'_>,
+        placement: PlaneFrame,
+        radii: [f64; 2],
+        source: usize,
+        depth: DepthRange,
+    ) -> Result<(), GeometryError> {
+        let near = self
+            .options
+            .section_offset_mm
+            .expect("retained section depth");
+        let [x, y, center_depth] = torus::axial_center(placement, self.options.frame)?;
+        let center = [x, y];
+        let [_, minor] = radii;
+        let near_delta = near - center_depth;
+        let far_delta = self
+            .options
+            .section_depth_mm
+            .map_or(f64::NEG_INFINITY, |distance| near_delta - distance);
+        if near_delta <= -minor || far_delta >= minor {
+            return Ok(());
+        }
+        let widest = 0_f64.clamp(far_delta, near_delta);
+        let outer = torus::section_radii(radii, widest)[0];
+        let windows = [self.options.section_u_mm, self.options.section_v_mm];
+        let distances = std::array::from_fn::<_, 2, _>(|axis| {
+            windows[axis].map_or(0., |[lo, hi]| center[axis] - center[axis].clamp(lo, hi))
+        });
+        if distances[0].hypot(distances[1]) >= outer {
+            return Ok(());
+        }
+        let bounds = center.map(|coordinate| [coordinate - outer, coordinate + outer]);
+        let Some(sides) = self.torus_window_sides(bounds) else {
+            return Ok(());
+        };
+        let Some(blocker) =
+            AnalyticFace::retained_torus([x, y, center_depth], [0., 0., 1.], radii, depth)
+                .map_err(planar::projection_error)?
+        else {
+            return Ok(());
+        };
+        let face = self.blockers.len();
+        self.blockers.push(blocker);
+        if near_delta.abs() < minor {
+            let cut_radii = torus::section_radii(radii, near_delta);
+            let mut vectors = section::project_concentric(center, cut_radii, &input, self.options)?;
+            for vector in &mut vectors {
+                vector.source_index = source;
+            }
+            self.extend(vectors)?;
+        }
+        let mut add_rims = |delta| {
+            for radius in torus::section_radii(radii, delta) {
+                let rim = SpatialRimCandidate {
+                    source,
+                    ellipse: Ellipse {
+                        center,
+                        major: radius,
+                        minor: radius,
+                        u: [1., 0.],
+                        v: [0., 1.],
+                        trim: [0., TAU],
+                    },
+                    depth: center_depth + delta,
+                    depth_sine: 0.,
+                };
+                self.rims
+                    .extend(depth.clip_rim(rim).map_err(planar::projection_error)?);
+            }
+            Ok::<(), GeometryError>(())
+        };
+        if widest != near_delta {
+            add_rims(widest)?;
+        }
+        if self.options.hidden_lines && far_delta.abs() < minor && far_delta != widest {
+            add_rims(far_delta)?;
+        }
+        self.torus_sides(&input, placement, radii, (source, face), sides)
+    }
+
+    fn near_cut(
+        &mut self,
+        frame: &Frame,
+        loops: &[Vec<SectionEdge>],
+        depth: f64,
+        source: usize,
+        policy: GeometryPolicy,
+        hatch: Option<DrawingHatch>,
+    ) -> Result<(), GeometryError> {
+        if loops.is_empty() {
+            return Ok(());
+        }
+        let rings = loops
+            .iter()
+            .map(|ring| {
+                ring.iter()
+                    .map(|edge| section_trim(frame, *edge, depth))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let face = AnalyticFace::plane(
+            [0., 0., depth],
+            [0., 0., 1.],
+            rings,
+            policy.linear_tolerance_mm,
+        )
+        .map_err(planar::projection_error)?;
+        self.blockers.extend(face);
+        let vectors = frame.vectors(loops, self.options, source)?;
+        self.extend(vectors)?;
+        if let Some(hatch) = hatch.filter(|h| h.pattern != HatchPattern::None) {
+            let boundary = frame.hatch(
+                loops,
+                self.options
+                    .chord_tolerance_mm
+                    .min(policy.minimum_feature_mm / 4.),
+            )?;
+            let mut curves = self.options.maximum_curves as usize;
+            let mut points = self.options.maximum_points as usize;
+            let hatch = publish_hatch(
+                source,
+                hatch,
+                &boundary,
+                policy.linear_tolerance_mm,
+                &mut curves,
+                &mut points,
+                &mut self.hatch_budget,
+            )?;
+            self.extend(hatch)?;
+        }
+        Ok(())
+    }
+
+    fn far_cut(&mut self, frame: &Frame, loops: &[Vec<SectionEdge>], depth: f64, source: usize) {
+        for curve in loops
+            .iter()
+            .flatten()
+            .flat_map(|&edge| frame.curves(edge).into_iter().flatten())
+        {
+            match curve {
+                Curve::Line(points) => self.lines.push(LineCandidate {
+                    source,
+                    points: points.map(|[x, y]| [x, y, depth]),
+                }),
+                Curve::Ellipse(ellipse) => self.ellipses.push(SpatialEllipseCandidate {
+                    source,
+                    ellipse,
+                    depth,
+                    depth_cosine: 0.,
+                    depth_sine: 0.,
+                }),
+            }
+        }
+    }
+
+    fn side_cut(
+        &mut self,
+        frame: &Frame,
+        loops: Vec<Vec<SectionEdge>>,
+        axis: usize,
+        coordinate: f64,
+        depth: DepthRange,
+        source: usize,
+    ) -> Result<(), GeometryError> {
+        let other = 1 - axis;
+        let across = frame.directions.map(|direction| direction[other]);
+        let depth_axis = frame.directions.map(|direction| direction[2]);
+        let screen_point = |p| {
+            let [x, y] = frame.point(p);
+            let mut point = [x, y, frame.origin[2] + dot(depth_axis, p)];
+            point[axis] = coordinate;
+            point
+        };
+        // The cut face is edge-on. Its near and far connectors are already
+        // part of those caps, and connectors to another side project to points.
+        for edge in loops.into_iter().flatten() {
+            match edge.curve {
+                Trim::Line => self.lines.extend(
+                    depth
+                        .clip_line(LineCandidate {
+                            source,
+                            points: edge.ends_mm.map(screen_point),
+                        })
+                        .map_err(planar::projection_error)?,
+                ),
+                Trim::Ellipse(arc) => {
+                    let ellipse = arc.ellipse();
+                    let [major, minor] = ellipse.semiaxes_mm();
+                    let [u, v] = [
+                        ellipse.major_axis().map(|component| component * major),
+                        ellipse.minor_axis().map(|component| component * minor),
+                    ];
+                    let [a, b] = [dot(across, u), dot(across, v)];
+                    let phase = b.atan2(a);
+                    let (sin, cos) = phase.sin_cos();
+                    let [du, dv] = [dot(depth_axis, u), dot(depth_axis, v)];
+                    // Align the projected coordinate with cosine. The depth of
+                    // an oblique ellipse retains both terms after this rotation.
+                    let depth_cosine = du.mul_add(cos, dv * sin);
+                    let depth_sine = (-du).mul_add(sin, dv * cos);
+                    let [x, y, z] = screen_point(ellipse.center_mm());
+                    let sweep = arc.sweep_rad();
+                    let lo = (arc.start_rad() + sweep.min(0.) - phase).rem_euclid(TAU);
+                    let hi = lo + sweep.abs();
+                    for trim in [[lo, hi.min(TAU)], [0., hi - TAU]] {
+                        if trim[1] > trim[0] {
+                            self.ellipses.extend(
+                                depth
+                                    .clip_ellipse(SpatialEllipseCandidate {
+                                        source,
+                                        ellipse: Ellipse {
+                                            center: [x, y],
+                                            u: std::array::from_fn(|i| f64::from(i == other)),
+                                            v: std::array::from_fn(|i| f64::from(i == axis)),
+                                            major: a.hypot(b),
+                                            minor: 0.,
+                                            trim,
+                                        },
+                                        depth: z,
+                                        depth_cosine,
+                                        depth_sine,
+                                    })
+                                    .map_err(planar::projection_error)?,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn extend(&mut self, vectors: Vec<ProjectedVector>) -> Result<(), GeometryError> {
+        let points = vectors
+            .iter()
+            .map(|vector| vector.preview_mm.len() as u32)
+            .sum();
+        self.options.maximum_points = self
+            .options
+            .maximum_points
+            .checked_sub(points)
+            .ok_or_else(limit)?;
+        self.options.maximum_curves = self
+            .options
+            .maximum_curves
+            .checked_sub(vectors.len() as u32)
+            .ok_or_else(limit)?;
+        self.output.extend(vectors);
+        Ok(())
+    }
+
+    fn finish(
+        mut self,
+        tolerance: f64,
+        bodies: &[Body],
+        sources: &[usize],
+    ) -> Result<Vec<ProjectedVector>, GeometryError> {
+        if !bodies.is_empty()
+            || !self.lines.is_empty()
+            || !self.contours.is_empty()
+            || !self.hidden.is_empty()
+            || !self.rims.is_empty()
+            || !self.ellipses.is_empty()
+        {
+            let segment_limit = (self.options.maximum_curves as usize)
+                .min(self.options.maximum_points as usize / 2);
+            if segment_limit == 0 {
+                return Err(limit());
+            }
+            let result = planar_projection::project_scene_with_analytic_faces(
+                bodies,
+                &[],
+                planar_projection::SceneExtras {
+                    lines: &self.lines,
+                    contours: &self.contours,
+                    intrinsic_hidden: &self.hidden,
+                    spatial_rims: &self.rims,
+                    spatial_ellipses: &self.ellipses,
+                    ..Default::default()
+                },
+                &self.blockers,
+                planar_projection::Options {
+                    tolerance,
+                    hidden_lines: self.options.hidden_lines,
+                    tangent_edges: self.options.tangent_edges,
+                    detail: None,
+                    segment_limit,
+                },
+            )
+            .map_err(planar::projection_error)?;
+            self.output
+                .extend(curved::publish_scene(result, self.options, sources, &[])?);
+        }
+        self.output.sort_by_key(|vector| vector.source_index);
+        Ok(self.output)
+    }
+}
+
+fn section_trim(frame: &Frame, edge: SectionEdge, depth: f64) -> Result<FaceTrim, GeometryError> {
+    match edge.curve {
+        Trim::Line => Ok(FaceTrim::Line(edge.ends_mm.map(|point| {
+            let [x, y] = frame.point(point);
+            [x, y, depth]
+        }))),
+        Trim::Ellipse(arc) => {
+            let ellipse = arc.ellipse();
+            let [major, minor] = ellipse.semiaxes_mm();
+            let [x, y] = frame.point(ellipse.center_mm());
+            let [u, v] =
+                [ellipse.major_axis(), ellipse.minor_axis()].map(|axis| frame.vector(axis));
+            let sign = (u[0] * v[1] - u[1] * v[0]).signum();
+            let ellipse = SpatialEllipse::new(
+                [x, y, depth],
+                [0., 0., sign],
+                [u[0], u[1], 0.],
+                [major, minor],
+            )
+            .map_err(|_| invalid_cap())?;
+            let arc = EllipseArc::new(ellipse, arc.start_rad(), arc.sweep_rad())
+                .map_err(|_| invalid_cap())?;
+            Ok(FaceTrim::Arc(arc))
+        }
+    }
+}
+
+fn invalid_cap() -> GeometryError {
+    err(
+        GeometryErrorKind::InvalidResult,
+        "Invalid retained section cap",
+    )
+}
+
+fn window_sides(
+    shell: &Shell,
+    frame: &Frame,
+    windows: [Option<[f64; 2]>; 2],
+    near: f64,
+    far: Option<f64>,
+) -> Option<[[Option<f64>; 2]; 2]> {
+    let [min, max] = shell.bounds_mm();
+    let bounds: [[f64; 2]; 3] = std::array::from_fn(|axis| {
+        [false, true].map(|upper| {
+            let point = std::array::from_fn(|i| {
+                if upper == (frame.directions[i][axis] >= 0.) {
+                    max[i]
+                } else {
+                    min[i]
+                }
+            });
+            frame.origin[axis] + dot(point, frame.directions.map(|direction| direction[axis]))
+        })
+    });
+    if near <= bounds[2][0] || far.is_some_and(|far| far >= bounds[2][1]) {
+        return None;
+    }
+    if windows
+        .into_iter()
+        .zip(bounds)
+        .any(|(window, [lo, hi])| window.is_some_and(|[a, b]| hi <= a || lo >= b))
+    {
+        return None;
+    }
+    Some(std::array::from_fn(|axis| {
+        windows[axis].map_or([None; 2], |[a, b]| {
+            let [lo, hi] = bounds[axis];
+            [(lo < a).then_some(a), (hi > b).then_some(b)]
+        })
+    }))
+}

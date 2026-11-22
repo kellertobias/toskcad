@@ -1,9 +1,16 @@
 //! Thread solids and receiving cuts use the same versioned source for UI/MCP.
+mod cosmetic;
 mod end_treatments;
+mod internal;
+mod internal_treatments;
+pub(crate) mod pipe;
 use crate::{ModelError, error};
 use multicad_core::{
     document::EntityId,
-    model::{ResolvedThread, ThreadDefinition, ThreadHand, ThreadMode, ThreadRepresentation},
+    model::{
+        ResolvedThread, ThreadDefinition, ThreadFamily, ThreadHand, ThreadMode,
+        ThreadRepresentation,
+    },
     parameters::EvaluatedParameters,
     references::Origin,
 };
@@ -88,7 +95,16 @@ pub(crate) fn build(
         .parameters
         .resolve(parameters, source.mode)
         .map_err(|e| error(Some(feature), e))?;
-    let target = source
+    let target = receiving_target(feature, source, solids)?;
+    build_resolved(feature, resolved, source.mode, target, policy)
+}
+
+fn receiving_target<'a>(
+    feature: EntityId,
+    source: &ThreadDefinition,
+    solids: &'a BTreeMap<EntityId, Solid>,
+) -> Result<Option<&'a Solid>, ModelError> {
+    source
         .target
         .as_ref()
         .map(|input| {
@@ -99,9 +115,435 @@ pub(crate) fn build(
                 )
             })
         })
-        .transpose()?;
-    build_resolved(feature, resolved, source.mode, target, policy)
+        .transpose()
 }
+
+fn helical_spec(thread: &ResolvedThread) -> HelicalThread {
+    let profile = thread.profile;
+    HelicalThread {
+        major_radius_mm: thread.major_radius_mm,
+        pitch_mm: thread.pitch_mm,
+        length_mm: thread.length_mm,
+        depth_mm: profile.depth_mm,
+        crest_width_mm: profile.crest_width_mm,
+        lower_flank_deg: profile.lower_flank_deg,
+        upper_flank_deg: profile.upper_flank_deg,
+        radial_taper: profile.radial_taper,
+        starts: thread.starts,
+        left_hand: thread.hand == ThreadHand::Left,
+    }
+}
+
+pub(crate) fn build_rust(
+    feature: EntityId,
+    source: &ThreadDefinition,
+    parameters: &EvaluatedParameters,
+    solids: &BTreeMap<EntityId, Solid>,
+    policy: GeometryPolicy,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<Solid, ModelError> {
+    let fail = |message| error(Some(feature), message);
+    let thread = source
+        .parameters
+        .resolve(parameters, source.mode)
+        .map_err(|cause| error(Some(feature), cause))?;
+    if thread.representation == ThreadRepresentation::CosmeticEnvelope
+        && source.mode == ThreadMode::NewExternal
+    {
+        return cosmetic::shaft(feature, &thread, policy);
+    }
+    if thread.representation == ThreadRepresentation::Modeled
+        && rounded_family(source.parameters.family)
+    {
+        if !matches!(
+            source.mode,
+            ThreadMode::NewExternal | ThreadMode::CutInternal
+        ) {
+            return Err(fail(
+                "Rust double-rounded external receiving closures are not certified",
+            ));
+        }
+        let (spec, frame) = rounded_spec(feature, &thread)?;
+        return if source.mode == ThreadMode::CutInternal {
+            let target = receiving_target(feature, source, solids)?
+                .ok_or_else(|| fail("Receiving rounded thread has no target predecessor"))?;
+            target.rust_cut_rounded_internal_thread(
+                spec,
+                thread.minimum_wall_mm,
+                feature,
+                frame,
+                policy,
+            )
+        } else {
+            Solid::rust_rounded_thread(spec, feature, frame, policy)
+        }
+        .map_err(|cause| error(Some(feature), cause));
+    }
+    if source.mode == ThreadMode::NewExternal
+        && thread.representation == ThreadRepresentation::Modeled
+        && matches!(
+            source.parameters.family,
+            ThreadFamily::Npt | ThreadFamily::Bspt
+        )
+    {
+        return pipe::shaft(
+            feature,
+            source.parameters.family,
+            &thread,
+            policy,
+            interrupt,
+        );
+    }
+    if source.mode == ThreadMode::CutExternal
+        && source.parameters.family == ThreadFamily::Npt
+        && thread.representation == ThreadRepresentation::Modeled
+    {
+        let target = receiving_target(feature, source, solids)?
+            .ok_or_else(|| fail("External pipe thread has no target predecessor"))?;
+        return pipe::cut_external_stock(feature, &thread, target, policy, interrupt);
+    }
+    if source.mode == ThreadMode::CutInternal
+        && thread.representation == ThreadRepresentation::Modeled
+        && matches!(
+            source.parameters.family,
+            ThreadFamily::Npt | ThreadFamily::Bspt
+        )
+    {
+        let target = receiving_target(feature, source, solids)?
+            .ok_or_else(|| fail("Internal pipe thread has no target predecessor"))?;
+        return pipe::internal_receiver(
+            feature,
+            source.parameters.family,
+            &thread,
+            target,
+            policy,
+            interrupt,
+        );
+    }
+    validate_rust_family(feature, source.parameters.family)?;
+    if thread.representation == ThreadRepresentation::CosmeticEnvelope
+        && source.mode == ThreadMode::CutInternal
+        && thread
+            .end_treatments
+            .as_ref()
+            .is_none_or(|e| e.start_chamfer_radial_depth_mm == 0. && e.end_relief_length_mm == 0.)
+    {
+        let target = receiving_target(feature, source, solids)?
+            .ok_or_else(|| fail("Receiving thread has no target predecessor"))?;
+        return cosmetic::bore(feature, &thread, target, policy);
+    }
+    if thread.representation == ThreadRepresentation::CosmeticEnvelope
+        && source.mode == ThreadMode::CutExternal
+    {
+        return Err(fail(
+            "Rust external receiving cuts require a modeled thread; cosmetic receiving envelopes are not yet certified",
+        ));
+    }
+    let terminal = thread
+        .end_treatments
+        .as_ref()
+        .filter(|ends| ends.start_chamfer_radial_depth_mm != 0. || ends.end_relief_length_mm != 0.);
+    if let Some(ends) = terminal {
+        // Terminal cylinders retain their original station and shared exact
+        // end. Entry-only cuts author a true canonical finite periodic source;
+        // neither route silently extends an older binary-domain material.
+        if source.mode == ThreadMode::CutInternal
+            && source.parameters.family == ThreadFamily::IsoMetric
+            && (ends.start_chamfer_radial_depth_mm > 0. || ends.end_relief_length_mm > 0.)
+        {
+            let target = receiving_target(feature, source, solids)?
+                .ok_or_else(|| fail("Internal authored treatments have no target predecessor"))?;
+            let extent =
+                multicad_core::parameters::exact_length_mm(&source.parameters.length, parameters)
+                    .map_err(|e| error(Some(feature), format!("Canonical receiving extent: {e}")))?;
+            return internal_treatments::build(feature, &thread, extent, target, policy, interrupt);
+        }
+        if !matches!(
+            source.mode,
+            ThreadMode::NewExternal | ThreadMode::CutExternal
+        ) || source.parameters.family != ThreadFamily::IsoMetric
+        {
+            return Err(fail(
+                "Rust end treatments require modeled ISO metric external material; receiving cuts need a full-height cylindrical entry",
+            ));
+        }
+        let (spec, root_radius, frame) = rust_profile_geometry(feature, &thread)?;
+        if ends.start_chamfer_radial_depth_mm != 0. {
+            let terminal = (ends.end_relief_length_mm != 0.).then_some(
+                multicad_kernel::rust_kernel::thread_end_relief::Intent {
+                    width_mm: ends.end_relief_length_mm,
+                    radial_depth_mm: ends.end_relief_radial_depth_mm,
+                },
+            );
+            return if source.mode == ThreadMode::CutExternal {
+                let target = receiving_target(feature, source, solids)?
+                    .ok_or_else(|| fail("Receiving entry thread has no target predecessor"))?;
+                target.rust_cut_external_thread_entry_chamfer_with_interrupt(
+                    spec,
+                    root_radius,
+                    ends.start_chamfer_radial_depth_mm,
+                    terminal,
+                    feature,
+                    frame,
+                    policy,
+                    interrupt,
+                )
+            } else {
+                Solid::rust_helical_thread_entry_chamfer_with_interrupt(
+                    spec,
+                    root_radius,
+                    ends.start_chamfer_radial_depth_mm,
+                    terminal,
+                    feature,
+                    frame,
+                    policy,
+                    interrupt,
+                )
+            }
+            .map_err(|cause| {
+                if cause.kind == multicad_kernel::GeometryErrorKind::Cancelled {
+                    error(Some(feature), "Model evaluation superseded")
+                } else {
+                    error(Some(feature), cause)
+                }
+            });
+        }
+        if source.mode == ThreadMode::CutExternal {
+            let target = receiving_target(feature, source, solids)?
+                .ok_or_else(|| fail("Receiving relief thread has no target predecessor"))?;
+            return target
+                .rust_cut_external_thread_end_relief_with_interrupt(
+                    spec,
+                    root_radius,
+                    ends.end_relief_length_mm,
+                    ends.end_relief_radial_depth_mm,
+                    feature,
+                    frame,
+                    policy,
+                    interrupt,
+                )
+                .map_err(|cause| {
+                    if cause.kind == multicad_kernel::GeometryErrorKind::Cancelled {
+                        error(Some(feature), "Model evaluation superseded")
+                    } else {
+                        error(Some(feature), cause)
+                    }
+                });
+        }
+        return Solid::rust_helical_thread_end_relief(
+            spec,
+            root_radius,
+            ends.end_relief_length_mm,
+            ends.end_relief_radial_depth_mm,
+            feature,
+            frame,
+            policy,
+        )
+        .map_err(|cause| error(Some(feature), cause));
+    }
+    if source.mode == ThreadMode::NewExternal
+        && source.parameters.family == ThreadFamily::Custom
+        && thread.representation == ThreadRepresentation::Modeled
+        && thread.profile.radial_taper != 0.
+        && thread.profile.rounding_radius_mm.is_none()
+    {
+        return Solid::rust_retained_helical_thread_with_interrupt(
+            helical_spec(&thread),
+            feature,
+            PlaneFrame {
+                origin: thread.frame.origin,
+                u: thread.frame.u,
+                v: thread.frame.v,
+            },
+            policy,
+            interrupt,
+        )
+        .map_err(|cause| {
+            if cause.kind == multicad_kernel::GeometryErrorKind::Cancelled {
+                error(Some(feature), "Model evaluation superseded")
+            } else {
+                error(Some(feature), cause)
+            }
+        });
+    }
+    let (spec, root_radius, frame) = rust_profile(feature, &thread)?;
+    let solid = if source.mode == ThreadMode::CutInternal {
+        let target = receiving_target(feature, source, solids)?
+            .ok_or_else(|| fail("Receiving thread has no target predecessor"))?;
+        return internal::build(
+            feature,
+            source.parameters.family,
+            &thread,
+            target,
+            (spec, root_radius, frame),
+            policy,
+        );
+    } else if source.mode == ThreadMode::CutExternal {
+        let target = receiving_target(feature, source, solids)?
+            .ok_or_else(|| fail("Receiving thread has no target predecessor"))?;
+        target.rust_cut_external_thread(spec, root_radius, feature, frame, policy)
+    } else {
+        Solid::rust_helical_thread(spec, root_radius, feature, frame, policy)
+    };
+    solid.map_err(|cause| error(Some(feature), cause))
+}
+
+fn rounded_family(family: ThreadFamily) -> bool {
+    matches!(
+        family,
+        ThreadFamily::Bsw | ThreadFamily::Bsf | ThreadFamily::Bspp | ThreadFamily::Round
+    )
+}
+/// Thread-tool mode availability; dimensions and closures still require proof.
+pub fn rust_thread_mode_supported(family: ThreadFamily, mode: ThreadMode) -> bool {
+    rust_thread_family_supported(family)
+        || (mode == ThreadMode::NewExternal
+            && matches!(family, ThreadFamily::Npt | ThreadFamily::Bspt))
+        || (matches!(mode, ThreadMode::NewExternal | ThreadMode::CutInternal)
+            && rounded_family(family))
+}
+
+/// The literal double-rounded cutter or shaft spec of a resolved Round,
+/// BSW, BSF or BSPP thread, in its own thread frame.
+pub(crate) fn rounded_spec(
+    feature: EntityId,
+    thread: &ResolvedThread,
+) -> Result<
+    (
+        multicad_kernel::rust_kernel::rounded_thread::Spec,
+        PlaneFrame,
+    ),
+    ModelError,
+> {
+    let fail = |message| error(Some(feature), message);
+    if thread.profile.radial_taper != 0. || thread.starts != 1 {
+        return Err(fail(
+            "Rust double-rounded threads require a straight single-start profile",
+        ));
+    }
+    if thread
+        .end_treatments
+        .as_ref()
+        .is_some_and(|e| e.start_chamfer_radial_depth_mm != 0. || e.end_relief_length_mm != 0.)
+    {
+        return Err(fail("Rounded thread end treatments are not yet certified"));
+    }
+    let (crest, root) = if let Some(round) = &thread.round {
+        (round.cutter_crest_radius_mm, round.cutter_root_radius_mm)
+    } else {
+        let radius = thread
+            .profile
+            .rounding_radius_mm
+            .ok_or_else(|| fail("Canonical rounded thread has no circular profile"))?;
+        (radius, radius)
+    };
+    let spec = multicad_kernel::rust_kernel::rounded_thread::Spec {
+        major_radius_mm: thread.major_radius_mm,
+        pitch_mm: thread.pitch_mm,
+        length_mm: thread.length_mm,
+        depth_mm: thread.profile.depth_mm,
+        crest_radius_mm: crest,
+        root_radius_mm: root,
+        flank_angle_deg: thread.profile.lower_flank_deg,
+        starts: thread.starts,
+        left_hand: thread.hand == ThreadHand::Left,
+    };
+    let frame = PlaneFrame {
+        origin: thread.frame.origin,
+        u: thread.frame.u,
+        v: thread.frame.v,
+    };
+    Ok((spec, frame))
+}
+
+pub(crate) fn validate_rust_family(
+    feature: EntityId,
+    family: ThreadFamily,
+) -> Result<(), ModelError> {
+    if !rust_thread_family_supported(family) {
+        return Err(error(
+            Some(feature),
+            "Rust thread geometry supports ISO metric, sourced UNC/UNF/Trapezoidal/Acme/Buttress and straight custom profiles",
+        ));
+    }
+    Ok(())
+}
+
+/// Families implemented by the owned kernel; individual source dimensions,
+/// representations and receiving stock still undergo geometry validation.
+pub fn rust_thread_family_supported(family: ThreadFamily) -> bool {
+    matches!(
+        family,
+        ThreadFamily::IsoMetric
+            | ThreadFamily::Unc
+            | ThreadFamily::Unf
+            | ThreadFamily::Trapezoidal
+            | ThreadFamily::Acme
+            | ThreadFamily::Buttress
+            | ThreadFamily::Custom
+    )
+}
+
+pub(crate) fn rust_profile(
+    feature: EntityId,
+    thread: &ResolvedThread,
+) -> Result<(HelicalThread, Option<f64>, PlaneFrame), ModelError> {
+    let fail = |message| error(Some(feature), message);
+    if thread.representation != ThreadRepresentation::Modeled {
+        return Err(fail(
+            "Rust thread geometry currently requires the Modeled representation",
+        ));
+    }
+    if thread.end_treatments.as_ref().is_some_and(|ends| {
+        ends.start_chamfer_radial_depth_mm != 0. || ends.end_relief_length_mm != 0.
+    }) {
+        return Err(fail(
+            "This Rust thread workflow does not support nontrivial end treatments",
+        ));
+    }
+    rust_profile_geometry(feature, thread)
+}
+fn rust_profile_geometry(
+    feature: EntityId,
+    thread: &ResolvedThread,
+) -> Result<(HelicalThread, Option<f64>, PlaneFrame), ModelError> {
+    let fail = |message| error(Some(feature), message);
+    if thread.representation != ThreadRepresentation::Modeled {
+        return Err(fail(
+            "Rust thread geometry currently requires the Modeled representation",
+        ));
+    }
+    if thread.profile.radial_taper != 0. || thread.profile.rounding_radius_mm.is_some() {
+        return Err(fail(
+            "Rust thread geometry requires an untapered profile without crest rounding",
+        ));
+    }
+    let phase = thread
+        .buttress
+        .as_ref()
+        .map_or(0., |buttress| buttress.phase_rotation_rad);
+    let (sin, cos) = phase.sin_cos();
+    Ok((
+        helical_spec(thread),
+        thread
+            .buttress
+            .as_ref()
+            .and_then(|buttress| buttress.root_circle.as_ref())
+            .map(|circle| circle.radius_mm)
+            .or_else(|| {
+                thread
+                    .metric_fit
+                    .as_ref()
+                    .and_then(|fit| fit.external_root_radius_mm)
+            }),
+        PlaneFrame {
+            origin: thread.frame.origin,
+            u: std::array::from_fn(|i| thread.frame.u[i] * cos + thread.frame.v[i] * sin),
+            v: std::array::from_fn(|i| thread.frame.v[i] * cos - thread.frame.u[i] * sin),
+        },
+    ))
+}
+
 /// Reuse the same native thread and receiving-wall checks inside a typed
 /// mechanical Part, without inventing a second canonical thread definition.
 pub(crate) fn build_resolved(
@@ -127,16 +569,8 @@ pub(crate) fn build_resolved(
             Solid::root_rounded_helical_thread_named(
                 RootRoundedHelicalThread {
                     profile: HelicalThread {
-                        major_radius_mm: resolved.major_radius_mm,
-                        pitch_mm: resolved.pitch_mm,
-                        length_mm: resolved.length_mm,
-                        depth_mm: profile.depth_mm,
-                        crest_width_mm: profile.crest_width_mm,
-                        lower_flank_deg: profile.lower_flank_deg,
-                        upper_flank_deg: profile.upper_flank_deg,
                         radial_taper: 0.,
-                        starts: resolved.starts,
-                        left_hand: resolved.hand == ThreadHand::Left,
+                        ..helical_spec(&resolved)
                     },
                     root_radius_mm,
                 },
@@ -146,18 +580,7 @@ pub(crate) fn build_resolved(
         } else if let Some(npt) = &resolved.npt {
             Solid::axial_flat_helical_thread_named(
                 AxialFlatHelicalThread {
-                    profile: HelicalThread {
-                        major_radius_mm: resolved.major_radius_mm,
-                        pitch_mm: resolved.pitch_mm,
-                        length_mm: resolved.length_mm,
-                        depth_mm: profile.depth_mm,
-                        crest_width_mm: profile.crest_width_mm,
-                        lower_flank_deg: profile.lower_flank_deg,
-                        upper_flank_deg: profile.upper_flank_deg,
-                        radial_taper: profile.radial_taper,
-                        starts: resolved.starts,
-                        left_hand: resolved.hand == ThreadHand::Left,
-                    },
+                    profile: helical_spec(&resolved),
                     crest_radius_limit_mm: npt.stock_crest_radius_limit_mm,
                 },
                 feature,
@@ -193,22 +616,7 @@ pub(crate) fn build_resolved(
                 policy,
             )
         } else {
-            Solid::helical_thread_named(
-                HelicalThread {
-                    major_radius_mm: resolved.major_radius_mm,
-                    pitch_mm: resolved.pitch_mm,
-                    length_mm: resolved.length_mm,
-                    depth_mm: profile.depth_mm,
-                    crest_width_mm: profile.crest_width_mm,
-                    lower_flank_deg: profile.lower_flank_deg,
-                    upper_flank_deg: profile.upper_flank_deg,
-                    radial_taper: profile.radial_taper,
-                    starts: resolved.starts,
-                    left_hand: resolved.hand == ThreadHand::Left,
-                },
-                feature,
-                policy,
-            )
+            Solid::helical_thread_named(helical_spec(&resolved), feature, policy)
         }
         .map_err(|e| error(Some(feature), e))?;
         let local = end_treatments::apply(feature, local, &resolved, mode, policy)?;

@@ -72,8 +72,13 @@ pub(super) fn show(ui: &mut egui::Ui, document: &Document, draft: Option<&Draft>
                     .as_ref()
                     .filter(|entity| entity.id == stock.material)
             });
-            let color = material
-                .and_then(material_color)
+            // Committed materials resolve canonically (linked appearance
+            // included), exactly as the model view does.
+            let color = Resolver::new(document)
+                .and_then(|r| r.resolve_material(stock.material))
+                .map(|p| p.appearance.color_rgba)
+                .ok()
+                .or_else(|| material.and_then(material_color))
                 .map_or(Color32::GRAY, to_color);
             stock_sample(ui, &painter, bounds, &stock, color);
             if let Some(material) = material {
@@ -135,6 +140,17 @@ pub(super) fn paint_swatch(
         painter.rect_filled(rect, 2., to_color(appearance.color_rgba));
         painter.rect_stroke(rect, 2., Stroke::new(1., Color32::GRAY), StrokeKind::Inside);
     }
+}
+
+/// A plain color chip, used for stock rows showing their material color.
+pub(super) fn paint_color(painter: &egui::Painter, rect: Rect, color: [u8; 4]) {
+    painter.rect_filled(rect, 2., to_color(color));
+    painter.rect_stroke(rect, 2., Stroke::new(1., Color32::GRAY), StrokeKind::Inside);
+}
+
+/// An outlined empty chip for stock whose material is not committed yet.
+pub(super) fn paint_missing(painter: &egui::Painter, rect: Rect) {
+    painter.rect_stroke(rect, 2., Stroke::new(1., Color32::GRAY), StrokeKind::Inside);
 }
 
 pub(super) fn hatch_picker(ui: &mut egui::Ui, hatch: &mut HatchStyle) {

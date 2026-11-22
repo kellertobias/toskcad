@@ -17,6 +17,7 @@ use multicad_core::{
     parameters::{BoundExpression, EvaluatedParameters, Unit},
     sketch::Datum,
 };
+use multicad_model::GeometryBackend;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -621,9 +622,10 @@ pub(super) fn parameters(
     p.validate()?;
     Ok(p)
 }
-pub(super) fn thread_profiles(_: &dyn Host, _: &Request, _: NoArgs) -> ToolResult {
+pub(super) fn thread_profiles(_: &dyn Host, call: &Request, _: NoArgs) -> ToolResult {
+    let rust = call.backend == GeometryBackend::Rust;
     let families:Vec<_> = ThreadFamily::ALL.into_iter().map(|family| {
-        let fit_classes:Vec<_> = if family.supported() && family.is_unified() {
+        let cosmetic_fit_classes:Vec<_> = if family.supported() && family.is_unified() {
             vec![ThreadFit::Unified2A, ThreadFit::Unified2B]
         } else if matches!(family,ThreadFamily::Bsw|ThreadFamily::Bsf) {
             vec![ThreadFit::WhitworthMediumExternal,ThreadFit::WhitworthMediumInternal]
@@ -638,7 +640,24 @@ pub(super) fn thread_profiles(_: &dyn Host, _: &Request, _: NoArgs) -> ToolResul
         } else if family.supported() {
             vec![ThreadFit::NominalBasic]
         } else {vec![]};
-        json!({"family":family,"label":family.label(),"supported":family.supported(),"source":family.source(),"fit_classes":fit_classes})
+        let modeled_new_external_supported = if rust { multicad_model::rust_thread_mode_supported(family, ThreadMode::NewExternal) } else { family.supported() };
+        // The general straight-profile factory is narrower than the actual
+        // mode dispatch: rounded and pipe families have their own providers.
+        let family_supported = !rust || [ThreadMode::NewExternal, ThreadMode::CutInternal, ThreadMode::CutExternal]
+            .into_iter().any(|mode| multicad_model::rust_thread_mode_supported(family, mode));
+        let fit_classes = if family_supported { cosmetic_fit_classes.clone() } else { vec![] };
+        let modeled_new_external_fit_classes: Vec<_> = if modeled_new_external_supported {
+            cosmetic_fit_classes.iter().copied().filter(|fit| !matches!(fit,
+                ThreadFit::Metric6HInternal | ThreadFit::Unified2B | ThreadFit::WhitworthMediumInternal | ThreadFit::BsppInternal
+            )).collect()
+        } else { vec![] };
+        let modeled_cut_internal_supported=if rust {multicad_model::rust_thread_mode_supported(family,ThreadMode::CutInternal)} else {family.supported()};
+        let modeled_cut_internal_fit_classes:Vec<_>=if modeled_cut_internal_supported {cosmetic_fit_classes.iter().copied().filter(|fit|!matches!(fit,ThreadFit::Metric6gExternal|ThreadFit::Unified2A|ThreadFit::WhitworthMediumExternal|ThreadFit::BsppClassBExternal)).collect()} else {vec![]};
+        json!({"family":family,"label":family.label(),"supported":!fit_classes.is_empty(),"source":family.source(),"fit_classes":fit_classes,
+            "modeled_new_external_supported":modeled_new_external_supported,"modeled_new_external_fit_classes":modeled_new_external_fit_classes,
+            "modeled_cut_internal_supported":modeled_cut_internal_supported,"modeled_cut_internal_fit_classes":modeled_cut_internal_fit_classes,
+            "modeled_cut_internal_scope":if rust && matches!(family,ThreadFamily::Bsw|ThreadFamily::Bsf|ThreadFamily::Bspp|ThreadFamily::Round) {"straight single-start full-through cylindrical stock; literal tool length must equal stock height"} else {"qualified receiving closures only"},
+            "cosmetic_new_external_supported":family.supported(),"cosmetic_fit_classes":cosmetic_fit_classes})
     }).collect();
     let unified_presets:Vec<_> = model::unified_thread_presets().into_iter().map(|p|json!({
         "family":p.family,"designation":p.designation,"diameter_mm":p.diameter_mm,"pitch_mm":p.pitch_mm,
@@ -655,12 +674,12 @@ pub(super) fn thread_profiles(_: &dyn Host, _: &Request, _: NoArgs) -> ToolResul
         "engagement_limit_mm":if p.family==ThreadFamily::Bspp {None}else{Some(15.*p.pitch_mm)},
         "source":p.source,"source_url":p.source_url,"profile_source_url":p.profile_source_url,
     })).collect();
-    Ok(json!({"families":families,
+    let mut report = json!({"families":families,
         "metric_source":model::METRIC_THREAD_SOURCE_URL,
         "metric_fit_source":model::METRIC_FIT_SOURCE,"metric_fit_source_url":model::METRIC_FIT_SOURCE_URL,"metric_root_source_url":model::METRIC_ROOT_SOURCE_URL,
         "metric_fit_presets":model::metric_fit_presets(),
         "metric_fit_engagement":{"kinds":["intended_length","normal_group_assumed"],"omitted":"legacy complete-profile length","source_url":model::METRIC_ROOT_SOURCE_URL,"scope":"IS14962-1:2001 clause12 supports explicit normal-group assumption when engagement is unknown. Intent does not prove actual mating overlap, strength or blind clearance; physical geometry and original normal intervals remain independently validated."},
-        "end_treatments":{"family":"iso_metric","starts":[1],"representation":"modeled","standalone_thread_only":true,"start":["flat_cut","chamfer45"],"end":["flat_cut","cylindrical_relief"],"scope":"Custom engineering dimensions inside unchanged authored length; retains at least one full pitch. No DIN76 shoulder relief or natural helical runout."},
+        "end_treatments":{"family":"iso_metric","starts":[1],"representation":"modeled","standalone_thread_only":false,"start":["flat_cut","chamfer45"],"end":["flat_cut","cylindrical_relief"],"scope":"Custom engineering dimensions inside unchanged authored length; retains at least one full pitch. No DIN76 shoulder relief or natural helical runout."},
         "representation_binding":{"parameter_unit":"count","values":{"0":"cosmetic_envelope","1":"modeled"},"authority":"representation_parameter when present; literal otherwise","clear":"clear_representation_parameter","scope":"Exact evaluated values only; omitted edits retain the binding."},
         "metric_presets":model::metric_thread_presets().into_iter().map(|p|json!({"designation":p.designation,"diameter_mm":p.diameter_mm,"pitch_mm":p.pitch_mm})).collect::<Vec<_>>(),
         "unified_source":model::UNIFIED_THREAD_SOURCE,"unified_source_url":model::UNIFIED_THREAD_SOURCE_URL,"unified_profile_source_url":model::UNIFIED_PROFILE_SOURCE_URL,
@@ -679,7 +698,55 @@ pub(super) fn thread_profiles(_: &dyn Host, _: &Request, _: NoArgs) -> ToolResul
         "rounded_support":{"starts":[1],"included_angle_deg":55,"crest_and_root":"tangent_circular_arcs","axial_allowance_mm":[0],"coating":"uncoated","bspp_sealing":"Parallel fastening thread; sealing is outside the thread. G labels are nominal pipe sizes, not physical inch diameters.","claim":"BSW/BSF: bounded BS 84:2007 Medium rows. BSPP: bounded Elesa+Ganter 2018 table and NBK JIS B 0202:1999 basic form; no pressure-seal, full ISO compliance or physical-fit certification."},
         "unified_support":{"starts":[1],"form":"un_flat_root","coating":"uncoated","max_length_nominal_diameters":1.5,"limits":"Null range endpoints are unspecified; an external minor reference is not an acceptance limit","claim":"Historical sourced dimensions; no current ASME, calibrated-gage or physical-fit certification"},
         "fit":"ISO metric supports nominal basic or listed historical 6g/6H fits; Custom, Trapezoidal and Acme use nominal basic dimensions; lead-screw crest/root clearance is separate from a fit class. UNC/UNF require 2A/2B; BSW/BSF require Medium external/internal; BSPP requires Class B external or the sourced internal class",
-        "runout":"flat_cut_ends","manufacturing":"Cosmetic envelopes are refused for STEP, mesh and print output; select modeled"}))
+        "runout":"flat_cut_ends","manufacturing":"Cosmetic envelopes are refused for STEP, mesh and print output; select modeled"});
+    if rust {
+        report["active_geometry_support"] = json!({
+            "modes": ["new_external", "cut_internal", "cut_external"],
+            "internal_receiving_stock": "One coaxial solid cylinder entered from either cap; partial-depth tools retain a floor and overrun tools are restricted to stock",
+            "external_receiving_stock": "One coaxial solid cylinder entered from either cap, radius at least the thread major radius; partial cuts retain the exact tail and overrun tools are restricted to stock",
+            "requested_tool_length_is_preserved": true,
+            "representations": ["modeled", "cosmetic_envelope"],
+            "cosmetic_scope": "new_external only; receiving cuts require modeled geometry",
+            "end_treatments": true,
+            "end_treatments_scope": "Modeled ISO metric external entry chamfers and terminal reliefs; internal nominal basic or 6H chamfer45 entry, cylindrical terminal relief or both support exact full-height cylinder stock and flat single-start profiles. Small unresolved entries and partial stock are refused. These authored internal providers do not support STEP",
+            "radial_taper": false,
+            "step": true,
+            "step_scope": "Standalone straight modeled shafts with one to eight starts, flat or circular roots, and partial, full or overrun cap-entry external cuts and blind or through internal threads in round stock, within the bounded spline budget; authored internal entry and terminal-relief providers are excluded from STEP",
+            "manufacturing_mesh": true,
+            "reference_data_includes_other_backends": true
+        });
+        report["active_geometry_support"]["combined_internal_treatments"] = json!({
+            "families":["iso_metric"],"fits":["nominal_basic","metric_6h_internal"],"starts":[1],"representation":"modeled",
+            "receiving_stock":"original full-height cylinder with the exact resolved source frame",
+            "profile":"actual flat bands; no rounded-root substitution",
+            "start":"positive chamfer45","end":"positive cylindrical_relief",
+            "scope":"Complete source boundary, minimum wall and precision proofs remain mandatory; unresolved small entries and partial stock are refused",
+            "manufacturing_mesh":true,"step":false
+        });
+        report["active_geometry_support"]["internal_terminal_treatments"] = json!({
+            "families":["iso_metric"],"fits":["nominal_basic","metric_6h_internal"],"starts":[1],"representation":"modeled",
+            "receiving_stock":"original full-height cylinder with the exact canonical receiving end and resolved source frame",
+            "profile":"actual flat bands; no rounded-root substitution",
+            "start":["flat_cut","chamfer45"],"end":"positive cylindrical_relief",
+            "scope":"The original visible law and terminal station remain unchanged. Only the actual terminal cylinder reaches the exact receiving end; complete boundary, minimum wall, precision and manufacturing proofs remain mandatory",
+            "manufacturing_mesh":true,"step":false
+        });
+        report["active_geometry_support"]["internal_entry_treatments"] = json!({
+            "families":["iso_metric"],"fits":["nominal_basic","metric_6h_internal"],"starts":[1],"representation":"modeled",
+            "receiving_stock":"original full-height cylinder with the exact canonical receiving end and resolved source frame",
+            "profile":"actual shared flat bands on an explicitly authored exact finite periodic domain",
+            "start":"chamfer45","end":"flat_cut",
+            "scope":"Original profile dimensions and periodic law are retained; the exact canonical endpoint is source authority. Complete actual cap/finite boundary, minimum wall, precision and manufacturing proofs remain mandatory. Unresolved small entries and partial stock are refused",
+            "manufacturing_mesh":true,"step":false
+        });
+        report["fit"] = json!(
+            "ISO metric supports nominal basic and listed historical 6g external and 6H internal fits. UNC/UNF use sourced 2A/2B fits. Straight custom, Trapezoidal, Acme and Buttress profiles use nominal basic dimensions."
+        );
+        report["manufacturing"] = json!(
+            "Modeled external shafts and cap-entry cylindrical receivers support certified mesh and STEP output within the bounded geometry budget. Source tool length is retained; manufacturing output contains only material within the stock. Authored internal entry-only, relief-only and combined treatments support certified mesh only and explicitly refuse STEP. Cosmetic envelopes are refused for manufacturing output."
+        );
+    }
+    Ok(report)
 }
 pub(super) fn inspect_thread(host: &dyn Host, _: &Request, args: InspectThreadArgs) -> ToolResult {
     let (document, revision, evaluated) = snapshot(host)?;
@@ -687,7 +754,7 @@ pub(super) fn inspect_thread(host: &dyn Host, _: &Request, args: InspectThreadAr
     let source = model::read_thread(&document, feature)?;
     let resolved = source.parameters.resolve(&evaluated, source.mode)?;
     Ok(
-        json!({"revision":revision,"thread":feature,"part":source.output.body,"source":source,"resolved":{"nominal_major_diameter_mm":2.*resolved.nominal_major_radius_mm,"nominal_pitch_diameter_mm":resolved.nominal_pitch_diameter_mm,"actual_pitch_diameter_mm":resolved.actual_pitch_diameter_mm,"fit":resolved.fit,"pipe":resolved.pipe,"npt":resolved.npt,"lead_screw":resolved.lead_screw,"buttress":resolved.buttress,"round":resolved.round,"metric_fit":resolved.metric_fit,"metric_fit_engagement":resolved.metric_fit_engagement,"physical_length_mm":resolved.length_mm,"end_treatments":resolved.end_treatments,"major_radius_mm":resolved.major_radius_mm,"pitch_mm":resolved.pitch_mm,"lead_mm":resolved.lead_mm,"starts":resolved.starts,"hand":resolved.hand,"representation":resolved.representation,"representation_parameter":source.parameters.representation_parameter,"profile":{"depth_mm":resolved.profile.depth_mm,"crest_width_mm":resolved.profile.crest_width_mm,"rounding_radius_mm":resolved.profile.rounding_radius_mm,"radial_taper":resolved.profile.radial_taper,"lower_flank_deg":resolved.profile.lower_flank_deg,"upper_flank_deg":resolved.profile.upper_flank_deg}},"scope":"Canonical source and resolved construction dimensions; nominal pitch diameter is basic, actual_pitch_diameter_mm and fit describe sourced fitted construction, not a measured or certified manufactured thread; use evaluate_model for current native geometry"}),
+        json!({"revision":revision,"thread":feature,"part":source.output.body,"source":source,"resolved":{"nominal_major_diameter_mm":2.*resolved.nominal_major_radius_mm,"nominal_pitch_diameter_mm":resolved.nominal_pitch_diameter_mm,"actual_pitch_diameter_mm":resolved.actual_pitch_diameter_mm,"fit":resolved.fit,"pipe":resolved.pipe,"npt":resolved.npt,"lead_screw":resolved.lead_screw,"buttress":resolved.buttress,"round":resolved.round,"metric_fit":resolved.metric_fit,"metric_fit_engagement":resolved.metric_fit_engagement,"physical_length_mm":resolved.length_mm,"end_treatments":resolved.end_treatments,"major_radius_mm":resolved.major_radius_mm,"pitch_mm":resolved.pitch_mm,"lead_mm":resolved.lead_mm,"starts":resolved.starts,"hand":resolved.hand,"representation":resolved.representation,"representation_parameter":source.parameters.representation_parameter,"profile":{"depth_mm":resolved.profile.depth_mm,"crest_width_mm":resolved.profile.crest_width_mm,"rounding_radius_mm":resolved.profile.rounding_radius_mm,"radial_taper":resolved.profile.radial_taper,"lower_flank_deg":resolved.profile.lower_flank_deg,"upper_flank_deg":resolved.profile.upper_flank_deg}},"scope":"Canonical source and resolved construction dimensions; nominal pitch diameter is basic, actual_pitch_diameter_mm and fit describe sourced fitted construction, not a measured or certified manufactured thread; use evaluate_model for current evaluated geometry"}),
     )
 }
 pub(super) fn set_thread(host: &dyn Host, call: &Request, args: ThreadArgs) -> ToolResult {

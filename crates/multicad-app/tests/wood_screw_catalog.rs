@@ -487,47 +487,47 @@ fn regeneration_accepts_unchanged_selected_wood_and_refuses_hash_identity_or_sam
 const LEGACY_PROJECTS: &[(&str, &str)] = &[
     (
         "bearing-open-608.tcd",
-        "0f541bd3e7477fb736572c73573f9d8bc055b4ce0beacf529f96d594c5e14514",
+        "2c1ca5af3d61c0ba935e3e9b7e01a2b45a6c44d38d4c7b23b794fc466c31be17",
     ),
     (
         "bearing-open-6000.tcd",
-        "ad2107734a22c87f17b11d3742931f95978e63e0b9762dba2aeb44bbaee3bcf9",
+        "c07515473a5ab6d9c8eacd866738ed323db24779f6caad84f65a2ae983d900bc",
     ),
     (
         "bearing-open-6200.tcd",
-        "4d85bc30aee327ae50eef2cc5128d9989324b46ac6f3b8cfcaaf8822230efa5a",
+        "917313f03d7773ec63a62f39161dbfa3edb7ef92b344f74569f26ec6cc32396c",
     ),
     (
         "bearing-open-6300.tcd",
-        "a0a85864e183857d3ff0be71b97d84ab90362af9c65f833dd8795a054a1fff97",
+        "f218ed7cdd8eb67b99d4975741ae78669bd7edcfbe6b2d39f39138de51e307de",
     ),
     (
         "plant-generic-tree.tcd",
-        "9b8601eb459a8181068a0e12f8b5242bda581c77458bc97ef767ce310fd8d323",
+        "13d2a99362cb8686a2a85628264117f6b91fb416ca0ae7075b6a37041a25ea16",
     ),
     (
         "plant-generic-shrub.tcd",
-        "0eb2464b9bd7e63464d69a8d2ecdd428c3cb2e825a1a4328b4dd4239f03dd2fa",
+        "691d217786a77e62f2bbd41a5d424eabb80d3e6c33a106a4521c7bca00d44d1b",
     ),
     (
         "equipment-power-outlet-type-f.tcd",
-        "9ab1d71bbe94ba347b7d9889107ecc8b8b403d363f73bb6b182f3282befc0eb0",
+        "c9ba73fbccfadfdf6437bd225844443d310bc14d29ced845ffd4251f321bb6c7",
     ),
     (
         "equipment-double-power-outlet-type-f.tcd",
-        "7aa12d6a086bb80ab8ec9ca716b8fa735fd5e0e7c87eea85420e90203957230b",
+        "0eec6984cdcaca296036f21115de9badddda84fd49c27a0e15e717f481f6b2fd",
     ),
     (
         "equipment-triple-power-outlet-type-f.tcd",
-        "44bd0249e00c039afce86e7f45ee710fefd9bbd86bb710c8a8c4c40b054c3bbb",
+        "64d6e639716a72379f3a06c1442aa61480feeeb8b8d1d623b116434c396f4de1",
     ),
     (
         "equipment-data-outlet-rj45.tcd",
-        "be49a23df30285ec816537cc38a43ca1993a186f3583199631522c4a69f22742",
+        "20465e3b7d0262936f87595508f9a9dd3b03a1a74a7f77163b03cc07d40a1ff5",
     ),
     (
         "equipment-tv-antenna-outlet.tcd",
-        "494409345feeab9d1d20e4a590b450b9d98ec241a9d64be063f06e129defb437",
+        "9f0c9fc40832246c0c875b11f2b555d3140e831595ddfe561cff22865410d7d6",
     ),
     (
         "equipment-switch.tcd",
@@ -535,7 +535,7 @@ const LEGACY_PROJECTS: &[(&str, &str)] = &[
     ),
     (
         "equipment-ceiling-luminaire.tcd",
-        "e1940ef32f4e9202bfee6d9c5cb51e95ec2cc6a04a5e31528b6d851bef4d0213",
+        "8622243eca61888cd019ad8396407255c70f564e6a8d6c15a2e6aee3d54f53bd",
     ),
     (
         "equipment-wall-luminaire.tcd",
@@ -543,7 +543,7 @@ const LEGACY_PROJECTS: &[(&str, &str)] = &[
     ),
     (
         "equipment-lamp-holder-e27.tcd",
-        "d57f84b699da3e9753bfa25cde4a44f0e3df72d3daebc2843e3b0667b635daa4",
+        "3b275299cef5143136794db01208bfddd75b9a35ca7bb3e69a7bf32a08154d67",
     ),
     (
         "equipment-radiator.tcd",
@@ -551,7 +551,7 @@ const LEGACY_PROJECTS: &[(&str, &str)] = &[
     ),
     (
         "equipment-kitchen-sink.tcd",
-        "4617a7bfac2bfb30cb45a23b263633f2fac861bbcdef029ce135dc07372912d9",
+        "74b85a90672c90eb7bc7baa26444276d620383a11cc46481bd648874076e53a1",
     ),
     (
         "equipment-washbasin.tcd",
@@ -571,19 +571,19 @@ const LEGACY_PROJECTS: &[(&str, &str)] = &[
     ),
     (
         "equipment-cooker-oven.tcd",
-        "02085f1a8cdc93c4ea8ee33ff1d1f8517493d205bb46e90dc5335d53646e4f08",
+        "03306bbaffb460b8ee532f09729cedff9ede9685c3042c2bd9535ffa3f822e45",
     ),
     (
         "equipment-cooktop.tcd",
-        "ce2822390069ec765178a854d701542588932ddf1414ffca299eb4c491c429fe",
+        "a485e1642c13dbf3af083cbc629f6f4a0b24284d12a3663f5fb1631bdffd2859",
     ),
     (
         "equipment-washing-machine.tcd",
-        "0ecd46dff95a67660cf7a0c88ee5d92947f47086f485346c6c104167070e7129",
+        "d34d313bf3831c260b19c6726e1dd10e0d6587d1c3c2bf4c7c9045f0973c2d2e",
     ),
     (
         "equipment-dryer.tcd",
-        "10421a27d9678003c146586ccc3c1865e5868cd2f080f7c1e9b842b6fa089bb6",
+        "cb8a16122cfb9bac4b9fbad4844f6ef8e1cab8591a552582c1a44c4ddfebef2b",
     ),
     (
         "equipment-refrigerator.tcd",

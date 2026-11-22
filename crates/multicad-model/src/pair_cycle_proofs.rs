@@ -253,11 +253,6 @@ impl Drop for PublicationScope {
 }
 
 #[cfg(test)]
-pub(crate) fn pending_entries() -> usize {
-    PUBLICATIONS.with(|s| s.borrow().iter().map(Vec::len).sum())
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     fn stage(store: &PairCycleProofStore, key: &str) {

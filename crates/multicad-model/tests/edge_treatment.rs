@@ -103,6 +103,213 @@ fn parameters(session: &Session) -> EdgeTreatmentParameters {
 }
 
 #[test]
+fn rust_placed_edge_features_preserve_saved_references_edits_and_history() {
+    use multicad_core::references::{self, Resolution};
+    use multicad_model::GeometryBackend;
+
+    let compile_rust = |session: &Session| {
+        Compiler::default()
+            .compile_with_backend(
+                session.document(),
+                session.revision(),
+                GeometryBackend::Rust,
+                None,
+            )
+            .unwrap()
+    };
+    for profile in [EdgeTreatmentProfile::Fillet, EdgeTreatmentProfile::Chamfer] {
+        let (mut session, mut input, _) = fixture();
+        let moved = model::TransformRequest::new(
+            input.clone(),
+            model::NumericTransform {
+                translation: [length(17.), length(-3.), length(21.)],
+                pivot: [length(3.), length(4.), length(5.)],
+                axis: [1., 2., 3.],
+                angle: model::angle(37.),
+            },
+        );
+        let prepared =
+            model::prepare_transform(&session, session.revision(), actor(), &moved).unwrap();
+        session.commit(prepared.prepared).unwrap();
+        input.producer = moved.feature;
+        let stock = compile_rust(&session);
+        let topology = &stock.snapshot().shapes[&input.producer].topology;
+        let selected = topology
+            .elements
+            .iter()
+            .find(|element| {
+                matches!(element.geometry, Some(AnalyticGeometry::Line { a_mm, b_mm }) if
+                ((0..3).map(|i| (a_mm[i]-b_mm[i]).powi(2)).sum::<f64>().sqrt()-10.).abs() < 1e-6)
+            })
+            .unwrap();
+        let capture = GeometryIntent::capture(topology, selected.key).unwrap();
+        let retained: Vec<_> = topology
+            .elements
+            .iter()
+            .filter(|element| {
+                element.key != selected.key
+                    && matches!(element.key.kind, TopologyKind::Face | TopologyKind::Edge)
+            })
+            .map(|element| GeometryIntent::capture(topology, element.key).unwrap())
+            .collect();
+        let mut settings = parameters(&session);
+        settings.profile = profile;
+        let treatment = EdgeTreatmentRequest::new(input.clone(), settings, vec![capture.clone()]);
+        let prepared =
+            model::prepare_edge_treatment(&session, session.revision(), actor(), &treatment)
+                .unwrap();
+        Compiler::default()
+            .compile_with_backend(
+                prepared.prepared.document(),
+                session.revision() + 1,
+                GeometryBackend::Rust,
+                None,
+            )
+            .unwrap();
+        session.commit(prepared.prepared).unwrap();
+        let mut bytes = Vec::new();
+        project_file::write(
+            &ProjectFile::new(session.document().clone()).unwrap(),
+            &mut bytes,
+            Default::default(),
+        )
+        .unwrap();
+        session = Session::new(
+            project_file::read(
+                &mut std::io::Cursor::new(bytes),
+                Default::default(),
+                &project_file::supported_capabilities(),
+            )
+            .unwrap()
+            .project
+            .document,
+        )
+        .unwrap();
+        let initial = session.document().clone();
+        for (width, radius) in [(30., 2.), (40., 3.)] {
+            if width == 40. {
+                let edits = [("width", "40"), ("radius", "3")].map(|(name, value)| {
+                    let mut parameter = session
+                        .document()
+                        .entities()
+                        .find(|entity| entity.name == name)
+                        .unwrap()
+                        .clone();
+                    let EntityData::Parameter { expression, .. } = &mut parameter.data else {
+                        unreachable!()
+                    };
+                    *expression = value.into();
+                    Mutation::Replace(parameter)
+                });
+                session
+                    .apply(Request {
+                        expected_revision: session.revision(),
+                        actor: actor(),
+                        label: "Edit placed edge feature".into(),
+                        edits: edits.into(),
+                    })
+                    .unwrap();
+            }
+            let result = compile_rust(&session);
+            let expected = width * 200.
+                - match profile {
+                    EdgeTreatmentProfile::Fillet => {
+                        (1. - std::f64::consts::FRAC_PI_4) * radius * radius * 10.
+                    }
+                    EdgeTreatmentProfile::Chamfer => radius * radius * 5.,
+                };
+            near(
+                result.solid(input.body).unwrap().volume_mm3().unwrap(),
+                expected,
+            );
+            assert!(result.snapshot().references.all_resolved());
+            let output = &result.snapshot().shapes[&treatment.feature].topology;
+            for reference in &retained {
+                assert!(
+                    matches!(
+                        references::resolve(reference, output, session.revision()),
+                        Resolution::Resolved { .. }
+                    ),
+                    "lost placed reference {reference:?}"
+                );
+            }
+            let generated = Origin {
+                source: treatment.feature,
+                role: format!("edge/{}", capture.id),
+            };
+            assert_eq!(
+                output
+                    .elements
+                    .iter()
+                    .filter(|element| element.key.kind == TopologyKind::Face
+                        && element.origins.contains(&generated))
+                    .count(),
+                1
+            );
+            for occurrence in result.snapshot().occurrences.keys() {
+                near(
+                    result.solid(*occurrence).unwrap().volume_mm3().unwrap(),
+                    expected,
+                );
+            }
+            let temporary = tempfile::tempdir().unwrap();
+            let path = temporary.path().join("placed-feature.step");
+            result.solid(input.body).unwrap().write_step(&path).unwrap();
+            let imported = multicad_kernel::Solid::import_rust_step(
+                &std::fs::read_to_string(path).unwrap(),
+                treatment.feature,
+                Default::default(),
+            )
+            .unwrap();
+            near(imported.volume_mm3().unwrap(), expected);
+        }
+        let edited = session.document().clone();
+        session.undo(session.revision(), actor()).unwrap();
+        assert_eq!(session.document(), &initial);
+        near(
+            compile_rust(&session)
+                .solid(input.body)
+                .unwrap()
+                .volume_mm3()
+                .unwrap(),
+            6000.
+                - match profile {
+                    EdgeTreatmentProfile::Fillet => (4. - std::f64::consts::PI) * 10.,
+                    EdgeTreatmentProfile::Chamfer => 20.,
+                },
+        );
+        session.redo(session.revision(), actor()).unwrap();
+        assert_eq!(session.document(), &edited);
+        let before = session.document().clone();
+        let revision = session.revision();
+        let invalid = model::prepare_edge_treatment_edit(
+            &session,
+            revision,
+            actor(),
+            treatment.feature,
+            &EdgeTreatmentParameters {
+                profile,
+                size: length(100.),
+            },
+            &[capture],
+        )
+        .unwrap();
+        assert!(
+            Compiler::default()
+                .compile_with_backend(
+                    invalid.prepared.document(),
+                    revision + 1,
+                    GeometryBackend::Rust,
+                    None
+                )
+                .is_err()
+        );
+        assert_eq!(session.document(), &before);
+        assert_eq!(session.revision(), revision);
+    }
+}
+
+#[test]
 fn native_fillet_switches_to_chamfer_and_rebuilds_bound_geometry_through_undo_and_reopen() {
     let (mut session, input, capture) = fixture();
     let original = session.document().clone();
@@ -225,7 +432,13 @@ fn native_fillet_switches_to_chamfer_and_rebuilds_bound_geometry_through_undo_an
         .unwrap()
         .write_step(&step)
         .unwrap();
-    let readback = multicad_kernel::Solid::read_step(&step, Default::default()).unwrap();
+
+    let readback = multicad_kernel::Solid::import_rust_step(
+        &std::fs::read_to_string(&step).unwrap(),
+        request.feature,
+        Default::default(),
+    )
+    .unwrap();
     near(readback.volume_mm3().unwrap(), 7980.);
     std::fs::remove_file(step).unwrap();
 }
@@ -289,7 +502,70 @@ fn failed_native_geometry_missing_and_ambiguous_edges_preserve_the_previous_soli
     );
 }
 #[test]
-fn sided_distance_and_bound_angle_rebuild_the_same_explicit_native_edge() {
+fn symmetric_box_chamfer_preserves_the_linked_body_and_undo() {
+    let (mut session, input, edge) = fixture();
+    let mut request = EdgeTreatmentRequest::new(
+        input.clone(),
+        EdgeTreatmentParameters {
+            profile: EdgeTreatmentProfile::Chamfer,
+            size: length(2.),
+        },
+        vec![edge.clone()],
+    );
+    let original = session.document().clone();
+    let invalid = {
+        request.parameters.size = length(20.);
+        model::prepare_edge_treatment(&session, session.revision(), actor(), &request).unwrap()
+    };
+    assert!(
+        Compiler::default()
+            .compile(invalid.prepared.document(), session.revision())
+            .is_err()
+    );
+    assert_eq!(session.document(), &original);
+
+    request.parameters.size = length(2.);
+    let prepared =
+        model::prepare_edge_treatment(&session, session.revision(), actor(), &request).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let model = compile(&session);
+    near(
+        model.solid(input.body).unwrap().volume_mm3().unwrap(),
+        5980.,
+    );
+    assert_eq!(model.snapshot().occurrences.len(), 1);
+    for occurrence in model.snapshot().occurrences.keys() {
+        near(
+            model.solid(*occurrence).unwrap().volume_mm3().unwrap(),
+            5980.,
+        );
+    }
+    let generated = Origin {
+        source: request.feature,
+        role: format!("edge/{}", edge.id),
+    };
+    assert!(
+        model.snapshot().shapes[&request.feature]
+            .topology
+            .elements
+            .iter()
+            .any(|element| {
+                element.key.kind == TopologyKind::Face && element.origins.contains(&generated)
+            })
+    );
+    session.undo(session.revision(), actor()).unwrap();
+    near(
+        compile(&session)
+            .solid(input.body)
+            .unwrap()
+            .volume_mm3()
+            .unwrap(),
+        6000.,
+    );
+}
+
+#[test]
+fn sided_distance_and_bound_angle_rebuild_the_same_explicit_edge() {
     let (mut session, input, edge) = fixture();
     let before = session.document().clone();
     let base = compile(&session);
@@ -423,4 +699,828 @@ fn sided_distance_and_bound_angle_rebuild_the_same_explicit_native_edge() {
             .1,
         vec![edge, face]
     );
+}
+
+#[test]
+fn preserved_bevel_ancestry_survives_two_exact_cuts() {
+    use multicad_model::GeometryBackend;
+    let (mut session, input, edge) = fixture();
+    let request = EdgeTreatmentRequest::new(
+        input.clone(),
+        EdgeTreatmentParameters {
+            profile: EdgeTreatmentProfile::Chamfer,
+            size: length(2.),
+        },
+        vec![edge.clone()],
+    );
+    let prepared =
+        model::prepare_edge_treatment(&session, session.revision(), actor(), &request).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let mut target = BodyInput {
+        producer: request.feature,
+        ..input
+    };
+    for x in [5., 9.] {
+        let tool = PrimitiveRequest::new(
+            "Cutting box",
+            PrimitiveParameters::Box {
+                size: [length(2.), length(2.), length(2.)],
+                frame: model::PrimitiveFrame {
+                    origin: [length(x), length(x), length(8.)],
+                    ..Default::default()
+                },
+            },
+        );
+        let prepared =
+            model::prepare_primitive(&session, session.revision(), actor(), &tool).unwrap();
+        session.commit(prepared.prepared).unwrap();
+        let cut = model::BooleanRequest::new(
+            model::Operation::Cut,
+            target.clone(),
+            vec![BodyInput {
+                body: tool.body,
+                producer: tool.feature,
+            }],
+        );
+        let prepared = model::prepare_boolean(&session, session.revision(), actor(), &cut).unwrap();
+        session.commit(prepared.prepared).unwrap();
+        target.producer = cut.feature;
+    }
+    let compiled = Compiler::default()
+        .compile_with_backend(
+            session.document(),
+            session.revision(),
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let generated = Origin {
+        source: request.feature,
+        role: format!("edge/{}", edge.id),
+    };
+    let shape = &compiled.snapshot().shapes[&target.producer];
+    near(shape.volume_mm3, 5964.);
+    assert!(
+        shape.topology.elements.iter().any(|face| {
+            face.key.kind == TopologyKind::Face && face.origins.contains(&generated)
+        })
+    );
+}
+
+#[test]
+fn rust_box_fillet_preserves_planar_references_and_analytic_step_after_edit() {
+    use multicad_core::references::{self, Resolution};
+    use multicad_model::GeometryBackend;
+
+    let (mut session, input, edge) = fixture();
+    let compile_rust = |session: &Session| {
+        Compiler::default()
+            .compile_with_backend(
+                session.document(),
+                session.revision(),
+                GeometryBackend::Rust,
+                None,
+            )
+            .unwrap()
+    };
+    let base = compile_rust(&session);
+    let stock = &base.snapshot().shapes[&input.producer].topology;
+    let original_faces: Vec<_> = stock
+        .elements
+        .iter()
+        .filter(|element| element.key.kind == TopologyKind::Face)
+        .map(|element| GeometryIntent::capture(stock, element.key).unwrap())
+        .collect();
+    let mut fillet =
+        EdgeTreatmentRequest::new(input.clone(), parameters(&session), vec![edge.clone()]);
+    let original = session.document().clone();
+    fillet.parameters.size = length(20.);
+    let oversized =
+        model::prepare_edge_treatment(&session, session.revision(), actor(), &fillet).unwrap();
+    assert!(
+        Compiler::default()
+            .compile_with_backend(
+                oversized.prepared.document(),
+                session.revision() + 1,
+                GeometryBackend::Rust,
+                None,
+            )
+            .is_err()
+    );
+    assert_eq!(session.document(), &original);
+    fillet.parameters = parameters(&session);
+    let valid =
+        model::prepare_edge_treatment(&session, session.revision(), actor(), &fillet).unwrap();
+    session.commit(valid.prepared).unwrap();
+
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(session.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let opened = project_file::read(
+        &mut std::io::Cursor::new(bytes),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap();
+    session = Session::new(opened.project.document).unwrap();
+    let generated = Origin {
+        source: fillet.feature,
+        role: format!("edge/{}", edge.id),
+    };
+    let temporary = tempfile::tempdir().unwrap();
+    for (width, radius) in [(30., 2.), (40., 3.)] {
+        if radius == 3. {
+            let edits = [("width", "40"), ("radius", "3")].map(|(name, value)| {
+                let mut parameter = session
+                    .document()
+                    .entities()
+                    .find(|entity| entity.name == name)
+                    .unwrap()
+                    .clone();
+                let EntityData::Parameter { expression, .. } = &mut parameter.data else {
+                    unreachable!();
+                };
+                *expression = value.into();
+                Mutation::Replace(parameter)
+            });
+            session
+                .apply(Request {
+                    expected_revision: session.revision(),
+                    actor: actor(),
+                    label: "Change stock and blend radius".into(),
+                    edits: edits.into(),
+                })
+                .unwrap();
+        }
+        let model = compile_rust(&session);
+        assert_eq!(model.snapshot().bodies[&input.body], fillet.feature);
+        assert!(model.snapshot().references.all_resolved());
+        let shape = &model.snapshot().shapes[&fillet.feature];
+        let expected = width * 200. - (1. - std::f64::consts::FRAC_PI_4) * radius * radius * 10.;
+        near(shape.volume_mm3, expected);
+        assert_eq!(shape.solid_count, 1);
+        assert_eq!(shape.bounds.min, [0.; 3]);
+        assert_eq!(shape.bounds.max, [width, 20., 10.]);
+        for occurrence in model.snapshot().occurrences.keys() {
+            near(
+                model.solid(*occurrence).unwrap().volume_mm3().unwrap(),
+                expected,
+            );
+        }
+        let current_stock = &model.snapshot().shapes[&input.producer].topology;
+        for intent in &original_faces {
+            let Resolution::Resolved { key, .. } =
+                references::resolve(intent, &shape.topology, session.revision())
+            else {
+                panic!("missing stock face {intent:?}");
+            };
+            let source = current_stock
+                .elements
+                .iter()
+                .find(|face| face.key.kind == TopologyKind::Face && face.origins == intent.origins)
+                .unwrap();
+            let treated = shape
+                .topology
+                .elements
+                .iter()
+                .find(|face| face.key == key)
+                .unwrap();
+            assert!(!source.frames.is_empty());
+            assert!(
+                source
+                    .frames
+                    .iter()
+                    .all(|frame| treated.frames.contains(frame))
+            );
+        }
+        let blends: Vec<_> = shape
+            .topology
+            .elements
+            .iter()
+            .filter(|face| face.key.kind == TopologyKind::Face && face.origins.contains(&generated))
+            .collect();
+        assert_eq!(blends.len(), 1);
+        assert!(blends[0].geometry.is_none());
+        assert!(blends[0].frames.is_empty());
+        let solid = model.solid(fillet.feature).unwrap();
+        let faces = solid.faces().unwrap();
+        near(
+            faces[blends[0].key.ordinal as usize].area_mm2,
+            std::f64::consts::FRAC_PI_2 * radius * 10.,
+        );
+        let path = temporary.path().join(format!("box-fillet-{radius}.step"));
+        solid.write_step(&path).unwrap();
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("CYLINDRICAL_SURFACE")
+        );
+        let reimported = multicad_kernel::Solid::import_rust_step(
+            &std::fs::read_to_string(&path).unwrap(),
+            fillet.feature,
+            Default::default(),
+        )
+        .unwrap();
+        near(reimported.volume_mm3().unwrap(), expected);
+    }
+}
+
+#[test]
+fn rust_box_fillet_accepts_each_complete_edge_and_preserves_the_other_edges() {
+    use multicad_core::references::{self, Resolution};
+    use multicad_model::GeometryBackend;
+
+    let (session, input, _) = fixture();
+    let compile = |document: &Document, revision| {
+        Compiler::default()
+            .compile_with_backend(document, revision, GeometryBackend::Rust, None)
+            .unwrap()
+    };
+    let base = compile(session.document(), session.revision());
+    let stock = &base.snapshot().shapes[&input.producer].topology;
+    let edges: Vec<_> = stock
+        .elements
+        .iter()
+        .filter_map(|element| {
+            if let Some(AnalyticGeometry::Line { a_mm, b_mm }) = element.geometry {
+                Some((
+                    GeometryIntent::capture(stock, element.key).unwrap(),
+                    a_mm,
+                    b_mm,
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(edges.len(), 12);
+    for (edge, a, b) in &edges {
+        let length = (0..3).map(|axis| (a[axis] - b[axis]).abs()).sum::<f64>();
+        let request =
+            EdgeTreatmentRequest::new(input.clone(), parameters(&session), vec![edge.clone()]);
+        let prepared =
+            model::prepare_edge_treatment(&session, session.revision(), actor(), &request).unwrap();
+        let revision = session.revision() + 1;
+        let result = compile(prepared.prepared.document(), revision);
+        let shape = &result.snapshot().shapes[&request.feature];
+        near(
+            shape.volume_mm3,
+            6000. - (4. - std::f64::consts::PI) * length,
+        );
+        for (candidate, ..) in &edges {
+            assert_eq!(
+                matches!(
+                    references::resolve(candidate, &shape.topology, revision),
+                    Resolution::Resolved { .. }
+                ),
+                candidate.id != edge.id,
+                "edge {edge:?}, candidate {candidate:?}",
+            );
+        }
+    }
+    let (first, a, b) = &edges[0];
+    let across = (0..3).find(|&axis| a[axis] != b[axis]).unwrap();
+    let (perpendicular, ..) = edges
+        .iter()
+        .find(|(_, a, b)| a[across] == b[across])
+        .unwrap();
+    let multiple = EdgeTreatmentRequest::new(
+        input,
+        parameters(&session),
+        vec![first.clone(), perpendicular.clone()],
+    );
+    let prepared =
+        model::prepare_edge_treatment(&session, session.revision(), actor(), &multiple).unwrap();
+    let result = Compiler::default().compile_with_backend(
+        prepared.prepared.document(),
+        session.revision() + 1,
+        GeometryBackend::Rust,
+        None,
+    );
+    let failure = result
+        .err()
+        .expect("perpendicular blends require shared corner surfaces");
+    assert!(
+        failure
+            .to_string()
+            .contains("complete parallel straight edges")
+    );
+}
+
+#[test]
+fn rust_box_fillet_keeps_parallel_corner_origins_and_round_trips_step() {
+    use multicad_core::references::{self, Resolution};
+    use multicad_model::GeometryBackend;
+
+    let (session, input, _) = fixture();
+    let compile = |document: &Document, revision| {
+        Compiler::default().compile_with_backend(document, revision, GeometryBackend::Rust, None)
+    };
+    let base = compile(session.document(), session.revision()).unwrap();
+    let stock = &base.snapshot().shapes[&input.producer].topology;
+    let corner = |x, y| {
+        let edge = stock
+            .elements
+            .iter()
+            .find(|element| {
+                matches!(element.geometry, Some(AnalyticGeometry::Line { a_mm, b_mm })
+                if a_mm[..2] == [x, y] && b_mm[..2] == [x, y])
+            })
+            .unwrap();
+        GeometryIntent::capture(stock, edge.key).unwrap()
+    };
+    let corners = [
+        corner(0., 0.),
+        corner(0., 20.),
+        corner(30., 20.),
+        corner(30., 0.),
+    ];
+    let revision = session.revision() + 1;
+    let prepare = |request: &EdgeTreatmentRequest| {
+        model::prepare_edge_treatment(&session, session.revision(), actor(), request)
+            .unwrap()
+            .prepared
+    };
+
+    let temporary = tempfile::tempdir().unwrap();
+    for (case, (selection, radius)) in [
+        (&[0, 1][..], 2.),
+        (&[0, 2][..], 15.),
+        (&[1, 2, 3][..], 2.),
+        (&[0, 1, 2, 3][..], 2.),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut request = EdgeTreatmentRequest::new(
+            input.clone(),
+            parameters(&session),
+            selection.iter().map(|&i| corners[i].clone()).collect(),
+        );
+        request.parameters.size = length(radius);
+        let prepared = prepare(&request);
+        let model = compile(prepared.document(), revision).unwrap();
+        let shape = &model.snapshot().shapes[&request.feature];
+        let expected = 6000.
+            - selection.len() as f64 * (1. - std::f64::consts::FRAC_PI_4) * radius * radius * 10.;
+        near(shape.volume_mm3, expected);
+        assert_eq!(shape.solid_count, 1);
+        assert_eq!(shape.bounds.min, [0.; 3]);
+        assert_eq!(shape.bounds.max, [30., 20., 10.]);
+
+        for element in &stock.elements {
+            let intent = GeometryIntent::capture(stock, element.key).unwrap();
+            let removed = match element.geometry {
+                Some(AnalyticGeometry::Point { position_mm }) => {
+                    let corner_index = match (position_mm[0] == 0., position_mm[1] == 0.) {
+                        (true, true) => 0,
+                        (true, false) => 1,
+                        (false, false) => 2,
+                        (false, true) => 3,
+                    };
+                    selection.contains(&corner_index)
+                }
+                _ => request
+                    .edges
+                    .iter()
+                    .any(|edge| edge.origins == intent.origins),
+            };
+            assert_eq!(
+                matches!(
+                    references::resolve(&intent, &shape.topology, revision),
+                    Resolution::Resolved { .. }
+                ),
+                !removed,
+                "case {case}, stock element {:?}",
+                element.key,
+            );
+        }
+        let solid = model.solid(request.feature).unwrap();
+        let faces = solid.faces().unwrap();
+        assert_eq!(faces.len(), 6 + selection.len());
+        for edge in &request.edges {
+            let origin = Origin {
+                source: request.feature,
+                role: format!("edge/{}", edge.id),
+            };
+            let [rounded] = shape
+                .topology
+                .elements
+                .iter()
+                .filter(|element| {
+                    element.key.kind == TopologyKind::Face && element.origins.contains(&origin)
+                })
+                .collect::<Vec<_>>()[..]
+            else {
+                panic!("one fillet face expected for {origin:?}");
+            };
+            near(
+                faces[rounded.key.ordinal as usize].area_mm2,
+                std::f64::consts::FRAC_PI_2 * radius * 10.,
+            );
+        }
+        solid
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        let path = temporary
+            .path()
+            .join(format!("parallel-box-fillet-{case}.step"));
+        solid.write_step(&path).unwrap();
+        let step = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(step.matches("CYLINDRICAL_SURFACE").count(), selection.len());
+        let readback =
+            multicad_kernel::Solid::import_rust_step(&step, request.feature, Default::default())
+                .unwrap();
+        near(readback.volume_mm3().unwrap(), expected);
+        assert_eq!(readback.bounds().unwrap(), shape.bounds);
+        assert_eq!(readback.solid_count().unwrap(), 1);
+
+        if selection.len() == 4 {
+            let mut bytes = Vec::new();
+            project_file::write(
+                &ProjectFile::new(prepared.document().clone()).unwrap(),
+                &mut bytes,
+                Default::default(),
+            )
+            .unwrap();
+            let opened = project_file::read(
+                &mut std::io::Cursor::new(bytes),
+                Default::default(),
+                &project_file::supported_capabilities(),
+            )
+            .unwrap();
+            let reopened = compile(&opened.project.document, revision).unwrap();
+            assert_eq!(
+                reopened.snapshot().shapes[&request.feature].topology,
+                shape.topology
+            );
+            request.edges.reverse();
+            let reordered = compile(prepare(&request).document(), revision).unwrap();
+            assert_eq!(
+                reordered.snapshot().shapes[&request.feature].topology,
+                shape.topology
+            );
+        }
+    }
+
+    let mut touching =
+        EdgeTreatmentRequest::new(input, parameters(&session), corners[..2].to_vec());
+    touching.parameters.size = length(10.);
+    let original = session.document().clone();
+    let failure = compile(prepare(&touching).document(), revision)
+        .err()
+        .expect("a shared side cannot collapse");
+    assert!(failure.to_string().contains("minimum feature size"));
+    assert_eq!(session.document(), &original);
+    assert_eq!(session.revision() + 1, revision);
+}
+
+#[test]
+fn parallel_box_chamfers_rebuild_both_named_faces_through_edits_history_and_reopen() {
+    use multicad_core::references::{Resolution, resolve};
+    let (mut session, input, first) = fixture();
+    let original = session.document().clone();
+    let initial = compile(&session);
+    let topology = &initial.snapshot().shapes[&input.producer].topology;
+    let second = topology
+        .elements
+        .iter()
+        .find(|element| {
+            matches!(element.geometry, Some(AnalyticGeometry::Line{a_mm,b_mm})
+            if element.key.kind==TopologyKind::Edge && a_mm[0]==0. && b_mm[0]==0.
+                && a_mm[1]==0. && b_mm[1]==0. && a_mm[2]!=b_mm[2])
+        })
+        .unwrap();
+    let selections = vec![
+        first,
+        GeometryIntent::capture(topology, second.key).unwrap(),
+    ];
+    let mut request = EdgeTreatmentRequest::new(
+        input.clone(),
+        EdgeTreatmentParameters {
+            profile: EdgeTreatmentProfile::Chamfer,
+            size: length(2.),
+        },
+        selections.clone(),
+    );
+    let prepared =
+        model::prepare_edge_treatment(&session, session.revision(), actor(), &request).unwrap();
+    let preview = Compiler::default()
+        .compile(prepared.prepared.document(), session.revision() + 1)
+        .unwrap();
+    near(
+        preview.solid(input.body).unwrap().volume_mm3().unwrap(),
+        5960.,
+    );
+    assert_eq!(session.document(), &original);
+    session.commit(prepared.prepared).unwrap();
+    let topology = &preview.snapshot().shapes[&request.feature].topology;
+    let generated: Vec<_> = selections
+        .iter()
+        .map(|selection| {
+            let origin = Origin {
+                source: request.feature,
+                role: format!("edge/{}", selection.id),
+            };
+            let face = topology
+                .elements
+                .iter()
+                .find(|element| {
+                    element.key.kind == TopologyKind::Face && element.origins.contains(&origin)
+                })
+                .unwrap();
+            GeometryIntent::capture(topology, face.key).unwrap()
+        })
+        .collect();
+    let applied = session.document().clone();
+    request.parameters.size = length(3.);
+    let edit = model::prepare_edge_treatment_edit(
+        &session,
+        session.revision(),
+        actor(),
+        request.feature,
+        &request.parameters,
+        &selections,
+    )
+    .unwrap();
+    session.commit(edit.prepared).unwrap();
+    let changed = compile(&session);
+    near(
+        changed.solid(input.body).unwrap().volume_mm3().unwrap(),
+        5910.,
+    );
+    for intent in &generated {
+        assert!(matches!(
+            resolve(
+                intent,
+                &changed.snapshot().shapes[&request.feature].topology,
+                session.revision()
+            ),
+            Resolution::Resolved { .. }
+        ));
+    }
+    session.undo(session.revision(), actor()).unwrap();
+    assert_eq!(session.document(), &applied);
+    session.redo(session.revision(), actor()).unwrap();
+    let mut width = session
+        .document()
+        .entities()
+        .find(|e| e.name == "width")
+        .unwrap()
+        .clone();
+    let EntityData::Parameter { expression, .. } = &mut width.data else {
+        panic!()
+    };
+    *expression = "40".into();
+    session
+        .apply(Request {
+            expected_revision: session.revision(),
+            actor: actor(),
+            label: "Resize chamfer stock".into(),
+            edits: vec![Mutation::Replace(width)],
+        })
+        .unwrap();
+    let resized = compile(&session);
+    near(
+        resized.solid(input.body).unwrap().volume_mm3().unwrap(),
+        7910.,
+    );
+    for intent in &generated {
+        assert!(matches!(
+            resolve(
+                intent,
+                &resized.snapshot().shapes[&request.feature].topology,
+                session.revision()
+            ),
+            Resolution::Resolved { .. }
+        ));
+    }
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(session.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let reopened = project_file::read(
+        &mut std::io::Cursor::new(bytes),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap();
+    let reopened = Session::new(reopened.project.document).unwrap();
+    near(
+        compile(&reopened)
+            .solid(input.body)
+            .unwrap()
+            .volume_mm3()
+            .unwrap(),
+        7910.,
+    );
+    let before = session.document().clone();
+    request.parameters.size = length(21.);
+    let invalid = model::prepare_edge_treatment_edit(
+        &session,
+        session.revision(),
+        actor(),
+        request.feature,
+        &request.parameters,
+        &selections,
+    )
+    .unwrap();
+    assert!(
+        Compiler::default()
+            .compile(invalid.prepared.document(), session.revision() + 1)
+            .is_err()
+    );
+    assert_eq!(session.document(), &before);
+}
+
+#[test]
+fn intersecting_box_chamfers_keep_all_twelve_named_faces_through_edits_history_and_reopen() {
+    use multicad_core::references::{Resolution, resolve};
+    let (mut session, input, _) = fixture();
+    let original = session.document().clone();
+    let initial = compile(&session);
+    let topology = &initial.snapshot().shapes[&input.producer].topology;
+    let selections: Vec<_> = topology
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Edge)
+        .map(|e| GeometryIntent::capture(topology, e.key).unwrap())
+        .collect();
+    assert_eq!(selections.len(), 12);
+    let mut request = EdgeTreatmentRequest::new(
+        input.clone(),
+        EdgeTreatmentParameters {
+            profile: EdgeTreatmentProfile::Chamfer,
+            size: length(2.),
+        },
+        selections.clone(),
+    );
+    let prepared =
+        model::prepare_edge_treatment(&session, session.revision(), actor(), &request).unwrap();
+    let preview = Compiler::default()
+        .compile(prepared.prepared.document(), session.revision() + 1)
+        .unwrap();
+    near(
+        preview.solid(input.body).unwrap().volume_mm3().unwrap(),
+        5562. + 2. / 3.,
+    );
+    let callbacks = std::cell::Cell::new(0);
+    let observe = || {
+        callbacks.set(callbacks.get() + 1);
+        false
+    };
+    Compiler::default()
+        .compile_interruptible(
+            prepared.prepared.document(),
+            session.revision() + 1,
+            Some(&observe),
+        )
+        .unwrap();
+    assert!(callbacks.get() > 20);
+    for at in [1, callbacks.get() / 2, callbacks.get() - 1] {
+        let seen = std::cell::Cell::new(0);
+        let cancel = || {
+            seen.set(seen.get() + 1);
+            seen.get() == at
+        };
+        let error = Compiler::default()
+            .compile_interruptible(
+                prepared.prepared.document(),
+                session.revision() + 1,
+                Some(&cancel),
+            )
+            .err()
+            .unwrap();
+        assert!(error.message.contains("superseded"), "{error:?}");
+        assert_eq!(session.document(), &original);
+    }
+    assert_eq!(session.document(), &original);
+    session.commit(prepared.prepared).unwrap();
+    let topology = &preview.snapshot().shapes[&request.feature].topology;
+    let generated: Vec<_> = selections
+        .iter()
+        .map(|selection| {
+            let origin = Origin {
+                source: request.feature,
+                role: format!("edge/{}", selection.id),
+            };
+            let face = topology
+                .elements
+                .iter()
+                .find(|element| {
+                    element.key.kind == TopologyKind::Face && element.origins.contains(&origin)
+                })
+                .unwrap();
+            GeometryIntent::capture(topology, face.key).unwrap()
+        })
+        .collect();
+    let applied = session.document().clone();
+    request.parameters.size = length(3.);
+    let edit = model::prepare_edge_treatment_edit(
+        &session,
+        session.revision(),
+        actor(),
+        request.feature,
+        &request.parameters,
+        &selections,
+    )
+    .unwrap();
+    session.commit(edit.prepared).unwrap();
+    let changed = compile(&session);
+    near(
+        changed.solid(input.body).unwrap().volume_mm3().unwrap(),
+        5064.,
+    );
+    for intent in &generated {
+        assert!(matches!(
+            resolve(
+                intent,
+                &changed.snapshot().shapes[&request.feature].topology,
+                session.revision()
+            ),
+            Resolution::Resolved { .. }
+        ));
+    }
+    session.undo(session.revision(), actor()).unwrap();
+    assert_eq!(session.document(), &applied);
+    session.redo(session.revision(), actor()).unwrap();
+    let mut width = session
+        .document()
+        .entities()
+        .find(|e| e.name == "width")
+        .unwrap()
+        .clone();
+    let EntityData::Parameter { expression, .. } = &mut width.data else {
+        panic!()
+    };
+    *expression = "40".into();
+    session
+        .apply(Request {
+            expected_revision: session.revision(),
+            actor: actor(),
+            label: "Resize chamfer stock".into(),
+            edits: vec![Mutation::Replace(width)],
+        })
+        .unwrap();
+    let resized = compile(&session);
+    near(
+        resized.solid(input.body).unwrap().volume_mm3().unwrap(),
+        6884.,
+    );
+    for intent in &generated {
+        assert!(matches!(
+            resolve(
+                intent,
+                &resized.snapshot().shapes[&request.feature].topology,
+                session.revision()
+            ),
+            Resolution::Resolved { .. }
+        ));
+    }
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(session.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let reopened = project_file::read(
+        &mut std::io::Cursor::new(bytes),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap();
+    let reopened = Session::new(reopened.project.document).unwrap();
+    near(
+        compile(&reopened)
+            .solid(input.body)
+            .unwrap()
+            .volume_mm3()
+            .unwrap(),
+        6884.,
+    );
+    let before = session.document().clone();
+    request.parameters.size = length(21.);
+    let invalid = model::prepare_edge_treatment_edit(
+        &session,
+        session.revision(),
+        actor(),
+        request.feature,
+        &request.parameters,
+        &selections,
+    )
+    .unwrap();
+    assert!(
+        Compiler::default()
+            .compile(invalid.prepared.document(), session.revision() + 1)
+            .is_err()
+    );
+    assert_eq!(session.document(), &before);
 }

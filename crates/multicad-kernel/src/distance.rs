@@ -1,6 +1,15 @@
 //! Exact finite B-rep distance. Selection ordinals are evaluation-local and must
 //! be obtained by resolving a persistent reference against the current solid.
 use crate::{GeometryError, GeometryErrorKind, Solid, ffi};
+mod circular;
+mod machined;
+mod parallel_faces;
+mod parallel_rings;
+mod planar;
+mod rings;
+mod rounded;
+mod sphere;
+mod worm_wheel;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BRepSelection {
     Whole,
@@ -30,7 +39,9 @@ pub struct MinimumDistance {
     /// solutions may make axis components nonunique even when the scalar is valid.
     pub witnesses: Vec<DistanceWitness>,
     pub witnesses_complete: bool,
-    pub total_solutions: u32,
+    /// None when the scalar and retained witnesses are certified without
+    /// enumerating all closest pairs. Such witnesses are always incomplete.
+    pub total_solutions: Option<u32>,
     pub inner_solution: bool,
 }
 fn error(kind: GeometryErrorKind, message: impl ToString) -> GeometryError {
@@ -47,11 +58,71 @@ pub(crate) fn measure(
     selection_b: BRepSelection,
     tolerance: f64,
 ) -> Result<MinimumDistance, GeometryError> {
+    if a.uses_rust_geometry() || b.uses_rust_geometry() {
+        if !a.uses_rust_geometry() || !b.uses_rust_geometry() {
+            return Err(error(
+                GeometryErrorKind::Unsupported,
+                "Exact distance requires both selections to use the same geometry backend",
+            ));
+        }
+        if let Some(result) = sphere::measure(a, selection_a, b, selection_b, tolerance) {
+            return result;
+        }
+        if let Some(result) = rings::measure(a, selection_a, b, selection_b, tolerance) {
+            return result;
+        }
+        if let Some(result) = rounded::measure(a, selection_a, b, selection_b, tolerance) {
+            return result;
+        }
+        if let Some(result) = circular::measure(a, selection_a, b, selection_b, tolerance) {
+            return result;
+        }
+        if let Some(result) = worm_wheel::measure(a, selection_a, b, selection_b, tolerance) {
+            return result;
+        }
+        if let Some(result) = parallel_rings::measure(a, selection_a, b, selection_b, tolerance) {
+            return result;
+        }
+        if let Some(result) = parallel_faces::measure(a, selection_a, b, selection_b, tolerance) {
+            return result;
+        }
+        if selection_a == BRepSelection::Whole
+            && selection_b == BRepSelection::Whole
+            && let Some(result) = a.rust_parallel_cylinder_pair(b)
+        {
+            return result.map(|(distance, _)| distance);
+        }
+        if selection_a == BRepSelection::Whole
+            && selection_b == BRepSelection::Whole
+            && let Some(result) = a.rust_bevel_pair_distance(b)
+        {
+            return result;
+        }
+        if selection_a == BRepSelection::Whole
+            && selection_b == BRepSelection::Whole
+            && let Some(result) = a.rust_worm_pair_distance(b)
+        {
+            return result;
+        }
+        if selection_a == BRepSelection::Whole
+            && selection_b == BRepSelection::Whole
+            && let Some(result) = a.rust_gear_section_distance(b, tolerance)
+        {
+            return result;
+        }
+        if selection_a == BRepSelection::Whole
+            && selection_b == BRepSelection::Whole
+            && let Some(result) = machined::measure(a, b, tolerance)
+        {
+            return result;
+        }
+        return planar::measure(a, selection_a, b, selection_b, tolerance);
+    }
     let (ak, ai) = selection_a.native();
     let (bk, bi) = selection_b.native();
     let result = ffi::minimum_distance(
-        &a.native.0,
-        &b.native.0,
+        a.occt()?,
+        b.occt()?,
         &ffi::DistanceOptionsData {
             a_kind: ak,
             a_index: ai,
@@ -94,7 +165,7 @@ pub(crate) fn measure(
         distance_mm: result.distance,
         witnesses,
         witnesses_complete: result.complete,
-        total_solutions: result.total_solutions,
+        total_solutions: Some(result.total_solutions),
         inner_solution: result.inner,
     })
 }

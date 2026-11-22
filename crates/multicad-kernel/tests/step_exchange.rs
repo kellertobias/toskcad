@@ -2,6 +2,248 @@ use multicad_kernel::{GeometryPolicy, RigidTransform, Solid};
 use std::sync::{Arc, Barrier};
 
 #[test]
+fn rust_step_reopens_a_placed_reversed_concave_prism_with_a_straight_hole() {
+    use multicad_core::{
+        document::EntityId,
+        references::{AnalyticGeometry, Origin, TopologyKind},
+    };
+    use multicad_kernel::{
+        PlaneFrame,
+        rust_kernel::{Rational, polygon::PolygonPrism, step_read::read_planar_solid},
+    };
+
+    let exact = |n| Rational::new(n, 1).unwrap();
+    let ring = |points: &[[i64; 2]]| points.iter().map(|p| p.map(exact)).collect();
+    let prism = PolygonPrism::new(
+        vec![
+            ring(&[[0, 0], [12, 0], [12, 5], [7, 5], [7, 9], [0, 9]]),
+            ring(&[[2, 2], [2, 4], [4, 4], [4, 2]]),
+        ],
+        exact(3),
+    )
+    .unwrap();
+    let (sin, cos) = 0.37_f64.sin_cos();
+    let frame = PlaneFrame {
+        origin: [3., 5., 11.],
+        u: [cos, sin, 0.],
+        v: [0., 0., 1.],
+    };
+    let owner = EntityId::new();
+    let origins: Vec<_> = (0..10)
+        .map(|_| Origin {
+            source: EntityId::new(),
+            role: "profile.edge".into(),
+        })
+        .collect();
+    let policy = GeometryPolicy::default();
+    let source =
+        Solid::from_polygon_prism_sweep(prism, frame, true, owner, &origins, &[false; 10], policy)
+            .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("prism.step");
+    let second = dir.path().join("same.step");
+    assert!(source.supports_step_export());
+    source.write_step(&first).unwrap();
+    source.write_step(&second).unwrap();
+    let bytes = std::fs::read_to_string(&first).unwrap();
+    assert_eq!(bytes, std::fs::read_to_string(second).unwrap());
+    assert!(bytes.contains("MANIFOLD_SOLID_BREP"));
+    assert!(bytes.contains("SI_UNIT(.MILLI.,.METRE.)"));
+    assert_eq!(bytes.matches("ADVANCED_FACE(").count(), 12);
+    let imported = Solid::read_step(&first, policy).unwrap();
+    assert_eq!(imported.solid_count().unwrap(), 1);
+    let near = |a: f64, b: f64| assert!((a - b).abs() < 2e-6, "{a} != {b}");
+    near(imported.volume_mm3().unwrap(), 252.);
+    let rust_read = read_planar_solid(&bytes, policy.linear_tolerance_mm).unwrap();
+    near(rust_read.volume_mm3, imported.volume_mm3().unwrap());
+    assert_eq!(rust_read.face_count, 12);
+    assert_eq!(rust_read.edges_mm.len(), 30);
+    let expected = source.bounds().unwrap();
+    let bounds = imported.bounds().unwrap();
+    for (a, b) in bounds
+        .min
+        .into_iter()
+        .chain(bounds.max)
+        .zip(expected.min.into_iter().chain(expected.max))
+    {
+        near(a, b);
+    }
+    for (a, b) in rust_read
+        .bounds_mm
+        .into_iter()
+        .flatten()
+        .zip(bounds.min.into_iter().chain(bounds.max))
+    {
+        near(a, b);
+    }
+    let end_normal = frame.normal().map(|x| -x);
+    let cap = imported
+        .faces()
+        .unwrap()
+        .into_iter()
+        .find(|face| {
+            face.plane.is_some_and(|(_, normal)| {
+                normal
+                    .into_iter()
+                    .zip(end_normal)
+                    .map(|(a, b)| a * b)
+                    .sum::<f64>()
+                    > 1. - 1e-9
+            })
+        })
+        .unwrap();
+    let end = PlaneFrame {
+        origin: std::array::from_fn(|i| frame.origin[i] + 3. * end_normal[i]),
+        ..frame
+    };
+    let contours = imported.planar_face_contours(cap.index, end).unwrap();
+    assert_eq!(contours.loops.len(), 2);
+    assert_eq!(contours.edge_count(), 10);
+    near(contours.area_mm2(), 84.);
+    let topology = imported.topology_snapshot(owner, 0).unwrap();
+    let edges: Vec<_> = topology
+        .elements
+        .iter()
+        .filter(|e| e.key.kind == TopologyKind::Edge)
+        .collect();
+    assert_eq!(edges.len(), 30);
+    assert!(
+        edges
+            .iter()
+            .all(|edge| matches!(edge.geometry, Some(AnalyticGeometry::Line { .. })))
+    );
+}
+
+#[test]
+fn rust_step_writes_placed_boxes_and_preserves_destinations_for_unsupported_solids() {
+    use multicad_core::document::EntityId;
+    use multicad_kernel::{
+        GeometryErrorKind, PlaneFrame,
+        rust_kernel::{Rational, prism::Prism},
+    };
+    let exact = |n| Rational::new(n, 1).unwrap();
+    let policy = GeometryPolicy::default();
+    let box_solid = Solid::rust_box(
+        EntityId::new().uuid_bits(),
+        [exact(3), exact(4), exact(5)],
+        PlaneFrame {
+            origin: [-6., 10., 20.],
+            u: [0., 1., 0.],
+            v: [0., 0., 1.],
+        },
+        policy,
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("box.step");
+    assert!(box_solid.supports_step_export());
+    box_solid.write_step(&path).unwrap();
+    let box_read = Solid::read_step(&path, policy).unwrap();
+    assert!((box_read.volume_mm3().unwrap() - 60.).abs() < 1e-8);
+    assert_eq!(box_read.bounds().unwrap().min, [-6., 10., 20.]);
+    assert_eq!(box_read.bounds().unwrap().max, [-1., 13., 24.]);
+    let bytes = std::fs::read(&path).unwrap();
+    let rounded =
+        Prism::extrude(EntityId::new().uuid_bits(), exact(4), exact(2), exact(3)).unwrap();
+    let curved = Solid::from_rust_prism(rounded, policy).unwrap();
+    assert!(!curved.supports_step_export());
+    assert_eq!(
+        curved.write_step(&path).unwrap_err().kind,
+        GeometryErrorKind::Unsupported
+    );
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+}
+
+#[test]
+fn rust_step_preserves_a_fractional_cylinder_and_its_analytic_cap_circles() {
+    use multicad_core::{document::EntityId, references::AnalyticGeometry};
+    use multicad_kernel::{
+        PlaneFrame,
+        rust_kernel::{Circle, Rational, cylinder::AxialCylinder, step_read::read_analytic_solid},
+    };
+    let exact = |n, d| Rational::new(n, d).unwrap();
+    let owner = EntityId::new();
+    let radius = exact(5, 2);
+    let cylinder = AxialCylinder::new(
+        owner.uuid_bits(),
+        Circle::new([exact(9, 2), exact(-13, 2)], radius).unwrap(),
+        exact(7, 3),
+        exact(11, 3),
+    )
+    .unwrap();
+    let (sin, cos) = 0.83_f64.sin_cos();
+    let policy = GeometryPolicy::default();
+    let source = Solid::from_axial_cylinder(
+        cylinder,
+        PlaneFrame {
+            origin: [4.5, -6.5, exact(7, 3).as_f64()],
+            u: [cos, sin, 0.],
+            v: [-sin, cos, 0.],
+        },
+        policy,
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cylinder.step");
+    assert!(source.supports_step_export());
+    source.write_step(&path).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let rust = read_analytic_solid(&text, policy.linear_tolerance_mm).unwrap();
+    let imported = Solid::read_step(&path, policy).unwrap();
+    let near = |a: f64, b: f64| assert!((a - b).abs() < 2e-6, "{a} != {b}");
+    assert_eq!(imported.solid_count().unwrap(), 1);
+    assert_eq!(rust.face_count, 3);
+    assert_eq!(imported.faces().unwrap().len(), 3);
+    assert_eq!(rust.circles.len(), 2);
+    assert!(rust.edges_mm.is_empty());
+    near(imported.volume_mm3().unwrap(), source.volume_mm3().unwrap());
+    near(rust.volume_mm3, source.volume_mm3().unwrap());
+    let expected = source.bounds().unwrap();
+    let native = imported.bounds().unwrap();
+    for (actual, expected) in native
+        .min
+        .into_iter()
+        .chain(native.max)
+        .zip(expected.min.into_iter().chain(expected.max))
+    {
+        near(actual, expected);
+    }
+    for (actual, expected) in rust
+        .bounds_mm
+        .into_iter()
+        .flatten()
+        .zip(expected.min.into_iter().chain(expected.max))
+    {
+        near(actual, expected);
+    }
+    let topology = imported.topology_snapshot(owner, 0).unwrap();
+    let circles: Vec<_> = topology
+        .elements
+        .iter()
+        .filter_map(|element| {
+            let Some(AnalyticGeometry::CircularArc {
+                frame,
+                radius_mm,
+                sweep_rad,
+                ..
+            }) = element.geometry
+            else {
+                return None;
+            };
+            near(radius_mm, radius.as_f64());
+            near(sweep_rad.abs(), std::f64::consts::TAU);
+            Some(frame.origin_mm)
+        })
+        .collect();
+    assert_eq!(circles.len(), 2);
+    for end in [cylinder.bottom(), cylinder.top()] {
+        assert!(circles.iter().any(|center| (center[0] - 4.5).abs() < 1e-7
+            && (center[1] + 6.5).abs() < 1e-7
+            && (center[2] - end.as_f64()).abs() < 1e-7));
+    }
+}
+
+#[test]
 fn concurrent_step_exchange_retains_independent_owner_geometry_and_unlocks_after_failures() {
     let directory = tempfile::tempdir().unwrap();
     let start = Arc::new(Barrier::new(8));

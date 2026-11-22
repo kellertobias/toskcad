@@ -1,5 +1,6 @@
 //! Exact nonperiodic clamped B-spline groundwork. Native queries use the basis
 //! directly; display sampling never participates in profile construction.
+use crate::elementary_curves::ElementaryCurve;
 use crate::{GeometryError, GeometryErrorKind, GeometryPolicy, PlaneFrame, Solid, ffi};
 use multicad_core::{
     document::EntityId,
@@ -8,6 +9,8 @@ use multicad_core::{
 
 pub const MAX_SPLINE_POLES: usize = 256;
 pub const MAX_CURVED_PROFILE_EDGES: usize = 64;
+pub const MAX_CABINET_PANEL_EDGES: usize = 128;
+pub const MAX_CABINET_PANEL_HOLES: usize = 32;
 
 // The native exact face builder checks pairs of curves. Keep a finite
 // manufacturing budget independent of the much smaller interactive budget.
@@ -54,7 +57,7 @@ fn empty_spline() -> ffi::SplineData {
         weights: vec![],
     }
 }
-fn arc_sweep(center: [f64; 2], a: [f64; 2], b: [f64; 2], clockwise: bool) -> f64 {
+pub(crate) fn arc_sweep(center: [f64; 2], a: [f64; 2], b: [f64; 2], clockwise: bool) -> f64 {
     let first = (a[1] - center[1]).atan2(a[0] - center[0]);
     let last = (b[1] - center[1]).atan2(b[0] - center[0]);
     (if clockwise {
@@ -74,16 +77,22 @@ pub struct BSpline2d {
     pub weights: Option<Vec<f64>>,
 }
 impl BSpline2d {
-    pub fn validate(&self, policy: GeometryPolicy) -> Result<(), GeometryError> {
-        policy.validate()?;
+    pub(crate) fn basis(&self) -> multicad_core::constraint_sketch::SplineBasis {
         multicad_core::constraint_sketch::SplineBasis {
             degree: self.degree,
             knots: self.knots.clone(),
             multiplicities: self.multiplicities.clone(),
             weights: self.weights.clone(),
         }
-        .validate(self.poles.len())
-        .map_err(|e| input(e.to_string()))?;
+    }
+    pub fn validate(&self, policy: GeometryPolicy) -> Result<(), GeometryError> {
+        policy.validate()?;
+        self.basis()
+            .validate(self.poles.len())
+            .map_err(|e| input(e.to_string()))?;
+        self.validate_pole_geometry(policy)
+    }
+    fn validate_pole_geometry(&self, policy: GeometryPolicy) -> Result<(), GeometryError> {
         for point in &self.poles {
             policy.point([point[0], point[1], 0.])?;
         }
@@ -108,7 +117,16 @@ impl BSpline2d {
         parameter: f64,
         policy: GeometryPolicy,
     ) -> Result<CurveSample2d, GeometryError> {
-        CurvedEdge2d::BSpline(self.clone()).evaluate(parameter, policy)
+        policy.validate()?;
+        self.validate_pole_geometry(policy)?;
+        let sample = self
+            .basis()
+            .evaluate(&self.poles, parameter)
+            .map_err(|e| input(e.to_string()))?;
+        Ok(CurveSample2d {
+            point: sample.point,
+            derivative: sample.derivative,
+        })
     }
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -217,6 +235,12 @@ impl CurvedEdge2d {
                         "Arc endpoints must be distinct and lie on the same authored circle",
                     ));
                 }
+                let sweep = arc_sweep(*center, *a, *b, *clockwise);
+                if sweep <= 0. || sweep >= std::f64::consts::TAU {
+                    return Err(input(
+                        "Arc sweep must be positive and smaller than a full circle",
+                    ));
+                }
                 ffi::CurvedEdgeData {
                     kind: 2,
                     a: p(*a),
@@ -249,17 +273,13 @@ impl CurvedEdge2d {
         parameter: f64,
         policy: GeometryPolicy,
     ) -> Result<CurveSample2d, GeometryError> {
-        let curve = self.data(policy, 0)?;
-        let out = ffi::curve_evaluate(&curve, parameter).map_err(native)?;
-        let point = [out.point.x, out.point.y];
-        let derivative = [out.derivative.x, out.derivative.y];
-        if point.iter().chain(&derivative).any(|v| !v.is_finite()) {
-            return Err(error(
-                GeometryErrorKind::InvalidResult,
-                "Native curve evaluation was nonfinite",
-            ));
+        if let Self::BSpline(spline) = self {
+            return spline.evaluate(parameter, policy);
         }
-        Ok(CurveSample2d { point, derivative })
+        let curve = self.data(policy, 0)?;
+        ElementaryCurve::new(self, &curve)
+            .expect("elementary curve")
+            .evaluate(parameter)
     }
     pub fn intersections(
         &self,
@@ -360,8 +380,8 @@ impl CurvedProfile {
                 "Curved profile exceeds the 64-edge/16-hole query budget",
             ),
             ProfileBudget::CabinetPanel => (
-                128,
-                32,
+                MAX_CABINET_PANEL_EDGES,
+                MAX_CABINET_PANEL_HOLES,
                 "Panel profile exceeds the 128-edge/32-hole manufacturing budget",
             ),
             ProfileBudget::DevelopedSheet => (
@@ -476,6 +496,18 @@ impl Solid {
         height_mm: f64,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
+        if !crate::OCCT_LINKED {
+            profile.checked(policy)?;
+            let feature = EntityId::new();
+            let origins = crate::geometry::construction::origins(
+                feature,
+                profile.outer.len() + profile.holes.iter().map(Vec::len).sum::<usize>(),
+            );
+            return crate::geometry::construction::normal(
+                profile, height_mm, feature, &origins, policy,
+            )?
+            .without_authored_provenance();
+        }
         Self::extrude_curved_profile_vector(
             profile,
             profile.frame.normal().map(|n| n * height_mm),
@@ -519,6 +551,21 @@ impl Solid {
         budget: ProfileBudget,
     ) -> Result<Self, GeometryError> {
         let c = profile.checked_for(policy, budget)?;
+        if !crate::OCCT_LINKED {
+            let feature = EntityId::new();
+            let origins = crate::geometry::construction::origins(
+                feature,
+                profile.outer.len() + profile.holes.iter().map(Vec::len).sum::<usize>(),
+            );
+            return crate::geometry::construction::vector(
+                profile,
+                displacement_mm,
+                feature,
+                &origins,
+                policy,
+            )?
+            .without_authored_provenance();
+        }
         policy.point(displacement_mm)?;
         let length = displacement_mm
             .into_iter()
@@ -563,6 +610,12 @@ impl Solid {
         origins: &[Origin],
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
+        if !crate::OCCT_LINKED {
+            profile.checked(policy)?;
+            return crate::geometry::construction::normal(
+                profile, height_mm, feature, origins, policy,
+            );
+        }
         Self::extrude_curved_profile_vector_named(
             profile,
             profile.frame.normal().map(|n| n * height_mm),
@@ -615,6 +668,16 @@ impl Solid {
         policy: GeometryPolicy,
         budget: ProfileBudget,
     ) -> Result<Self, GeometryError> {
+        if !crate::OCCT_LINKED {
+            profile.checked_for(policy, budget)?;
+            return crate::geometry::construction::vector(
+                profile,
+                displacement_mm,
+                feature,
+                origins,
+                policy,
+            );
+        }
         let edges: Vec<_> = profile
             .outer
             .iter()

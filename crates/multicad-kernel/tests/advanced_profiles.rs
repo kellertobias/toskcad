@@ -3,6 +3,7 @@ use multicad_kernel::*;
 fn p() -> GeometryPolicy {
     GeometryPolicy::default()
 }
+
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-5, "{a} != {b}");
 }
@@ -65,7 +66,7 @@ fn straight_sweep_and_right_corner_polyline_are_real_named_solids() {
     let before = profile.clone();
     let feature = EntityId::new();
     let curves = origins(4);
-    let result = Solid::sweep_polyline_named(
+    let result = Solid::rust_sweep_polyline_named(
         &profile,
         &[[0.; 3], [0., 0., 30.]],
         feature,
@@ -85,7 +86,7 @@ fn straight_sweep_and_right_corner_polyline_are_real_named_solids() {
         }],
         holes: vec![],
     };
-    let elbow = Solid::sweep_polyline_named(
+    let elbow = Solid::rust_sweep_polyline_named(
         &circle,
         &[[0.; 3], [0., 0., 20.], [20., 0., 20.]],
         feature,
@@ -104,7 +105,8 @@ fn loft_authored_sections_preserve_correspondence_named_references_and_step() {
     let before = sections.clone();
     let names = vec![origins(4), origins(4)];
     for ruled in [true, false] {
-        let result = Solid::loft_profiles_named(&sections, feature, &names, ruled, p()).unwrap();
+        let result =
+            Solid::rust_loft_profiles_named(&sections, feature, &names, ruled, p()).unwrap();
         near(result.volume_mm3().unwrap(), 3500.);
         verify(&result, feature);
         let snapshot = result.topology_snapshot(feature, 0).unwrap();
@@ -115,7 +117,7 @@ fn loft_authored_sections_preserve_correspondence_named_references_and_step() {
             .unwrap();
         let intent = GeometryIntent::capture(&snapshot, selected.key).unwrap();
         let edited = vec![sections[0].clone(), rect(12., 6., [4., 2., 35.])];
-        let next = Solid::loft_profiles_named(&edited, feature, &names, ruled, p()).unwrap();
+        let next = Solid::rust_loft_profiles_named(&edited, feature, &names, ruled, p()).unwrap();
         assert!(matches!(
             resolve(&intent, &next.topology_snapshot(feature, 1).unwrap(), 1),
             Resolution::Resolved { .. }
@@ -128,10 +130,10 @@ fn loft_authored_sections_preserve_correspondence_named_references_and_step() {
         rect(10., 6., [0., 0., 30.]),
     ];
     let names = vec![origins(4), origins(4), origins(4)];
-    let ruled = Solid::loft_profiles_named(&three, feature, &names, true, p()).unwrap();
+    let ruled = Solid::rust_loft_profiles_named(&three, feature, &names, true, p()).unwrap();
     near(ruled.volume_mm3().unwrap(), 2540.);
     verify(&ruled, feature);
-    let smooth = Solid::loft_profiles_named(&three, feature, &names, false, p()).unwrap();
+    let smooth = Solid::rust_loft_profiles_named(&three, feature, &names, false, p()).unwrap();
     assert!(smooth.volume_mm3().unwrap() > 1800.);
     verify(&smooth, feature);
 }
@@ -208,4 +210,277 @@ fn unsupported_profiles_and_bad_paths_fail_explicitly_without_mutating_sources()
         .is_err()
     );
     assert_eq!(profile, before);
+}
+
+#[test]
+fn rust_straight_sweep_translates_the_authored_section_in_both_directions() {
+    let feature = EntityId::new();
+    let frame = PlaneFrame {
+        origin: [11., -7., 23.],
+        u: [1., 0., 0.],
+        v: [0., 0.6, 0.8],
+    };
+    let mut rectangle = rect(10., 6., frame.origin);
+    rectangle.frame = frame;
+    let circle = CurvedProfile {
+        frame,
+        outer: vec![CurvedEdge2d::Circle {
+            center: [4., 3.],
+            radius_mm: 2.,
+        }],
+        holes: vec![],
+    };
+    let mixed = CurvedProfile {
+        frame,
+        outer: vec![
+            CurvedEdge2d::Line {
+                a: [0., 0.],
+                b: [8., 0.],
+            },
+            CurvedEdge2d::Arc {
+                center: [8., 3.],
+                a: [8., 0.],
+                b: [8., 6.],
+                clockwise: false,
+            },
+            CurvedEdge2d::Line {
+                a: [8., 6.],
+                b: [0., 6.],
+            },
+            CurvedEdge2d::Line {
+                a: [0., 6.],
+                b: [0., 0.],
+            },
+        ],
+        holes: vec![],
+    };
+    for (profile, area) in [
+        (rectangle, 60.),
+        (circle, 4. * std::f64::consts::PI),
+        (mixed, 48. + 4.5 * std::f64::consts::PI),
+    ] {
+        let curve_origins = origins(profile.outer.len());
+        let path_origins = origins(1);
+        for height in [-30., 30.] {
+            let start = frame.point([2.5, 2.]);
+            let end = std::array::from_fn(|i| start[i] + frame.normal()[i] * height);
+            let path = [start, end];
+            let rust = Solid::rust_sweep_straight_named(
+                &profile,
+                &path,
+                feature,
+                &curve_origins,
+                &path_origins,
+                p(),
+            )
+            .unwrap();
+            assert!(rust.uses_rust_geometry());
+            assert_eq!(rust.solid_count().unwrap(), 1);
+            near(rust.volume_mm3().unwrap(), area * height.abs());
+            let topology = rust.topology_snapshot(feature, 0).unwrap();
+            let path_roles = [
+                path_origins[0].clone(),
+                Origin {
+                    source: feature,
+                    role: format!("side/{}/{}", path_origins[0].source, path_origins[0].role),
+                },
+            ];
+            let check_path_ancestry = |snapshot: &TopologySnapshot| {
+                for element in &snapshot.elements {
+                    let side = element.key.kind != TopologyKind::Face
+                        || curve_origins
+                            .iter()
+                            .any(|origin| element.origins.contains(origin));
+                    for origin in &path_roles {
+                        assert_eq!(element.origins.contains(origin), side, "{:?}", element.key);
+                        if side && matches!(element.geometry, Some(AnalyticGeometry::Plane { .. }))
+                        {
+                            assert!(element.frames.iter().any(|anchor| anchor.origin == *origin));
+                        }
+                    }
+                }
+            };
+            check_path_ancestry(&topology);
+            for origin in curve_origins
+                .iter()
+                .cloned()
+                .chain(["cap.start", "cap.end"].map(|role| Origin {
+                    source: feature,
+                    role: role.into(),
+                }))
+            {
+                assert_eq!(
+                    topology
+                        .elements
+                        .iter()
+                        .filter(|element| element.key.kind == TopologyKind::Face
+                            && element.origins.contains(&origin))
+                        .count(),
+                    1,
+                    "{origin:?}"
+                );
+            }
+            let receipt = rust
+                .manufacturing_mesh_with_receipt(Default::default())
+                .unwrap();
+            assert!(!receipt.mesh.indices.is_empty());
+        }
+    }
+}
+
+#[test]
+fn rust_sweep_refuses_unsupported_transitions_and_invalid_placement() {
+    let feature = EntityId::new();
+    let profile = rect(10., 6., [0.; 3]);
+    let curves = origins(4);
+    for (path, kind, message) in [
+        (
+            vec![[0.; 3], [0., 0., 10.], [1., 0., 11.]],
+            GeometryErrorKind::Unsupported,
+            "corner transitions",
+        ),
+        (
+            vec![[0., 0., 1.], [0., 0., 10.]],
+            GeometryErrorKind::Input,
+            "path start",
+        ),
+        (
+            vec![[0.; 3], [1e-5, 0., 10.]],
+            GeometryErrorKind::Input,
+            "perpendicular",
+        ),
+        (vec![[0.; 3], [0.; 3]], GeometryErrorKind::Input, "Length"),
+    ] {
+        let path_origins = origins(path.len() - 1);
+        let error =
+            Solid::rust_sweep_straight_named(&profile, &path, feature, &curves, &path_origins, p())
+                .err()
+                .unwrap();
+        assert_eq!(error.kind, kind, "{error}");
+        assert!(error.message.contains(message), "{error}");
+    }
+    let error = Solid::rust_sweep_straight_named(
+        &profile,
+        &[[0.; 3], [0., 0., 10.]],
+        feature,
+        &curves,
+        &curves[..1],
+        p(),
+    )
+    .err()
+    .unwrap();
+    assert!(
+        error.message.contains("distinct authored curve origins"),
+        "{error}"
+    );
+}
+
+#[test]
+fn rust_same_phase_circle_loft_has_exact_geometry_and_both_section_origins() {
+    let feature = EntityId::new();
+    let frame = PlaneFrame {
+        origin: [11., -7., 23.],
+        u: [1., 0., 0.],
+        v: [0., 0.6, 0.8],
+    };
+    let section_origins = [origins(1), origins(1)];
+    for height in [-20_f64, 20.] {
+        for radii in [[2., 4.], [4., 2.], [2., 2.]] {
+            let [start, end] = [0., height].map(|level| PlaneFrame {
+                origin: std::array::from_fn(|i| frame.origin[i] + frame.normal()[i] * level),
+                ..frame
+            });
+            let profiles = [start, end]
+                .into_iter()
+                .zip(radii)
+                .map(|(frame, radius_mm)| CurvedProfile {
+                    frame,
+                    outer: vec![CurvedEdge2d::Circle {
+                        center: [3., 2.],
+                        radius_mm,
+                    }],
+                    holes: vec![],
+                })
+                .collect::<Vec<_>>();
+            let rust =
+                Solid::rust_loft_coaxial_circles_named(&profiles, feature, &section_origins, p())
+                    .unwrap();
+            assert!(rust.uses_rust_geometry());
+            assert_eq!(rust.solid_count().unwrap(), 1);
+            let [a, b] = radii;
+            let volume = std::f64::consts::PI * height.abs() / 3. * (a * a + a * b + b * b);
+            near(rust.volume_mm3().unwrap(), volume);
+            let check_ancestry = |topology: &TopologySnapshot| {
+                for face in topology
+                    .elements
+                    .iter()
+                    .filter(|element| element.key.kind == TopologyKind::Face)
+                {
+                    let is_cap = ["cap.start", "cap.end"].into_iter().any(|role| {
+                        face.origins.contains(&Origin {
+                            source: feature,
+                            role: role.into(),
+                        })
+                    });
+                    for origin in section_origins.iter().flatten() {
+                        assert_eq!(face.origins.contains(origin), !is_cap);
+                        assert_eq!(
+                            face.origins.contains(&Origin {
+                                source: feature,
+                                role: format!("side/{}/{}", origin.source, origin.role)
+                            }),
+                            !is_cap
+                        );
+                    }
+                }
+            };
+            check_ancestry(&rust.topology_snapshot(feature, 0).unwrap());
+            let receipt = rust
+                .manufacturing_mesh_with_receipt(Default::default())
+                .unwrap();
+            assert!(!receipt.mesh.indices.is_empty());
+
+            let folder = tempfile::tempdir().unwrap();
+            let step = folder.path().join("circle-loft.step");
+            rust.write_step(&step).unwrap();
+            let imported =
+                Solid::import_rust_step(&std::fs::read_to_string(&step).unwrap(), feature, p())
+                    .unwrap();
+            near(imported.volume_mm3().unwrap(), volume);
+        }
+    }
+}
+
+#[test]
+fn rust_circle_loft_refuses_phase_change_and_offset_axis() {
+    let feature = EntityId::new();
+    let sections = [origins(1), origins(1)];
+    let circle = |z| CurvedProfile {
+        frame: PlaneFrame {
+            origin: [0., 0., z],
+            ..Default::default()
+        },
+        outer: vec![CurvedEdge2d::Circle {
+            center: [0.; 2],
+            radius_mm: 2.,
+        }],
+        holes: vec![],
+    };
+    let a = circle(0.);
+    let mut b = circle(20.);
+    b.frame.u = [0., 1., 0.];
+    b.frame.v = [-1., 0., 0.];
+    let error = Solid::rust_loft_coaxial_circles_named(&[a.clone(), b], feature, &sections, p())
+        .err()
+        .unwrap();
+    assert_eq!(error.kind, GeometryErrorKind::Unsupported);
+    assert!(error.message.contains("seam directions"), "{error}");
+
+    let mut b = circle(20.);
+    b.frame.origin[0] = 1.;
+    let error = Solid::rust_loft_coaxial_circles_named(&[a, b], feature, &sections, p())
+        .err()
+        .unwrap();
+    assert_eq!(error.kind, GeometryErrorKind::Unsupported);
+    assert!(error.message.contains("coaxial"), "{error}");
 }

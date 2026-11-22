@@ -1,12 +1,14 @@
-//! Resolve associative end planes against current upstream native geometry.
+//! Resolve associative end planes against current upstream geometry.
 use crate::{ModelError, compiler::error};
 use multicad_core::{
     document::{Document, EntityData, EntityId},
     model::{ResolvedExtent, ResolvedExtrudeControls, ResolvedTermination},
-    references::{self, Origin, Resolution, TopologySnapshot},
+    references::{Origin, ReferenceAddress, ReferenceReport, Resolution},
     sketch,
 };
-use multicad_kernel::{BooleanOperation, CurvedProfile, GeometryPolicy, PlaneFrame, Solid};
+use multicad_kernel::{
+    BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, Solid,
+};
 use std::collections::BTreeMap;
 
 pub(crate) struct Extrusion<'a> {
@@ -14,7 +16,7 @@ pub(crate) struct Extrusion<'a> {
     pub revision: u64,
     pub feature: EntityId,
     pub solids: &'a BTreeMap<EntityId, Solid>,
-    pub topologies: &'a BTreeMap<EntityId, TopologySnapshot>,
+    pub report: Option<&'a ReferenceReport>,
     pub policy: GeometryPolicy,
     pub interrupt: Option<&'a dyn Fn() -> bool>,
 }
@@ -28,6 +30,32 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
         a[0] * b[1] - a[1] * b[0],
     ]
 }
+
+pub(crate) fn has_associative_end(extent: &ResolvedExtent) -> bool {
+    let referenced =
+        |end: &ResolvedTermination| !matches!(end, ResolvedTermination::Distance { .. });
+    match extent {
+        ResolvedExtent::OneSided { end } => referenced(end),
+        ResolvedExtent::TwoSided { forward, backward } => {
+            referenced(forward) || referenced(backward)
+        }
+        ResolvedExtent::Symmetric { .. } => false,
+    }
+}
+
+fn place_profile(
+    mut profile: CurvedProfile,
+    controls: &ResolvedExtrudeControls,
+) -> (CurvedProfile, [f64; 3]) {
+    let frame = profile.frame;
+    let normal = frame.normal();
+    let [u, v, n] = controls.direction;
+    let direction = std::array::from_fn(|i| frame.u[i] * u + frame.v[i] * v + normal[i] * n);
+    profile.frame.origin =
+        std::array::from_fn(|i| frame.origin[i] + normal[i] * controls.start_offset_mm);
+    (profile, direction)
+}
+
 impl Extrusion<'_> {
     fn failure(&self, message: impl std::fmt::Display) -> ModelError {
         error(Some(self.feature), message)
@@ -37,11 +65,13 @@ impl Extrusion<'_> {
         end: &ResolvedTermination,
         profile: &CurvedProfile,
     ) -> Result<PlaneFrame, ModelError> {
-        let report = references::inspect(self.document, self.revision, self.topologies);
+        let report = self.report.ok_or_else(|| {
+            self.failure("Missing current references for associative termination")
+        })?;
         let (mut frame, offset) = match end {
             ResolvedTermination::ToPlane { plane, offset_mm } => {
                 let frame =
-                    sketch::inspect_plane(self.document, *plane, self.revision, Some(&report))
+                    sketch::inspect_plane(self.document, *plane, self.revision, Some(report))
                         .map_err(|e| self.failure(e))?;
                 (
                     PlaneFrame {
@@ -72,7 +102,7 @@ impl Extrusion<'_> {
                         self.failure("Termination face input is missing; repair its reference")
                     })?;
                 let diagnostic = report
-                    .get(references::ReferenceAddress {
+                    .get(ReferenceAddress {
                         owner: self.feature,
                         reference: *reference,
                     })
@@ -88,17 +118,12 @@ impl Extrusion<'_> {
                 let solid = self.solids.get(&link.target).ok_or_else(|| {
                     self.failure("Termination face producer has no current solid")
                 })?;
-                let face = solid
-                    .faces()
+                let (origin, normal) = solid
+                    .face_plane(key.ordinal)
                     .map_err(|e| self.failure(e))?
-                    .into_iter()
-                    .find(|face| face.index == key.ordinal)
                     .ok_or_else(|| {
-                        self.failure("Termination face is missing from the current solid")
+                        self.failure("Select a planar termination face; this face is curved")
                     })?;
-                let (origin, normal) = face.plane.ok_or_else(|| {
-                    self.failure("Select a planar termination face; this face is curved")
-                })?;
                 // Signed face offsets follow the current native OUTWARD
                 // normal. Multiple inherited semantic frames must never choose
                 // the offset side through UUID/insertion ordering.
@@ -167,6 +192,105 @@ impl Extrusion<'_> {
         frame.origin = std::array::from_fn(|i| frame.origin[i] + normal[i] * offset);
         Ok(frame)
     }
+
+    fn plane_or_distance(
+        &self,
+        end: &ResolvedTermination,
+        profile: &CurvedProfile,
+        direction: [f64; 3],
+    ) -> Result<PlaneFrame, ModelError> {
+        if let ResolvedTermination::Distance { distance_mm } = *end {
+            return Ok(PlaneFrame {
+                origin: std::array::from_fn(|i| {
+                    profile.frame.origin[i] + direction[i] * distance_mm
+                }),
+                ..profile.frame
+            });
+        }
+        self.plane(end, profile)
+    }
+
+    pub fn build_rust_associative(
+        &self,
+        profile: CurvedProfile,
+        origins: &[Origin],
+        controls: &ResolvedExtrudeControls,
+    ) -> Result<Solid, ModelError> {
+        if controls.taper_rad != 0. {
+            return Err(self.failure("Taper with an associative end plane is not supported yet"));
+        }
+        if self.interrupt.is_some_and(|interrupt| interrupt()) {
+            return Err(self.failure("Model evaluation superseded"));
+        }
+        let (profile, direction) = place_profile(profile, controls);
+        let (start, end) = match &controls.extent {
+            ResolvedExtent::OneSided { end } => (None, self.plane(end, &profile)?),
+            ResolvedExtent::TwoSided { forward, backward } => (
+                Some(self.plane_or_distance(backward, &profile, direction.map(|n| -n))?),
+                self.plane_or_distance(forward, &profile, direction)?,
+            ),
+            ResolvedExtent::Symmetric { .. } => {
+                return Err(self.failure("Symmetric extrusion has no associative end"));
+            }
+        };
+        if self.interrupt.is_some_and(|interrupt| interrupt()) {
+            return Err(self.failure("Model evaluation superseded"));
+        }
+        if std::iter::once(&profile.outer)
+            .chain(&profile.holes)
+            .flatten()
+            .any(|edge| !matches!(edge, CurvedEdge2d::Line { .. }))
+        {
+            let normal = profile.frame.normal();
+            let travel = |plane: PlaneFrame| {
+                let axis = plane.normal();
+                let transverse = cross(normal, axis);
+                // Allow roundoff in rigid frames without flattening a sloped cap.
+                if dot(transverse, transverse) > (16. * f64::EPSILON).powi(2) {
+                    return Err(self.failure("Curved associative extrusion needs parallel caps"));
+                }
+                let delta = std::array::from_fn(|i| plane.origin[i] - profile.frame.origin[i]);
+                let distance = dot(delta, axis) / dot(direction, axis);
+                Ok(distance)
+            };
+            if controls.direction[0] != 0. || controls.direction[1] != 0. {
+                return Err(self.failure("Curved associative extrusion needs normal travel"));
+            }
+            let back = start.map(travel).transpose()?.unwrap_or(0.);
+            let front = travel(end)?;
+            let minimum = self.policy.minimum_feature_mm;
+            let maximum = self.policy.maximum_coordinate_mm;
+            let valid = |distance: f64| (minimum..=maximum).contains(&distance);
+            if !valid(front) || (start.is_some() && !valid(-back)) {
+                return Err(self.failure(
+                    "Termination planes must leave sufficient material on each requested side",
+                ));
+            }
+            let sign = controls.direction[2];
+            let cap_anchors = [start.unwrap_or(profile.frame), end];
+            return crate::rust_backend::associative_curved_extrude(
+                self.feature,
+                profile,
+                origins,
+                sign * back,
+                sign * (front - back),
+                self.policy,
+            )?
+            .with_rust_sweep_cap_anchors(cap_anchors)
+            .map_err(|cause| self.failure(cause));
+        }
+        Solid::rust_extrude_to_planes_named(
+            &profile,
+            direction,
+            start,
+            end,
+            self.feature,
+            origins,
+            self.policy,
+        )
+        .map_err(|e| self.failure(e))
+    }
+
     fn side(
         &self,
         profile: &CurvedProfile,
@@ -228,35 +352,13 @@ impl Extrusion<'_> {
     }
     pub fn build(
         &self,
-        mut profile: CurvedProfile,
+        profile: CurvedProfile,
         origins: &[Origin],
         controls: &ResolvedExtrudeControls,
     ) -> Result<Solid, ModelError> {
-        let frame = profile.frame;
-        let normal = frame.normal();
-        let direction: [f64; 3] = std::array::from_fn(|i| {
-            frame.u[i] * controls.direction[0]
-                + frame.v[i] * controls.direction[1]
-                + normal[i] * controls.direction[2]
-        });
-        profile.frame.origin =
-            std::array::from_fn(|i| frame.origin[i] + normal[i] * controls.start_offset_mm);
-        if controls.taper_rad != 0. {
-            let referenced = match &controls.extent {
-                ResolvedExtent::OneSided { end } => {
-                    !matches!(end, ResolvedTermination::Distance { .. })
-                }
-                ResolvedExtent::TwoSided { forward, backward } => {
-                    !matches!(forward, ResolvedTermination::Distance { .. })
-                        || !matches!(backward, ResolvedTermination::Distance { .. })
-                }
-                ResolvedExtent::Symmetric { .. } => false,
-            };
-            if referenced {
-                return Err(
-                    self.failure("Taper with an associative end plane is not supported yet")
-                );
-            }
+        let (mut profile, direction) = place_profile(profile, controls);
+        if controls.taper_rad != 0. && has_associative_end(&controls.extent) {
+            return Err(self.failure("Taper with an associative end plane is not supported yet"));
         }
         match &controls.extent {
             ResolvedExtent::OneSided { end } => {

@@ -12,6 +12,9 @@ publish.workspace = true
 name = "multicad"
 path = "src/main.rs"
 
+[features]
+default = []
+
 [dependencies]
 multicad-core.workspace = true
 multicad-kernel.workspace = true

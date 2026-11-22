@@ -4,6 +4,7 @@ use multicad_core::{
     constraint_sketch::{ConstraintKind, Curve, CurveKind, source::Source},
     document::{EntityData, EntityId, Mutation},
     model::{self, *},
+    project_file::{self, ProjectFile},
     sketch::Datum,
     sketch_regions,
 };
@@ -100,6 +101,146 @@ fn path(session: &mut Session) -> SketchPathSource {
         curves: vec![line],
     }
 }
+
+fn miter_path(session: &mut Session) -> SketchPathSource {
+    let mut curves = vec![];
+    let (sketch, _) = add_sketch(session, Datum::Xz, "Miter path", 0., |s, session| {
+        let start = s.add_point([0., 0.]);
+        let corner = s.add_point([0., 40.]);
+        let end = s.add_point([20., 40.]);
+        let first = s.add_line(start, corner);
+        let second = s.add_line(corner, end);
+        curves.extend([first, second]);
+        s.add_constraint(ConstraintKind::Fix { point: start });
+        s.add_constraint(ConstraintKind::Vertical { line: first });
+        s.add_constraint(ConstraintKind::Horizontal { line: second });
+        s.add_constraint(ConstraintKind::Length {
+            line: first,
+            dimension: bound(session, "pitch", "mm"),
+        });
+        s.add_constraint(ConstraintKind::Length {
+            line: second,
+            dimension: length(20.),
+        });
+    });
+    SketchPathSource { sketch, curves }
+}
+fn miter_chain_path(session: &mut Session) -> SketchPathSource {
+    let mut curves = vec![];
+    let (sketch, _) = add_sketch(session, Datum::Xz, "Two-corner path", 0., |s, session| {
+        let points = [[0., 0.], [0., 40.], [20., 40.], [20., 70.]].map(|p| s.add_point(p));
+        let [a, b, c, d] = points;
+        let [first, middle, last] = [s.add_line(a, b), s.add_line(b, c), s.add_line(c, d)];
+        curves.extend([first, middle, last]);
+        s.add_constraint(ConstraintKind::Fix { point: a });
+        s.add_constraint(ConstraintKind::Vertical { line: first });
+        s.add_constraint(ConstraintKind::Horizontal { line: middle });
+        s.add_constraint(ConstraintKind::Vertical { line: last });
+        for (line, dimension) in [
+            (first, bound(session, "pitch", "mm")),
+            (middle, length(20.)),
+            (last, length(30.)),
+        ] {
+            s.add_constraint(ConstraintKind::Length { line, dimension });
+        }
+    });
+    SketchPathSource { sketch, curves }
+}
+
+fn check_saved_rust_profile(
+    session: &mut Session,
+    request: &AdvancedRequest,
+    volume: f64,
+) -> multicad_model::Model {
+    use multicad_model::{Compiler, GeometryBackend};
+    let compiler = Compiler {
+        omit_display: true,
+        ..Default::default()
+    };
+    let evaluate = |document, revision| {
+        compiler
+            .compile_sources_with_backend(
+                document,
+                revision,
+                &[request.body],
+                GeometryBackend::Rust,
+                None,
+            )
+            .unwrap()
+    };
+    let revision = session.revision();
+    let before = session.document().clone();
+    let model = evaluate(&before, revision);
+    let solid = model.solid(request.body).unwrap();
+    assert!(solid.uses_rust_geometry());
+    near(solid.volume_mm3().unwrap(), volume);
+    assert_eq!(solid.solid_count().unwrap(), 1);
+    assert!(
+        !solid
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap()
+            .mesh
+            .indices
+            .is_empty()
+    );
+    let folder = tempfile::tempdir().unwrap();
+    let step = folder.path().join("swept.step");
+    assert!(solid.supports_step_export());
+    solid.write_step(&step).unwrap();
+    near(
+        multicad_model::export::verify_rust_step_shape(
+            &step,
+            solid,
+            &model.snapshot().shapes[&request.feature],
+            1e-7,
+        )
+        .unwrap(),
+        volume,
+    );
+    let imported = multicad_kernel::Solid::import_rust_step(
+        &std::fs::read_to_string(step).unwrap(),
+        request.feature,
+        Default::default(),
+    )
+    .unwrap();
+    near(imported.volume_mm3().unwrap(), volume);
+    let bounds = solid.bounds().unwrap();
+    let imported_bounds = imported.bounds().unwrap();
+    for (actual, expected) in imported_bounds
+        .min
+        .into_iter()
+        .chain(imported_bounds.max)
+        .zip(bounds.min.into_iter().chain(bounds.max))
+    {
+        near(actual, expected);
+    }
+
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(before.clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let opened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap();
+    assert_eq!(opened.project.document, before);
+    let restored = evaluate(&opened.project.document, revision);
+    near(
+        restored.solid(request.body).unwrap().volume_mm3().unwrap(),
+        volume,
+    );
+    assert!(restored.snapshot().references.all_resolved());
+    session.undo(revision, actor()).unwrap();
+    session.redo(session.revision(), actor()).unwrap();
+    assert_eq!(session.document(), &before);
+    restored
+}
+
 #[test]
 fn sweep_rebuilds_solved_profile_and_ordered_path_without_display_geometry() {
     let (mut session, _) = fixture();
@@ -112,10 +253,10 @@ fn sweep_rebuilds_solved_profile_and_ordered_path_without_display_geometry() {
         Some(path),
     );
     commit(&mut session, &request);
-    persist_and_check(&mut session, request.body, PI * 4. * 40., 1);
+    check_saved_rust_profile(&mut session, &request, PI * 4. * 40.);
     apply_parameter(&mut session, "pitch", "50");
     apply_parameter(&mut session, "wall", "3");
-    persist_and_check(&mut session, request.body, PI * 9. * 50., 1);
+    check_saved_rust_profile(&mut session, &request, PI * 9. * 50.);
     let source = model::read_advanced(session.document(), request.feature)
         .unwrap()
         .0;
@@ -123,6 +264,801 @@ fn sweep_rebuilds_solved_profile_and_ordered_path_without_display_geometry() {
     assert_eq!(source.profiles, request.profiles);
     assert_eq!(source.path, request.path);
 }
+
+#[test]
+fn mitered_sweep_preserves_path_faces_after_edit_reopen_and_step() {
+    use multicad_core::references::{
+        self, AnalyticGeometry, GeometryIntent, Origin, Resolution, TopologyKind,
+    };
+    use multicad_kernel::Solid;
+
+    let (mut session, _) = fixture();
+    let (sketch, section) = add_sketch(&mut session, Datum::Xy, "Sweep section", 0., |s, _| {
+        s.add_rectangle([-2., -1.], [2., 1.]).unwrap();
+    });
+    let profile = ProfileSource {
+        sketch,
+        region: sketch_regions::extract(&section).regions[0].intent(),
+    };
+    let path = miter_path(&mut session);
+    let request = AdvancedRequest::new_body(
+        "Mitered sweep",
+        AdvancedParameters::Sweep(Default::default()),
+        vec![profile],
+        Some(path.clone()),
+    );
+    let preview = commit(&mut session, &request);
+    let check_geometry = |solid: &Solid, bend_z: f64| {
+        assert_eq!(solid.solid_count().unwrap(), 1);
+        near(solid.volume_mm3().unwrap(), 8. * (bend_z + 20.));
+        near(
+            solid
+                .faces()
+                .unwrap()
+                .iter()
+                .map(|face| face.area_mm2)
+                .sum(),
+            16. + 12. * (bend_z + 20.),
+        );
+        let bounds = solid.bounds().unwrap();
+        for (actual, expected) in
+            bounds
+                .min
+                .into_iter()
+                .chain(bounds.max)
+                .zip([-2., -1., 0., 20., 1., bend_z + 2.])
+        {
+            near(actual, expected);
+        }
+    };
+    check_geometry(preview.solid(request.body).unwrap(), 40.);
+    let initial = check_saved_rust_profile(&mut session, &request, 480.);
+    check_geometry(initial.solid(request.body).unwrap(), 40.);
+    let topology = &initial.snapshot().shapes[&request.feature].topology;
+    let path_origins = path.curves.iter().map(|&source| Origin {
+        source,
+        role: "path.edge".into(),
+    });
+    let side_intents = path_origins
+        .map(|origin| {
+            let sides = topology
+                .elements
+                .iter()
+                .filter(|face| {
+                    face.key.kind == TopologyKind::Face && face.origins.contains(&origin)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(sides.len(), 4, "each leg owns its four exterior walls");
+            sides
+                .into_iter()
+                .map(|side| GeometryIntent::capture(topology, side.key).unwrap())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let cap_intents = ["cap.start", "cap.end"].map(|role| {
+        let face = topology
+            .elements
+            .iter()
+            .find(|face| {
+                face.key.kind == TopologyKind::Face
+                    && face.origins.contains(&Origin {
+                        source: request.feature,
+                        role: role.into(),
+                    })
+            })
+            .unwrap();
+        GeometryIntent::capture(topology, face.key).unwrap()
+    });
+
+    apply_parameter(&mut session, "pitch", "55");
+    let reopened = check_saved_rust_profile(&mut session, &request, 600.);
+    let solid = reopened.solid(request.body).unwrap();
+    check_geometry(solid, 55.);
+
+    let topology = &reopened.snapshot().shapes[&request.feature].topology;
+    let resolve = |intent| match references::resolve(intent, topology, topology.revision) {
+        Resolution::Resolved {
+            key,
+            geometry: Some(AnalyticGeometry::Plane { frame }),
+            ..
+        } => (key, frame),
+        other => panic!("miter sweep face did not resolve after reopening: {other:?}"),
+    };
+    let sides: std::collections::BTreeSet<_> = side_intents
+        .iter()
+        .flatten()
+        .map(|intent| resolve(intent).0)
+        .collect();
+    assert_eq!(sides.len(), 8);
+    let (_, start) = resolve(&cap_intents[0]);
+    let (_, end) = resolve(&cap_intents[1]);
+    near(start.origin_mm[2], 0.);
+    near(start.normal()[2], -1.);
+    near(end.origin_mm[0], 20.);
+    near(end.normal()[0], 1.);
+    assert_eq!(
+        model::read_advanced(session.document(), request.feature)
+            .unwrap()
+            .0
+            .path,
+        Some(path),
+    );
+}
+
+#[test]
+fn concave_miter_keeps_the_notched_caps_and_authored_wall_after_edit() {
+    use multicad_core::{
+        drawings::{VectorCurve, VectorRole},
+        references::{self, GeometryIntent, Resolution, TopologyKind},
+    };
+    use multicad_kernel::{DrawingProjection, DrawingSolid, Solid, project_drawing};
+
+    let (mut session, _) = fixture();
+    let mut notch = EntityId::nil();
+    let (sketch, section) = add_sketch(&mut session, Datum::Xy, "U section", 0., |s, _| {
+        let points = [
+            [-3., -2.],
+            [3., -2.],
+            [3., 2.],
+            [1., 2.],
+            [1., 0.],
+            [-1., 0.],
+            [-1., 2.],
+            [-3., 2.],
+        ]
+        .map(|point| s.add_point(point));
+        for (i, (a, b)) in points
+            .into_iter()
+            .zip(points.into_iter().cycle().skip(1))
+            .enumerate()
+        {
+            let curve = s.add_line(a, b);
+            if i == 4 {
+                notch = curve;
+            }
+        }
+    });
+    let profile = ProfileSource {
+        sketch,
+        region: sketch_regions::extract(&section).regions[0].intent(),
+    };
+    let path = miter_path(&mut session);
+    let request = AdvancedRequest::new_body(
+        "Notched sweep",
+        AdvancedParameters::Sweep(Default::default()),
+        vec![profile],
+        Some(path.clone()),
+    );
+    let native_preview = commit(&mut session, &request);
+    let check_geometry = |solid: &Solid, bend_z: f64| {
+        let path_length = bend_z + 20.;
+        assert_eq!(solid.solid_count().unwrap(), 1);
+        // The cross section and its perimeter are symmetric in X, so the
+        // miter's shorter and longer generators cancel in both integrals.
+        near(solid.volume_mm3().unwrap(), 20. * path_length);
+        near(
+            solid.faces().unwrap().iter().map(|f| f.area_mm2).sum(),
+            40. + 24. * path_length,
+        );
+        let bounds = solid.bounds().unwrap();
+        for (actual, expected) in
+            bounds
+                .min
+                .into_iter()
+                .chain(bounds.max)
+                .zip([-3., -2., 0., 20., 2., bend_z + 3.])
+        {
+            near(actual, expected);
+        }
+    };
+    check_geometry(native_preview.solid(request.body).unwrap(), 40.);
+    let initial = check_saved_rust_profile(&mut session, &request, 1_200.);
+    let topology = &initial.snapshot().shapes[&request.feature].topology;
+    let notch = topology
+        .elements
+        .iter()
+        .find(|face| {
+            face.key.kind == TopologyKind::Face
+                && face.origins.iter().any(|origin| origin.source == notch)
+                && face
+                    .origins
+                    .iter()
+                    .any(|origin| origin.source == path.curves[1])
+        })
+        .unwrap();
+    let notch = GeometryIntent::capture(topology, notch.key).unwrap();
+
+    apply_parameter(&mut session, "pitch", "55");
+    let reopened = check_saved_rust_profile(&mut session, &request, 1_500.);
+    let solid = reopened.solid(request.body).unwrap();
+    check_geometry(solid, 55.);
+    let topology = &reopened.snapshot().shapes[&request.feature].topology;
+    assert!(matches!(
+        references::resolve(&notch, topology, topology.revision),
+        Resolution::Resolved { .. }
+    ));
+    let drawing = project_drawing(
+        &[DrawingSolid { solid, hatch: None }],
+        DrawingProjection {
+            section_offset_mm: Some(10.),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        drawing
+            .iter()
+            .any(|vector| vector.role == VectorRole::Section
+                && matches!(vector.curve, VectorCurve::Line { a, b }
+            if a[1].abs() < 1e-7 && b[1].abs() < 1e-7
+                && (a[0].min(b[0]) + 1.).abs() < 1e-7 && (a[0].max(b[0]) - 1.).abs() < 1e-7))
+    );
+}
+
+#[test]
+fn circular_miter_rebuilds_its_exact_trim_after_saved_path_and_radius_edits() {
+    use multicad_core::drawings::{
+        DrawingView, Scale, VectorCurve, VectorRole, ViewEvaluation, ViewKind, ViewSource,
+    };
+    use multicad_core::references::{
+        self, AnalyticGeometry, GeometryIntent, Resolution, TopologyKind,
+    };
+    use multicad_kernel::Solid;
+
+    let (mut session, _) = fixture();
+    let (profile, circle_curve) = circle(&mut session, "Round sweep section", 0., 2., true);
+    let path = miter_path(&mut session);
+    let request = AdvancedRequest::new_body(
+        "Circular miter",
+        AdvancedParameters::Sweep(Default::default()),
+        vec![profile],
+        Some(path.clone()),
+    );
+    let preview = commit(&mut session, &request);
+    let check_geometry = |solid: &Solid, radius: f64, bend_z: f64| {
+        let centerline = bend_z + 20.;
+        assert_eq!(solid.solid_count().unwrap(), 1);
+        near(
+            solid.volume_mm3().unwrap(),
+            PI * radius.powi(2) * centerline,
+        );
+        near(
+            solid
+                .faces()
+                .unwrap()
+                .iter()
+                .map(|face| face.area_mm2)
+                .sum(),
+            2. * PI * radius * (centerline + radius),
+        );
+        let bounds = solid.bounds().unwrap();
+        for (actual, expected) in bounds.min.into_iter().chain(bounds.max).zip([
+            -radius,
+            -radius,
+            0.,
+            20.,
+            radius,
+            bend_z + radius,
+        ]) {
+            near(actual, expected);
+        }
+    };
+    check_geometry(preview.solid(request.body).unwrap(), 2., 40.);
+    let initial = check_saved_rust_profile(&mut session, &request, PI * 240.);
+    let topology = &initial.snapshot().shapes[&request.feature].topology;
+    let walls: Vec<_> = topology
+        .elements
+        .iter()
+        .filter(|face| {
+            face.key.kind == TopologyKind::Face
+                && face
+                    .origins
+                    .iter()
+                    .any(|origin| origin.source == circle_curve)
+                && face
+                    .origins
+                    .iter()
+                    .any(|origin| path.curves.contains(&origin.source))
+        })
+        .map(|face| GeometryIntent::capture(topology, face.key).unwrap())
+        .collect();
+    assert_eq!(walls.len(), 8);
+    let trims: Vec<_> = topology
+        .elements
+        .iter()
+        .filter_map(|edge| {
+            if let Some(AnalyticGeometry::EllipticArc { semiaxes_mm, .. }) = edge.geometry {
+                Some(semiaxes_mm)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(trims.len(), 4);
+    for [major, minor] in trims {
+        near(major, 2. * 2_f64.sqrt());
+        near(minor, 2.);
+    }
+
+    apply_parameter(&mut session, "pitch", "55");
+    apply_parameter(&mut session, "wall", "3");
+    let reopened = check_saved_rust_profile(&mut session, &request, PI * 675.);
+    let solid = reopened.solid(request.body).unwrap();
+    check_geometry(solid, 3., 55.);
+    let topology = &reopened.snapshot().shapes[&request.feature].topology;
+    let resolved: std::collections::BTreeSet<_> = walls
+        .iter()
+        .map(
+            |intent| match references::resolve(intent, topology, topology.revision) {
+                Resolution::Resolved { key, .. } => key,
+                diagnostic => {
+                    panic!("Circular miter wall did not survive the edit: {diagnostic:?}")
+                }
+            },
+        )
+        .collect();
+    assert_eq!(resolved.len(), 8);
+    let diagonal = std::f64::consts::FRAC_1_SQRT_2;
+    let view = DrawingView {
+        id: EntityId::new(),
+        name: "Oblique miter".into(),
+        source: ViewSource::Model {
+            entities: vec![request.body],
+        },
+        frame: references::ReferenceFrame {
+            origin_mm: [0.; 3],
+            u: [1., 0., 0.],
+            v: [0., diagonal, diagonal],
+        },
+        kind: ViewKind::Projection,
+        position_mm: [0.; 2],
+        scale: Scale {
+            numerator: 1,
+            denominator: 1,
+        },
+        hidden_lines: true,
+        tangent_edges: false,
+        paper_chord_tolerance_mm: 0.01,
+        guide: None,
+        equipment_categories: None,
+    };
+    let drawing_model = multicad_model::Compiler {
+        omit_display: true,
+        ..Default::default()
+    }
+    .compile_with_backend(
+        session.document(),
+        session.revision(),
+        multicad_model::GeometryBackend::Rust,
+        None,
+    )
+    .unwrap();
+    let drawing = drawing_model
+        .drawing_view(
+            session.document(),
+            session.revision(),
+            &view,
+            &Default::default(),
+        )
+        .unwrap();
+    let ViewEvaluation::Ready { vectors, .. } = drawing else {
+        panic!("Expected exact circular miter drawing: {drawing:?}");
+    };
+    assert!(
+        vectors.iter().any(|vector| matches!(vector.curve,
+            VectorCurve::Ellipse { center, major_mm, minor_mm, .. }
+            if center[0].abs() < 1e-7 && (center[1] - 55. * diagonal).abs() < 1e-7
+                && (major_mm - 3. * (1. + diagonal).sqrt()).abs() < 1e-7
+                && (minor_mm - 3. * (1. - diagonal).sqrt()).abs() < 1e-7
+        )),
+        "the projected miter must retain its exact ellipse"
+    );
+    let section = multicad_kernel::project_drawing(
+        &[multicad_kernel::DrawingSolid { solid, hatch: None }],
+        multicad_kernel::DrawingProjection {
+            section_offset_mm: Some(55.),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut arc_sweep = 0.;
+    for vector in section
+        .iter()
+        .filter(|vector| vector.role == VectorRole::Section)
+    {
+        if let VectorCurve::Ellipse {
+            major_mm,
+            minor_mm,
+            start_rad,
+            end_rad,
+            ..
+        } = vector.curve
+        {
+            near(major_mm, 3.);
+            near(minor_mm, 3.);
+            arc_sweep += (end_rad - start_rad).abs();
+        }
+    }
+    near(arc_sweep, PI);
+}
+
+#[test]
+fn circular_miter_chain_rebuilds_and_keeps_both_middle_cylinder_trims() {
+    use multicad_core::{
+        drawings::{VectorCurve, VectorRole},
+        references::{self, AnalyticGeometry, GeometryIntent, Resolution, TopologyKind},
+    };
+    use multicad_kernel::{DrawingProjection, DrawingSolid, PlaneFrame, Solid, project_drawing};
+
+    let (mut session, _) = fixture();
+    let (profile, circle_curve) = circle(&mut session, "Circular chain section", 0., 2., true);
+    let path = miter_chain_path(&mut session);
+    let request = AdvancedRequest::new_body(
+        "Two circular miters",
+        AdvancedParameters::Sweep(Default::default()),
+        vec![profile],
+        Some(path.clone()),
+    );
+    let preview = commit(&mut session, &request);
+    let check_geometry = |solid: &Solid, radius: f64, bend_z: f64| {
+        assert_eq!(solid.solid_count().unwrap(), 1);
+        near(
+            solid.volume_mm3().unwrap(),
+            PI * radius.powi(2) * (bend_z + 50.),
+        );
+        near(
+            solid
+                .faces()
+                .unwrap()
+                .iter()
+                .map(|face| face.area_mm2)
+                .sum(),
+            2. * PI * radius * (bend_z + 50. + radius),
+        );
+        let bounds = solid.bounds().unwrap();
+        for (actual, expected) in bounds.min.into_iter().chain(bounds.max).zip([
+            -radius,
+            -radius,
+            0.,
+            20. + radius,
+            radius,
+            bend_z + 30.,
+        ]) {
+            near(actual, expected);
+        }
+    };
+    check_geometry(preview.solid(request.body).unwrap(), 2., 40.);
+    let initial = check_saved_rust_profile(&mut session, &request, PI * 360.);
+    let topology = &initial.snapshot().shapes[&request.feature].topology;
+    let middle_walls: Vec<_> = topology
+        .elements
+        .iter()
+        .filter(|face| {
+            face.key.kind == TopologyKind::Face
+                && face
+                    .origins
+                    .iter()
+                    .any(|origin| origin.source == circle_curve)
+                && face
+                    .origins
+                    .iter()
+                    .any(|origin| origin.source == path.curves[1])
+        })
+        .map(|face| GeometryIntent::capture(topology, face.key).unwrap())
+        .collect();
+    assert_eq!(middle_walls.len(), 4);
+
+    apply_parameter(&mut session, "pitch", "55");
+    apply_parameter(&mut session, "wall", "3");
+    let reopened = check_saved_rust_profile(&mut session, &request, PI * 945.);
+    let solid = reopened.solid(request.body).unwrap();
+    check_geometry(solid, 3., 55.);
+    let topology = &reopened.snapshot().shapes[&request.feature].topology;
+    let resolved: std::collections::BTreeSet<_> = middle_walls
+        .iter()
+        .map(
+            |intent| match references::resolve(intent, topology, topology.revision) {
+                Resolution::Resolved { key, .. } => key,
+                diagnostic => {
+                    panic!("The middle sweep wall did not resolve after the edit: {diagnostic:?}")
+                }
+            },
+        )
+        .collect();
+    assert_eq!(resolved.len(), 4);
+    assert_eq!(
+        topology
+            .elements
+            .iter()
+            .filter(|edge| matches!(edge.geometry, Some(AnalyticGeometry::EllipticArc { .. })))
+            .count(),
+        8
+    );
+
+    let input = [DrawingSolid { solid, hatch: None }];
+    let section = project_drawing(
+        &input,
+        DrawingProjection {
+            frame: PlaneFrame {
+                origin: [0.; 3],
+                u: [0., 1., 0.],
+                v: [0., 0., 1.],
+            },
+            section_offset_mm: Some(10.),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let sweep: f64 = section
+        .iter()
+        .filter(|vector| vector.role == VectorRole::Section)
+        .map(|vector| match vector.curve {
+            VectorCurve::Ellipse {
+                center,
+                major_mm,
+                minor_mm,
+                start_rad,
+                end_rad,
+                ..
+            } => {
+                near(center[0], 0.);
+                near(center[1], 55.);
+                near(major_mm, 3.);
+                near(minor_mm, 3.);
+                (end_rad - start_rad).abs()
+            }
+            ref other => panic!("Expected the exact middle disk section, got {other:?}"),
+        })
+        .sum();
+    near(sweep, 2. * PI);
+    let diagonal = std::f64::consts::FRAC_1_SQRT_2;
+    let projection = project_drawing(
+        &input,
+        DrawingProjection {
+            frame: PlaneFrame {
+                v: [0., diagonal, diagonal],
+                ..Default::default()
+            },
+            hidden_lines: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    for x in [0., 20.] {
+        assert!(
+            projection.iter().any(|vector| matches!(vector.curve,
+                VectorCurve::Ellipse { center, major_mm, minor_mm, .. }
+                if (center[0] - x).abs() < 1e-7 && (center[1] - 55. * diagonal).abs() < 1e-7
+                    && (major_mm - 3. * (1. + diagonal).sqrt()).abs() < 1e-7
+                    && (minor_mm - 3. * (1. - diagonal).sqrt()).abs() < 1e-7
+            )),
+            "Missing exact projection of the joint at X={x}"
+        );
+    }
+}
+
+#[test]
+fn mixed_miter_keeps_a_stadium_profile_and_its_authored_walls_after_reopen() {
+    use multicad_core::{
+        drawings::{VectorCurve, VectorRole},
+        references::{self, AnalyticGeometry, GeometryIntent, Resolution, TopologyKind},
+    };
+    use multicad_kernel::{DrawingProjection, DrawingSolid, PlaneFrame, Solid, project_drawing};
+
+    let (mut session, _) = fixture();
+    let mut straight = EntityId::nil();
+    let curved = EntityId::new();
+    let (sketch, section) = add_sketch(&mut session, Datum::Xy, "Stadium profile", 0., |s, _| {
+        let [a, b, c, d] = [[-3., -1.], [3., -1.], [3., 1.], [-3., 1.]].map(|p| s.add_point(p));
+        straight = s.add_line(a, b);
+        let right = s.add_point([3., 0.]);
+        let left = s.add_point([-3., 0.]);
+        s.sketch.curves.push(Curve {
+            id: curved,
+            construction: false,
+            kind: CurveKind::Arc {
+                center: right,
+                start: b,
+                end: c,
+                clockwise: false,
+            },
+        });
+        s.add_line(c, d);
+        s.sketch.curves.push(Curve {
+            id: EntityId::new(),
+            construction: false,
+            kind: CurveKind::Arc {
+                center: left,
+                start: d,
+                end: a,
+                clockwise: false,
+            },
+        });
+    });
+    let profile = ProfileSource {
+        sketch,
+        region: sketch_regions::extract(&section).regions[0].intent(),
+    };
+    let path = miter_chain_path(&mut session);
+    let request = AdvancedRequest::new_body(
+        "Stadium sweep through two bends",
+        AdvancedParameters::Sweep(Default::default()),
+        vec![profile],
+        Some(path.clone()),
+    );
+    let preview = commit(&mut session, &request);
+    let area = 12. + PI;
+    let perimeter = 12. + 2. * PI;
+    let check_geometry = |solid: &Solid, bend_z| {
+        let length = bend_z + 50.;
+        assert_eq!(solid.solid_count().unwrap(), 1);
+        near(solid.volume_mm3().unwrap(), area * length);
+        near(
+            solid
+                .faces()
+                .unwrap()
+                .iter()
+                .map(|face| face.area_mm2)
+                .sum(),
+            2. * area + perimeter * length,
+        );
+        let bounds = solid.bounds().unwrap();
+        for (actual, expected) in
+            bounds
+                .min
+                .into_iter()
+                .chain(bounds.max)
+                .zip([-4., -1., 0., 24., 1., bend_z + 30.])
+        {
+            near(actual, expected);
+        }
+    };
+    check_geometry(preview.solid(request.body).unwrap(), 40.);
+    let initial = check_saved_rust_profile(&mut session, &request, area * 90.);
+    let topology = &initial.snapshot().shapes[&request.feature].topology;
+    let intents: Vec<_> = topology
+        .elements
+        .iter()
+        .filter(|face| {
+            face.key.kind == TopologyKind::Face
+                && face
+                    .origins
+                    .iter()
+                    .any(|origin| [straight, curved].contains(&origin.source))
+                && face
+                    .origins
+                    .iter()
+                    .any(|origin| origin.source == path.curves[1])
+        })
+        .map(|face| GeometryIntent::capture(topology, face.key).unwrap())
+        .collect();
+    assert_eq!(intents.len(), 3);
+
+    apply_parameter(&mut session, "pitch", "55");
+    let reopened = check_saved_rust_profile(&mut session, &request, area * 105.);
+    let solid = reopened.solid(request.body).unwrap();
+    check_geometry(solid, 55.);
+    let topology = &reopened.snapshot().shapes[&request.feature].topology;
+    let resolved: std::collections::BTreeSet<_> = intents
+        .iter()
+        .map(
+            |intent| match references::resolve(intent, topology, topology.revision) {
+                Resolution::Resolved { key, .. } => key,
+                diagnostic => panic!("The stadium sweep wall did not resolve: {diagnostic:?}"),
+            },
+        )
+        .collect();
+    assert_eq!(resolved.len(), 3);
+    assert!(topology.elements.iter().any(|edge| matches!(edge.geometry,
+        Some(AnalyticGeometry::EllipticArc { semiaxes_mm: [a, b], .. })
+            if (a - 2_f64.sqrt()).abs() < 1e-7 && (b - 1.).abs() < 1e-7)));
+
+    let input = [DrawingSolid { solid, hatch: None }];
+    let section = project_drawing(
+        &input,
+        DrawingProjection {
+            frame: PlaneFrame {
+                origin: [0.; 3],
+                u: [0., 1., 0.],
+                v: [0., 0., 1.],
+            },
+            section_offset_mm: Some(10.),
+            section_only: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut arc_span = 0.;
+    let mut straight_span = 0.;
+    for vector in section
+        .iter()
+        .filter(|vector| vector.role == VectorRole::Section)
+    {
+        match vector.curve {
+            VectorCurve::Ellipse {
+                major_mm,
+                minor_mm,
+                start_rad,
+                end_rad,
+                ..
+            } => {
+                near(major_mm, 1.);
+                near(minor_mm, 1.);
+                arc_span += (end_rad - start_rad).abs();
+            }
+            VectorCurve::Line { a, b } => straight_span += (b[0] - a[0]).hypot(b[1] - a[1]),
+            ref other => panic!("Expected exact stadium section edges, got {other:?}"),
+        }
+    }
+    near(arc_span, 2. * PI);
+    near(straight_span, 12.);
+    let joint = [3., -1., 52.];
+    let u = [-0.2, 1., 0.].map(|v| v / 1.04_f64.sqrt());
+    let normal = [1., 0.2, 0.3].map(|v| v / 1.13_f64.sqrt());
+    let v = [
+        -normal[2] * u[1],
+        normal[2] * u[0],
+        normal[0] * u[1] - normal[1] * u[0],
+    ];
+    let joint_view = DrawingProjection {
+        frame: PlaneFrame {
+            origin: joint,
+            u,
+            v,
+        },
+        section_offset_mm: Some(0.),
+        section_only: true,
+        ..Default::default()
+    };
+    let check_joint = |solid: &Solid| {
+        let exact = project_drawing(&[DrawingSolid { solid, hatch: None }], joint_view).unwrap();
+        let at_joint = |p: [f64; 2]| p[0].hypot(p[1]) < 1e-7;
+        let mut touching = [0; 2];
+        for vector in exact
+            .iter()
+            .filter(|vector| vector.role == VectorRole::Section)
+        {
+            match vector.curve {
+                VectorCurve::Line { a, b } if [a, b].into_iter().any(at_joint) => touching[0] += 1,
+                VectorCurve::Ellipse {
+                    center,
+                    u,
+                    v,
+                    major_mm,
+                    minor_mm,
+                    start_rad,
+                    end_rad,
+                } => {
+                    let ends = [start_rad, end_rad].map(|angle| {
+                        let (sin, cos) = angle.sin_cos();
+                        std::array::from_fn(|i| {
+                            center[i] + major_mm * cos * u[i] + minor_mm * sin * v[i]
+                        })
+                    });
+                    if ends.into_iter().any(at_joint) {
+                        near(major_mm * normal[2], 1.);
+                        near(minor_mm, 1.);
+                        touching[1] += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(touching, [1, 1]);
+    };
+    check_joint(solid);
+    let directory = tempfile::tempdir().unwrap();
+    let step = directory.path().join("stadium-miter.step");
+    solid.write_step(&step).unwrap();
+    let imported = Solid::import_rust_step(
+        &std::fs::read_to_string(&step).unwrap(),
+        request.feature,
+        Default::default(),
+    )
+    .unwrap();
+    check_joint(&imported);
+}
+
 #[test]
 fn an_existing_sweep_rejects_a_path_changed_to_construction_without_source_mutation() {
     let (mut session, _) = fixture();
@@ -162,7 +1098,13 @@ fn an_existing_sweep_rejects_a_path_changed_to_construction_without_source_mutat
         Some(path)
     );
     let failure = multicad_model::Compiler::default()
-        .compile(&candidate, revision)
+        .compile_sources_with_backend(
+            &candidate,
+            revision,
+            &[request.body],
+            multicad_model::GeometryBackend::Rust,
+            None,
+        )
         .err()
         .unwrap();
     assert_eq!(failure.entity, Some(request.feature));
@@ -193,19 +1135,9 @@ fn loft_uses_explicit_section_seams_and_current_bound_section_geometry() {
         None,
     );
     commit(&mut session, &request);
-    persist_and_check(
-        &mut session,
-        request.body,
-        PI * 20. / 3. * (4. + 8. + 16.),
-        1,
-    );
+    check_saved_rust_profile(&mut session, &request, PI * 20. / 3. * (4. + 8. + 16.));
     apply_parameter(&mut session, "wall", "3");
-    persist_and_check(
-        &mut session,
-        request.body,
-        PI * 20. / 3. * (9. + 12. + 16.),
-        1,
-    );
+    check_saved_rust_profile(&mut session, &request, PI * 20. / 3. * (9. + 12. + 16.));
     let mut edit = AdvancedRequest::existing(session.document(), request.feature).unwrap();
     let AdvancedParameters::Loft(p) = &mut edit.parameters else {
         panic!()
@@ -214,13 +1146,1439 @@ fn loft_uses_explicit_section_seams_and_current_bound_section_geometry() {
     let prepared =
         model::prepare_advanced_edit(&session, session.revision(), actor(), &edit).unwrap();
     session.commit(prepared.prepared).unwrap();
-    persist_and_check(
-        &mut session,
-        request.body,
-        PI * 20. / 3. * (9. + 12. + 16.),
-        1,
+    check_saved_rust_profile(&mut session, &request, PI * 20. / 3. * (9. + 12. + 16.));
+}
+
+#[test]
+fn ruled_circular_loft_rebuilds_every_band_and_preserves_step_geometry() {
+    use multicad_model::Model;
+
+    let (mut session, _) = fixture();
+    let (first, a) = circle(&mut session, "Loft start", 0., 2., false);
+    let (middle, b) = circle(&mut session, "Loft transition", 7., 2., true);
+    let (last, c) = circle(&mut session, "Loft end", 20., 5., false);
+    let request = AdvancedRequest::new_body(
+        "Ruled circular loft",
+        AdvancedParameters::Loft(LoftParameters {
+            ruled: true,
+            seams: vec![a, b, c],
+        }),
+        vec![first, middle, last],
+        None,
+    );
+    commit(&mut session, &request);
+    let check_bands = |model: &Model, radius: f64| {
+        let solid = model.solid(request.body).unwrap();
+        let bounds = solid.bounds().unwrap();
+        for (actual, expected) in bounds
+            .min
+            .into_iter()
+            .chain(bounds.max)
+            .zip([-5., -5., 0., 5., 5., 20.])
+        {
+            near(actual, expected);
+        }
+        let mut actual: Vec<_> = solid
+            .faces()
+            .unwrap()
+            .into_iter()
+            .filter_map(|face| face.plane.is_none().then_some(face.area_mm2))
+            .collect();
+        let mut expected = [
+            PI * (2. + radius) * 7_f64.hypot(radius - 2.),
+            PI * (radius + 5.) * 13_f64.hypot(5. - radius),
+        ];
+        actual.sort_unstable_by(f64::total_cmp);
+        expected.sort_unstable_by(f64::total_cmp);
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.into_iter().zip(expected) {
+            near(actual, expected);
+        }
+    };
+    for radius in [2., 4.] {
+        if radius > 2. {
+            apply_parameter(&mut session, "wall", "4");
+        }
+        let frustum = |a, b, h| PI * h * (a * a + a * b + b * b) / 3.;
+        let volume = frustum(2., radius, 7.) + frustum(radius, 5., 13.);
+
+        let reopened = check_saved_rust_profile(&mut session, &request, volume);
+        check_bands(&reopened, radius);
+        let (source, _) = model::read_advanced(session.document(), request.feature).unwrap();
+        assert_eq!(source.profiles, request.profiles);
+        assert_eq!(source.parameters, request.parameters);
+    }
+}
+
+#[test]
+fn ruled_polygon_loft_preserves_section_seams_after_edit_reopen_and_step() {
+    use multicad_core::references::{
+        self, AnalyticGeometry, GeometryIntent, Resolution, TopologyKind,
+    };
+    use multicad_model::{Compiler, GeometryBackend, Model};
+
+    let (mut session, _) = fixture();
+    let corners =
+        |[x, y]: [f64; 2], [w, h]: [f64; 2]| [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+    let sections = [
+        ("Rectangular loft start", 0., [0., 0.], [6., 4.]),
+        ("Rectangular loft middle", 12., [1., -1.], [10., 8.]),
+        ("Rectangular loft end", 26., [-2., 2.], [4., 5.]),
+    ];
+    let [(first, a), (middle, b), (last, c)] = sections.map(|(name, z, origin, size)| {
+        let mut seam = EntityId::nil();
+        let (sketch, source) = add_sketch(&mut session, Datum::Xy, name, z, |source, _| {
+            let points = corners(origin, size).map(|point| source.add_point(point));
+            for (i, (a, b)) in points
+                .into_iter()
+                .zip(points.into_iter().cycle().skip(1))
+                .enumerate()
+            {
+                let edge = source.add_line(a, b);
+                if i == 0 {
+                    seam = edge;
+                }
+            }
+        });
+        let region = sketch_regions::extract(&source).regions[0].intent();
+        (ProfileSource { sketch, region }, seam)
+    });
+    let request = AdvancedRequest::new_body(
+        "Ruled rectangular loft",
+        AdvancedParameters::Loft(LoftParameters {
+            ruled: true,
+            seams: vec![a, b, c],
+        }),
+        vec![first, middle.clone(), last],
+        None,
+    );
+    commit(&mut session, &request);
+    let compiler = Compiler {
+        omit_display: true,
+        ..Default::default()
+    };
+    let evaluate = |session: &Session, backend| {
+        compiler
+            .compile_sources_with_backend(
+                session.document(),
+                session.revision(),
+                &[request.body],
+                backend,
+                None,
+            )
+            .unwrap()
+    };
+    let volume = |z, [w, h]: [f64; 2]| {
+        // Each width and height varies linearly in its own band. The
+        // product is quadratic, so Simpson's rule gives the exact volume.
+        let band = |height, [a, b]: [f64; 2], [c, d]: [f64; 2]| {
+            height * (2. * a * b + a * d + b * c + 2. * c * d) / 6.
+        };
+        band(z, [6., 4.], [w, h]) + band(26. - z, [w, h], [4., 5.])
+    };
+    let check_geometry = |model: &Model, volume, [min, max]: [[f64; 3]; 2]| {
+        let solid = model.solid(request.body).unwrap();
+        assert_eq!(solid.solid_count().unwrap(), 1);
+        near(solid.volume_mm3().unwrap(), volume);
+        let bounds = solid.bounds().unwrap();
+        for i in 0..3 {
+            near(bounds.min[i], min[i]);
+            near(bounds.max[i], max[i]);
+        }
+    };
+
+    let initial = evaluate(&session, GeometryBackend::Rust);
+    let initial_bounds = [[-2., -1., 0.], [11., 7., 26.]];
+    let initial_volume = volume(12., [10., 8.]);
+    check_geometry(&initial, initial_volume, initial_bounds);
+    let topology = &initial.snapshot().shapes[&request.feature].topology;
+    let face = |test: &dyn Fn(&references::TopologyElement) -> bool| {
+        topology
+            .elements
+            .iter()
+            .find(|element| element.key.kind == TopologyKind::Face && test(element))
+            .unwrap()
+    };
+    let sides = [[a, b], [b, c]].map(|[start, end]| {
+        let side = face(&|e| {
+            e.origins.iter().any(|origin| origin.source == start)
+                && e.origins.iter().any(|origin| origin.source == end)
+        });
+        assert!(side.origins.iter().any(|origin| {
+            origin.source == request.feature && origin.role.starts_with(&format!("side/{start}/"))
+        }));
+        GeometryIntent::capture(topology, side.key).unwrap()
+    });
+    let caps = ["cap.start", "cap.end"].map(|role| {
+        let cap = face(&|e| {
+            e.origins
+                .iter()
+                .any(|origin| origin.source == request.feature && origin.role == role)
+        });
+        GeometryIntent::capture(topology, cap.key).unwrap()
+    });
+
+    let mut source = Source::read(session.document(), middle.sketch).unwrap().0;
+    for (point, position) in source
+        .sketch
+        .points
+        .iter_mut()
+        .zip(corners([2., -2.], [11., 7.]))
+    {
+        point.position_mm = position;
+    }
+    let EntityData::Sketch { plane, .. } = session.document().get(middle.sketch).unwrap().data
+    else {
+        panic!("expected a sketch plane");
+    };
+    let mut plane = session.document().get(plane).unwrap().clone();
+    let EntityData::Plane { origin_mm, .. } = &mut plane.data else {
+        panic!("expected a datum plane");
+    };
+    origin_mm[2] = 14.;
+    let mut edits = source.replace(session.document(), middle.sketch).unwrap();
+    edits.push(Mutation::Replace(plane));
+    session
+        .apply(Request {
+            expected_revision: session.revision(),
+            actor: actor(),
+            label: "Move and resize the middle loft section".into(),
+            edits,
+        })
+        .unwrap();
+    assert_eq!(
+        model::read_advanced(session.document(), request.feature)
+            .unwrap()
+            .0
+            .profiles,
+        request.profiles
+    );
+    let edited_volume = volume(14., [11., 7.]);
+    let edited_bounds = [[-2., -2., 0.], [13., 7., 26.]];
+    let reopened = check_saved_rust_profile(&mut session, &request, edited_volume);
+    check_geometry(&reopened, edited_volume, edited_bounds);
+    let topology = &reopened.snapshot().shapes[&request.feature].topology;
+    let resolved = |intent| match references::resolve(intent, topology, topology.revision) {
+        Resolution::Resolved {
+            key,
+            geometry: Some(AnalyticGeometry::Plane { frame }),
+            ..
+        } => (key, frame),
+        other => panic!("loft face did not resolve after the saved section edit: {other:?}"),
+    };
+    let faces = reopened.solid(request.body).unwrap().faces().unwrap();
+    for (intent, area) in sides
+        .iter()
+        .zip([8.5 * 200_f64.sqrt(), 7.5 * 160_f64.sqrt()])
+    {
+        let (key, _) = resolved(intent);
+        near(faces[key.ordinal as usize].area_mm2, area);
+    }
+    for (intent, [z, sign]) in caps.iter().zip([[0., -1.], [26., 1.]]) {
+        let (_, frame) = resolved(intent);
+        near(frame.origin_mm[2], z);
+        near(frame.normal()[2], sign);
+    }
+}
+
+#[test]
+fn smooth_planar_loft_keeps_the_intermediate_station_attachment() {
+    use multicad_core::references::{self, Attachment, GeometryIntent, Resolution, TopologyKind};
+
+    let (mut session, _) = fixture();
+    let [a, b] = notched_loft_footprints();
+    let interpolate = |t: f64| {
+        std::array::from_fn(|i| std::array::from_fn(|j| (b[i][j] - a[i][j]).mul_add(t, a[i][j])))
+    };
+    let [(first, start), (middle, station), (last, end)] = [
+        ("Smooth start", 0., a),
+        ("Smooth station", 1.5, interpolate(0.375)),
+        ("Smooth end", 4., b),
+    ]
+    .map(|(name, z, points)| loft_polygon(&mut session, name, z, points));
+    let request = AdvancedRequest::new_body(
+        "Smooth planar notch",
+        AdvancedParameters::Loft(LoftParameters {
+            seams: vec![start[0], station[0], end[0]],
+            ..Default::default()
+        }),
+        vec![first, middle.clone(), last],
+        None,
+    );
+    commit(&mut session, &request);
+    let volume = 4. * (56. + 4. * 70.5 + 86.) / 6.;
+
+    let initial = check_saved_rust_profile(&mut session, &request, volume);
+    assert_eq!(
+        initial.solid(request.body).unwrap().faces().unwrap().len(),
+        10
+    );
+
+    let notch = |model: &multicad_model::Model| {
+        let topology = &model.snapshot().shapes[&request.feature].topology;
+        topology
+            .elements
+            .iter()
+            .find(|face| {
+                face.key.kind == TopologyKind::Face
+                    && [start[4], station[4], end[4]]
+                        .into_iter()
+                        .all(|id| face.origins.iter().any(|origin| origin.source == id))
+            })
+            .unwrap()
+            .clone()
+    };
+    let face = notch(&initial);
+    let topology = &initial.snapshot().shapes[&request.feature].topology;
+    let mut intent = GeometryIntent::capture(topology, face.key).unwrap();
+    let anchor = face
+        .frames
+        .iter()
+        .find(|anchor| anchor.origin.source == station[4])
+        .unwrap();
+    near(anchor.frame.origin_mm[2], 1.5);
+    intent.attachment = Some(Attachment {
+        anchor: anchor.origin.clone(),
+        offset_mm: [0.; 3],
+        angle_rad: 0.,
+    });
+
+    let mut source = Source::read(session.document(), middle.sketch).unwrap().0;
+    for (point, position) in source.sketch.points.iter_mut().zip(interpolate(0.625)) {
+        point.position_mm = position;
+    }
+    let EntityData::Sketch { plane, .. } = session.document().get(middle.sketch).unwrap().data
+    else {
+        panic!("expected the middle section plane");
+    };
+    let mut plane = session.document().get(plane).unwrap().clone();
+    let EntityData::Plane { origin_mm, .. } = &mut plane.data else {
+        panic!("expected a datum plane");
+    };
+    origin_mm[2] = 2.5;
+    let mut edits = source.replace(session.document(), middle.sketch).unwrap();
+    edits.push(Mutation::Replace(plane));
+    session
+        .apply(Request {
+            expected_revision: session.revision(),
+            actor: actor(),
+            label: "Move the smooth loft station along the same wall".into(),
+            edits,
+        })
+        .unwrap();
+    let restored = check_saved_rust_profile(&mut session, &request, volume);
+    let topology = &restored.snapshot().shapes[&request.feature].topology;
+    let Resolution::Resolved {
+        key,
+        frame: Some(frame),
+        ..
+    } = references::resolve(&intent, topology, topology.revision)
+    else {
+        panic!("the station attachment must resolve on the merged wall");
+    };
+    assert_eq!(key, notch(&restored).key);
+    near(frame.origin_mm[2], 2.5);
+
+    // A real change in the transition needs the general smooth provider.
+    source.sketch.points[0].position_mm[0] += 0.5;
+    let altered = session
+        .document()
+        .edited(&source.replace(session.document(), middle.sketch).unwrap())
+        .unwrap();
+    let error = multicad_model::Compiler::default()
+        .compile_sources_with_backend(
+            &altered,
+            session.revision(),
+            &[request.body],
+            multicad_model::GeometryBackend::Rust,
+            None,
+        )
+        .err()
+        .expect("a non-affine station must not be flattened");
+    assert!(error.message.contains("straight transition"));
+}
+
+#[test]
+fn smooth_coaxial_loft_keeps_the_exact_cone_and_all_section_origins() {
+    use multicad_core::references::TopologyKind;
+
+    let (mut session, _) = fixture();
+    let (first, a) = circle(&mut session, "Cone start", 0., 2., false);
+    let (middle, b) = circle(&mut session, "Cone station", 7., 3.05, false);
+    let middle_sketch = middle.sketch;
+    let (last, c) = circle(&mut session, "Cone end", 20., 5., false);
+    let request = AdvancedRequest::new_body(
+        "Smooth coaxial cone",
+        AdvancedParameters::Loft(LoftParameters {
+            seams: vec![a, b, c],
+            ..Default::default()
+        }),
+        vec![first, middle, last],
+        None,
+    );
+    commit(&mut session, &request);
+    let volume = 20. * PI * (4. + 10. + 25.) / 3.;
+    let area = PI * (4. + 25. + 7. * 20_f64.hypot(3.));
+    let check = |model: &multicad_model::Model| {
+        let solid = model.solid(request.body).unwrap();
+        near(solid.volume_mm3().unwrap(), volume);
+        near(
+            solid
+                .faces()
+                .unwrap()
+                .iter()
+                .map(|face| face.area_mm2)
+                .sum(),
+            area,
+        );
+    };
+    let reopened = check_saved_rust_profile(&mut session, &request, volume);
+    check(&reopened);
+    assert_eq!(
+        reopened.solid(request.body).unwrap().faces().unwrap().len(),
+        3
+    );
+    let topology = &reopened.snapshot().shapes[&request.feature].topology;
+    assert!(topology.elements.iter().any(|face| {
+        face.key.kind == TopologyKind::Face
+            && [a, b, c]
+                .into_iter()
+                .all(|id| face.origins.iter().any(|origin| origin.source == id))
+    }));
+
+    let mut source = Source::read(session.document(), middle_sketch).unwrap().0;
+    let CurveKind::Circle { radius_mm, .. } = &mut source.sketch.curves[0].kind else {
+        panic!("expected the authored circle");
+    };
+    *radius_mm += 0.25;
+    let altered = session
+        .document()
+        .edited(&source.replace(session.document(), middle_sketch).unwrap())
+        .unwrap();
+    let error = multicad_model::Compiler::default()
+        .compile_sources_with_backend(
+            &altered,
+            session.revision(),
+            &[request.body],
+            multicad_model::GeometryBackend::Rust,
+            None,
+        )
+        .err()
+        .expect("a non-affine circular station must not be flattened");
+    assert!(error.message.contains("straight transition"));
+}
+
+#[test]
+fn default_two_section_loft_preserves_planar_notch_after_reopen() {
+    let (mut session, _) = fixture();
+    let [bottom, top] = notched_loft_footprints();
+    let [(first, a), (last, b)] = [
+        ("Default loft start", 0., bottom),
+        ("Default loft end", 4., top),
+    ]
+    .map(|(name, z, points)| loft_polygon(&mut session, name, z, points));
+    let parameters = LoftParameters {
+        seams: vec![a[0], b[0]],
+        ..Default::default()
+    };
+    assert!(!parameters.ruled);
+    let request = AdvancedRequest::new_body(
+        "Default notched loft",
+        AdvancedParameters::Loft(parameters),
+        vec![first, last],
+        None,
+    );
+    commit(&mut session, &request);
+    let volume = 4. * (56. + 4. * 70.5 + 86.) / 6.;
+    let reopened = check_saved_rust_profile(&mut session, &request, volume);
+    let solid = reopened.solid(request.body).unwrap();
+    assert_eq!(solid.faces().unwrap().len(), 10);
+    let bounds = solid.bounds().unwrap();
+    for (actual, expected) in bounds
+        .min
+        .into_iter()
+        .chain(bounds.max)
+        .zip([0., -1., 0., 12., 10., 4.])
+    {
+        near(actual, expected);
+    }
+}
+
+fn loft_polygon<const N: usize>(
+    session: &mut Session,
+    name: &str,
+    z: f64,
+    outline: [[f64; 2]; N],
+) -> (ProfileSource, [EntityId; N]) {
+    let mut curves = [EntityId::nil(); N];
+    let (sketch, source) = add_sketch(session, Datum::Xy, name, z, |source, _| {
+        let points = outline.map(|p| source.add_point(p));
+        curves = std::array::from_fn(|i| source.add_line(points[i], points[(i + 1) % N]));
+    });
+    let region = sketch_regions::extract(&source).regions[0].intent();
+    (ProfileSource { sketch, region }, curves)
+}
+
+#[test]
+fn twisted_polygon_loft_rebuilds_and_reopens_from_embedded_step() {
+    use multicad_core::references::{self, GeometryIntent, Resolution, TopologyKind};
+    use multicad_model::{Compiler, GeometryBackend, imports::read_step_file_with_backend};
+
+    let (mut session, _) = fixture();
+    let bottom = [[-2., -1.], [2., -1.], [2., 1.], [-2., 1.]];
+    let (sin, cos) = std::f64::consts::FRAC_PI_6.sin_cos();
+    let top = bottom.map(|[x, y]| [cos * x - sin * y + 1., sin * x + cos * y + 0.5]);
+    let [(first, start), (last, end)] = [
+        ("Bottom rectangle", 0., bottom),
+        ("Rotated top rectangle", 6., top),
+    ]
+    .map(|(name, z, outline)| loft_polygon(&mut session, name, z, outline));
+    let request = AdvancedRequest::new_body(
+        "Twisted rectangle",
+        AdvancedParameters::Loft(LoftParameters {
+            seams: vec![start[0], end[0]],
+            ..Default::default()
+        }),
+        vec![first, last.clone()],
+        None,
+    );
+    commit(&mut session, &request);
+    // Integrate the determinant of (1 - t) I + t R across the height.
+    let volume = |cos| 6. * 8. * (2. + cos) / 3.;
+
+    let model = check_saved_rust_profile(&mut session, &request, volume(cos));
+    let solid = model.solid(request.body).unwrap();
+    verify_twisted_loft_sections(solid);
+    verify_twisted_loft_scene(solid);
+    verify_twisted_loft_round_scene(solid);
+    verify_twisted_loft_assembly_sections(solid);
+    let faces = solid.faces().unwrap();
+    assert_eq!(faces.len(), 6);
+    assert_eq!(faces.iter().filter(|face| face.plane.is_some()).count(), 2);
+
+    let contours = solid
+        .planar_face_contours_with_sources(0, Default::default())
+        .unwrap();
+    assert_eq!(contours.edge_keys[0].len(), 4);
+    near(contours.contours.loops[0].signed_area(), 8.);
+
+    let wall_key = |model: &multicad_model::Model| {
+        let topology = &model.snapshot().shapes[&request.feature].topology;
+        let wall = topology
+            .elements
+            .iter()
+            .find(|face| {
+                face.key.kind == TopologyKind::Face
+                    && [start[0], end[0]]
+                        .iter()
+                        .all(|id| face.origins.iter().any(|origin| origin.source == *id))
+            })
+            .unwrap();
+        wall.key
+    };
+    let topology = &model.snapshot().shapes[&request.feature].topology;
+    let intent = GeometryIntent::capture(topology, wall_key(&model)).unwrap();
+    let (sin, cos) = (40. * PI / 180.).sin_cos();
+    let mut upper = Source::read(session.document(), last.sketch).unwrap().0;
+    for (point, [x, y]) in upper.sketch.points.iter_mut().zip(bottom) {
+        point.position_mm = [cos * x - sin * y + 1., sin * x + cos * y + 0.5];
+    }
+    session
+        .apply(Request {
+            expected_revision: session.revision(),
+            actor: actor(),
+            label: "Rotate the upper loft section".into(),
+            edits: upper.replace(session.document(), last.sketch).unwrap(),
+        })
+        .unwrap();
+    let edited = check_saved_rust_profile(&mut session, &request, volume(cos));
+    let topology = &edited.snapshot().shapes[&request.feature].topology;
+    let key = wall_key(&edited);
+    assert!(matches!(
+        references::resolve(&intent, topology, topology.revision),
+        Resolution::Resolved { key: actual, frame: None, .. } if actual == key
+    ));
+
+    let directory = tempfile::tempdir().unwrap();
+    let step = directory.path().join("twisted.step");
+    edited
+        .solid(request.body)
+        .unwrap()
+        .write_step(&step)
+        .unwrap();
+    let input = read_step_file_with_backend(&step, GeometryBackend::Rust).unwrap();
+    let mut imported =
+        Session::new(multicad_core::document::Document::new("Imported twisted loft").unwrap())
+            .unwrap();
+    let staged = model::imports::prepare_step_import(&imported, 0, actor(), &input).unwrap();
+    let body = staged.model.outputs[0].body;
+    imported.commit(staged.model.prepared).unwrap();
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(imported.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    std::fs::remove_file(step).unwrap();
+    let opened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap();
+    let imported = Compiler::default()
+        .compile_with_backend(&opened.project.document, 0, GeometryBackend::Rust, None)
+        .unwrap();
+    near(
+        imported.solid(body).unwrap().volume_mm3().unwrap(),
+        volume(cos),
     );
 }
+
+fn verify_twisted_loft_assembly_sections(loft: &multicad_kernel::Solid) {
+    use multicad_core::{
+        drawings::{VectorCurve, VectorRole},
+        materials::HatchPattern,
+    };
+    use multicad_kernel::{
+        DrawingHatch, DrawingProjection, DrawingSolid, PlaneFrame, Solid, project_drawing,
+        rust_kernel::Rational,
+    };
+
+    let stock = [
+        ([7, 1, 1], [-3., 0.4, -2.]),
+        ([3, 2, 6], [-3., 0., 0.]),
+        ([2, 2, 1], [-1., -2., 7.]),
+    ];
+    let [rear, middle, front] = stock.map(|(size, origin)| {
+        Solid::rust_box(
+            EntityId::new().uuid_bits(),
+            size.map(|n| Rational::new(n, 1).unwrap()),
+            PlaneFrame {
+                origin,
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .unwrap()
+    });
+    let project = |rear, loft, middle, front, options, hatch| {
+        project_drawing(
+            &[rear, loft, middle, front].map(|solid| DrawingSolid { solid, hatch }),
+            options,
+        )
+        .unwrap()
+    };
+    let axial = DrawingProjection {
+        section_offset_mm: Some(3.),
+        section_depth_mm: Some(2.5),
+        section_u_mm: Some([-2.3, 1.5]),
+        section_v_mm: Some([-0.2, 1.6]),
+        hidden_lines: true,
+        chord_tolerance_mm: 1e-4,
+        ..Default::default()
+    };
+    let oblique = DrawingProjection {
+        frame: PlaneFrame {
+            v: [0., 0.8, 0.6],
+            ..Default::default()
+        },
+        section_depth_mm: Some(1.8),
+        section_v_mm: Some([1., 3.3]),
+        ..axial
+    };
+    let through = DrawingProjection {
+        section_depth_mm: None,
+        section_v_mm: Some([-1., 3.3]),
+        ..oblique
+    };
+    let hatch = DrawingHatch {
+        angle_rad: 0.4,
+        spacing_mm: 0.25,
+        line_width_mm: 0.1,
+        pattern: HatchPattern::Lines,
+    };
+    for options in [axial, oblique, through] {
+        let vectors = project(&rear, loft, &middle, &front, options, Some(hatch));
+        for source in [1, 2] {
+            for role in [VectorRole::Section, VectorRole::Visible, VectorRole::Hatch] {
+                assert!(
+                    vectors
+                        .iter()
+                        .any(|v| v.source_index == source && v.role == role),
+                    "{source}: {role:?}"
+                );
+            }
+        }
+        assert!(vectors.iter().all(|v| v.source_index < 3));
+        if options.section_depth_mm.is_some() {
+            assert!(vectors.iter().all(|v| v.source_index != 0));
+        } else {
+            assert!(
+                vectors
+                    .iter()
+                    .any(|v| v.source_index == 0 && v.role == VectorRole::Visible)
+            );
+        }
+        if options.frame.v[2] != 0. {
+            assert!(vectors.iter().any(|v| v.source_index == 1
+                && v.role == VectorRole::Section
+                && matches!(v.curve, VectorCurve::BSpline { degree: 2, .. })));
+        }
+    }
+
+    // At the lower side of the oblique window the ray lies at v = 1.
+    // It meets the stock's y = 0 plane at depth 4/3 and the loft's left
+    // wall at the station obtained by converting that point back to model Z.
+    let station = (0.6 + 0.8 * (4. / 3.)) / 6.;
+    let (sin, cos) = std::f64::consts::FRAC_PI_6.sin_cos();
+    let wall = [[-2., -1.], [-2., 1.]].map(|[x, y]| {
+        let top = [cos * x - sin * y + 1., sin * x + cos * y + 0.5];
+        [x + station * (top[0] - x), y + station * (top[1] - y)]
+    });
+    let [a, b] = wall;
+    let crossing = a[0] + (b[0] - a[0]) * (-a[1] / (b[1] - a[1]));
+    let bounded = project(&rear, loft, &middle, &front, oblique, None);
+    let meets_crossing = |source, role, is_start: bool| {
+        bounded.iter().any(|v| {
+            v.source_index == source && v.role == role &&
+                matches!(v.curve, VectorCurve::Line { a, b } if
+                    [a, b].into_iter().all(|p| (p[1] - 1.).abs() < 1e-7) &&
+                    (if is_start { a[0].min(b[0]) } else { a[0].max(b[0]) } - crossing).abs() < 1e-7)
+        })
+    };
+    assert!(meets_crossing(1, VectorRole::Hidden, false));
+    assert!(meets_crossing(1, VectorRole::Visible, true));
+    assert!(meets_crossing(2, VectorRole::Visible, false));
+    assert!(meets_crossing(2, VectorRole::Hidden, true));
+}
+
+fn verify_twisted_loft_scene(loft: &multicad_kernel::Solid) {
+    use multicad_core::drawings::VectorRole;
+    use multicad_kernel::{
+        DrawingProjection, DrawingSolid, PlaneFrame, Solid, project_drawing, rust_kernel::Rational,
+    };
+
+    let placements = [([7, 1, 1], [-3., 0.4, -2.]), ([2, 2, 1], [-1., -2., 7.])];
+    let [rear, front] = placements.map(|(size, origin)| {
+        Solid::rust_box(
+            EntityId::new().uuid_bits(),
+            size.map(|n| Rational::new(n, 1).unwrap()),
+            PlaneFrame {
+                origin,
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .unwrap()
+    });
+    let project = |rear, loft, front, options| {
+        project_drawing(
+            &[rear, loft, front].map(|solid| DrawingSolid { solid, hatch: None }),
+            options,
+        )
+        .unwrap()
+    };
+    let options = DrawingProjection {
+        hidden_lines: true,
+        chord_tolerance_mm: 1e-4,
+        ..Default::default()
+    };
+    let mixed = project(&rear, loft, &front, options);
+    for source in 0..3 {
+        for role in [VectorRole::Hidden, VectorRole::Visible] {
+            assert!(
+                mixed
+                    .iter()
+                    .any(|v| v.source_index == source && v.role == role)
+            );
+        }
+    }
+    let visible = project(
+        &rear,
+        loft,
+        &front,
+        DrawingProjection {
+            hidden_lines: false,
+            ..options
+        },
+    );
+    assert_eq!(
+        visible,
+        mixed
+            .iter()
+            .filter(|v| v.role == VectorRole::Visible)
+            .cloned()
+            .collect::<Vec<_>>(),
+    );
+    let detail = project(
+        &rear,
+        loft,
+        &front,
+        DrawingProjection {
+            detail: Some(([0., 0.], 1.25)),
+            ..options
+        },
+    );
+    assert!(!detail.is_empty());
+    assert!(
+        detail
+            .iter()
+            .flat_map(|v| &v.preview_mm)
+            .all(|[u, v]| u.hypot(*v) < 1.250001)
+    );
+}
+
+fn verify_twisted_loft_round_scene(loft: &multicad_kernel::Solid) {
+    use multicad_core::drawings::{VectorCurve, VectorRole};
+    use multicad_kernel::{DrawingProjection, DrawingSolid, PlaneFrame, Solid, project_drawing};
+
+    let frame = PlaneFrame {
+        origin: [1., -0.5, 7.],
+        ..Default::default()
+    };
+    let ring =
+        Solid::rust_annulus(0.65, 1.4, 1.5, EntityId::new(), frame, Default::default()).unwrap();
+    let project = |loft, ring, options| {
+        project_drawing(
+            &[loft, ring].map(|solid| DrawingSolid { solid, hatch: None }),
+            options,
+        )
+        .unwrap()
+    };
+    let options = DrawingProjection {
+        hidden_lines: true,
+        chord_tolerance_mm: 1e-4,
+        ..Default::default()
+    };
+    let axial = project(loft, &ring, options);
+    for role in [VectorRole::Hidden, VectorRole::Visible] {
+        assert!(axial.iter().any(|v| v.source_index == 0 && v.role == role));
+    }
+    for radius in [0.65, 1.4] {
+        assert!(axial.iter().any(|v| {
+            v.source_index == 1
+                && v.role == VectorRole::Visible
+                && matches!(v.curve, VectorCurve::Ellipse { major_mm, minor_mm, .. }
+                    if major_mm == radius && minor_mm == radius)
+        }));
+    }
+    let sphere = Solid::rust_sphere_named(
+        2.,
+        PlaneFrame {
+            origin: [1., -0.5, 8.5],
+            ..Default::default()
+        },
+        EntityId::new(),
+        Default::default(),
+    )
+    .unwrap();
+    let loft_and_sphere = project(loft, &sphere, options);
+    assert!(
+        loft_and_sphere
+            .iter()
+            .any(|v| v.source_index == 0 && v.role == VectorRole::Hidden)
+    );
+    assert!(loft_and_sphere.iter().any(|v| v.source_index == 1
+        && v.role == VectorRole::Visible
+        && matches!(v.curve, VectorCurve::Ellipse { major_mm: 2., .. })));
+    let sphere_cut = project(
+        loft,
+        &sphere,
+        DrawingProjection {
+            section_offset_mm: Some(8.2),
+            section_depth_mm: Some(6.),
+            ..options
+        },
+    );
+    assert!(sphere_cut.iter().any(|v| v.source_index == 1
+        && v.role == VectorRole::Section
+        && matches!(v.curve, VectorCurve::Ellipse { major_mm, .. }
+            if (major_mm - 3.91_f64.sqrt()).abs() < 1e-8)));
+    assert!(
+        sphere_cut
+            .iter()
+            .any(|v| v.source_index == 0 && v.role == VectorRole::Visible)
+    );
+
+    let oblique = DrawingProjection {
+        frame: PlaneFrame {
+            v: [0., 0.8, 0.6],
+            ..Default::default()
+        },
+        ..options
+    };
+    let tilted = project(loft, &ring, oblique);
+    let visible = project(
+        loft,
+        &ring,
+        DrawingProjection {
+            hidden_lines: false,
+            ..oblique
+        },
+    );
+    assert_eq!(
+        visible,
+        tilted
+            .iter()
+            .filter(|v| v.role == VectorRole::Visible)
+            .cloned()
+            .collect::<Vec<_>>()
+    );
+    let cropped = project(
+        loft,
+        &ring,
+        DrawingProjection {
+            detail: Some(([1., 4.8], 0.75)),
+            ..oblique
+        },
+    );
+    assert!(cropped.iter().any(|v| v.source_index == 1));
+    assert!(
+        cropped
+            .iter()
+            .flat_map(|v| &v.preview_mm)
+            .all(|[x, y]| { (x - 1.).hypot(y - 4.8) <= 0.750001 })
+    );
+
+    let retained = |loft, ring, options| {
+        let hatch = multicad_kernel::DrawingHatch {
+            angle_rad: 0.3,
+            spacing_mm: 0.2,
+            line_width_mm: 0.1,
+            pattern: multicad_core::materials::HatchPattern::Lines,
+        };
+        project_drawing(
+            &[
+                DrawingSolid {
+                    solid: loft,
+                    hatch: None,
+                },
+                DrawingSolid {
+                    solid: ring,
+                    hatch: Some(hatch),
+                },
+            ],
+            options,
+        )
+        .unwrap_or_else(|error| panic!("{options:?}: {error:?}"))
+    };
+    let axial_cut = DrawingProjection {
+        section_offset_mm: Some(7.8),
+        section_depth_mm: Some(4.),
+        ..options
+    };
+    let windowed_cut = DrawingProjection {
+        section_offset_mm: Some(6.5),
+        section_depth_mm: Some(3.),
+        section_u_mm: Some([-0.15, 2.2]),
+        section_v_mm: Some([3.8, 5.4]),
+        ..oblique
+    };
+    let through = DrawingProjection {
+        section_depth_mm: None,
+        ..windowed_cut
+    };
+    for cut in [axial_cut, windowed_cut, through] {
+        let vectors = retained(loft, &ring, cut);
+        for role in [VectorRole::Visible, VectorRole::Section, VectorRole::Hatch] {
+            assert!(
+                vectors
+                    .iter()
+                    .any(|v| v.source_index == 1 && v.role == role),
+                "{cut:?} {role:?}"
+            );
+        }
+        assert!(
+            vectors
+                .iter()
+                .any(|v| v.source_index == 0 && v.role == VectorRole::Visible)
+        );
+        assert!(vectors.iter().any(|v| v.source_index == 1
+            && v.role == VectorRole::Section
+            && matches!(v.curve, VectorCurve::Ellipse { .. })));
+        for point in vectors.iter().flat_map(|v| &v.preview_mm) {
+            for (coordinate, range) in point.iter().zip([cut.section_u_mm, cut.section_v_mm]) {
+                assert!(range.is_none_or(|[lo, hi]| *coordinate >= lo - 1e-6 && *coordinate <= hi + 1e-6));
+            }
+        }
+    }
+}
+
+fn verify_twisted_loft_sections(solid: &multicad_kernel::Solid) {
+    use multicad_core::{
+        drawings::{VectorCurve, VectorRole},
+        materials::HatchPattern,
+    };
+    use multicad_kernel::{
+        DrawingHatch, DrawingProjection, DrawingSolid, GeometryErrorKind, PlaneFrame,
+        project_drawing,
+    };
+
+    let options = DrawingProjection {
+        frame: PlaneFrame {
+            origin: [0., 0., 3.],
+            u: [1., 0., 0.],
+            v: [0., 0.8, 0.6],
+        },
+        section_only: true,
+        section_offset_mm: Some(0.),
+        chord_tolerance_mm: 1e-4,
+        ..Default::default()
+    };
+    let project =
+        |solid, options, hatch| project_drawing(&[DrawingSolid { solid, hatch }], options);
+    let view = DrawingProjection {
+        frame: options.frame,
+        hidden_lines: true,
+        chord_tolerance_mm: options.chord_tolerance_mm,
+        ..Default::default()
+    };
+    let ordinary = project(solid, view, None).unwrap();
+    assert!(ordinary.iter().any(|v| v.role == VectorRole::Visible));
+    assert!(ordinary.iter().any(|v| v.role == VectorRole::Hidden));
+    let retained_options = DrawingProjection {
+        frame: PlaneFrame::default(),
+        section_offset_mm: Some(4.),
+        section_depth_mm: Some(2.5),
+        ..view
+    };
+    let retained = project(solid, retained_options, None).unwrap();
+    assert_eq!(
+        retained
+            .iter()
+            .filter(|v| v.role == VectorRole::Section)
+            .count(),
+        4
+    );
+    assert!(retained.iter().any(|v| v.role == VectorRole::Hidden));
+    let oblique_depth = DrawingProjection {
+        section_offset_mm: Some(0.6),
+        section_depth_mm: Some(1.8),
+        ..view
+    };
+    let oblique_retained = project(solid, oblique_depth, None).unwrap();
+    assert_eq!(
+        oblique_retained.iter().filter(|v| v.role == VectorRole::Section &&
+            matches!(&v.curve, VectorCurve::BSpline { degree: 2, weights, .. } if weights[0] != weights[2]))
+            .count(),
+        4,
+    );
+    assert!(
+        oblique_retained
+            .iter()
+            .any(|v| v.role == VectorRole::Hidden)
+    );
+    let oblique_through = DrawingProjection {
+        section_depth_mm: None,
+        ..oblique_depth
+    };
+    let through = project(solid, oblique_through, None).unwrap();
+    assert!(through.iter().any(|v| v.role == VectorRole::Hidden));
+    let window_depth = DrawingProjection {
+        section_u_mm: Some([-0.65, 1.5]),
+        section_v_mm: Some([-0.8, 1.5]),
+        ..oblique_depth
+    };
+    let window_through = DrawingProjection {
+        section_depth_mm: None,
+        ..window_depth
+    };
+    let window_axial = DrawingProjection {
+        section_u_mm: Some([-0.5, 1.]),
+        ..retained_options
+    };
+    let bounded = [window_depth, window_through, window_axial].map(|options| {
+        let vectors = project(solid, options, None).unwrap();
+        for vector in &vectors {
+            for &point in &vector.preview_mm {
+                assert!(
+                    point
+                        .into_iter()
+                        .zip([options.section_u_mm, options.section_v_mm])
+                        .all(|(x, range)| range
+                            .is_none_or(|[lo, hi]| (lo - 1e-7..=hi + 1e-7).contains(&x)))
+                );
+            }
+        }
+        assert!(vectors.iter().any(|v| v.role == VectorRole::Section));
+        assert!(vectors.iter().any(|v| v.role == VectorRole::Visible));
+        vectors
+    });
+    assert!(bounded[0].iter().any(|v| v.role == VectorRole::Section
+        && matches!(&v.curve, VectorCurve::BSpline { degree: 2, .. })));
+    let outside_window = DrawingProjection {
+        section_u_mm: Some([2.9, 3.1]),
+        ..oblique_depth
+    };
+    assert!(project(solid, outside_window, None).unwrap().is_empty());
+    let reverse = project(
+        solid,
+        DrawingProjection {
+            frame: PlaneFrame {
+                v: [0., -1., 0.],
+                ..PlaneFrame::default()
+            },
+            section_offset_mm: Some(-2.),
+            section_depth_mm: Some(2.5),
+            ..retained_options
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        reverse
+            .iter()
+            .filter(|v| v.role == VectorRole::Section)
+            .count(),
+        4
+    );
+    assert!(
+        project(
+            solid,
+            DrawingProjection {
+                section_offset_mm: Some(-1.),
+                ..retained_options
+            },
+            None
+        )
+        .unwrap()
+        .is_empty()
+    );
+    let detail_options = DrawingProjection {
+        detail: Some((ordinary[0].preview_mm[0], 0.35)),
+        ..view
+    };
+    let detail = project(solid, detail_options, None).unwrap();
+    assert!(!detail.is_empty());
+    let (center, radius) = detail_options.detail.unwrap();
+    assert!(
+        detail
+            .iter()
+            .flat_map(|v| &v.preview_mm)
+            .all(|p| { (p[0] - center[0]).hypot(p[1] - center[1]) <= radius + 1e-7 })
+    );
+    let rust = project(solid, options, None).unwrap();
+    assert_eq!(rust.len(), 4);
+    assert!(rust.iter().all(|vector| vector.role == VectorRole::Section
+        && matches!(&vector.curve, VectorCurve::BSpline {
+            degree: 2, periodic: false, poles, weights, ..
+        } if poles.len() == 3 && weights.iter().all(|&weight| weight > 0.))));
+    assert!(rust.iter().all(|vector| vector.preview_mm.len() > 2));
+
+    let placement = multicad_kernel::RigidTransform {
+        rotation: [[0., 0., 1.], [0., 1., 0.], [-1., 0., 0.]],
+        translation_mm: [11., 7., -5.],
+    };
+    let placed = solid.transformed(placement).unwrap();
+    let placed_vectors = project(
+        &placed,
+        DrawingProjection {
+            frame: PlaneFrame {
+                origin: [14., 7., -5.],
+                u: [0., 0., -1.],
+                v: [0.6, 0.8, 0.],
+            },
+            ..options
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(placed_vectors.len(), rust.len());
+    for (a, b) in placed_vectors.iter().zip(&rust) {
+        assert_eq!(a.preview_mm.len(), b.preview_mm.len());
+        for (&[x, y], &[u, v]) in a.preview_mm.iter().zip(&b.preview_mm) {
+            near(x, u);
+            near(y, v);
+        }
+    }
+
+    let hatch = DrawingHatch {
+        angle_rad: 0.3,
+        spacing_mm: 0.3,
+        line_width_mm: 0.1,
+        pattern: HatchPattern::Lines,
+    };
+    assert!(
+        project(solid, retained_options, Some(hatch))
+            .unwrap()
+            .iter()
+            .any(|vector| vector.role == VectorRole::Hatch)
+    );
+    assert!(
+        project(solid, oblique_depth, Some(hatch))
+            .unwrap()
+            .iter()
+            .any(|vector| vector.role == VectorRole::Hatch)
+    );
+    assert!(
+        project(solid, window_depth, Some(hatch))
+            .unwrap()
+            .iter()
+            .any(|vector| vector.role == VectorRole::Hatch)
+    );
+    assert!(
+        project(solid, outside_window, Some(hatch))
+            .unwrap()
+            .is_empty()
+    );
+    let hatched = project(solid, options, Some(hatch)).unwrap();
+    assert_eq!(&hatched[..4], &rust);
+    assert!(
+        hatched[4..]
+            .iter()
+            .any(|vector| vector.role == VectorRole::Hatch)
+    );
+
+    let axial = DrawingProjection {
+        frame: PlaneFrame::default(),
+        section_offset_mm: Some(3.),
+        ..options
+    };
+    let lines = project(solid, axial, None).unwrap();
+    assert_eq!(lines.len(), 4);
+    let twice_area: f64 = lines
+        .iter()
+        .map(|vector| match vector.curve {
+            VectorCurve::Line { a, b } => a[0] * b[1] - a[1] * b[0],
+            _ => panic!("parallel loft section should retain straight edges"),
+        })
+        .sum();
+    near(
+        twice_area.abs() / 2.,
+        4. * (1. + std::f64::consts::FRAC_PI_6.cos()),
+    );
+    assert!(
+        project(
+            solid,
+            DrawingProjection {
+                section_offset_mm: Some(30.),
+                ..axial
+            },
+            Some(hatch)
+        )
+        .unwrap()
+        .is_empty()
+    );
+    assert_eq!(
+        project(
+            solid,
+            DrawingProjection {
+                maximum_points: 3,
+                ..options
+            },
+            None
+        )
+        .unwrap_err()
+        .kind,
+        GeometryErrorKind::Limit,
+    );
+    assert_eq!(
+        project(
+            solid,
+            DrawingProjection {
+                maximum_curves: 3,
+                ..options
+            },
+            None
+        )
+        .unwrap_err()
+        .kind,
+        GeometryErrorKind::Limit,
+    );
+    let window = DrawingProjection {
+        section_u_mm: Some([-10., 10.]),
+        section_v_mm: Some([-10., 10.]),
+        ..options
+    };
+    assert_eq!(project(solid, window, None).unwrap(), rust);
+    let clipped_options = DrawingProjection {
+        section_u_mm: Some([-0.5, 0.5]),
+        section_v_mm: Some([-1.2, 1.6]),
+        ..options
+    };
+    let clipped = project(solid, clipped_options, None).unwrap();
+    assert!(
+        clipped
+            .iter()
+            .any(|v| matches!(v.curve, VectorCurve::BSpline { degree: 2, .. }))
+    );
+    assert!(
+        clipped
+            .iter()
+            .any(|v| matches!(v.curve, VectorCurve::Line { a, b } if a[0] == 0.5 && b[0] == 0.5))
+    );
+    assert!(
+        clipped
+            .iter()
+            .flat_map(|v| &v.preview_mm)
+            .all(|[u, v]| (-0.5 - 1e-12..=0.5 + 1e-12).contains(u)
+                && (-1.2 - 1e-12..=1.6 + 1e-12).contains(v))
+    );
+    assert!(
+        project(solid, clipped_options, Some(hatch))
+            .unwrap()
+            .iter()
+            .any(|v| v.role == VectorRole::Hatch)
+    );
+    assert!(
+        project(
+            solid,
+            DrawingProjection {
+                section_u_mm: Some([8., 9.]),
+                ..options
+            },
+            None
+        )
+        .unwrap()
+        .is_empty()
+    );
+}
+
+fn notched_loft_footprints() -> [[[f64; 2]; 8]; 2] {
+    [
+        [
+            [0., 0.],
+            [10., 0.],
+            [10., 8.],
+            [7., 8.],
+            [7., 2.],
+            [3., 2.],
+            [3., 8.],
+            [0., 8.],
+        ],
+        [
+            [1., -1.],
+            [12., -1.],
+            [12., 10.],
+            [9., 10.],
+            [9., 3.],
+            [4., 3.],
+            [4., 10.],
+            [1., 10.],
+        ],
+    ]
+}
+
+#[test]
+fn concave_ruled_loft_rebuilds_its_notch_and_saved_walls() {
+    use multicad_core::{
+        drawings::{VectorCurve, VectorRole},
+        references::{self, GeometryIntent, Resolution, TopologyKind},
+    };
+    use multicad_kernel::{
+        DrawingProjection, DrawingSolid, PlaneFrame, Solid, project_drawing, rust_kernel::Rational,
+    };
+
+    let (mut session, _) = fixture();
+    let [bottom, middle] = notched_loft_footprints();
+    let end = middle.map(|[x, y]| [0.75 * x + 1., 0.75 * y + 1.]);
+    let sections = [
+        ("Notched start", 0., bottom),
+        ("Notched transition", 4., middle),
+        ("Notched end", 10., end),
+    ];
+    let [(first, a), (middle, b), (last, c)] =
+        sections.map(|(name, z, outline)| loft_polygon(&mut session, name, z, outline));
+    let request = AdvancedRequest::new_body(
+        "Notched ruled loft",
+        AdvancedParameters::Loft(LoftParameters {
+            ruled: true,
+            seams: vec![a[0], b[0], c[0]],
+        }),
+        vec![first, middle.clone(), last],
+        None,
+    );
+    commit(&mut session, &request);
+    let volume = |z| {
+        z * (56. + 4. * 70.5 + 86.) / 6. + (10. - z) * 86. * (1. + 0.75 + 0.75_f64.powi(2)) / 3.
+    };
+    let initial = check_saved_rust_profile(&mut session, &request, volume(4.));
+    let topology = &initial.snapshot().shapes[&request.feature].topology;
+    let notch = topology
+        .elements
+        .iter()
+        .find(|face| {
+            face.key.kind == TopologyKind::Face
+                && [a[4], b[4]]
+                    .into_iter()
+                    .all(|id| face.origins.iter().any(|origin| origin.source == id))
+        })
+        .unwrap();
+    let intent = GeometryIntent::capture(topology, notch.key).unwrap();
+    let EntityData::Sketch { plane, .. } = session.document().get(middle.sketch).unwrap().data
+    else {
+        panic!("expected the middle sketch plane");
+    };
+    let mut plane = session.document().get(plane).unwrap().clone();
+    let EntityData::Plane { origin_mm, .. } = &mut plane.data else {
+        panic!("expected a datum plane");
+    };
+    origin_mm[2] = 5.;
+    session
+        .apply(Request {
+            expected_revision: session.revision(),
+            actor: actor(),
+            label: "Move the middle notch section".into(),
+            edits: vec![Mutation::Replace(plane)],
+        })
+        .unwrap();
+    let reopened = check_saved_rust_profile(&mut session, &request, volume(5.));
+    let solid = reopened.solid(request.body).unwrap();
+    assert_eq!(solid.faces().unwrap().len(), 18);
+    let topology = &reopened.snapshot().shapes[&request.feature].topology;
+    assert!(matches!(
+        references::resolve(&intent, topology, topology.revision),
+        Resolution::Resolved { .. }
+    ));
+    let vectors = project_drawing(
+        &[DrawingSolid { solid, hatch: None }],
+        DrawingProjection {
+            section_offset_mm: Some(2.5),
+            section_only: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        vectors
+            .iter()
+            .any(|vector| vector.role == VectorRole::Section
+                && matches!(vector.curve, VectorCurve::Line { a, b }
+            if (a[1] - 2.5).abs() < 1e-7 && (b[1] - 2.5).abs() < 1e-7
+                && (a[0].min(b[0]) - 3.5).abs() < 1e-7
+                && (a[0].max(b[0]) - 8.).abs() < 1e-7))
+    );
+    let tool = Solid::rust_box(
+        EntityId::new().uuid_bits(),
+        [1, 1, 3].map(|size| Rational::new(size, 1).unwrap()),
+        PlaneFrame {
+            origin: [1.2, 0.25, -1.],
+            ..Default::default()
+        },
+        Default::default(),
+    )
+    .unwrap();
+    let cut_feature = EntityId::new();
+    let cut = solid
+        .rust_subtract_planar_tools(&[&tool], cut_feature, Default::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(cut.solid_count().unwrap(), 1);
+    near(cut.volume_mm3().unwrap(), volume(5.) - 2.);
+    assert!(
+        cut.topology_snapshot(cut_feature, 0)
+            .unwrap()
+            .elements
+            .iter()
+            .any(|face| face.key.kind == TopologyKind::Face
+                && [a[4], b[4]]
+                    .into_iter()
+                    .all(|id| face.origins.iter().any(|origin| origin.source == id)))
+    );
+}
+
 #[test]
 fn missing_seam_and_unsupported_curved_path_fail_without_committing_source() {
     let (mut session, _) = fixture();

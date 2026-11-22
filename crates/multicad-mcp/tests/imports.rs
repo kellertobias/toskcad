@@ -2,13 +2,17 @@
 //! folder in scope, updates the board, and is refused for paths outside it.
 use multicad_core::{
     commands::{Actor, Channel},
-    document::Document,
+    document::{Document, EntityId},
+    model::imports::{StepEncoding, read_step_source},
+    project_file::{self, ProjectFile},
+    references::{AnalyticGeometry, Resolution},
 };
-use multicad_kernel::{GeometryPolicy, RigidTransform, Solid};
+use multicad_kernel::{BooleanOperation, GeometryPolicy, PlaneFrame, RigidTransform, Solid};
 use multicad_mcp::{
     Headless, Workspace,
     tools::{Call, dispatch},
 };
+use multicad_model::GeometryBackend;
 use serde_json::{Value, json};
 use std::sync::{Arc, atomic::AtomicBool};
 
@@ -20,6 +24,15 @@ fn call() -> Call {
         },
         cancel: Arc::new(AtomicBool::new(false)),
     }
+}
+
+fn write_pocket(stock: &Solid, tool: &Solid, path: &std::path::Path, policy: GeometryPolicy) {
+    stock
+        .boolean(tool, BooleanOperation::Subtract, policy)
+        .unwrap()
+        .unwrap()
+        .write_step(path)
+        .unwrap();
 }
 
 const BOARD: &str = r#"(kicad_pcb (general (thickness 1.6))
@@ -104,4 +117,531 @@ fn mcp_imports_step_and_kicad_from_the_exchange_folder_only() {
         assert_eq!(e.code, "out_of_scope", "{name}");
     }
     assert_eq!(host.document(), before);
+}
+
+#[test]
+fn rust_mcp_round_trips_a_step_body_and_refuses_an_unsupported_shape() {
+    let dir = tempfile::tempdir().unwrap();
+    let policy = GeometryPolicy::default();
+    let stock = Solid::box_solid([10., 8., 6.], policy).unwrap();
+    let stock_file = dir.path().join("stock.step");
+    stock.write_step(&stock_file).unwrap();
+    let tool = Solid::box_solid([4., 4., 4.], policy)
+        .unwrap()
+        .transformed(RigidTransform {
+            translation_mm: [2., 2., 3.],
+            ..Default::default()
+        })
+        .unwrap();
+    let pocket_file = dir.path().join("blind-pocket.step");
+    write_pocket(&stock, &tool, &pocket_file, policy);
+    let round_tool = Solid::cylinder(
+        PlaneFrame {
+            origin: [4., 4., 3.],
+            ..Default::default()
+        },
+        2.,
+        4.,
+        policy,
+    )
+    .unwrap();
+    let round_path = dir.path().join("round-blind-pocket.step");
+    write_pocket(&stock, &round_tool, &round_path, policy);
+    let oblique_tool = Solid::cylinder(
+        PlaneFrame {
+            origin: [4., 4., 3.],
+            u: [0.8, 0., -0.6],
+            ..Default::default()
+        },
+        2.,
+        5.,
+        policy,
+    )
+    .unwrap();
+    let oblique = stock
+        .boolean(&oblique_tool, BooleanOperation::Subtract, policy)
+        .unwrap()
+        .unwrap();
+    oblique
+        .write_step(&dir.path().join("oblique-blind-pocket.step"))
+        .unwrap();
+    // A box whose top face lies on an OFFSET_SURFACE: a surface family the
+    // Rust reader does not admit.
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/offset-top-box.step"
+        ),
+        dir.path().join("offset-top-box.step"),
+    )
+    .unwrap();
+    let workspace = || Workspace::new(Document::new("STEP backend").unwrap()).unwrap();
+    let native = Headless::new(workspace(), Some(dir.path().to_path_buf()), false);
+    let rust = Headless::with_geometry_backend(
+        workspace(),
+        Some(dir.path().to_path_buf()),
+        false,
+        GeometryBackend::Rust,
+    );
+    let import_pocket = json!({ "expected_revision": 0, "file_name": "blind-pocket.step" });
+    let native_import = dispatch(&native, &call(), "import_step", import_pocket.clone()).unwrap();
+    assert_eq!(native_import["parts"].as_array().unwrap().len(), 1);
+    let native_model = dispatch(&native, &call(), "evaluate_model", json!({})).unwrap();
+    assert!((native_model["parts"][0]["volume_mm3"].as_f64().unwrap() - 432.).abs() < 1e-7);
+    let source_feature = &native_model["parts"][0]["feature"];
+    let tools = [
+        ("evaluate_model", json!({})),
+        (
+            "reference_candidates",
+            json!({"source": source_feature, "kind": "face"}),
+        ),
+    ];
+    for (name, args) in tools {
+        dispatch(&native, &call(), name, args.clone()).unwrap();
+    }
+    // The default headless host is the Rust kernel, like the explicit one.
+    for (host, name) in [(&native, "rust"), (&rust, "rust")] {
+        let info = dispatch(host, &call(), "document_info", json!({})).unwrap();
+        assert_eq!(info["geometry_backend"], name);
+        assert_eq!(info["scope"]["mode"], "headless");
+    }
+    let before = rust.document();
+    let refused = dispatch(
+        &rust,
+        &call(),
+        "import_step",
+        json!({ "expected_revision": 0, "file_name": "offset-top-box.step" }),
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "model_failed");
+    assert!(
+        refused
+            .message
+            .contains("Rust STEP import requires a supported analytic solid in millimeters"),
+        "{refused}"
+    );
+    assert_eq!(rust.document(), before);
+
+    // The oblique blind pocket round-trips with its exact volume and bounds.
+    let rust_oblique = Headless::with_geometry_backend(
+        workspace(),
+        Some(dir.path().to_path_buf()),
+        false,
+        GeometryBackend::Rust,
+    );
+    let imported_oblique = dispatch(
+        &rust_oblique,
+        &call(),
+        "import_step",
+        json!({ "expected_revision": 0, "file_name": "oblique-blind-pocket.step" }),
+    )
+    .unwrap();
+    assert_eq!(imported_oblique["revision"], 1);
+    assert_eq!(imported_oblique["parts"].as_array().unwrap().len(), 1);
+    let model = dispatch(&rust_oblique, &call(), "evaluate_model", json!({})).unwrap();
+    let part = &model["parts"][0];
+    let volume = oblique.volume_mm3().unwrap();
+    assert!((part["volume_mm3"].as_f64().unwrap() - volume).abs() <= 1e-9 * volume);
+    let bounds = oblique.bounds().unwrap();
+    for (key, expected) in [("min", bounds.min), ("max", bounds.max)] {
+        let actual = &part["bounds_mm"][key];
+        for (i, value) in expected.iter().enumerate() {
+            assert!((actual[i].as_f64().unwrap() - value).abs() < 1e-9, "{key}");
+        }
+    }
+
+    let rust_round = Headless::with_geometry_backend(
+        workspace(),
+        Some(dir.path().to_path_buf()),
+        false,
+        GeometryBackend::Rust,
+    );
+    let round = dispatch(
+        &rust_round,
+        &call(),
+        "import_step",
+        json!({ "expected_revision": 0, "file_name": "round-blind-pocket.step" }),
+    )
+    .unwrap();
+    assert_eq!(round["revision"], 1);
+    std::fs::remove_file(round_path).unwrap();
+    let source = EntityId::parse(round["source"].as_str().unwrap()).unwrap();
+    let round_document = rust_round.document();
+    assert_eq!(
+        read_step_source(&round_document, source).unwrap().encoding,
+        StepEncoding::RustStep
+    );
+    let reopened = Headless::with_geometry_backend(
+        Workspace::new(round_document).unwrap(),
+        None,
+        false,
+        GeometryBackend::Rust,
+    );
+    let rebuilt = dispatch(&reopened, &call(), "evaluate_model", json!({})).unwrap();
+    let expected = 480. - 12. * std::f64::consts::PI;
+    assert!((rebuilt["parts"][0]["volume_mm3"].as_f64().unwrap() - expected).abs() < 1e-7);
+
+    let imported = dispatch(
+        &rust,
+        &call(),
+        "import_step",
+        json!({ "expected_revision": 0, "file_name": "stock.step" }),
+    )
+    .unwrap();
+    assert_eq!(imported["revision"], 1);
+    let source = EntityId::parse(imported["source"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        read_step_source(&rust.document(), source).unwrap().encoding,
+        StepEncoding::RustStep
+    );
+    std::fs::remove_file(&stock_file).unwrap();
+    let part = imported["parts"][0].as_str().unwrap();
+    let evaluated = dispatch(&rust, &call(), "evaluate_model", json!({})).unwrap();
+    assert_eq!(evaluated["parts"][0]["part"], part);
+    assert_eq!(evaluated["parts"][0]["volume_mm3"], 480.);
+    let exported = dispatch(
+        &rust,
+        &call(),
+        "export_step",
+        json!({ "part": part, "file_name": "verified.step" }),
+    )
+    .unwrap();
+    assert_eq!(exported["readback_volume_mm3"], 480.);
+    assert_eq!(exported["model_volume_mm3"], 480.);
+    assert!(!dir.path().join(".verified.step.partial.step").exists());
+
+    Solid::box_solid([12., 8., 6.], policy)
+        .unwrap()
+        .write_step(&stock_file)
+        .unwrap();
+    let updated = dispatch(
+        &rust,
+        &call(),
+        "import_step",
+        json!({ "expected_revision": 1, "file_name": "stock.step", "source": source }),
+    )
+    .unwrap();
+    assert_eq!(updated["revision"], 2);
+    assert_eq!(updated["matched"][0]["geometry_changed"], true);
+    assert_eq!(updated["added"], json!([]));
+    assert_eq!(updated["missing"], json!([]));
+    std::fs::remove_file(stock_file).unwrap();
+    let evaluated = dispatch(&rust, &call(), "evaluate_model", json!({})).unwrap();
+    assert_eq!(evaluated["parts"][0]["part"], part);
+    assert_eq!(evaluated["parts"][0]["volume_mm3"], 576.);
+
+    let before = rust.document();
+    let escaped = dispatch(
+        &rust,
+        &call(),
+        "import_step",
+        json!({ "expected_revision": 2, "file_name": "../verified.step" }),
+    )
+    .unwrap_err();
+    assert_eq!(escaped.code, "out_of_scope");
+    let kicad = dispatch(
+        &rust,
+        &call(),
+        "import_kicad",
+        json!({ "expected_revision": 2, "file_name": "board.kicad_pcb" }),
+    )
+    .unwrap_err();
+    assert!(kicad.message.contains("board.kicad_pcb"));
+    assert_eq!(rust.document(), before);
+}
+
+#[test]
+fn rust_mcp_reopens_mixed_pocket_step_with_a_persistent_floor_attachment() {
+    let dir = tempfile::tempdir().unwrap();
+    let policy = GeometryPolicy::default();
+    let stock = Solid::box_solid([10., 8., 6.], policy).unwrap();
+    let tool = Solid::box_solid([4., 4., 4.], policy)
+        .unwrap()
+        .transformed(RigidTransform {
+            translation_mm: [2., 2., 3.],
+            ..Default::default()
+        })
+        .unwrap();
+    let grooved = stock
+        .boolean(&tool, BooleanOperation::Subtract, policy)
+        .unwrap()
+        .unwrap();
+    let round_tool = Solid::cylinder(
+        PlaneFrame {
+            origin: [8., 4., 4.],
+            ..Default::default()
+        },
+        1.,
+        4.,
+        policy,
+    )
+    .unwrap();
+    let pocket_path = dir.path().join("pocket.step");
+    write_pocket(&grooved, &round_tool, &pocket_path, policy);
+    let pi = std::f64::consts::PI;
+    let volume = 432. - 2. * pi;
+
+    let open = |document: Document| {
+        Headless::with_geometry_backend(
+            Workspace::new(document).unwrap(),
+            Some(dir.path().to_path_buf()),
+            false,
+            GeometryBackend::Rust,
+        )
+    };
+    let rust = open(Document::new("Pocket STEP project").unwrap());
+    let imported = dispatch(
+        &rust,
+        &call(),
+        "import_step",
+        json!({ "expected_revision": 0, "file_name": "pocket.step" }),
+    )
+    .unwrap();
+    assert_eq!(imported["revision"], 1);
+    let source = EntityId::parse(imported["source"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        read_step_source(&rust.document(), source).unwrap().encoding,
+        StepEncoding::RustStep
+    );
+    let part = &imported["parts"][0];
+    let evaluated = dispatch(&rust, &call(), "evaluate_model", json!({})).unwrap();
+    let shape = &evaluated["parts"][0];
+    assert_eq!(&shape["part"], part);
+    assert_eq!(shape["solid_count"], 1);
+    assert!((shape["volume_mm3"].as_f64().unwrap() - volume).abs() < 1e-7);
+    let feature = &shape["feature"];
+    let candidate_args = json!({ "source": feature, "kind": "face" });
+    let faces = dispatch(
+        &rust,
+        &call(),
+        "reference_candidates",
+        candidate_args.clone(),
+    )
+    .unwrap();
+    let floor = faces["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| {
+            let geometry = serde_json::from_value(candidate["geometry"].clone()).unwrap();
+            matches!(geometry, AnalyticGeometry::Plane { frame }
+                if (frame.origin_mm[2] - 3.).abs() < 1e-7 && frame.normal()[2] > 0.999999)
+        })
+        .expect("blind pocket must have a planar floor above the bottom of the stock");
+    let attached = dispatch(
+        &rust,
+        &call(),
+        "create_engraving_sketch",
+        json!({ "expected_revision": 1, "source": feature, "face": floor["element"]["ordinal"] }),
+    )
+    .unwrap();
+    assert_eq!(attached["revision"], 2);
+    let sketch_args = json!({ "sketch": attached["sketch"] });
+
+    std::fs::remove_file(pocket_path).unwrap();
+    let project = ProjectFile::new(rust.document()).unwrap();
+    let mut saved = Vec::new();
+    project_file::write(&project, &mut saved, Default::default()).unwrap();
+    let loaded = project_file::read(
+        &mut saved.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project;
+    let reopened = open(loaded.document);
+    let rebuilt = dispatch(&reopened, &call(), "evaluate_model", json!({})).unwrap();
+    assert_eq!(&rebuilt["parts"][0], shape);
+    let attachment = rebuilt["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|reference| &reference["source"] == feature)
+        .expect("the reopened sketch must still refer to the imported part");
+    let resolution = serde_json::from_value(attachment["resolution"].clone()).unwrap();
+    assert!(
+        matches!(resolution, Resolution::Resolved { frame: Some(frame), .. }
+        if (frame.origin_mm[2] - 3.).abs() < 1e-7)
+    );
+    let rebuilt_faces =
+        dispatch(&reopened, &call(), "reference_candidates", candidate_args).unwrap();
+    assert_eq!(rebuilt_faces["elements"], faces["elements"]);
+    let sketch = dispatch(&reopened, &call(), "inspect_sketch", sketch_args).unwrap();
+    assert_eq!(sketch["solved"], true);
+
+    let exported = dispatch(
+        &reopened,
+        &call(),
+        "export_step",
+        json!({ "part": part, "file_name": "reopened.step" }),
+    )
+    .unwrap();
+    for field in ["model_volume_mm3", "readback_volume_mm3"] {
+        assert!((exported[field].as_f64().unwrap() - volume).abs() < 1e-7);
+    }
+    let independent = Solid::read_step(&dir.path().join("reopened.step"), policy).unwrap();
+    assert!((independent.volume_mm3().unwrap() - volume).abs() < 1e-7);
+    let faces = independent.faces().unwrap();
+    assert!(faces.iter().any(|face| {
+        (face.area_mm2 - 16.).abs() < 1e-7
+            && face.plane.is_some_and(|(origin, normal)| {
+                (origin[2] - 3.).abs() < 1e-7 && normal[2] > 0.999999
+            })
+    }));
+    assert!(faces.iter().any(|face| {
+        (face.area_mm2 - pi).abs() < 1e-7
+            && face.plane.is_some_and(|(_, normal)| normal[2] > 0.999999)
+            && face
+                .center_mm
+                .into_iter()
+                .zip([8., 4., 4.])
+                .all(|(actual, expected)| (actual - expected).abs() < 1e-7)
+    }));
+    assert!(
+        faces
+            .iter()
+            .any(|face| { face.plane.is_none() && (face.area_mm2 - 4. * pi).abs() < 1e-7 })
+    );
+}
+
+#[test]
+fn changed_imported_finite_face_is_refused_before_mcp_source_update_commits() {
+    fn imported_tetra(length: f64) -> String {
+        let [a, b, c, d] = [[0., 0., 0.], [4., 0., 0.], [0., 4., 0.], [0., 0., length]];
+        let union = multicad_kernel::rust_kernel::planar_boolean::Union::from_planar_rings(
+            &[vec![a, c, b], vec![a, b, d], vec![a, d, c], vec![b, c, d]],
+            1e-7,
+        )
+        .unwrap();
+        multicad_kernel::rust_kernel::step::write_planar_union(
+            &union,
+            [0.; 3],
+            [1., 0., 0.],
+            [0., 1., 0.],
+        )
+        .unwrap()
+    }
+    fn attach_imported_datum(
+        session: &mut multicad_core::commands::Session,
+        producer: multicad_core::document::EntityId,
+    ) {
+        use multicad_core::{
+            commands::{Actor, Channel, Request},
+            document::{Entity, EntityData, Link, Mutation},
+            references::{Attachment, GeometryIntent, TopologyKind},
+        };
+        let model = multicad_model::Compiler::default()
+            .compile_with_backend(
+                session.document(),
+                session.revision(),
+                GeometryBackend::Rust,
+                None,
+            )
+            .unwrap();
+        let topology = &model.snapshot().shapes[&producer].topology;
+        let face = topology
+            .elements
+            .iter()
+            .find(|face| face.key.kind == TopologyKind::Face && matches!(face.geometry, Some(multicad_core::references::AnalyticGeometry::Plane {frame}) if frame.normal()[0] < -0.99))
+            .unwrap();
+        let mut intent = GeometryIntent::capture(topology, face.key).unwrap();
+        intent.boundary = Some(face.boundary.clone());
+        intent.attachment = Some(Attachment {
+            anchor: face.frames[0].origin.clone(),
+            offset_mm: [0.25, -0.5, 0.75],
+            angle_rad: 0.3,
+        });
+        session
+            .apply(Request {
+                expected_revision: session.revision(),
+                actor: Actor::local(Channel::Ui),
+                label: "Attach imported face datum".into(),
+                edits: vec![Mutation::Insert(Entity::new(
+                    "Imported datum",
+                    EntityData::Plane {
+                        origin_mm: [0.; 3],
+                        normal: [0., 0., 1.],
+                        anchor: Some(Link {
+                            target: producer,
+                            role: "face_attachment".into(),
+                            geometry: Some(intent),
+                        }),
+                    },
+                ))],
+            })
+            .unwrap();
+    }
+
+    use multicad_core::commands::Session;
+    use multicad_core::model::imports::prepare_step_import;
+    use multicad_mcp::host::with;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tetra.step");
+    std::fs::write(&path, imported_tetra(4.)).unwrap();
+    let mut session = Session::new(Document::new("Import update repair").unwrap()).unwrap();
+    let file =
+        multicad_model::imports::read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap();
+    let import = prepare_step_import(&session, 0, Actor::local(Channel::Ui), &file).unwrap();
+    let source = import.source;
+    let producer = import.model.outputs[0].feature;
+    session.commit(import.model.prepared).unwrap();
+    attach_imported_datum(&mut session, producer);
+    let host = Headless::with_geometry_backend(
+        Workspace::new(session.document().clone()).unwrap(),
+        Some(dir.path().to_owned()),
+        false,
+        GeometryBackend::Rust,
+    );
+    let before = host.document();
+    let state = |target: &mut dyn multicad_mcp::host::Target| {
+        (
+            target.session().revision(),
+            target.session().activity().count(),
+            target.session().can_undo(),
+            target.session().can_redo(),
+        )
+    };
+    let prior = with(&host, state).unwrap();
+    std::fs::write(&path, imported_tetra(5.)).unwrap();
+    let error = dispatch(
+        &host,
+        &call(),
+        "import_step",
+        json!({"expected_revision":0,"file_name":"tetra.step","source":source}),
+    )
+    .unwrap_err();
+    assert!(error.message.contains("reference repair"), "{error:?}");
+    assert!(
+        error.message.contains("face_attachment") || error.message.contains("plane"),
+        "{error:?}"
+    );
+    assert_eq!(host.document(), before);
+    assert_eq!(with(&host, state).unwrap(), prior);
+    // The same command recovers once a source with the retained region returns.
+    let mut equivalent = imported_tetra(4.);
+    let start = equivalent.find("=CLOSED_SHELL('',(").unwrap() + "=CLOSED_SHELL('',(".len();
+    let end = start + equivalent[start..].find("))").unwrap();
+    let refs = equivalent[start..end]
+        .split(',')
+        .rev()
+        .collect::<Vec<_>>()
+        .join(",");
+    equivalent.replace_range(start..end, &refs);
+    std::fs::write(&path, equivalent).unwrap();
+    let updated = dispatch(
+        &host,
+        &call(),
+        "import_step",
+        json!({"expected_revision":0,"file_name":"tetra.step","source":source}),
+    )
+    .unwrap();
+    assert_eq!(updated["revision"], 1);
+    let model = dispatch(&host, &call(), "evaluate_model", json!({})).unwrap();
+    assert!(
+        model["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|part| (part["volume_mm3"].as_f64().unwrap() - 32. / 3.).abs() < 1e-7)
+    );
 }

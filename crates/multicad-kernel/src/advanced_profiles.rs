@@ -1,7 +1,10 @@
 //! Closed profile sweeps and ordered lofts with authored curve identities.
-//! Native compatibility guessing, profile relocation and implicit correction
+//! Compatibility guessing, profile relocation and implicit correction
 //! are disabled; unsupported holes/path/correspondence remain explicit errors.
-use crate::{CurvedProfile, GeometryError, GeometryErrorKind, GeometryPolicy, Solid, ffi};
+use crate::{
+    CurvedEdge2d, CurvedProfile, GeometryError, GeometryErrorKind, GeometryPolicy, PlaneFrame,
+    Solid, ffi,
+};
 use multicad_core::{
     document::EntityId,
     references::{GeometryIntent, Origin, TopologyKind},
@@ -14,11 +17,25 @@ fn failure(kind: GeometryErrorKind, message: impl Into<String>) -> GeometryError
         message: message.into(),
     }
 }
+
+pub(crate) fn matches_straight_loft_station(
+    start: f64,
+    station: f64,
+    end: f64,
+    fraction: f64,
+    tolerance_mm: f64,
+) -> bool {
+    let scale = start.abs().max(station.abs()).max(end.abs()).max(1.);
+    let roundoff = (64. * f64::EPSILON * scale).min(tolerance_mm);
+    ((end - start).mul_add(fraction, start) - station).abs() <= roundoff
+}
+
 fn origins_valid(feature: EntityId, origins: &[Origin]) -> Result<(), GeometryError> {
+    let authored: BTreeSet<_> = origins.iter().collect();
     if feature.is_nil()
         || origins.is_empty()
         || origins.len() > 1024
-        || origins.iter().collect::<BTreeSet<_>>().len() != origins.len()
+        || authored.len() != origins.len()
     {
         return Err(failure(
             GeometryErrorKind::Input,
@@ -32,16 +49,20 @@ fn origins_valid(feature: EntityId, origins: &[Origin]) -> Result<(), GeometryEr
                 "Authored curve origin collides with a generated cap identity",
             ));
         }
+        let side = Origin {
+            source: feature,
+            role: format!("side/{}/{}", origin.source, origin.role),
+        };
+        if authored.contains(&side) {
+            return Err(failure(
+                GeometryErrorKind::Input,
+                "Authored curve origin collides with a generated side identity",
+            ));
+        }
         GeometryIntent {
             id: feature,
             kind: TopologyKind::Face,
-            origins: BTreeSet::from([
-                origin.clone(),
-                Origin {
-                    source: feature,
-                    role: format!("side/{}/{}", origin.source, origin.role),
-                },
-            ]),
+            origins: BTreeSet::from([origin.clone(), side]),
             boundary: None,
             attachment: None,
         }
@@ -50,7 +71,160 @@ fn origins_valid(feature: EntityId, origins: &[Origin]) -> Result<(), GeometryEr
     }
     Ok(())
 }
+fn sweep_origins(
+    profile: &CurvedProfile,
+    path_mm: &[[f64; 3]],
+    feature: EntityId,
+    profile_origins: &[Origin],
+    path_origins: &[Origin],
+) -> Result<Vec<Origin>, GeometryError> {
+    if !profile.holes.is_empty() {
+        return Err(failure(
+            GeometryErrorKind::Input,
+            "Sweep currently supports one closed outer profile without holes",
+        ));
+    }
+    if !(2..=65).contains(&path_mm.len())
+        || profile_origins.len() != profile.outer.len()
+        || path_origins.len() + 1 != path_mm.len()
+    {
+        return Err(failure(
+            GeometryErrorKind::Input,
+            "Sweep needs 2 to 65 ordered path points and an authored origin for every profile/path edge",
+        ));
+    }
+    let origins: Vec<_> = profile_origins
+        .iter()
+        .chain(path_origins)
+        .cloned()
+        .collect();
+    origins_valid(feature, &origins)?;
+    Ok(origins)
+}
+
+fn sweep_start_height(
+    frame: PlaneFrame,
+    start: [f64; 3],
+    end: [f64; 3],
+    policy: GeometryPolicy,
+) -> Result<f64, GeometryError> {
+    frame.checked(policy)?;
+    policy.point(start)?;
+    policy.point(end)?;
+    let offset = std::array::from_fn(|i| start[i] - frame.origin[i]);
+    let delta: [f64; 3] = std::array::from_fn(|i| end[i] - start[i]);
+    let length = delta[0].hypot(delta[1]).hypot(delta[2]);
+    policy.length(length)?;
+    let normal = frame.normal();
+    let dot = |a: [f64; 3], b: [f64; 3]| a.into_iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+    let height = dot(delta, normal) / dot(normal, normal);
+    let lateral: [f64; 3] = std::array::from_fn(|i| delta[i] - height * normal[i]);
+    let roundoff = 64.
+        * f64::EPSILON
+        * start
+            .into_iter()
+            .chain(end)
+            .map(f64::abs)
+            .fold(length.max(1.), f64::max);
+    if dot(offset, normal).abs() > policy.linear_tolerance_mm
+        || lateral[0].hypot(lateral[1]).hypot(lateral[2]) > roundoff.min(policy.linear_tolerance_mm)
+    {
+        return Err(failure(
+            GeometryErrorKind::Input,
+            "Sweep profile plane must contain the path start and be perpendicular to its first segment",
+        ));
+    }
+    Ok(height)
+}
+
 impl Solid {
+    /// Sweep a closed profile along an authored straight or mitered polyline.
+    pub fn rust_sweep_polyline_named(
+        profile: &CurvedProfile,
+        path_mm: &[[f64; 3]],
+        feature: EntityId,
+        profile_origins: &[Origin],
+        path_origins: &[Origin],
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        if path_mm.len() == 2 {
+            return Self::rust_sweep_straight_named(
+                profile,
+                path_mm,
+                feature,
+                profile_origins,
+                path_origins,
+                policy,
+            );
+        }
+        policy.validate()?;
+        sweep_origins(profile, path_mm, feature, profile_origins, path_origins)?;
+        if let [CurvedEdge2d::Circle { center, radius_mm }] = profile.outer.as_slice() {
+            sweep_start_height(profile.frame, path_mm[0], path_mm[1], policy)?;
+            return Self::rust_sweep_circular_miter_named(
+                profile.frame,
+                *center,
+                *radius_mm,
+                path_mm,
+                feature,
+                (&profile_origins[0], path_origins),
+                policy,
+            );
+        }
+        if profile
+            .outer
+            .iter()
+            .any(|edge| matches!(edge, CurvedEdge2d::Arc { .. }))
+        {
+            sweep_start_height(profile.frame, path_mm[0], path_mm[1], policy)?;
+            return Self::rust_sweep_mixed_miter_named(
+                profile,
+                path_mm,
+                feature,
+                profile_origins,
+                path_origins,
+                policy,
+            );
+        }
+        Self::rust_sweep_miter_named(
+            profile,
+            path_mm,
+            feature,
+            profile_origins,
+            path_origins,
+            policy,
+        )
+    }
+
+    /// A straight path has a constant corrected Frenet frame. The authored
+    /// section translates along that segment with no relocation or rotation.
+    pub fn rust_sweep_straight_named(
+        profile: &CurvedProfile,
+        path_mm: &[[f64; 3]],
+        feature: EntityId,
+        profile_origins: &[Origin],
+        path_origins: &[Origin],
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        policy.validate()?;
+        sweep_origins(profile, path_mm, feature, profile_origins, path_origins)?;
+        let &[start, end] = path_mm else {
+            return Err(failure(
+                GeometryErrorKind::Unsupported,
+                "Rust sweep supports one straight path segment; corner transitions are unavailable",
+            ));
+        };
+        let height = sweep_start_height(profile.frame, start, end, policy)?;
+        Self::rust_extrude_normal_profile_with_path(
+            profile,
+            height,
+            feature,
+            profile_origins,
+            Some(path_origins[0].clone()),
+            policy,
+        )
+    }
+
     /// Sweep one outer wire along an open world-space polyline. The profile
     /// starts in its given plane, normal to the first path segment. Every path
     /// segment has a stable supplied origin; corners use native right transitions.
@@ -63,28 +237,8 @@ impl Solid {
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
         policy.validate()?;
-        if !profile.holes.is_empty() {
-            return Err(failure(
-                GeometryErrorKind::Input,
-                "Sweep currently supports one closed outer profile without holes",
-            ));
-        }
-        if !(2..=65).contains(&path_mm.len())
-            || profile_origins.len() != profile.outer.len()
-            || path_origins.len() + 1 != path_mm.len()
-        {
-            return Err(failure(
-                GeometryErrorKind::Input,
-                "Sweep needs 2 to 65 ordered path points and an authored origin for every profile/path edge",
-            ));
-        }
+        let origins = sweep_origins(profile, path_mm, feature, profile_origins, path_origins)?;
         let checked = profile.checked(policy)?;
-        let origins: Vec<_> = profile_origins
-            .iter()
-            .chain(path_origins)
-            .cloned()
-            .collect();
-        origins_valid(feature, &origins)?;
         let mut path = vec![];
         for point in path_mm {
             policy.point(*point)?;
@@ -148,6 +302,153 @@ impl Solid {
         result.name_advanced_profile(feature, &origins)?;
         Ok(result)
     }
+    /// Loft ordered authored sections with exact planar, bilinear or round walls.
+    pub fn rust_loft_profiles_named(
+        profiles: &[CurvedProfile],
+        feature: EntityId,
+        section_origins: &[Vec<Origin>],
+        ruled: bool,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        if profiles.iter().all(|profile| {
+            profile
+                .outer
+                .iter()
+                .all(|edge| matches!(edge, CurvedEdge2d::Line { .. }))
+        }) {
+            return Self::rust_loft_polygon_sections_named(
+                profiles,
+                feature,
+                section_origins,
+                ruled,
+                policy,
+            );
+        }
+        Self::rust_loft_round_sections(profiles, feature, section_origins, ruled, policy)
+    }
+
+    /// Loft two full circles on one axis with the same authored seam phase.
+    pub fn rust_loft_coaxial_circles_named(
+        profiles: &[CurvedProfile],
+        feature: EntityId,
+        section_origins: &[Vec<Origin>],
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        if profiles.len() != 2 {
+            return Err(failure(
+                GeometryErrorKind::Unsupported,
+                "Rust loft requires two ordered circular sections",
+            ));
+        }
+        Self::rust_loft_round_sections(profiles, feature, section_origins, true, policy)
+    }
+
+    fn rust_loft_round_sections(
+        profiles: &[CurvedProfile],
+        feature: EntityId,
+        section_origins: &[Vec<Origin>],
+        ruled: bool,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        policy.validate()?;
+        if !(2..=16).contains(&profiles.len()) || section_origins.len() != profiles.len() {
+            return Err(failure(
+                GeometryErrorKind::Input,
+                "Rust loft needs 2 to 16 ordered sections with authored identities",
+            ));
+        }
+        let start = profiles[0].frame;
+        let normal = start.normal();
+        let distance = |a: [f64; 3], b: [f64; 3]| {
+            let [x, y, z] = std::array::from_fn(|i| a[i] - b[i]);
+            x.hypot(y).hypot(z)
+        };
+        let dot = |a: [f64; 3], b: [f64; 3]| a.into_iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+        let angle_eps = 64. * f64::EPSILON;
+        let mut sections: Vec<[f64; 2]> = Vec::with_capacity(profiles.len());
+        let mut origins = Vec::with_capacity(profiles.len());
+        let mut axis_origin = [0.; 3];
+        let mut sign = 1.;
+        for (index, (profile, section_origins)) in profiles.iter().zip(section_origins).enumerate()
+        {
+            let ([CurvedEdge2d::Circle { center, radius_mm }], [origin], []) = (
+                profile.outer.as_slice(),
+                section_origins.as_slice(),
+                profile.holes.as_slice(),
+            ) else {
+                return Err(failure(
+                    GeometryErrorKind::Unsupported,
+                    "Rust round loft needs one full authored circle without holes in each section",
+                ));
+            };
+            profile.frame.checked(policy)?;
+            let center = profile.frame.point(*center);
+            policy.point(center)?;
+            policy.length(*radius_mm)?;
+            if distance(start.u, profile.frame.u) > angle_eps
+                || distance(start.v, profile.frame.v) > angle_eps
+            {
+                return Err(failure(
+                    GeometryErrorKind::Unsupported,
+                    "Rust loft requires matching circle seam directions",
+                ));
+            }
+            if index == 0 {
+                axis_origin = center;
+            }
+            let delta = std::array::from_fn(|i| center[i] - axis_origin[i]);
+            let height = dot(delta, normal) / dot(normal, normal);
+            if index == 1 {
+                sign = height.signum();
+            }
+            if let Some(&[_, previous]) = sections.last() {
+                policy.length(height * sign - previous)?;
+            }
+            let roundoff = axis_origin
+                .into_iter()
+                .chain(center)
+                .map(f64::abs)
+                .fold(height.abs().max(1.), f64::max)
+                * angle_eps;
+            if distance(delta, normal.map(|component| component * height))
+                > roundoff.min(policy.linear_tolerance_mm)
+            {
+                return Err(failure(
+                    GeometryErrorKind::Unsupported,
+                    "Rust loft requires coaxial circle centers",
+                ));
+            }
+            sections.push([*radius_mm, height * sign]);
+            origins.push(origin.clone());
+        }
+        origins_valid(feature, &origins)?;
+        let continuous = !ruled && sections.len() > 2;
+        if continuous {
+            let [first, _] = sections[0];
+            let [last, height] = sections[sections.len() - 1];
+            if sections[1..sections.len() - 1].iter().any(|&[radius, z]| {
+                !matches_straight_loft_station(
+                    first,
+                    radius,
+                    last,
+                    z / height,
+                    policy.linear_tolerance_mm,
+                )
+            }) {
+                return Err(failure(
+                    GeometryErrorKind::Unsupported,
+                    "Rust smooth circular loft requires all stations on the same straight transition",
+                ));
+            }
+        }
+        let frame = PlaneFrame {
+            origin: axis_origin,
+            u: start.u,
+            v: start.v.map(|component| component * sign),
+        };
+        Self::rust_revolve_circle_loft(frame, &sections, feature, &origins, continuous, policy)
+    }
+
     /// Loft 2..16 closed sections in supplied order, keeping their edge order
     /// and winding. Matching edge kinds/counts define explicit correspondence.
     pub fn loft_profiles_named(

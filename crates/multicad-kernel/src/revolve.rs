@@ -60,7 +60,7 @@ impl RevolutionAxis {
         let v = self.rotate_vector(sub(p, self.origin_mm), angle);
         std::array::from_fn(|i| self.origin_mm[i] + v[i])
     }
-    fn validate(
+    pub(crate) fn validate(
         self,
         profile: &CurvedProfile,
         angle: f64,
@@ -182,6 +182,11 @@ impl Solid {
         origins: &[Origin],
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
+        if !crate::OCCT_LINKED {
+            return Self::rust_revolve_curved_profile_named(
+                profile, axis, angle_rad, feature, origins, policy,
+            );
+        }
         let edges: Vec<_> = profile
             .outer
             .iter()
@@ -216,7 +221,7 @@ impl Solid {
         let mut frames = vec![None; edges.len()];
         let mut seen = vec![false; edges.len()];
         let mut rejected = vec![false; edges.len()];
-        for seed in ffi::seeds(&solid.native.0)
+        for seed in ffi::seeds(solid.occt()?)
             .map_err(|e| error(GeometryErrorKind::Native, e.to_string()))?
         {
             if seed.role != 2 {

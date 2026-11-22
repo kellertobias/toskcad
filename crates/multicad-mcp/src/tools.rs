@@ -21,9 +21,10 @@ use multicad_core::{
     parameters::{self, BoundExpression, Unit},
     sketch::Datum,
     sketch_import::{self, Format, ImportOptions, SourceUnit, UnitChoice},
+    sketch_regions::RegionQueries,
 };
 use multicad_kernel::NativeRegionQueries;
-use multicad_model::Compiler;
+use multicad_model::{Compiler, GeometryBackend};
 use schemars::JsonSchema;
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -37,6 +38,8 @@ use std::{
 };
 
 mod architecture;
+mod solid_pairs;
+use solid_pairs::{InspectPartPairArgs, inspect_part_pair};
 mod cabinetry;
 mod wood_boxes;
 use wood_boxes::{
@@ -63,6 +66,8 @@ use screw_connections::{
 mod gear_pairs;
 mod gears;
 mod guides;
+mod helical_tube_cut;
+use helical_tube_cut::{HelicalTubeCutArgs, set_helical_tube_cut};
 mod imports;
 mod levels;
 mod mechanical_parts;
@@ -181,9 +186,24 @@ pub struct Call {
 #[derive(Clone)]
 struct Request {
     call: Call,
+    backend: GeometryBackend,
     tool: &'static str,
     arguments: Value,
     review: Arc<std::sync::Mutex<Option<u64>>>,
+}
+impl Request {
+    fn region_queries(&self) -> &'static dyn RegionQueries {
+        static NATIVE: std::sync::LazyLock<NativeRegionQueries> =
+            std::sync::LazyLock::new(NativeRegionQueries::default);
+        static RUST: std::sync::LazyLock<NativeRegionQueries> = std::sync::LazyLock::new(|| {
+            NativeRegionQueries::analytic(Default::default())
+                .expect("valid default geometry policy")
+        });
+        match self.backend {
+            GeometryBackend::OpenCascade => &*NATIVE,
+            GeometryBackend::Rust => &*RUST,
+        }
+    }
 }
 impl std::ops::Deref for Request {
     type Target = Call;
@@ -239,6 +259,7 @@ macro_rules! tools {
             };
             let request = Request {
                 call: call.clone(),
+                backend: host.geometry_backend(),
                 tool,
                 arguments: arguments.clone(),
                 review: Arc::default(),
@@ -260,7 +281,13 @@ macro_rules! tools {
                 $($name => ($name, $read_only),)*
                 _ => return Err(ToolError::new("unknown_tool", format!("Unknown tool '{name}'"))),
             };
-            let request = Request { call: call.clone(), tool, arguments, review: Arc::default() };
+            let request = Request {
+                call: call.clone(),
+                backend: host.geometry_backend(),
+                tool,
+                arguments,
+                review: Arc::default(),
+            };
             finish(host, &request, read_only, Err(error))
         }
     };
@@ -268,7 +295,7 @@ macro_rules! tools {
 
 tools! {
     "document_info" => NoArgs, "Document information", true,
-        "Name, identity and current revision of the controlled document, undo/redo availability, entity counts and the access scope (project file, export folder, read-only, transport).",
+        "Name, identity and current revision of the controlled document, undo/redo availability, entity counts, geometry backend and access scope (project file, export folder, read-only, transport).",
         document_info;
     "list_entities" => ListEntities, "List entities", true,
         "Canonical entities with persistent IDs, names, kinds and references. Optionally filter by kind (parameter, plane, sketch, feature, part, assembly, instance, material, drawing, export_set, extension, group).",
@@ -280,7 +307,7 @@ tools! {
         "Every project parameter with its expression, declared unit, evaluated value in that unit, role (driving or derived) and exposure. Parameters private to placed symbols are omitted; change them through the instance's exposed overrides.",
         list_parameters;
     "set_parameter" => SetParameter, "Create or edit parameter", false,
-        "Create a parameter, or edit the one with this name. Literal values are plain numbers ('40'); formulas start with '=' and reference parameters with '$' ('=$width/2'). The unit is required. Commits one transaction.",
+        "Create a parameter, or edit the one with this name. Literal values are plain numbers ('40'); formulas start with '=' and reference parameters with '$' ('=$width/2'). The unit is required. Validates affected modeling consumers before committing one transaction or queueing owner review. Invalid geometry, cancellation or a stale revision leaves the document unchanged; unrelated parts are excluded.",
         set_parameter;
     "create_sketch" => CreateSketch, "Create sketch", false,
         "Create an empty constrained sketch on an origin datum plane (xy, xz or yz). Commits one transaction and returns the sketch ID.",
@@ -304,7 +331,7 @@ tools! {
         "Remove a sketch text element. Features that used its regions report that their profile changed. Commits one transaction.",
         sketch_remove_text;
     "set_sketch_dimension" => SetDimension, "Set sketch dimension", false,
-        "Change the value of an existing driving dimension constraint to a literal or parameter formula. The sketch is re-solved; a failed solve changes nothing.",
+        "Change an existing driving dimension to a literal or parameter formula. Re-solves the sketch and validates affected modeling consumers before committing or queueing owner review. Failed solves, invalid downstream geometry, cancellation and stale revisions change nothing; unrelated unfinished parts are excluded.",
         set_sketch_dimension;
     "inspect_sketch" => SketchArgs, "Inspect sketch", true,
         "Solve a sketch and report its state, degrees of freedom, conflicts, solved points, curves, constraints, text elements (with their derived glyph contour curve IDs) and the exact closed regions (with index and area in mm²) usable by extrude.",
@@ -312,6 +339,12 @@ tools! {
     "extrude" => Extrude, "Extrude regions", false,
         "Extrude regions of a sketch (indices from inspect_sketch at the same revision), or planar model faces (source feature and face ordinal from reference_candidates at the same revision; exact outer boundary and holes, persistent face reference), by a signed nonzero distance. Give either sketch with regions or faces. A negative distance extrudes the same magnitude opposite to the profile normal (for faces: into the body) without changing the operation. operation new_body creates parts; join, cut and intersect modify target_part. Curved, missing or ambiguous faces are refused and nothing changes. The candidate is evaluated natively before it commits.",
         extrude;
+    "set_helical_tube_cut" => HelicalTubeCutArgs, "Create or edit helical tube cut", false,
+        "Cut an exact cylinder with a right-handed circular tube centered on its outside radius. Use target_part to create or feature to edit; provide the complete typed recipe each time. Heights and start_angle are in the cylinder's local frame, with zero height at its bottom and phase zero at its authored seam. The tube must start between the caps, clear adjacent turns and exit completely through the top cap. Requires the Rust backend. A failed or cancelled candidate changes nothing.",
+        set_helical_tube_cut;
+    "inspect_part_pair" => InspectPartPairArgs, "Inspect whole Part pair", true,
+        "Read the current complete solids of two Parts and report finite minimum distance, occupied common volume and bounded physical witnesses. Dimensions are in millimeters; optional contact_tolerance carries a length unit. Positive material is never rounded into contact. total_solutions is null and witnesses_complete is false for a continuum or an unenumerated solution set. Unsupported geometry or unresolved near-contact is refused; no source or selection changes. This queries Part solids, not occurrence placement overrides.",
+        inspect_part_pair;
     "evaluate_model" => NoArgs, "Evaluate model", true,
         "Evaluate the complete model with the native kernel and report every final part (producing feature, solid count, volume in mm³, bounds in mm) and every placed instance (component, solid count, volume, bounds), plus reference diagnostics. Evaluation failures are returned as structured errors.",
         evaluate_model;
@@ -346,7 +379,7 @@ tools! {
         "Read retained mechanical Part dimensions, optional reference attribution and representation without native evaluation. A reference match does not certify stock, fit or standards compliance.",
         inspect_mechanical_part;
     "set_mechanical_part" => MechanicalPartArgs, "Create or edit mechanical part", false,
-        "Create a parametric washer, hex nut, headed machine screw or bearing mounting envelope, or edit by generator feature ID retaining Part identity and omitted fields. Machine-screw underhead_length retains neck-to-tip semantics; alternatively length_input selects kind underhead or overall with a typed value. Exactly one authored length is retained; supplying both refuses, omission preserves its expression and convention. Overall includes actual head height. thread.length is its threaded extent and thread.frame locates the neck datum. Head and drive kinds are explicit; switching a kind requires all its dimensions. Supported heads include socket-cap, external hex, pan, button and countersunk with compatible external-hex, hex-socket, hexalobular or Phillips H drives. Hexalobular recesses use tangent circular arcs; Phillips H0 uses a rounded inner form and H1–H4 use a shallow V. Profile angles require angular units deg or rad; length quantities require length units. Omitted fields preserve their authored expressions. Socket recesses are real hexagons. Nut thread.length is its height. Cosmetic threads are refused for manufacturing export until Modeled. Symbol-owned features must be changed through edit_symbol_instance. Native evaluation precedes one transaction or owner review; stale, invalid, cancelled and failed requests change nothing. No sourced catalog membership, fitted metric tolerance or stock availability is implied.",
+        "Create a parametric washer, hex nut, headed machine screw, hanger bolt, wood insert or bearing mounting envelope, or edit by generator feature ID retaining Part identity and omitted fields. Hanger bolts retain wood_thread, metric_thread, plain_length and plain_diameter. Wood inserts retain outer_thread and inner_thread. Both use one recipe-level placement; nested thread frames are derived and cannot be edited separately. Machine-screw underhead_length retains neck-to-tip semantics; alternatively length_input selects kind underhead or overall with a typed value. Exactly one authored length is retained; supplying both refuses, omission preserves its expression and convention. Overall includes actual head height. thread.length is its threaded extent and thread.frame locates the neck datum. Head and drive kinds are explicit; switching a kind requires all its dimensions. Supported heads include socket-cap, external hex, pan, button and countersunk with compatible external-hex, hex-socket, hexalobular or Phillips H drives. Hexalobular recesses use tangent circular arcs; Phillips H0 uses a rounded inner form and H1–H4 use a shallow V. Profile angles require angular units deg or rad; length quantities require length units. Omitted fields preserve their authored expressions. Socket recesses are real hexagons. Nut thread.length is its height. Cosmetic threads are refused for manufacturing export until Modeled. Symbol-owned features must be changed through edit_symbol_instance. Native evaluation precedes one transaction or owner review; stale, invalid, cancelled and failed requests change nothing. No sourced catalog membership, fitted metric tolerance or stock availability is implied.",
         set_mechanical_part;
     "import_symbol" => ImportSymbolArgs, "Import pinned symbol", false,
         "Import one canonical reusable definition from a bare .tcd file inside the exchange folder. source_definition is the source extension ID and is required for ambiguous files. Returns the embedded definition ID, immutable pin and exposed template parameter IDs. Source import does not place or certify native geometry; private template source remains owned.",
@@ -414,7 +447,7 @@ tools! {
         "Save the document to the project file in scope, if expected_revision is current. Never writes elsewhere.",
         save_project;
     "export_step" => ExportStep, "Export STEP", true,
-        "Write one current Part definition as a STEP B-rep into the export folder in scope (bare file name ending .step or .stp), including definition-only Parts of an Assembly. Uses definition coordinates; export sets with occurrence paths select posed members. Consumed Parts remain unavailable. The file is read back and its volume reported. Does not change the document.",
+        "Write one current Part definition as a STEP B-rep into the export folder in scope (bare file name ending .step or .stp), including definition-only Parts of an Assembly. Uses definition coordinates; export sets with occurrence paths select posed members. Consumed Parts remain unavailable. The receipt distinguishes decoded boundary mass from complete source-known boundary verification: readback_volume_mm3 is null when file mass was not independently decoded, with source mass bounds reported separately. Does not change the document.",
         export_step;
     "set_level" => LevelArgs, "Create or edit level", false,
         "Create a building level (elevation, floor-to-floor height, slab thickness) or edit one by ID. Every hosted slab, pedestal, stair and wall rebuilds and is evaluated natively before commit.",
@@ -744,6 +777,9 @@ impl Quantity {
     }
     fn input(&self) -> Result<DimensionInput, ToolError> {
         self.length_unit()?;
+        self.scalar_input()
+    }
+    fn scalar_input(&self) -> Result<DimensionInput, ToolError> {
         match (self.value, &self.expression) {
             (Some(value), None) if value.is_finite() => Ok(DimensionInput::Literal {
                 value,
@@ -1166,8 +1202,12 @@ fn diagnostics_json(d: &multicad_solver::Diagnostics) -> Value {
 
 // ---- Tools ----------------------------------------------------------------
 
-fn document_info(host: &dyn Host, _: &Request, _: NoArgs) -> ToolResult {
+fn document_info(host: &dyn Host, call: &Request, _: NoArgs) -> ToolResult {
     let scope = host.scope();
+    let geometry_backend = match call.backend {
+        GeometryBackend::OpenCascade => "opencascade",
+        GeometryBackend::Rust => "rust",
+    };
     with(host, move |target| {
         let session = target.session();
         let document = session.document();
@@ -1186,6 +1226,7 @@ fn document_info(host: &dyn Host, _: &Request, _: NoArgs) -> ToolResult {
             "can_redo": session.can_redo(),
             "entity_counts": counts,
             "units": { "length": "mm", "angle": "deg", "area": "mm2", "volume": "mm3" },
+            "geometry_backend": geometry_backend,
             "project_path": target.project_path(),
             "scope": scope,
         })
@@ -1269,9 +1310,59 @@ fn list_parameters(host: &dyn Host, _: &Request, _: NoArgs) -> ToolResult {
     })
 }
 
+/// Prove consumers of an edited source outside the document owner. Source-only
+/// edits remain possible while unrelated modeling work is unfinished.
+fn preflight_affected_consumers(
+    call: &Request,
+    prepared: &Prepared,
+    source: EntityId,
+    expected_revision: u64,
+) -> Result<(), ToolError> {
+    let document = prepared.document();
+    let roots: Vec<_> = document
+        .affected([source])?
+        .into_iter()
+        .filter(|id| {
+            matches!(
+                document.get(*id).map(|entity| &entity.data),
+                Some(
+                    EntityData::Feature {
+                        suppressed: false,
+                        ..
+                    } | EntityData::Instance { .. }
+                        | EntityData::Plane {
+                            anchor: Some(_),
+                            ..
+                        }
+                )
+            )
+        })
+        .collect();
+    let compiler = Compiler {
+        omit_display: true,
+        ..Default::default()
+    };
+    let interrupt = || call.cancelled();
+    // Source admission is bounded to 128 roots per request. Batches preserve
+    // isolation from unfinished unrelated Parts even for larger source edits.
+    for roots in roots.chunks(128) {
+        call.finish(compiler.compile_sources_with_backend(
+            document,
+            expected_revision.saturating_add(1),
+            roots,
+            call.backend,
+            Some(&interrupt),
+        ))
+        .map_err(|error| error.at_revision(expected_revision))?;
+    }
+    Ok(())
+}
+
 fn set_parameter(host: &dyn Host, call: &Request, args: SetParameter) -> ToolResult {
-    let call = call.clone();
-    with(host, move |target| {
+    let expected_revision = args.expected_revision;
+    let unit = args.unit.clone();
+    let prepare_call = call.clone();
+    let (prepared, parameter, created, value) = with(host, move |target| {
         revision_guard(target, args.expected_revision)?;
         let document = target.session().document();
         let existing = document
@@ -1317,18 +1408,30 @@ fn set_parameter(host: &dyn Host, call: &Request, args: SetParameter) -> ToolRes
         };
         let prepared = target.session().prepare(SessionRequest {
             expected_revision: args.expected_revision,
-            actor: call.actor.clone(),
+            actor: prepare_call.actor.clone(),
             label: format!("Set parameter {}", args.name),
             edits: vec![mutation],
         })?;
-        let value = prepared.parameters().values.get(&parameter).cloned();
+        let value = prepared
+            .parameters()
+            .values
+            .get(&parameter)
+            .and_then(|v| v.quantity.in_unit(v.unit));
+        Ok::<_, ToolError>((prepared, parameter, created, value))
+    })??;
+    // Parameter expressions can change any downstream modeling recipe. Prove
+    // only their consumers, outside the document owner and before commit/review.
+    preflight_affected_consumers(call, &prepared, parameter, expected_revision)?;
+    let call = call.clone();
+    with(host, move |target| {
+        revision_guard(target, expected_revision)?;
         let revision = commit(target, &call, prepared)?;
         Ok(json!({
             "revision": revision,
             "parameter": parameter,
             "created": created,
-            "value": value.as_ref().and_then(|v| v.quantity.in_unit(v.unit)),
-            "unit": args.unit,
+            "value": value,
+            "unit": unit,
         }))
     })?
 }
@@ -1486,17 +1589,18 @@ fn sketch_add_circle(host: &dyn Host, call: &Request, args: AddCircle) -> ToolRe
 }
 
 fn set_sketch_dimension(host: &dyn Host, call: &Request, args: SetDimension) -> ToolResult {
-    let call = call.clone();
+    let expected_revision = args.expected_revision;
+    let prepare_call = call.clone();
     let sketch = id(&args.sketch)?;
     let constraint = id(&args.constraint)?;
     let input = args.value.input()?;
-    with(host, move |target| {
+    let preview = with(host, move |target| {
         revision_guard(target, args.expected_revision)?;
         sketch_entity(target, sketch)?;
         let edit = multicad_solver::prepare_dimension(
             target.session(),
             args.expected_revision,
-            call.actor.clone(),
+            prepare_call.actor.clone(),
             sketch,
             None,
             &DimensionRequest {
@@ -1508,6 +1612,12 @@ fn set_sketch_dimension(host: &dyn Host, call: &Request, args: SetDimension) -> 
         let Some(preview) = edit.preview else {
             return Err(solve_failure(sketch, &edit.evaluation.diagnostics));
         };
+        Ok::<_, ToolError>(preview)
+    })??;
+    preflight_affected_consumers(call, &preview, sketch, expected_revision)?;
+    let call = call.clone();
+    with(host, move |target| {
+        revision_guard(target, expected_revision)?;
         let revision = commit(target, &call, preview)?;
         Ok(json!({ "revision": revision, "sketch": sketch, "constraint": constraint }))
     })?
@@ -1554,10 +1664,9 @@ fn inspect_sketch(host: &dyn Host, call: &Request, args: SketchArgs) -> ToolResu
     let interrupt = || call.cancelled();
     let regions = match result.solved() {
         Some(_) => {
-            let extraction = call.finish(result.regions_with_queries_and_interrupt(
-                &NativeRegionQueries::default(),
-                Some(&interrupt),
-            ))?;
+            let extraction = call.finish(
+                result.regions_with_queries_and_interrupt(call.region_queries(), Some(&interrupt)),
+            )?;
             json!({
                 "regions": extraction.regions.iter().enumerate().map(|(index, r)| json!({
                     "index": index,
@@ -1629,26 +1738,70 @@ fn current_producer(
 fn compile(
     document: &multicad_core::document::Document,
     revision: u64,
-    call: &Call,
+    call: &Request,
 ) -> Result<multicad_model::Model, ToolError> {
     let interrupt = || call.cancelled();
-    call.finish(Compiler::default().compile_interruptible(document, revision, Some(&interrupt)))
+    call.finish(Compiler::default().compile_with_backend(
+        document,
+        revision,
+        call.backend,
+        Some(&interrupt),
+    ))
+}
+
+fn compile_without_display(
+    document: &multicad_core::document::Document,
+    revision: u64,
+    call: &Request,
+) -> Result<multicad_model::Model, ToolError> {
+    let interrupt = || call.cancelled();
+    call.finish(
+        Compiler {
+            omit_display: true,
+            ..Default::default()
+        }
+        .compile_with_backend(document, revision, call.backend, Some(&interrupt)),
+    )
+}
+
+fn compile_sources(
+    document: &multicad_core::document::Document,
+    revision: u64,
+    roots: &[EntityId],
+    call: &Request,
+) -> Result<multicad_model::Model, ToolError> {
+    let interrupt = || call.cancelled();
+    call.finish(Compiler::default().compile_sources_with_backend(
+        document,
+        revision,
+        roots,
+        call.backend,
+        Some(&interrupt),
+    ))
 }
 
 fn sketch_support_report(
     document: &multicad_core::document::Document,
     revision: u64,
     sketch: EntityId,
-    call: &Call,
+    call: &Request,
 ) -> Result<Option<multicad_core::references::ReferenceReport>, ToolError> {
-    if multicad_core::sketch_regions::supporting_face(document, sketch).is_none() {
+    let has_external_inputs = matches!(
+        document.get(sketch).map(|entity| &entity.data),
+        Some(EntityData::Sketch { inputs, .. })
+            if inputs.iter().any(|link| link.role == multicad_core::sketch_external::ROLE)
+    );
+    if multicad_core::sketch_regions::supporting_face(document, sketch).is_none()
+        && !has_external_inputs
+    {
         return Ok(None);
     }
     let interrupt = || call.cancelled();
-    call.finish(Compiler::default().sketch_reference_report(
+    call.finish(Compiler::default().sketch_reference_report_with_backend(
         document,
         revision,
         sketch,
+        call.backend,
         Some(&interrupt),
     ))
     .map(Some)
@@ -1695,10 +1848,10 @@ fn extrude(host: &dyn Host, call: &Request, args: Extrude) -> ToolResult {
             &evaluated,
         )?;
         let interrupt = || call.cancelled();
-        let extraction = call.finish(evaluated_sketch.regions_with_queries_and_interrupt(
-            &NativeRegionQueries::default(),
-            Some(&interrupt),
-        ))?;
+        let extraction = call.finish(
+            evaluated_sketch
+                .regions_with_queries_and_interrupt(call.region_queries(), Some(&interrupt)),
+        )?;
         for index in &args.regions {
             let region = extraction.regions.get(*index).ok_or_else(|| {
                 ToolError::invalid(format!(
@@ -1822,13 +1975,7 @@ fn extrude_faces(
                     .involving(source),
             );
         }
-        let interrupt = || call.cancelled();
-        let model = call.finish(Compiler::default().compile_sources_interruptible(
-            document,
-            revision,
-            &[source],
-            Some(&interrupt),
-        ))?;
+        let model = compile_sources(document, revision, &[source], call)?;
         let topology = model
             .snapshot()
             .shapes
@@ -1877,7 +2024,7 @@ fn extrude_faces(
 
 fn evaluate_model(host: &dyn Host, call: &Request, _: NoArgs) -> ToolResult {
     let (document, revision, _) = snapshot(host)?;
-    let model = compile(&document, revision, call)?;
+    let model = compile_without_display(&document, revision, call)?;
     let snapshot = model.snapshot();
     let parts: Vec<_> = snapshot
         .bodies
@@ -2043,7 +2190,7 @@ fn export_step(host: &dyn Host, call: &Request, args: ExportStep) -> ToolResult 
     ) {
         return Err(ToolError::not_found(part, "Part"));
     }
-    let model = compile(&document, revision, call)?;
+    let model = compile_without_display(&document, revision, call)?;
     let definition_parts = multicad_core::model::assembly_definition_parts(&document)?;
     let feature = *model
         .snapshot()
@@ -2071,14 +2218,31 @@ fn export_step(host: &dyn Host, call: &Request, args: ExportStep) -> ToolResult 
     })?;
     let path: PathBuf = directory.join(name);
     let partial = directory.join(format!(".{name}.partial.step"));
+    let verify = || -> Result<multicad_model::export::StepVerificationReceipt, ToolError> {
+        let policy = solid.geometry_policy();
+        if call.backend == GeometryBackend::Rust {
+            let shape = model.snapshot().shapes.get(&feature).ok_or_else(|| {
+                ToolError::new("export_failed", "The Rust solid has no evaluated topology")
+                    .involving(feature)
+            })?;
+            multicad_model::export::verify_rust_step_shape_receipt(
+                &partial,
+                solid,
+                shape,
+                policy.linear_tolerance_mm,
+            )
+            .map_err(|e| ToolError::new("export_failed", format!("STEP readback failed: {e}")))
+        } else {
+            multicad_kernel::Solid::read_step(&partial, policy)
+                .and_then(|s| s.volume_mm3())
+                .map(multicad_model::export::StepVerificationReceipt::decoded)
+                .map_err(|e| ToolError::new("export_failed", format!("STEP readback failed: {e}")))
+        }
+    };
     let written = solid
         .write_step(&partial)
         .map_err(|e| ToolError::new("export_failed", e.to_string()))
-        .and_then(|()| {
-            multicad_kernel::Solid::read_step(&partial, multicad_kernel::GeometryPolicy::default())
-                .and_then(|s| s.volume_mm3())
-                .map_err(|e| ToolError::new("export_failed", format!("STEP readback failed: {e}")))
-        })
+        .and_then(|()| verify())
         .and_then(|volume| {
             call.check()?;
             std::fs::rename(&partial, &path)
@@ -2102,7 +2266,8 @@ fn export_step(host: &dyn Host, call: &Request, args: ExportStep) -> ToolResult 
         "sha256": sketch_import::provenance::sha256_hex(&bytes),
         "units": "mm",
         "model_volume_mm3": model.snapshot().shapes.get(&feature).map(|s| s.volume_mm3),
-        "readback_volume_mm3": volume,
+        "readback_volume_mm3": volume.decoded_volume_mm3,
+        "step_verification": volume,
     }))
 }
 

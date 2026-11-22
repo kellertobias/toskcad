@@ -13,7 +13,9 @@ pub use feed::{BackendFactory, ReferenceEvaluation, SceneBackend, SceneFeed, Sce
 mod interaction;
 pub use interaction::Interaction;
 mod grid;
+mod overlay;
 pub use grid::floor_grid;
+pub use overlay::overlay_painter;
 mod quality;
 pub use quality::{DisplayQuality, Refinement};
 mod section;

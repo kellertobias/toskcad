@@ -683,3 +683,115 @@ fn positive_native_intersections_below_absolute_volume_scales_remain_cut_targets
     );
     assert_eq!(session.document(), &source);
 }
+
+#[test]
+fn occupied_cylinder_targets_distinguish_exact_contact_separation_and_positive_lens() {
+    for (offset, hit) in [
+        ([3., 4., 0.], false),
+        ([4., 4., 0.], false),
+        ([3., 3., 0.], true),
+    ] {
+        let mut session = root();
+        let target = part(
+            &mut session,
+            "Target",
+            PrimitiveParameters::Cylinder {
+                radius: length(2.5),
+                height: length(10.),
+                frame: Default::default(),
+            },
+        );
+        let tool = part(
+            &mut session,
+            "Tool",
+            PrimitiveParameters::Cylinder {
+                radius: length(2.5),
+                height: length(10.),
+                frame: PrimitiveFrame {
+                    origin: offset.map(length),
+                    ..Default::default()
+                },
+            },
+        );
+        let before = session.document().clone();
+        let model = Compiler::default()
+            .compile(&before, session.revision())
+            .unwrap();
+        let result = model
+            .cut_targets(
+                &before,
+                session.revision(),
+                &CutTargetQuery {
+                    tools: vec![tool.producer],
+                    component: None,
+                    include: vec![target.body],
+                    exclude: vec![],
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(result.targets.contains(&target), hit, "{offset:?}");
+        assert_eq!(result.not_intersecting.contains(&target.body), !hit);
+        assert_eq!(session.document(), &before);
+    }
+}
+
+#[test]
+fn literal_diagonal_cylinder_target_queries_preserve_tiny_lenses_and_exact_contacts() {
+    for (radius, xy, intersects) in [
+        (1., [2_f64.sqrt().next_down(); 2], true),
+        (2.5, [3., 4.], false),
+        (2.5, [3., 4_f64.next_down()], true),
+        (2.5, [3., 4_f64.next_up()], false),
+        (2.5, [3., 3.], true),
+        (2.5, [4., 4.], false),
+    ] {
+        let mut session = root();
+        let a = part(
+            &mut session,
+            "Target",
+            PrimitiveParameters::Cylinder {
+                radius: length(radius),
+                height: length(10.),
+                frame: Default::default(),
+            },
+        );
+        let b = part(
+            &mut session,
+            "Literal source tool",
+            PrimitiveParameters::Cylinder {
+                radius: length(radius),
+                height: length(10.),
+                frame: PrimitiveFrame {
+                    origin: [length(xy[0]), length(xy[1]), length(0.)],
+                    ..Default::default()
+                },
+            },
+        );
+        let before = session.document().clone();
+        let model = Compiler::default()
+            .compile(&before, session.revision())
+            .unwrap();
+        let result = model
+            .cut_targets(
+                &before,
+                session.revision(),
+                &CutTargetQuery {
+                    tools: vec![b.producer],
+                    component: None,
+                    include: vec![a.body],
+                    exclude: vec![],
+                },
+                None,
+            )
+            .unwrap();
+        if intersects {
+            assert_eq!(result.targets, vec![a.clone()]);
+            assert!(result.not_intersecting.is_empty());
+        } else {
+            assert!(result.targets.is_empty());
+            assert_eq!(result.not_intersecting, vec![a.body]);
+        }
+        assert_eq!(session.document(), &before);
+    }
+}

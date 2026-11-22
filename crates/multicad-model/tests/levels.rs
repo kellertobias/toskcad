@@ -13,7 +13,9 @@ use multicad_core::{
     project_file::{self, ProjectFile},
     references::ReferenceFrame,
 };
-use multicad_model::{Compiler, DrawingProviders, Model};
+use multicad_model::{
+    Compiler, DrawingProviders, GeometryBackend, Model, export::verify_rust_step_shape,
+};
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -73,6 +75,116 @@ fn stair(level: EntityId, top: EntityId, form: StairForm) -> StairDefinition {
 /// the last column `top` deep, all lifted by `lift`.
 fn flight_area(n: f64, riser: f64, going: f64, lift: f64, top: f64) -> f64 {
     going * ((n - 1.) * lift + riser * (n - 1.) * n / 2.) + top * (lift + n * riser)
+}
+
+#[test]
+fn rust_stairs_preserve_rotated_flights_landings_and_manufacturing_geometry() {
+    let mut session = Session::new(Document::new("Rotated stairs").unwrap()).unwrap();
+    let bottom = level(&mut session, "Ground", 100.);
+    let top = level(&mut session, "Upper", 3100.);
+    let mut features = Vec::new();
+    for (form, direction_deg) in [
+        (StairForm::Straight, 20.),
+        (StairForm::QuarterTurn { turn: Turn::Left }, 27.),
+        (StairForm::HalfTurn { turn: Turn::Right }, -31.),
+    ] {
+        let definition = StairDefinition {
+            direction_deg,
+            ..stair(bottom, top, form)
+        };
+        let prepared = model::prepare_stair(
+            &session,
+            session.revision(),
+            actor(),
+            "Stair",
+            &definition,
+            None,
+        )
+        .unwrap();
+        features.push(prepared.outputs[0].feature);
+        session.commit(prepared.prepared).unwrap();
+    }
+    let compiler = Compiler::default();
+    let rust = compiler
+        .compile_sources_with_backend(
+            session.document(),
+            session.revision(),
+            &features,
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap_or_else(|cause| panic!("Rust: {cause}"));
+    let scratch = tempfile::tempdir().unwrap();
+    for feature in features {
+        let actual = rust.solid(feature).unwrap();
+        assert!(actual.uses_rust_geometry());
+        assert_eq!(actual.solid_count().unwrap(), 1);
+        // Independent expectation from the resolved stair pieces: each piece
+        // is its side profile swept one stair width to its left, and flights
+        // and landings only share whole faces, so volumes add and the bounds
+        // are the hull of every placed profile vertex.
+        let resolved = model::resolve_stair(
+            session.document(),
+            session.parameters(),
+            &model::read_stair(session.document(), feature).unwrap(),
+        )
+        .unwrap();
+        let mut volume = 0.;
+        let mut min = [f64::INFINITY; 3];
+        let mut max = [f64::NEG_INFINITY; 3];
+        for piece in &resolved.pieces {
+            let profile = &piece.profile;
+            let area = (0..profile.len())
+                .map(|i| {
+                    let [a, b] = [profile[i], profile[(i + 1) % profile.len()]];
+                    a[0] * b[1] - b[0] * a[1]
+                })
+                .sum::<f64>()
+                .abs()
+                / 2.;
+            volume += area * piece.width_mm;
+            let left = [-piece.along[1], piece.along[0]];
+            for [x, z] in profile.iter().copied() {
+                for w in [0., piece.width_mm] {
+                    let p = [
+                        piece.origin[0] + piece.along[0] * x + left[0] * w,
+                        piece.origin[1] + piece.along[1] * x + left[1] * w,
+                        piece.base_z_mm + z,
+                    ];
+                    for i in 0..3 {
+                        min[i] = min[i].min(p[i]);
+                        max[i] = max[i].max(p[i]);
+                    }
+                }
+            }
+        }
+        near(actual.volume_mm3().unwrap(), volume, 1e-8 * volume);
+        let a = actual.bounds().unwrap();
+        for i in 0..3 {
+            near(a.min[i], min[i], 1e-7);
+            near(a.max[i], max[i], 1e-7);
+        }
+        assert!(
+            !actual
+                .manufacturing_mesh_with_receipt(Default::default())
+                .unwrap()
+                .mesh
+                .indices
+                .is_empty()
+        );
+        let path = scratch.path().join(format!("stair-{feature}.step"));
+        actual.write_step(&path).unwrap();
+        let reopened = multicad_kernel::Solid::read_step(&path, compiler.policy).unwrap();
+        near(reopened.volume_mm3().unwrap(), volume, 1e-8 * volume);
+        let receipt = verify_rust_step_shape(
+            &path,
+            rust.solid(feature).unwrap(),
+            &rust.snapshot().shapes[&feature],
+            compiler.policy.linear_tolerance_mm,
+        )
+        .unwrap();
+        near(receipt, volume, 1e-8 * volume);
+    }
 }
 
 #[test]
@@ -322,6 +434,15 @@ fn levels_host_slabs_pedestals_stairs_and_walls_that_follow_level_edits() {
 
 #[test]
 fn service_envelopes_report_model_clearance_and_show_in_plan() {
+    service_envelope_workflow(GeometryBackend::Rust);
+}
+
+fn service_envelope_workflow(backend: GeometryBackend) {
+    let compile = |session: &Session| {
+        Compiler::default()
+            .compile_with_backend(session.document(), session.revision(), backend, None)
+            .unwrap()
+    };
     let mut s = Session::new(Document::new("Envelopes").unwrap()).unwrap();
     let machine = PrimitiveRequest::new(
         "Machine",

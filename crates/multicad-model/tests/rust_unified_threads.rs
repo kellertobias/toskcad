@@ -1,0 +1,357 @@
+use multicad_core::{
+    commands::{Actor, Channel, Session},
+    constraint_sketch::Dimension,
+    document::{Document, Entity, EntityData, Mutation},
+    model::{
+        self, BodyInput, PrimitiveParameters, PrimitiveRequest, ThreadFamily, ThreadFit,
+        ThreadHand, ThreadMode, ThreadParameters, ThreadRequest, length,
+    },
+    project_file::{self, ProjectFile},
+    references::{self, GeometryIntent, Resolution, TopologyKind},
+};
+use multicad_model::{Compiler, GeometryBackend};
+fn actor() -> Actor {
+    Actor::local(Channel::Mcp)
+}
+fn compile(s: &Session) -> multicad_model::Model {
+    Compiler {
+        omit_display: true,
+        ..Default::default()
+    }
+    .compile_with_backend(s.document(), s.revision(), GeometryBackend::Rust, None)
+    .unwrap()
+}
+fn thread_parameters(family: ThreadFamily, hand: ThreadHand, internal: bool) -> ThreadParameters {
+    let pitch = 25.4
+        / if family == ThreadFamily::Unc {
+            20.
+        } else {
+            28.
+        };
+    ThreadParameters {
+        family,
+        hand,
+        fit: if internal {
+            ThreadFit::Unified2B
+        } else {
+            ThreadFit::Unified2A
+        },
+        major_diameter: Dimension::Literal {
+            value: 0.25,
+            unit: "in".into(),
+        },
+        pitch: length(pitch),
+        length: length(4. * pitch),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn equal_authored_stock_and_tool_lengths_do_not_create_a_conversion_floor() {
+    equal_length_case(None);
+}
+
+#[test]
+fn equal_expression_stock_and_tool_lengths_share_one_exact_evaluation() {
+    equal_length_case(Some("=1.956 mm"));
+    equal_length_case(Some("=$stock_height"));
+}
+
+#[test]
+fn shared_approximate_length_is_retained_when_exact_formula_limits_are_reached() {
+    let text = "=7.43 mm + 1 mm / 99999991 + 1 mm / 100000007 + 1 mm / 100000037";
+    let document = Document::new("Bounded arithmetic").unwrap();
+    let parameters = multicad_core::parameters::evaluate(&document).unwrap();
+    let dimension = Dimension::Expression {
+        expression: multicad_core::parameters::BoundExpression::bind(&document, text, "mm", None)
+            .unwrap(),
+    };
+    assert!(multicad_core::parameters::exact_length_mm(&dimension, &parameters).is_err());
+    equal_length_case(Some(text));
+}
+
+fn equal_length_case(expression: Option<&str>) {
+    let document = Document::new("Exact through thread")
+        .unwrap()
+        .edited(&[Mutation::Insert(Entity::new(
+            "stock_height",
+            EntityData::Parameter {
+                expression: "1.956".into(),
+                unit: "mm".into(),
+                inputs: vec![],
+                exposed: false,
+            },
+        ))])
+        .unwrap();
+    let dimension = expression.map_or_else(
+        || length(1.956),
+        |text| Dimension::Expression {
+            expression: multicad_core::parameters::BoundExpression::bind(
+                &document, text, "mm", None,
+            )
+            .unwrap(),
+        },
+    );
+    let mut session = Session::new(document).unwrap();
+    let height = dimension
+        .value_in(
+            multicad_core::parameters::Unit::Millimeter,
+            Some(session.parameters()),
+        )
+        .unwrap();
+    let blank = PrimitiveRequest::new(
+        "Stock",
+        PrimitiveParameters::Cylinder {
+            radius: length(5.),
+            height: dimension.clone(),
+            frame: Default::default(),
+        },
+    );
+    session
+        .commit(
+            model::prepare_primitive(&session, 0, actor(), &blank)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let mut parameters = thread_parameters(ThreadFamily::Unc, ThreadHand::Right, true);
+    parameters.length = dimension;
+    let request = ThreadRequest::receiving(
+        "Through",
+        ThreadMode::CutInternal,
+        BodyInput {
+            body: blank.body,
+            producer: blank.feature,
+        },
+        parameters.clone(),
+    )
+    .unwrap();
+    session
+        .commit(
+            model::prepare_thread(&session, session.revision(), actor(), &request)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let model = compile(&session);
+    let solid = model.solid(request.feature).unwrap();
+    let intervals = solid.rust_receiving_thread_intervals().unwrap();
+    assert_eq!(
+        intervals.requested_tool_length_mm.to_bits(),
+        height.to_bits()
+    );
+    assert_eq!(
+        intervals.physical_thread_length_mm.to_bits(),
+        height.to_bits()
+    );
+    assert_eq!(intervals.stock_length_mm.to_bits(), height.to_bits());
+    assert_eq!(
+        model::read_thread(session.document(), request.feature)
+            .unwrap()
+            .parameters,
+        parameters
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("through.step");
+    solid.write_step(&path).unwrap();
+    let reopened = multicad_kernel::Solid::read_step(&path, Default::default()).unwrap();
+    assert!((reopened.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-3);
+}
+#[test]
+fn sourced_unc_unf_profiles_keep_fits_material_history_and_verified_manufacturing_export() {
+    for family in [ThreadFamily::Unc, ThreadFamily::Unf] {
+        for hand in [ThreadHand::Right, ThreadHand::Left] {
+            let mut s = Session::new(Document::new("Rust Unified threads").unwrap()).unwrap();
+            let parameters = thread_parameters(family, hand, false);
+            let resolved = parameters
+                .resolve(s.parameters(), ThreadMode::NewExternal)
+                .unwrap();
+            let shaft = ThreadRequest::new("Unified 2A", parameters.clone());
+            s.commit(
+                model::prepare_thread(&s, s.revision(), actor(), &shaft)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+            let blank = PrimitiveRequest::new(
+                "Nut stock",
+                PrimitiveParameters::Cylinder {
+                    radius: length(5.),
+                    height: length(resolved.length_mm),
+                    frame: Default::default(),
+                },
+            );
+            s.commit(
+                model::prepare_primitive(&s, s.revision(), actor(), &blank)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+            let internal = thread_parameters(family, hand, true);
+            let tap = ThreadRequest::receiving(
+                "Unified 2B",
+                ThreadMode::CutInternal,
+                BodyInput {
+                    body: blank.body,
+                    producer: blank.feature,
+                },
+                internal.clone(),
+            )
+            .unwrap();
+            s.commit(
+                model::prepare_thread(&s, s.revision(), actor(), &tap)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+            let model = compile(&s);
+            let screw = model.solid(shaft.feature).unwrap();
+            let nut = model.solid(tap.feature).unwrap();
+            assert!(screw.uses_rust_geometry() && nut.uses_rust_geometry());
+            let r = resolved.actual_pitch_diameter_mm.unwrap() / 2.;
+            assert!(
+                screw
+                    .rust_thread_contains([r, 0., 2.20 * resolved.pitch_mm])
+                    .unwrap()
+            );
+            assert!(
+                !screw
+                    .rust_thread_contains([r, 0., 2.30 * resolved.pitch_mm])
+                    .unwrap()
+            );
+            assert_eq!(resolved.fit.as_ref().unwrap().class, ThreadFit::Unified2A);
+            assert_eq!(
+                internal
+                    .resolve(s.parameters(), ThreadMode::CutInternal)
+                    .unwrap()
+                    .fit
+                    .as_ref()
+                    .unwrap()
+                    .class,
+                ThreadFit::Unified2B
+            );
+            let shape = &model.snapshot().shapes[&shaft.feature];
+            let face = shape
+                .topology
+                .elements
+                .iter()
+                .find(|e| {
+                    e.key.kind == TopologyKind::Face
+                        && e.origins.iter().any(|o| o.role == "cap.start")
+                })
+                .unwrap();
+            let intent = GeometryIntent::capture(&shape.topology, face.key).unwrap();
+            let volume = screw.volume_mm3().unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            for (i, solid) in [screw, nut].into_iter().enumerate() {
+                let path = dir.path().join(format!("thread-{i}.step"));
+                solid.write_step(&path).unwrap();
+                let source = std::fs::read_to_string(&path).unwrap();
+                let decoded = solid.verify_helical_step(&source).unwrap().unwrap();
+                assert!((decoded - solid.volume_mm3().unwrap()).abs() < 1e-3);
+                let imported = multicad_kernel::Solid::import_rust_step(
+                    &source,
+                    multicad_core::document::EntityId::new(),
+                    Default::default(),
+                )
+                .unwrap();
+                assert_eq!(imported.solid_count().unwrap(), 1);
+                assert!(
+                    (imported.volume_mm3().unwrap() - solid.volume_mm3().unwrap()).abs() < 1e-3
+                );
+            }
+
+            let before = s.document().clone();
+            let edited = ThreadParameters {
+                length: length(3.5 * resolved.pitch_mm),
+                hand: if hand == ThreadHand::Right {
+                    ThreadHand::Left
+                } else {
+                    ThreadHand::Right
+                },
+                ..parameters
+            };
+            s.commit(
+                model::prepare_thread_edit(&s, s.revision(), actor(), shaft.feature, &edited)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+            let updated = compile(&s);
+            assert!(
+                (updated.solid(shaft.feature).unwrap().volume_mm3().unwrap() - volume * 3.5 / 4.)
+                    .abs()
+                    < 1e-7
+            );
+            assert!(matches!(
+                references::resolve(
+                    &intent,
+                    &updated.snapshot().shapes[&shaft.feature].topology,
+                    s.revision()
+                ),
+                Resolution::Resolved { .. }
+            ));
+            let after = s.document().clone();
+            s.undo(s.revision(), actor()).unwrap();
+            assert_eq!(s.document(), &before);
+            s.redo(s.revision(), actor()).unwrap();
+            assert_eq!(s.document(), &after);
+            let mut bytes = vec![];
+            project_file::write(
+                &ProjectFile::new(after.clone()).unwrap(),
+                &mut bytes,
+                Default::default(),
+            )
+            .unwrap();
+            let reopened = project_file::read(
+                &mut bytes.as_slice(),
+                Default::default(),
+                &project_file::supported_capabilities(),
+            )
+            .unwrap()
+            .project;
+            assert_eq!(
+                model::read_thread(&reopened.document, shaft.feature)
+                    .unwrap()
+                    .parameters,
+                edited
+            );
+            let reopened = Session::new(reopened.document).unwrap();
+            assert!(
+                (compile(&reopened)
+                    .solid(shaft.feature)
+                    .unwrap()
+                    .volume_mm3()
+                    .unwrap()
+                    - volume * 3.5 / 4.)
+                    .abs()
+                    < 1e-7
+            );
+            let invalid = ThreadParameters {
+                minimum_wall: length(3.),
+                ..internal
+            };
+            let candidate =
+                model::prepare_thread_edit(&s, s.revision(), actor(), tap.feature, &invalid)
+                    .unwrap();
+            let failure = Compiler {
+                omit_display: true,
+                ..Default::default()
+            }
+            .compile_with_backend(
+                candidate.prepared.document(),
+                s.revision() + 1,
+                GeometryBackend::Rust,
+                None,
+            )
+            .err()
+            .expect("an insufficient receiver wall must fail before commit");
+            assert_eq!(failure.entity, Some(tap.feature));
+            assert!(
+                failure.message.to_ascii_lowercase().contains("wall"),
+                "{failure}"
+            );
+            assert_eq!(s.document(), &after);
+        }
+    }
+}

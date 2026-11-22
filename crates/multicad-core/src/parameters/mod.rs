@@ -1,12 +1,17 @@
 //! Typed, bounded expression evaluation over the canonical document.
 mod bound;
+mod exact_length;
 mod expression;
+pub(crate) use exact_length::exact_length_in;
+pub use exact_length::exact_length_mm;
+pub(crate) use exact_length::literal_length_in;
 mod length_display;
 pub use bound::*;
 pub use length_display::*;
 mod units;
-use crate::document::{Document, DocumentError, EntityData, EntityId, Link};
+use crate::document::{Document, DocumentError, EntityData, EntityId, Link, ValidatedDocument};
 use serde::Serialize;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 pub use units::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -30,7 +35,7 @@ pub struct ParameterError {
     pub offset: Option<usize>,
 }
 impl ParameterError {
-    pub(crate) fn new(code: ParameterErrorCode, message: impl Into<String>) -> Self {
+    pub fn new(code: ParameterErrorCode, message: impl Into<String>) -> Self {
         Self {
             entity: None,
             code,
@@ -141,6 +146,21 @@ fn valid_name(name: &str) -> bool {
 /// Normalize name bindings to stable IDs and evaluate in source dependency order.
 /// The caller receives a candidate document; the original is never mutated.
 pub fn evaluate(document: &Document) -> Result<EvaluatedParameters, ParameterError> {
+    evaluate_impl(document, None)
+}
+
+/// Reuse source validation and ordering when bindings are already normalized.
+/// New or reordered bindings still pass through the full candidate validation.
+pub fn evaluate_validated(
+    source: &ValidatedDocument<'_>,
+) -> Result<EvaluatedParameters, ParameterError> {
+    evaluate_impl(source.document(), Some(source.topological_order()))
+}
+
+fn evaluate_impl(
+    document: &Document,
+    validated_order: Option<&[EntityId]>,
+) -> Result<EvaluatedParameters, ParameterError> {
     let mut names = BTreeMap::new();
     let mut expressions = BTreeMap::new();
     let mut normalized_entities = Vec::new();
@@ -217,19 +237,28 @@ pub fn evaluate(document: &Document) -> Result<EvaluatedParameters, ParameterErr
             }
             links.push(Link::new(target, name));
         }
-        let mut normalized = entity.clone();
-        if let EntityData::Parameter { inputs, .. } = &mut normalized.data {
-            *inputs = links;
+        if &links != inputs {
+            let mut normalized = entity.clone();
+            if let EntityData::Parameter { inputs, .. } = &mut normalized.data {
+                *inputs = links;
+            }
+            normalized_entities.push(crate::document::Mutation::Replace(normalized));
         }
-        normalized_entities.push(crate::document::Mutation::Replace(normalized));
         expressions.insert(
             entity.id,
             (expr, unit, expression.trim_start().starts_with('=')),
         );
     }
-    let bound = document.edited(&normalized_entities)?;
+    let (bound, order) = match validated_order {
+        Some(order) if normalized_entities.is_empty() => (document.clone(), Cow::Borrowed(order)),
+        _ => {
+            let bound = document.edited(&normalized_entities)?;
+            let order = bound.topological_order()?;
+            (bound, Cow::Owned(order))
+        }
+    };
     let mut values: BTreeMap<EntityId, ParameterValue> = BTreeMap::new();
-    for id in bound.topological_order()? {
+    for &id in order.iter() {
         let Some((expression, unit, explicit)) = expressions.get(&id) else {
             continue;
         };
@@ -239,55 +268,26 @@ pub fn evaluate(document: &Document) -> Result<EvaluatedParameters, ParameterErr
         else {
             unreachable!()
         };
-        let (mut quantity, implicit) = expression
-            .evaluate(*unit, *explicit, &|name| {
+        let quantity = expression
+            .evaluate_declared::<f64>(*unit, *explicit, |name| {
                 let link = inputs.iter().find(|r| r.role == name).ok_or_else(|| {
                     ParameterError::new(
                         ParameterErrorCode::MissingReference,
                         format!("Unbound parameter '{name}'"),
                     )
                 })?;
-                values.get(&link.target).map(|p| p.quantity).ok_or_else(|| {
-                    ParameterError::new(
-                        ParameterErrorCode::MissingReference,
-                        format!("Dependency '{}' has no value", link.role),
-                    )
-                })
+                values
+                    .get(&link.target)
+                    .map(|p| p.quantity.into())
+                    .ok_or_else(|| {
+                        ParameterError::new(
+                            ParameterErrorCode::MissingReference,
+                            format!("Dependency '{}' has no value", link.role),
+                        )
+                    })
             })
-            .map_err(|e| e.at(id))?;
-        if implicit && quantity.dimension == Dimension::RATIO {
-            quantity = Quantity {
-                canonical: quantity.canonical * unit.scale(),
-                dimension: unit.dimension(),
-            };
-        }
-        if quantity.dimension != unit.dimension() {
-            return Err(ParameterError::new(
-                ParameterErrorCode::Dimension,
-                format!(
-                    "Expression dimension {:?} does not match unit {}",
-                    quantity.dimension,
-                    unit.symbol()
-                ),
-            )
-            .at(id));
-        }
-        if !quantity.canonical.is_finite() {
-            return Err(ParameterError::new(
-                ParameterErrorCode::NonFinite,
-                "Converted result is not finite",
-            )
-            .at(id));
-        }
-        if quantity.dimension == Dimension::COUNT
-            && (quantity.canonical < 0.0 || quantity.canonical.fract().abs() > 1e-9)
-        {
-            return Err(ParameterError::new(
-                ParameterErrorCode::Count,
-                "Counts must be nonnegative whole numbers",
-            )
-            .at(id));
-        }
+            .map_err(|e| e.at(id))?
+            .into();
         values.insert(
             id,
             ParameterValue {
@@ -308,7 +308,9 @@ pub fn evaluate(document: &Document) -> Result<EvaluatedParameters, ParameterErr
     })
 }
 
-pub use expression::{display_input, validate_input};
+pub use expression::{
+    FormulaQuantity, FormulaScalar, display_input, evaluate_formula, validate_input,
+};
 /// Replace an exposed parameter's default formula with an explicit supplied value.
 /// Callers commit the returned source mutation through Session, preserving undo.
 pub fn override_exposed(

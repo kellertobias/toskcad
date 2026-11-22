@@ -173,6 +173,230 @@ impl multicad_mcp::Storage for ProjectStore {
         .map_err(|e| e.to_string())
     }
 }
+
+#[test]
+fn rust_mcp_models_edits_and_reopens_a_metric_thread_without_fallback() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("thread.tcd");
+    let backend = multicad_model::GeometryBackend::Rust;
+    let open = || {
+        Headless::with_geometry_backend(
+            Workspace::project(path.clone(), Box::new(ProjectStore)).unwrap(),
+            Some(directory.path().into()),
+            false,
+            backend,
+        )
+    };
+    let h = open();
+    let profiles = run(&h, "thread_profiles", json!({}));
+    assert_eq!(
+        profiles["active_geometry_support"]["modes"],
+        json!(["new_external", "cut_internal", "cut_external"])
+    );
+    assert_eq!(profiles["active_geometry_support"]["step"], true);
+    let families = profiles["families"].as_array().unwrap();
+    let metric = families
+        .iter()
+        .find(|entry| entry["family"] == "iso_metric")
+        .unwrap();
+    assert_eq!(
+        metric["fit_classes"],
+        json!(["nominal_basic", "metric_6g_external", "metric_6h_internal"])
+    );
+    assert!(
+        families
+            .iter()
+            .any(|entry| entry["family"] == "unc" && entry["supported"] == true)
+    );
+    for family in ["unc", "unf"] {
+        let entry = families
+            .iter()
+            .find(|entry| entry["family"] == family)
+            .unwrap();
+        assert_eq!(entry["fit_classes"], json!(["unified_2a", "unified_2b"]));
+    }
+    for family in ["trapezoidal", "acme", "buttress", "custom"] {
+        let entry = families
+            .iter()
+            .find(|entry| entry["family"] == family)
+            .unwrap();
+        assert_eq!(entry["supported"], true);
+        assert_eq!(entry["fit_classes"], json!(["nominal_basic"]));
+    }
+    assert_eq!(
+        profiles["active_geometry_support"]["representations"],
+        json!(["modeled", "cosmetic_envelope"])
+    );
+    assert!(
+        !profiles["manufacturing"]
+            .as_str()
+            .unwrap()
+            .contains("STEP is unavailable")
+    );
+    let request = json!({
+        "expected_revision":0,"name":"M8 × 1.25","family":"iso_metric",
+        "major_diameter":mm(8.),"pitch":mm(1.25),"length":mm(12.5)
+    });
+    let cancelled = dispatch(&h, &call(true), "set_thread", request.clone()).unwrap_err();
+    assert_eq!(cancelled.code, "cancelled");
+    let result = run(&h, "set_thread", request);
+    let thread = feature(&result);
+    let part = result["part"].clone();
+    let shape = run(&h, "evaluate_model", json!({}))["parts"][0].clone();
+    assert_eq!(shape["solid_count"], 1);
+    assert_eq!(shape["feature"], thread.to_string());
+    let volume = shape["volume_mm3"].as_f64().unwrap();
+    assert!(volume > 400. && volume < 600.);
+    assert_eq!(shape["bounds_mm"]["max"][2], 12.5);
+    let edit = run(
+        &h,
+        "set_thread",
+        json!({"expected_revision":1,"thread":thread,"hand":"left","length":mm(10.)}),
+    );
+    assert_eq!(edit["part"], part);
+    assert_eq!(feature(&edit), thread);
+    let before_rejection = h.document();
+    let bsw = run(
+        &h,
+        "set_thread",
+        json!({"expected_revision":2,"name":"Supported BSW","family":"bsw",
+            "fit":"whitworth_medium_external","major_diameter":{"value":0.25,"unit":"in"},
+            "pitch":{"value":0.05,"unit":"in"},"length":mm(2.5)}),
+    );
+    let evaluated = run(&h, "evaluate_model", json!({}));
+    let bsw_shape = evaluated["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|part| part["feature"] == bsw["thread"])
+        .unwrap();
+    assert_eq!(bsw_shape["solid_count"], 1);
+    assert!(bsw_shape["volume_mm3"].as_f64().unwrap() > 0.);
+    run(&h, "undo", json!({"expected_revision":3}));
+    assert_eq!(h.document(), before_rejection);
+    let rejected = dispatch(
+        &h,
+        &call(false),
+        "set_thread",
+        json!({"expected_revision":4,"name":"Invalid diameter","family":"iso_metric",
+            "major_diameter":mm(0.),"pitch":mm(1.25),"length":mm(2.5)}),
+    )
+    .unwrap_err();
+    assert_eq!(rejected.code, "invalid_document");
+    assert!(rejected.message.contains("positive"), "{rejected:?}");
+    assert_eq!(h.document(), before_rejection);
+
+    let step = run(
+        &h,
+        "export_step",
+        json!({"part":part,"file_name":"thread.step"}),
+    );
+    let readback_volume = step["readback_volume_mm3"].as_f64().unwrap();
+    assert!(directory.path().join("thread.step").is_file());
+    assert!(!directory.path().join(".thread.step.partial.step").exists());
+
+    run(&h, "save_project", json!({"expected_revision":4}));
+    drop(h);
+    let reopened = open();
+    let source = run(&reopened, "inspect_thread", json!({"thread":thread}));
+    assert_eq!(source["part"], part);
+    assert_eq!(source["resolved"]["hand"], "left");
+    assert_eq!(source["resolved"]["physical_length_mm"], 10.);
+    let shape = run(&reopened, "evaluate_model", json!({}))["parts"][0].clone();
+    let edited_volume = shape["volume_mm3"].as_f64().unwrap();
+    assert!((edited_volume - volume * 0.8).abs() < 1e-7);
+    // The independently decoded STEP volume includes the helix's spline approximation.
+    assert!((readback_volume - edited_volume).abs() < 1e-6);
+}
+
+#[test]
+fn rust_mcp_cuts_and_reopens_a_metric_receiver_and_refuses_invalid_stock() {
+    use multicad_mcp::Storage;
+
+    let mut session = Session::new(Document::new("Rust metric receiver").unwrap()).unwrap();
+    let stock = PrimitiveRequest::new(
+        "Receiver stock",
+        PrimitiveParameters::Cylinder {
+            radius: length(5.),
+            height: length(6.6),
+            frame: Default::default(),
+        },
+    );
+    let prepared = model::prepare_primitive(&session, 0, call(false).actor, &stock).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("receiver.tcd");
+    ProjectStore
+        .save(
+            &path,
+            &multicad_core::project_file::ProjectFile::new(session.document().clone()).unwrap(),
+        )
+        .unwrap();
+    let open = || {
+        Headless::with_geometry_backend(
+            Workspace::project(path.clone(), Box::new(ProjectStore)).unwrap(),
+            Some(directory.path().into()),
+            false,
+            multicad_model::GeometryBackend::Rust,
+        )
+    };
+    let h = open();
+    let before = h.document();
+    let request = json!({
+        "expected_revision":0,"name":"M6 × 1 6H","mode":"cut_internal","target_part":stock.body,
+        "major_diameter":mm(6.),"pitch":mm(1.),"length":mm(6.6),"fit":"metric_6h_internal",
+        "minimum_wall":mm(1.)
+    });
+    for (field, value) in [
+        ("origin", json!([mm(0.1), mm(0.), mm(0.)])),
+        ("minimum_wall", mm(2.1)),
+    ] {
+        let mut invalid = request.clone();
+        invalid[field] = value;
+        let rejected = dispatch(&h, &call(false), "set_thread", invalid).unwrap_err();
+        assert_eq!(rejected.code, "model_failed", "{rejected:?}");
+        assert_eq!(h.document(), before);
+    }
+    assert_eq!(
+        dispatch(&h, &call(true), "set_thread", request.clone())
+            .unwrap_err()
+            .code,
+        "cancelled"
+    );
+    assert_eq!(h.document(), before);
+    let result = run(&h, "set_thread", request);
+    let thread = feature(&result);
+    assert_eq!(result["part"], stock.body.to_string());
+    let shape = run(&h, "evaluate_model", json!({}))["parts"][0].clone();
+    assert_eq!(shape["solid_count"], 1);
+    assert_eq!(shape["bounds_mm"]["min"], json!([-5., -5., 0.]));
+    assert_eq!(shape["bounds_mm"]["max"], json!([5., 5., 6.6]));
+    let volume = shape["volume_mm3"].as_f64().unwrap();
+    assert!((320. ..390.).contains(&volume), "receiver volume {volume}");
+    assert_eq!(
+        run(
+            &h,
+            "set_thread",
+            json!({"expected_revision":1,"thread":thread,"hand":"left"})
+        )["thread"],
+        thread.to_string()
+    );
+    run(&h, "save_project", json!({"expected_revision":2}));
+    drop(h);
+    let reopened = open();
+    let source = run(&reopened, "inspect_thread", json!({"thread":thread}));
+    assert_eq!(source["part"], stock.body.to_string());
+    assert_eq!(
+        source["source"]["target"]["producer"],
+        stock.feature.to_string()
+    );
+    assert_eq!(source["resolved"]["fit"]["class"], "metric_6h_internal");
+    assert_eq!(source["resolved"]["hand"], "left");
+    let rebuilt = run(&reopened, "evaluate_model", json!({}))["parts"][0].clone();
+    assert_eq!(rebuilt["feature"], thread.to_string());
+    assert!((rebuilt["volume_mm3"].as_f64().unwrap() - volume).abs() < 1e-7);
+}
+
 #[test]
 fn unc_and_unf_mcp_pairs_keep_fits_through_partial_edits_history_saved_reopen_and_native_step() {
     use multicad_mcp::Storage;
@@ -240,6 +464,54 @@ fn unc_and_unf_mcp_pairs_keep_fits_through_partial_edits_history_saved_reopen_an
                 .unwrap()
                 > actual
         );
+        let unchanged = h.document();
+        let bounded = Headless::with_geometry_backend(
+            Workspace::new(unchanged.clone()).unwrap(),
+            None,
+            false,
+            multicad_model::GeometryBackend::Rust,
+        );
+        let failure = dispatch(
+            &bounded,
+            &call(false),
+            "set_thread",
+            json!({"expected_revision":0,"thread":internal["thread"],"length":mm(4.-1e-8)}),
+        )
+        .unwrap_err();
+        assert_eq!(failure.code, "model_failed");
+        assert_eq!(bounded.document(), unchanged);
+        assert_eq!(h.document(), unchanged);
+        run(
+            &bounded,
+            "set_thread",
+            json!({"expected_revision":0,"thread":internal["thread"],"length":mm(4.5)}),
+        );
+        let clipped = run(
+            &bounded,
+            "inspect_thread",
+            json!({"thread":internal["thread"]}),
+        );
+        assert_eq!(clipped["resolved"]["physical_length_mm"], 4.5);
+        let geometry = run(&bounded, "evaluate_model", json!({}));
+        let receiver = geometry["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["part"] == internal["part"])
+            .unwrap();
+        assert_eq!(receiver["bounds_mm"]["max"][2], 4.);
+        assert_eq!(
+            dispatch(
+                &h,
+                &call(true),
+                "set_thread",
+                json!({"expected_revision":2,"thread":internal["thread"],"length":mm(3.)})
+            )
+            .unwrap_err()
+            .code,
+            "cancelled"
+        );
+        assert_eq!(h.document(), unchanged);
         let before_edit = h.document();
         let prior = model::read_thread(&before_edit, shaft).unwrap();
         run(
@@ -285,10 +557,16 @@ fn unc_and_unf_mcp_pairs_keep_fits_through_partial_edits_history_saved_reopen_an
             let solid =
                 multicad_kernel::Solid::read_step(&dir.path().join(name), Default::default())
                     .unwrap();
+            let text = std::fs::read_to_string(dir.path().join(name)).unwrap();
             assert!(
-                solid.faces().unwrap().len() > 6,
-                "modeled output retains native helical faces"
+                text.contains("B_SPLINE_SURFACE_WITH_KNOTS"),
+                "modeled output retains actual helical surfaces"
             );
+            assert_eq!(
+                solid.faces().unwrap().len(),
+                text.matches("ADVANCED_FACE").count()
+            );
+            assert_eq!(solid.solid_count().unwrap(), 1);
         }
         let history = run(&h, "history", json!({}));
         assert!(history.to_string().contains("mcp:threads"));
@@ -795,4 +1073,97 @@ fn engagement_expression_inspection_omission_and_failed_clear_are_atomic() {
         "normal_group_assumed"
     );
     assert!(report["resolved"]["metric_fit_engagement"]["intended_length_mm"].is_null());
+}
+
+#[test]
+fn rust_external_receiving_threads_commit_edit_export_and_reopen_without_source_rewrite() {
+    use multicad_mcp::Storage;
+    let mut session = Session::new(Document::new("External receiving shaft").unwrap()).unwrap();
+    let stock = PrimitiveRequest::new(
+        "Shaft",
+        PrimitiveParameters::Cylinder {
+            radius: length(3.),
+            height: length(8.),
+            frame: Default::default(),
+        },
+    );
+    let prepared = model::prepare_primitive(&session, 0, call(false).actor, &stock).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("shaft.tcd");
+    ProjectStore
+        .save(
+            &path,
+            &multicad_core::project_file::ProjectFile::new(session.document().clone()).unwrap(),
+        )
+        .unwrap();
+    let open = || {
+        Headless::with_geometry_backend(
+            Workspace::project(path.clone(), Box::new(ProjectStore)).unwrap(),
+            Some(directory.path().into()),
+            false,
+            multicad_model::GeometryBackend::Rust,
+        )
+    };
+    let h = open();
+    let before = h.document();
+    let args = json!({"expected_revision":0,"name":"M6 shaft","mode":"cut_external","target_part":stock.body,"family":"iso_metric","major_diameter":mm(6.),"pitch":mm(1.),"length":mm(3.75),"fit":"metric_6g_external"});
+    let mut invalid = args.clone();
+    invalid["origin"] = json!([mm(0.1), mm(0.), mm(0.)]);
+    assert_eq!(
+        dispatch(&h, &call(false), "set_thread", invalid)
+            .unwrap_err()
+            .code,
+        "model_failed"
+    );
+    assert_eq!(h.document(), before);
+    assert_eq!(
+        dispatch(&h, &call(true), "set_thread", args.clone())
+            .unwrap_err()
+            .code,
+        "cancelled"
+    );
+    assert_eq!(h.document(), before);
+    let created = run(&h, "set_thread", args);
+    let thread = feature(&created);
+    let initial = h.document();
+    run(
+        &h,
+        "set_thread",
+        json!({"expected_revision":1,"thread":thread,"length":mm(5.)}),
+    );
+    let source = model::read_thread(&h.document(), thread).unwrap();
+    assert_eq!(source.target.as_ref().unwrap().producer, stock.feature);
+    assert_eq!(source.mode, model::ThreadMode::CutExternal);
+    assert_eq!(source.parameters.fit, model::ThreadFit::Metric6gExternal);
+    let edited = h.document();
+    run(&h, "undo", json!({"expected_revision":2}));
+    assert_eq!(h.document(), initial);
+    run(&h, "redo", json!({"expected_revision":3}));
+    assert_eq!(h.document(), edited);
+    run(
+        &h,
+        "export_step",
+        json!({"part":stock.body,"file_name":"shaft.step"}),
+    );
+    assert!(directory.path().join("shaft.step").exists());
+    run(&h, "save_project", json!({"expected_revision":4}));
+    drop(h);
+    let reopened = open();
+    assert_eq!(reopened.document(), edited);
+    let report = run(&reopened, "thread_profiles", json!({}));
+    let npt = report["families"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["family"] == "npt")
+        .unwrap();
+    assert_eq!(npt["supported"], true);
+    assert_eq!(npt["modeled_new_external_supported"], true);
+    assert_eq!(npt["modeled_cut_internal_supported"], false);
+    assert_eq!(npt["cosmetic_new_external_supported"], true);
+    assert_eq!(
+        npt["cosmetic_fit_classes"],
+        json!(["npt_historical_midpoint"])
+    );
 }

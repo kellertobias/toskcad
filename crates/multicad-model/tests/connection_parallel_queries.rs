@@ -78,7 +78,7 @@ fn actual_connection_parallel_common_matches_serial_for_clear_and_wrong_phase_pa
     let policy = GeometryPolicy::default();
     assert_eq!(policy.boolean_fuzzy_mm, 0.);
     let sources = [screw, nut, stock, &wrong_nut];
-    let before = sources.map(|solid| solid.to_brep().unwrap());
+    let before = sources.map(|solid| solid.exact_text().unwrap());
     let mut records = vec![];
     for (case, other, collision) in [
         ("actual_screw_nut", nut, false),
@@ -121,7 +121,7 @@ fn actual_connection_parallel_common_matches_serial_for_clear_and_wrong_phase_pa
                 };
                 for (solid, bytes) in sources.iter().zip(&before) {
                     assert_eq!(
-                        &solid.to_brep().unwrap(),
+                        &solid.exact_text().unwrap(),
                         bytes,
                         "A COMMON query changed an operand BRep"
                     );

@@ -1,0 +1,372 @@
+tests/control_desk.rs [control_desk] :: sheet_edits_keep_hardware_parts_and_source_driven_holes
+    at crates/multicad-app/tests/control_desk.rs:365:18:
+    called `Result::unwrap()` on an `Err` value: "e029aa17-26ad-4a64-9e0b-8c1e8f6ba0b5: drawing projection: Rust mixed drawing requires rectangular walls and paired concentric quarter bends" note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/control_desk.rs [control_desk] :: board_drives_panel_and_guide_through_reimport_and_repair
+    at crates/multicad-app/tests/control_desk.rs:220:9:
+    HardwareRecord { part: EntityId(76ef664d-d788-4429-9c4c-28e9731685f0), feature: EntityId(312b029a-c5ed-498f-af0a-971e5c1d1211), sheet_part: EntityId(a75d5e59-118d-4e6b-b191-e4f75c776932), sheet_feature: EntityId(9e195a1a-35f0-404f-a26b-560f122bed31), pattern: 1, item: Washer, designation: "ISO 7089 M4", source: "ISO 7089 nominal dimensions", quantity: 4, hole_mm: 4.5, findings: ["Exact hardware in
+tests/control_desk.rs [control_desk] :: generated_deliverables_read_back_independently
+    at crates/multicad-app/tests/control_desk.rs:550:43:
+    called `Result::unwrap()` on an `Err` value: "Export set cannot run: [RecipeReport { recipe: EntityId(7e4d9469-a74a-45fd-955a-2de7eb39d5a7), status: Unsupported(\"Page CD-101 cannot export: 24097f4a-afea-494d-b14c-0de30c46e1a3: drawing projection: Rust mixed drawing requires rectangular walls and paired concentric quarter bends\"), files: 1, excluded_aids: [] }, RecipeReport { recipe: EntityId(eb2
+tests/drill_guide_demo.rs [drill_guide_demo] :: generator_and_shipped_guide_have_the_same_active_geometry
+    at crates/multicad-app/tests/drill_guide_demo.rs:166:31:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(d7fb9e33-75a2-4054-b83b-9db249ac854d)), message: "Boolean: Rust Boolean has no exact provider for Prism Subtract Prism" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/drill_guide_demo.rs [drill_guide_demo] :: shipped_guide_moves_the_fence_and_writes_only_the_four_printed_parts
+    at crates/multicad-app/tests/drill_guide_demo.rs:37:10:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(b251ac2a-c733-4f41-bd9f-6cbcc6c8e3ef)), message: "Boolean: Rust Boolean has no exact provider for AxialCylinder Union Prism" }  
+tests/front_panel.rs [front_panel] :: shipped_example_opens_with_metadata_bends_openings_and_fitted_end_parts
+    at crates/multicad-app/tests/front_panel.rs:95:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for Revolved Intersect NormalSweep" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/front_panel.rs [front_panel] :: edits_move_openings_components_and_end_parts_through_undo_redo_and_reopen
+    at crates/multicad-app/tests/front_panel.rs:95:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for Revolved Intersect NormalSweep" }  
+tests/nut_catalog.rs [nut_catalog] :: all_shipped_nuts_have_checked_typed_sources_and_independent_native_profile_witnesses
+    at crates/multicad-app/tests/nut_catalog.rs:553:48:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "solid backend", kind: Unsupported, message: "This operation is unavailable for the Rust solid" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/shared_workflow.rs [shared_workflow] :: shared_workflow_propagates_edits_into_solids_drawings_and_files
+    at crates/multicad-app/tests/shared_workflow.rs:161:60:
+    called `Result::unwrap()` on an `Err` value: "Export set cannot run: [RecipeReport { recipe: EntityId(c65619f5-8e95-460b-8ea5-b680c737e350), status: Unsupported(\"Page W-101 cannot export: afb26d8d-6d65-4013-8b58-020f03ad9cc9: drawing projection: Rust mixed drawing requires rectangular walls and paired concentric quarter bends\"), files: 1, excluded_aids: [] }, RecipeReport { recipe: EntityId(3911
+tests/tool_case.rs [tool_case] :: printed_parts_carry_inspected_aids_that_never_change_them
+    at crates/multicad-app/tests/tool_case.rs:402:49:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(edb25d68-dc40-4280-ba22-03daa2123f82)), message: "planar Boolean: Rust planar Boolean requires certified positive convex material pieces" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/tool_case.rs [tool_case] :: drawer_poses_limits_interference_and_sampled_travel_use_the_actual_assembly
+    at crates/multicad-app/tests/tool_case.rs:343:36:
+    called `Result::unwrap()` on an `Err` value: InspectionFailure { kind: Unsupported, message: "planar Boolean: Rust planar Boolean requires certified positive convex material pieces" }  
+tests/workbench_demo.rs [workbench_demo] :: external_client_changes_the_grid_pitch_through_review
+    at crates/multicad-app/tests/workbench_demo.rs:222:18:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for AxialCylinder Intersect PolygonPrism" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/workbench_demo.rs [workbench_demo] :: shipped_file_opens_with_metadata_frame_welds_worktop_and_hole_grid
+    at crates/multicad-app/tests/workbench_demo.rs:222:18:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for AxialCylinder Intersect PolygonPrism" }  ---- parameter_edits_move_frame_grid_and_top_with_undo_redo_and_save_reopen stdout ----
+tests/workbench_demo.rs [workbench_demo] :: parameter_edits_move_frame_grid_and_top_with_undo_redo_and_save_reopen
+    at crates/multicad-app/tests/workbench_demo.rs:222:18:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for AxialCylinder Intersect PolygonPrism" }  
+tests/advanced_profiles.rs [advanced_profiles] :: loft_authored_sections_preserve_correspondence_named_references_and_step
+    at crates/multicad-kernel/tests/advanced_profiles.rs:136:87:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Rust ruled polygon loft", kind: Unsupported, message: "Rust smooth polygon loft requires all stations on the same straight transition" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/affine.rs [affine] :: nonuniform_cylinder_is_exact_brep_and_never_retains_false_circular_metadata
+    at crates/multicad-kernel/tests/affine.rs:193:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "scale", kind: Unsupported, message: "Rust Scale requires supported straight planar stock with one wire per source face" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/axial_pipe_threads.rs [axial_pipe_threads] :: axial_npt_flanks_and_stock_clipped_crests_preserve_gauge_cones_and_native_roles
+    at crates/multicad-kernel/tests/axial_pipe_threads.rs:46:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for ClippedNpt Intersect Prism" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/curves.rs [curves] :: mixed_true_arcs_circles_and_spline_profiles_have_exact_material_and_origins
+    at crates/multicad-kernel/tests/curves.rs:518:86:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "spline extrusion", kind: Unsupported, message: "Authored spline section could not be certified: Unresolved" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/curves.rs [curves] :: rational_solid_step_roundtrip_keeps_exact_volume_and_named_faces
+    at crates/multicad-kernel/tests/curves.rs:427:6:
+    called `Result::unwrap()` on an `Err` value: Any { .. }  
+tests/edge_treatment.rs [edge_treatment] :: all_box_edges_include_exact_vertex_generated_corner_origins_without_fake_planes
+    at crates/multicad-kernel/tests/edge_treatment.rs:349:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "fillet", kind: Unsupported, message: "Rust fillet requires complete parallel straight edges of a rectangular box" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/gears.rs [gears] :: intrinsic_hubs_extend_one_solid_and_one_continuous_bore_with_exact_face_ancestry
+    at crates/multicad-kernel/tests/gears.rs:520:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for SpurGear Intersect Prism" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/gears.rs [gears] :: compatible_pairs_have_no_sampled_interference_and_wrong_phase_is_detected
+    at crates/multicad-kernel/tests/gears.rs:526:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for SpurGear Intersect SpurGear" }  ---- spur_has_measured_involute_width_native_circular_fillets_and_complete_provenance stdout ----
+tests/gears.rs [gears] :: spur_has_measured_involute_width_native_circular_fillets_and_complete_provenance
+    at crates/multicad-kernel/tests/gears.rs:520:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for SpurGear Intersect Prism" }  ---- helix_hand_chevron_reversal_and_center_gap_are_real_native_sections stdout ----
+tests/gears.rs [gears] :: helix_hand_chevron_reversal_and_center_gap_are_real_native_sections
+    at crates/multicad-kernel/tests/gears.rs:520:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for Herringbone Intersect Prism" }  ---- larger_teeth_root_fillets_and_helical_step_roundtrip_keep_manufacturing_geometry stdout ----
+tests/gears.rs [gears] :: larger_teeth_root_fillets_and_helical_step_roundtrip_keep_manufacturing_geometry
+    at crates/multicad-kernel/tests/gears.rs:683:71:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "STEP import", kind: Unsupported, message: "Rust STEP import requires a supported analytic solid in millimeters" }  
+tests/interference.rs [interference] :: hollow_solid_aabb_overlap_never_becomes_interference_or_zero_clearance
+    at crates/multicad-kernel/tests/interference.rs:209:61:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "minimum distance", kind: Unsupported, message: "Rust distance supports points, straight edges and straight-edged planar faces" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/internal_gears.rs [internal_gears] :: inward_involutes_connected_rim_root_circles_and_step_are_actual_native_geometry
+    at crates/multicad-kernel/tests/internal_gears.rs:48:6:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for InternalRing Intersect Prism" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/knuckle_threads.rs [knuckle_threads] :: small_knuckle_fixed_meridian_keeps_its_actual_crest_circle_with_radial_offset
+    at crates/multicad-kernel/tests/knuckle_threads.rs:285:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "mesh", kind: Limit, message: "Rust tessellation exceeds the triangle budget" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/revolve.rs [revolve] :: revolve_worker_exports_only_current_owner_thread_keys
+    at crates/multicad-kernel/tests/revolve.rs:337:63:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "revolution", kind: Native, message: "OpenCascade is unavailable in this build" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rounded_threads.rs [rounded_threads] :: blind_and_through_rounded_receivers_keep_rigid_geometry_ancestry_and_step_bounds
+    at crates/multicad-kernel/tests/rounded_threads.rs:610:18:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Rust helical thread", kind: Unsupported, message: "Receiving stock cannot preserve an unambiguous authored attachment chart" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rounded_threads.rs [rounded_threads] :: rounded_crest_and_root_are_true_axial_circles_with_native_ancestry_and_step_geometry
+    at crates/multicad-kernel/tests/rounded_threads.rs:266:14:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for RoundedThread Intersect Prism" }  
+tests/rust_circular_pockets.rs [rust_circular_pockets] :: opposite_blind_drills_keep_exact_floors_rims_references_and_step
+    at crates/multicad-kernel/tests/rust_circular_pockets.rs:116:14:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for NormalSweep Subtract AxialCylinder" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rust_rounded_slots.rs [rust_rounded_slots] :: blind_mortise_keeps_its_floor_reference_when_a_round_hole_is_added
+    at crates/multicad-kernel/tests/rust_rounded_slots.rs:306:14:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for Prism Subtract NormalSweep" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rust_warped_union_step.rs [rust_warped_union_step] :: native_step_reader_keeps_the_elliptical_trim_of_a_joined_fillet
+    at crates/multicad-kernel/tests/rust_warped_union_step.rs:103:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for NormalSweep Subtract Linear" }  ---- native_step_reader_keeps_two_exact_boss_rims_on_one_stock_face stdout ----
+tests/rust_warped_union_step.rs [rust_warped_union_step] :: native_step_reader_keeps_two_exact_boss_rims_on_one_stock_face
+    at crates/multicad-kernel/tests/rust_warped_union_step.rs:205:14:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for Prism Union AxialCylinder" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/sketch_references.rs [sketch_references] :: transformed_brep_is_queried_once_and_invalid_selections_never_mutate_source
+    at crates/multicad-kernel/tests/sketch_references.rs:39:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "sketch reference", kind: Unsupported, message: "Rust sketch references support finite vertices, lines and conics, and can project involute flanks" }  ---- finite_cylinder_face_marks_proven_tangent_line_and_distinguishes_two_inside_from_empty_outside stdout ----
+tests/sketch_references.rs [sketch_references] :: finite_cylinder_face_marks_proven_tangent_line_and_distinguishes_two_inside_from_empty_outside
+    at crates/multicad-kernel/tests/sketch_references.rs:39:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "sketch reference", kind: Unsupported, message: "Rust sketch references support finite vertices, lines and conics, and can project involute flanks" }  ---- exact_rational_pole_projection_preserves_basis_weights_and_real_tilted_circle_locus stdout ----
+tests/sketch_references.rs [sketch_references] :: exact_rational_pole_projection_preserves_basis_weights_and_real_tilted_circle_locus
+    at crates/multicad-kernel/tests/sketch_references.rs:102:6:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "spline extrusion", kind: Unsupported, message: "This rational spline profile cannot yet be extruded" }  ---- independent_native_section_owners_can_query_concurrently stdout ----
+tests/sketch_references.rs [sketch_references] :: independent_native_section_owners_can_query_concurrently
+    at crates/multicad-kernel/tests/sketch_references.rs:540:5:
+    a scoped thread panicked  ---- finite_face_sections_respect_holes_curved_surfaces_rotated_planes_and_empty_results stdout ----
+tests/sketch_references.rs [sketch_references] :: finite_face_sections_respect_holes_curved_surfaces_rotated_planes_and_empty_results
+    at crates/multicad-kernel/tests/sketch_references.rs:39:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "sketch reference", kind: Unsupported, message: "Rust sketch references support finite vertices, lines and conics, and can project involute flanks" }  ---- native_trimmed_circular_fragments_keep_finite_source_parameters_across_the_circle_seam stdout ----
+tests/sketch_references.rs [sketch_references] :: native_trimmed_circular_fragments_keep_finite_source_parameters_across_the_circle_seam
+    at crates/multicad-kernel/tests/sketch_references.rs:570:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for AxialCylinder Intersect Prism" }  ---- singular_conic_collapsed_and_closed_retraced_spline_projections_fail_but_open_line_locus_survives stdout ----
+tests/sketch_references.rs [sketch_references] :: singular_conic_collapsed_and_closed_retraced_spline_projections_fail_but_open_line_locus_survives
+    at crates/multicad-kernel/tests/sketch_references.rs:66:10:
+    native edge with requested exact geometry  ---- rational_and_nonrational_spline_contacts_are_native_parameterized_and_tangent stdout ----
+tests/sketch_references.rs [sketch_references] :: rational_and_nonrational_spline_contacts_are_native_parameterized_and_tangent
+    at crates/multicad-kernel/tests/sketch_references.rs:66:10:
+    native edge with requested exact geometry  
+tests/sketch_text.rs [sketch_text] :: c0_spline_self_intersection_ignores_joints_but_finds_real_crossings
+    at crates/multicad-kernel/tests/sketch_text.rs:108:10:
+    called `Result::unwrap()` on an `Err` value: QueryError { message: "exact spline edit: Spline region predicate cannot be certified at the requested precision" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/sketch_text.rs [sketch_text] :: every_supported_character_extracts_clean_nested_regions
+    at crates/multicad-kernel/tests/sketch_text.rs:55:5:
+    [     "CantarellRegular '#': 0 regions for 2 contours, [(QueryFailure, \"No transverse classification ray could be certified for the spline boundary\")]",     "CantarellRegular 'R': 1 regions for 2 contours, [(QueryFailure, \"exact spline edit: Spline region predicate cannot be certified at the requested precision\")]",
+tests/spherical_bevel.rs [spherical_bevel] :: directional_native_flux_preserves_known_box_cone_and_holed_volumes_and_raw_step
+    at crates/multicad-kernel/tests/spherical_bevel.rs:437:29:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "write STEP", kind: Unsupported, message: "Rust STEP export requires supported geometry with one closed exterior shell per solid" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/spherical_bevel.rs [spherical_bevel] :: centered_basis_flux_preserves_offcenter_void_shells_and_compound_multiplicity
+    at crates/multicad-kernel/tests/spherical_bevel.rs:464:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "planar Boolean", kind: InvalidResult, message: "Planar Boolean did not produce certified material: Invalid" }  ---- both_root_branches_and_64_tooth_boundary_match_independent_volume_cap_flank_and_raw_step_oracles stdout ----
+tests/spherical_bevel.rs [spherical_bevel] :: both_root_branches_and_64_tooth_boundary_match_independent_volume_cap_flank_and_raw_step_oracles
+    at crates/multicad-kernel/tests/spherical_bevel.rs:246:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for Bevel Intersect Prism" }  ---- zero_bore_asymmetric_bevels_keep_independent_volume_after_rigid_scale_and_raw_step stdout ----
+tests/spherical_bevel.rs [spherical_bevel] :: zero_bore_asymmetric_bevels_keep_independent_volume_after_rigid_scale_and_raw_step
+    at crates/multicad-kernel/tests/spherical_bevel.rs:438:52:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "imported boundary", kind: InvalidResult, message: "Imported boundary is not a valid closed solid" }  
+tests/spline_edits.rs [spline_edits] :: exact_segment_hits_line_arc_circle_and_spline_boundaries_and_builds_a_real_solid
+    at crates/multicad-kernel/tests/spline_edits.rs:278:66:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "spline extrusion", kind: Unsupported, message: "This rational spline profile cannot yet be extruded" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/step_exchange.rs [step_exchange] :: step_solids_split_a_file_into_located_exact_breps_that_round_trip
+    at crates/multicad-kernel/tests/step_exchange.rs:322:28:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "write STEP", kind: Unsupported, message: "Rust STEP export requires supported geometry with one closed exterior shell per solid" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/tapered_rounded_threads.rs [tapered_rounded_threads] :: tapered_profile_preserves_axial_circles_flanks_and_gauge_cones
+    at crates/multicad-kernel/tests/tapered_rounded_threads.rs:170:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for RadialBoundary Intersect Prism" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/threads.rs [threads] :: custom_conical_threads_and_step_mesh_export_retain_physical_helices
+    at crates/multicad-kernel/tests/threads.rs:144:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for RadialBoundary Intersect Prism" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/worm_gears.rs [worm_gears] :: native_worm_has_axial_trapezoid_centered_phase_bore_and_independent_volume
+    at crates/multicad-kernel/tests/worm_gears.rs:42:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for Worm Intersect Prism" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/worm_gears.rs [worm_gears] :: parallel_intersection_keeps_independent_native_owners_on_their_threads
+    at crates/multicad-kernel/tests/worm_gears.rs:383:23:
+    called `Result::unwrap()` on an `Err` value: Any { .. }  ---- generated_wheel_has_measured_throat_flanks_root_caps_bore_and_native_step stdout ----
+tests/worm_gears.rs [worm_gears] :: generated_wheel_has_measured_throat_flanks_root_caps_bore_and_native_step
+    at crates/multicad-kernel/tests/worm_gears.rs:42:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for Worm Intersect Prism" }  ---- generated_wheel_upper_domain_has_independent_volume_and_step_readback stdout ----
+tests/worm_gears.rs [worm_gears] :: generated_wheel_upper_domain_has_independent_volume_and_step_readback
+    at crates/multicad-kernel/tests/worm_gears.rs:42:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for Worm Intersect Prism" }  ---- conjugate_pair_phase_clears_and_half_tooth_wrong_phase_interferes stdout ----
+tests/worm_gears.rs [worm_gears] :: conjugate_pair_phase_clears_and_half_tooth_wrong_phase_interferes
+    at crates/multicad-kernel/tests/worm_gears.rs:324:18:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for Worm Intersect Worm" }  
+tests/imports.rs [imports] :: rust_mcp_round_trips_a_step_body_and_refuses_an_unsupported_shape
+    at crates/multicad-mcp/tests/imports.rs:32:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "oblique cylindrical cut", kind: Unsupported, message: "Oblique cylindrical subtraction is unresolved within the certified margin" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rounded_threads.rs [rounded_threads] :: round_nested_hardware_exposes_common_pd_and_distinct_internal_material_and_cutter_circles
+    at crates/multicad-mcp/tests/rounded_threads.rs:25:33:
+    MCP set_mechanical_part {"expected_revision":0,"name":"Round hardware","recipe":{"drive":{"kind":"external_hex"},"head":{"across_flats":{"unit":"mm","value":30.0},"height":{"unit":"mm","value":3.0},"kind":"external_hex"},"kind":"machine_screw","shank_diameter":{"unit":"mm","value":10.0},"thread":{"family":"round","fit":"nominal_basic","hand":"left","length":{"unit":"mm","value":8.559800000000001},
+tests/screw_profiles.rs [screw_profiles] :: native_profile_previews_reject_or_apply_once_then_edit_history_save_and_reopen
+    at crates/multicad-mcp/tests/screw_profiles.rs:30:43:
+    called `Result::unwrap()` on an `Err` value: ToolError { code: "model_failed", message: "Rust cosmetic screws support external hex heads or socket-cap and straight countersunk heads with flat hex sockets", involved: [EntityId(47a05837-16a4-4ce2-818a-445c86e23392)], current_revision: None } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/bevel_gears.rs [bevel_gears] :: native_bevel_pair_has_intersecting_axes_engagement_and_two_step_leaves
+    at crates/multicad-model/tests/bevel_gears.rs:110:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "minimum distance", kind: Unsupported, message: "Rust distance supports points, straight edges and straight-edged planar faces" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/buttress_threads.rs [buttress_threads] :: named_buttress_native_pairs_preserve_load_flank_phase_root_and_flat_cutter_for_both_hands
+    at crates/multicad-model/tests/buttress_threads.rs:130:47:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "solid backend", kind: Unsupported, message: "This operation is unavailable for the Rust solid" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/connection_parallel_queries.rs [connection_parallel_queries] :: actual_connection_parallel_common_matches_serial_for_clear_and_wrong_phase_pairs
+    at crates/multicad-model/tests/connection_parallel_queries.rs:81:54:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "solid backend", kind: Unsupported, message: "This operation is unavailable for the Rust solid" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/custom_connection_hardware.rs [custom_connection_hardware] :: all_three_engineered_hardware_forms_have_actual_helices_independent_mass_material_and_step
+    at crates/multicad-model/tests/custom_connection_hardware.rs:186:9:
+    assertion failed: topology.elements.iter().any(|e|         e.origins.iter().any(|o| o.role.starts_with("thread/"))) note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+tests/developed_sheet_budget.rs [developed_sheet_budget] :: larger_developed_profile_keeps_exact_overlap_validation_and_the_query_limit
+    at crates/multicad-model/tests/developed_sheet_budget.rs:126:5:
+    normal extrusion: Invalid analytic normal extrusion: InvalidProfile note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/face_profiles.rs [face_profiles] :: face_profile_join_and_cut_change_the_target_body_volume
+    at crates/multicad-model/tests/face_profiles.rs:25:10:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(390bb277-a849-44b5-bd4f-864edd079c2d)), message: "Boolean: Rust Boolean has no exact provider for PolygonPrism Union PolygonPrism" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/fences.rs [fences] :: linked_plan_elevation_pdf_and_dxf_measure_actual_members_at_three_scales
+    at crates/multicad-model/tests/fences.rs:665:13:
+    Unresolved { message: "4a1ecd72-54ea-4319-aa38-b6bd29b4497f: drawing projection: Rust mixed drawing requires rectangular walls and paired concentric quarter bends" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/gear_coverage.rs [gear_coverage] :: independently_sourced_positive_and_negative_shift_pairs_have_native_engagement_and_step_solids
+    at crates/multicad-model/tests/gear_coverage.rs:122:75:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "imported boundary", kind: InvalidResult, message: "Imported boundary is not a valid closed solid" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/gear_pairs.rs [gear_pairs] :: actual_native_pairs_cover_all_supported_families_and_only_two_exported_physical_leaves
+    at crates/multicad-model/tests/gear_pairs.rs:96:81:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "STEP import", kind: Unsupported, message: "Rust STEP import requires a supported analytic solid in millimeters" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/gears.rs [gears] :: every_supported_family_builds_in_its_canonical_frame_and_survives_step_readback
+    at crates/multicad-model/tests/gears.rs:352:75:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "STEP import", kind: Unsupported, message: "Rust STEP import requires a supported analytic solid in millimeters" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/internal_gears.rs [internal_gears] :: both_ring_sizes_and_member_orders_have_real_sampled_clearance_step_and_bad_phase_controls
+    at crates/multicad-model/tests/internal_gears.rs:94:18:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for SpurGear Intersect InternalRing" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/mechanical_bom.rs [mechanical_bom] :: bom_follows_retained_solid_links_and_skips_obsolete_evaluated_hardware
+    at crates/multicad-model/tests/mechanical_bom.rs:31:10:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(4bc3c599-29d6-4338-ad5f-a7141904c40f)), message: "Boolean: Rust Boolean has no exact provider for Prism Subtract Annulus" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/npt_threads.rs [npt_threads] :: tapered_receiving_wall_is_checked_at_the_entrance_and_along_the_full_depth
+    at crates/multicad-model/tests/pipe_threads.rs:251:5:
+    6ecdf632-59de-4709-a19d-84d5dbcb7594: Rust thread geometry supports ISO metric, sourced UNC/UNF/Trapezoidal/Acme/Buttress and straight custom profiles note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/npt_threads.rs [npt_threads] :: sourced_npt_pairs_have_native_clearance_step_print_and_independent_reopen
+    at crates/multicad-model/tests/npt_threads.rs:103:68:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(f928300c-02a4-45ed-8f46-ce7dde4b6474)), message: "Rust thread geometry supports ISO metric, sourced UNC/UNF/Trapezoidal/Acme/Buttress and straight custom profiles" }  
+tests/nut_representation_binding.rs [nut_representation_binding] :: bound_modeled_authority_overrides_cosmetic_literal_for_m6_native_step_and_atomic_failures
+    at crates/multicad-model/tests/nut_representation_binding.rs:183:39:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "solid backend", kind: Unsupported, message: "This operation is unavailable for the Rust solid" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/nut_representation_binding.rs [nut_representation_binding] :: bound_cosmetic_authority_blocks_manufacturing_and_parameter_edits_change_cached_m3_geometry
+    at crates/multicad-model/tests/nut_representation_binding.rs:183:39:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "solid backend", kind: Unsupported, message: "This operation is unavailable for the Rust solid" }  
+tests/occurrence_external_review.rs [occurrence_external_review] :: finite_curved_face_section_drives_a_real_closed_solid_and_empty_section_cannot_reuse_guesses
+    at crates/multicad-model/tests/occurrence_external_review.rs:110:10:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(ba2b6b1a-1ad6-4a81-9b41-4befc9e68180)), message: "sketch reference: Rust sketch references support finite vertices, lines and conics, and can project involute flanks" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/occurrence_external_review.rs [occurrence_external_review] :: current_native_spline_basis_regenerates_without_rewriting_authored_output_or_pole_ids
+    at crates/multicad-model/tests/occurrence_external_review.rs:206:39:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(929e7af2-efd1-4b30-8f20-bf3625d33d50)), message: "spline extrusion: This rational spline profile cannot yet be extruded" }  ---- editable_native_review_generator_roundtrips_twelve_projects_and_refuses_overwrite stdout ----
+tests/occurrence_external_review.rs [occurrence_external_review] :: editable_native_review_generator_roundtrips_twelve_projects_and_refuses_overwrite
+    at crates/multicad-model/tests/occurrence_external_review.rs:286:43:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(1092401b-d89f-4930-b3f9-2eef84028f7e)), message: "sketch reference: Rust sketch references support finite vertices, lines and conics, and can project involute flanks" }  
+tests/pipe_threads.rs [pipe_threads] :: tapered_receiving_wall_is_checked_at_the_entrance_and_along_the_full_depth
+    at crates/multicad-model/tests/pipe_threads.rs:251:5:
+    6ecdf632-59de-4709-a19d-84d5dbcb7594: Rust thread geometry supports ISO metric, sourced UNC/UNF/Trapezoidal/Acme/Buttress and straight custom profiles note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/pipe_threads.rs [pipe_threads] :: sourced_r_rc_pairs_have_native_clearance_step_print_and_independent_reopen
+    at crates/multicad-model/tests/pipe_threads.rs:103:68:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(8616b883-ed96-40a4-a41f-8e1eb382e92f)), message: "Rust thread geometry supports ISO metric, sourced UNC/UNF/Trapezoidal/Acme/Buttress and straight custom profiles" }  
+tests/profile_connections.rs [profile_connections] :: paired_end_connection_machines_only_the_host_and_survives_reopen_and_undo
+    at crates/multicad-model/tests/profile_connections.rs:468:77:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(a07ab455-4893-4fc3-b0b5-69393f70067e)), message: "Rust profile connections do not yet support stepped access bores across interrupted stock" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rack_gears.rs [rack_gears] :: both_roles_and_odd_even_finite_racks_have_eleven_native_samples_two_physical_leaves_and_step_readback
+    at crates/multicad-model/tests/rack_gears.rs:149:18:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for NormalSweep Intersect SpurGear" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rust_apartment_drawing.rs [rust_apartment_drawing] :: apartment_workshop_references_publish_both_saved_views
+    at crates/multicad-model/tests/rust_apartment_drawing.rs:185:5:
+    assertion `left == right` failed   left: [141, 71]  right: [119, 44]
+tests/rust_apartment_drawing.rs [rust_apartment_drawing] :: apartment_floor_plan_publishes_the_real_worktop_apertures
+    at crates/multicad-model/tests/rust_apartment_drawing.rs:66:5:
+    assertion `left == right` failed   left: 257  right: 235
+tests/rust_curved_drawer.rs [rust_curved_drawer] :: saved_toolcase_drawer_keeps_exact_floor_fillet_intersections
+    at crates/multicad-model/tests/rust_curved_drawer.rs:26:37:
+    OpenCascade: OpenCascade is unavailable in this build note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rust_curved_drawer_cut.rs [rust_curved_drawer_cut] :: saved_toolcase_drawer_cuts_front_pull_and_lead_ins_without_losing_fillet_geometry
+    at crates/multicad-model/tests/rust_curved_drawer_cut.rs:23:37:
+    OpenCascade: OpenCascade is unavailable in this build note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rust_drawer_axial_cut.rs [rust_drawer_axial_cut] :: saved_toolcase_cuts_bores_and_captive_nut_recesses_in_both_drawers
+    at crates/multicad-model/tests/rust_drawer_axial_cut.rs:26:37:
+    OpenCascade: OpenCascade is unavailable in this build note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rust_drawer_bosses.rs [rust_drawer_bosses] :: saved_toolcase_joins_round_mounting_and_magnet_bosses_to_both_drawers
+    at crates/multicad-model/tests/rust_drawer_bosses.rs:26:37:
+    OpenCascade: OpenCascade is unavailable in this build note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rust_drawer_coupon.rs [rust_drawer_coupon] :: saved_toolcase_crops_the_exact_finished_drawer_to_its_front_coupon
+    at crates/multicad-model/tests/rust_drawer_coupon.rs:24:37:
+    OpenCascade: OpenCascade is unavailable in this build note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rust_planar_drawer.rs [rust_planar_drawer] :: saved_toolcase_drawer_reinforcements_join_when_all_operands_are_planar
+    at crates/multicad-model/tests/rust_planar_drawer.rs:51:37:
+    OpenCascade: OpenCascade is unavailable in this build note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rust_receiving_entry_chamfer.rs [rust_receiving_entry_chamfer] :: unsupported_receiving_families_and_internal_entry_do_not_change_the_document
+    at crates/multicad-model/tests/rust_receiving_entry_chamfer.rs:381:9:
+    07df7ebd-5349-4e07-89d9-875c22b7cea6: Rust internal thread treatment: Actual internal treatment source proof failed: Unresolved note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/rust_thread_entry_chamfer.rs [rust_thread_entry_chamfer] :: canonical_entry_and_terminal_edits_keep_literal_source_and_honest_export_mass
+    at crates/multicad-model/tests/rust_thread_entry_chamfer.rs:98:14:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "STEP import", kind: Limit, message: "STEP curve/surface trim verification exceeds the Rust budget" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/schedules.rs [schedules] :: machining_schedule_groups_holes_by_size_and_lists_recesses
+    at crates/multicad-model/tests/schedules.rs:28:10:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(0999c719-4cdd-4f1e-93c0-0f7b58d389bd)), message: "planar Boolean: Rust planar Boolean requires certified positive convex material pieces" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/sheet_dxf.rs [sheet_dxf] :: developed_sheet_dxf_reopens_with_cut_bend_and_drill_layers
+    at crates/multicad-model/tests/sheet_dxf.rs:543:5:
+    Rust formed sheet requires one full-length bend or two opposite full-length bends without reliefs note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/sheet_flange_guides.rs [sheet_flange_guides] :: pre_check_reports_what_native_evaluation_refuses
+    at crates/multicad-model/tests/sheet_flange_guides.rs:284:5:
+    Rust formed sheet requires one full-length bend or two opposite full-length bends without reliefs note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/sheet_flange_guides.rs [sheet_flange_guides] :: guides_match_the_native_folded_solid
+    at crates/multicad-model/tests/sheet_flange_guides.rs:230:33:
+    called `Result::unwrap()` on an `Err` value: "The inset formed sheet boundary cannot be certified: Unsupported"  
+tests/sheet_forming.rs [sheet_forming] :: hems_jogs_corners_reliefs_and_cutouts_keep_their_intent
+    at crates/multicad-model/tests/sheet_forming.rs:296:5:
+    Rust formed sheet requires one full-length bend or two opposite full-length bends without reliefs note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/sheet_hardware.rs [sheet_hardware] :: mounting_patterns_cut_holes_and_place_separate_hardware_parts
+    at crates/multicad-model/tests/sheet_hardware.rs:161:5:
+    ["Exact hardware interference requires a verified flat Rust sheet"] note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/sheet_metal.rs [sheet_metal] :: sheet_development_probe_bypasses_cached_publication_and_refuses_flat_only_conflicts
+    at crates/multicad-model/tests/sheet_metal.rs:975:10:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(f341aa57-a207-49b4-bb4a-b9b7c394c99e)), message: "Rust formed sheet requires a rectangular base" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/sheet_unfold.rs [sheet_unfold] :: unfolding_links_bends_and_drills_and_reports_scoped_diagnostics
+    at crates/multicad-model/tests/sheet_unfold.rs:58:10:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(d08d8a22-8126-4190-815e-f15b615987b0)), message: "The inset formed sheet boundary cannot be certified: Invalid" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/shifted_helical_coverage.rs [shifted_helical_coverage] :: both_primary_khk_shifted_helical_worked_candidates_have_real_native_bodies_and_step
+    at crates/multicad-model/tests/shifted_helical_coverage.rs:309:77:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(28bce841-db04-4d19-81ea-4c84e10ad33f)), message: "Rust gear pair does not have certified positive clearance at tested drive 0.000000 degrees; repair its phase or clearance" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/shifted_helical_coverage.rs [shifted_helical_coverage] :: all_shifted_helical_families_in_both_planes_have_native_mating_complete_volume_and_step
+    at crates/multicad-model/tests/shifted_helical_coverage.rs:140:75:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "STEP import", kind: Unsupported, message: "Rust STEP import requires a supported analytic solid in millimeters" }  
+tests/sketch_import.rs [sketch_import] :: imported_svg_holes_islands_ellipses_and_beziers_have_exact_native_areas
+    at crates/multicad-model/tests/sketch_import.rs:112:10:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(d3aee4a9-f58a-4afd-a39c-5f7687681195)), message: "spline extrusion: This rational spline profile cannot yet be extruded" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/spline_trim.rs [spline_trim] :: trimmed_exact_regions_generate_real_native_solids_and_generator_reopens_without_overwrite
+    at crates/multicad-model/tests/spline_trim.rs:226:71:
+    called `Result::unwrap()` on an `Err` value: "Expected one exact closed region: [Diagnostic { problem: QueryFailure, curves: [EntityId(4bd9ee2d-d80d-4113-96d2-c80964efa173), EntityId(ce836143-d888-40dd-b516-35dcbbd310d0)], at_mm: None, message: \"exact spline edit: Rust spline and line contact could not be separated from a tangent, overlap or finite endpoint\" }]" note: run with `RUST_BACKTRACE=1`
+tests/spline_trim.rs [spline_trim] :: genuine_missing_hit_tangent_and_overlap_have_no_commit_capable_result
+    at crates/multicad-model/tests/spline_trim.rs:330:9:
+    exact spline edit: Rust spline and line contact could not be separated from a tangent, overlap or finite endpoint  ---- genuine_rational_and_polynomial_splines_trim_against_every_named_boundary_without_replacing_surviving_ids stdout ----
+tests/spline_trim.rs [spline_trim] :: genuine_rational_and_polynomial_splines_trim_against_every_named_boundary_without_replacing_surviving_ids
+    at crates/multicad-model/tests/spline_trim.rs:34:59:
+    false/Spline: exact spline edit: Spline region predicate cannot be certified at the requested precision  
+tests/terminations.rs [terminations] :: signed_face_offset_uses_native_outward_normal_with_opposing_inherited_frames
+    at crates/multicad-model/tests/terminations.rs:997:14:
+    Coincident Boolean inherited the opposite generator frame note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/thread_mating.rs [thread_mating] :: modeled_metric_nut_has_interference_without_phase_and_clearance_after_correction
+    at crates/multicad-model/tests/thread_mating.rs:96:14:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for Helical Intersect Helical" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/three_mf_indexed_manifold.rs [three_mf_indexed_manifold] :: actual_positive_load_right_hand_buttress_omits_only_exact_duplicate_native_xyz_triangles
+    at crates/multicad-model/tests/three_mf_indexed_manifold.rs:690:41:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "solid backend", kind: Unsupported, message: "This operation is unavailable for the Rust solid" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/three_mf_indexed_manifold.rs [three_mf_indexed_manifold] :: actual_positive_load_left_hand_buttress_retriangulates_detached_internal_constraints_only
+    at crates/multicad-model/tests/three_mf_indexed_manifold.rs:834:34:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "solid backend", kind: Unsupported, message: "This operation is unavailable for the Rust solid" }  
+tests/transfer.rs [transfer] :: threaded_mouth_outside_axial_span_is_refused_but_same_part_plain_hole_transfers
+    at crates/multicad-model/tests/transfer.rs:796:14:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(f540f3eb-3d93-4be8-bf71-5e4fb6b87cfa)), message: "Rust helical thread: A cylindrical receiving thread requires one analytic stock cylinder" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/weldment.rs [weldment] :: paired_miter_follows_the_meeting_angle_and_records_both_end_angles
+    at crates/multicad-model/tests/weldment.rs:737:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "planar Boolean", kind: InvalidResult, message: "Planar Boolean did not produce certified material: Unresolved" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/weldment.rs [weldment] :: copes_fit_the_actual_receiving_member_with_clearance
+    at crates/multicad-model/tests/weldment.rs:43:10:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(04dd877a-60fe-4d13-b52a-1173108403bb)), message: "Rust coped ends require straight-sided member sections" }  
+tests/wood_boxes.rs [wood_boxes] :: closed_open_top_omitted_side_and_multiple_omissions_produce_separate_nonoverlapping_native_panels
+    at crates/multicad-model/tests/wood_boxes.rs:142:22:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "planar Boolean", kind: InvalidResult, message: "Planar Boolean did not produce certified material: Unresolved" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/wood_screws.rs [wood_screws] :: sourced_hex_stock_envelopes_have_real_bounds_flat_limit_planes_and_raw_step_readbacks
+    at crates/multicad-model/tests/wood_screws.rs:80:10:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "Boolean", kind: Unsupported, message: "Rust Boolean has no exact provider for WarpedUnion Intersect Prism" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/worm_gears.rs [worm_gears] :: zero_thinning_pair_preserves_strict_native_no_overlap_over_full_turn
+    at crates/multicad-model/tests/worm_gears.rs:327:10:
+    called `Result::unwrap()` on an `Err` value: ModelError { entity: Some(EntityId(2195649c-08a9-459a-8818-7f47ad62576d)), message: "Rust worm pair does not have certified positive clearance at tested drive 0.000000 degrees; repair its phase, center distance or thinning" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+tests/worm_gears.rs [worm_gears] :: native_generated_pair_has_actual_centered_bodies_world_axes_and_step_evidence
+    at crates/multicad-model/tests/worm_gears.rs:192:14:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "minimum distance", kind: Unsupported, message: "Rust distance supports points, straight edges and straight-edged planar faces" }  
+src/lib.rs [multicad_ui] :: application::mechanical_imports::tests::step_import_through_the_native_dialog_previews_then_applies_once
+    at crates/multicad-ui/src/mechanical_import/tests.rs:90:35:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "write STEP", kind: Unsupported, message: "Rust STEP export requires supported geometry with one closed exterior shell per solid" } note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
+src/lib.rs [multicad_ui] :: mechanical_import::tests::step_preview_lists_solids_and_apply_is_one_undoable_transaction
+    at crates/multicad-ui/src/mechanical_import/tests.rs:90:35:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "write STEP", kind: Unsupported, message: "Rust STEP export requires supported geometry with one closed exterior shell per solid" }  ---- mechanical_import::tests::step_update_shows_the_plan_and_keeps_missing_solids stdout ----
+src/lib.rs [multicad_ui] :: mechanical_import::tests::step_update_shows_the_plan_and_keeps_missing_solids
+    at crates/multicad-ui/src/mechanical_import/tests.rs:90:35:
+    called `Result::unwrap()` on an `Err` value: GeometryError { operation: "write STEP", kind: Unsupported, message: "Rust STEP export requires supported geometry with one closed exterior shell per solid" }  ---- modeling::controller::sheet::tests::viewer_chosen_flange_previews_applies_and_reopens stdout ----
+src/lib.rs [multicad_ui] :: modeling::controller::sheet::tests::viewer_chosen_flange_previews_applies_and_reopens
+    at crates/multicad-ui/src/modeling/controller/sheet.rs:190:9:
+    c2ab40e5-0671-4922-86b3-954cba1284e6: Rust formed sheet requires one full-length bend or two opposite full-length bends without reliefs  ---- modeling::sheet::tests::neighboring_flanges_and_invalid_bends_are_diagnosed_on_their_edges stdout ----
+src/lib.rs [multicad_ui] :: modeling::sheet::tests::neighboring_flanges_and_invalid_bends_are_diagnosed_on_their_edges
+    at crates/multicad-ui/src/modeling/sheet.rs:1028:9:
+    Rust formed sheet requires one full-length bend or two opposite full-length bends without reliefs  

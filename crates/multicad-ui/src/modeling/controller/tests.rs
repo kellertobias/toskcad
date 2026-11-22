@@ -20,9 +20,13 @@ struct State {
     reject: bool,
     cancellations: usize,
     evaluations: Vec<multicad_core::model::EvaluationOptions>,
+    fast_hardware_preview: bool,
 }
 struct ScriptedBackend(Arc<Mutex<State>>);
 impl SceneBackend for ScriptedBackend {
+    fn supports_fast_hardware_preview(&self) -> bool {
+        self.0.lock().unwrap().fast_hardware_preview
+    }
     fn request_evaluation(
         &mut self,
         document: &Document,
@@ -191,6 +195,114 @@ fn automatic_extrude_debounces_edits_and_accepts_only_the_confirmed_stamp() {
     assert_eq!(session.document(), &before);
     assert_eq!(session.revision(), 0);
 }
+
+#[test]
+fn hardware_opens_immediately_and_only_the_latest_edit_can_confirm() {
+    use multicad_core::model::ModelEvaluationInfo;
+
+    for (fast_hardware_preview, delay) in [(false, 0.30), (true, 0.075)] {
+        let mut session = Session::new(Document::new("Hardware preview").unwrap()).unwrap();
+        let before = session.document().clone();
+        let resources = ProjectResources::default();
+        let state = Arc::new(Mutex::new(State {
+            fast_hardware_preview,
+            ..Default::default()
+        }));
+        let mut controller = ModelToolController::default();
+        controller.set_backend(Box::new(ScriptedBackend(state.clone())));
+        controller
+            .begin_mechanical_part(&session, &resources, Channel::Ui)
+            .unwrap();
+        let ctx = egui::Context::default();
+        let tick = |controller: &mut ModelToolController, session: &Session, time| {
+            ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| {
+                    controller.tick_auto_preview(ui, session, &resources, false);
+                },
+            )
+            .drop_without_applying_deltas();
+        };
+        let first_cancellations = state.lock().unwrap().cancellations;
+        assert!(controller.pending());
+        assert_eq!(state.lock().unwrap().requests.len(), 1);
+        tick(&mut controller, &session, 0.);
+        assert_eq!(state.lock().unwrap().cancellations, first_cancellations);
+        assert_eq!(state.lock().unwrap().requests.len(), 1);
+
+        let edit = |controller: &mut ModelToolController, session: &Session, diameter| {
+            let ModelRequest::MechanicalPart(mut request) = controller
+                .form
+                .as_ref()
+                .unwrap()
+                .request(session.document(), controller.capabilities())
+                .unwrap()
+            else {
+                panic!("Expected a hardware draft");
+            };
+            let model::MechanicalPartParameters::Washer {
+                outside_diameter, ..
+            } = &mut request.parameters
+            else {
+                panic!("Expected the default washer");
+            };
+            *outside_diameter = length(diameter);
+            let panel =
+                MechanicalPartPanel::new(*request, session.parameters().clone(), false).unwrap();
+            controller.form = Some(ModelForm::MechanicalPart(Box::new(panel)));
+        };
+        edit(&mut controller, &session, 8.);
+        tick(&mut controller, &session, 0.02);
+        assert!(controller.arm_confirmation(&session, &resources));
+        edit(&mut controller, &session, 9.);
+        tick(&mut controller, &session, 0.04);
+        assert!(controller.keyboard_confirm.is_none());
+        tick(&mut controller, &session, 0.04 + delay - 0.002);
+        assert_eq!(state.lock().unwrap().requests.len(), 1);
+        assert!(controller.arm_confirmation(&session, &resources));
+        tick(&mut controller, &session, 0.04 + delay + 0.002);
+        assert_eq!(state.lock().unwrap().requests.len(), 2);
+        assert_eq!(session.document(), &before);
+
+        let (document, _, stamp) = state.lock().unwrap().requests[1].clone();
+        reply(&state, 0);
+        controller.poll(&session, &resources);
+        assert!(!controller.confirmation_ready(&session, &resources));
+        let scene = native_scene(&document, stamp)
+            .as_ref()
+            .clone()
+            .with_model_evaluation(Arc::new(ModelEvaluationInfo {
+                source_hash: ContentHash::document(&document).unwrap(),
+                screw_connection_checks: vec![],
+                consumed_bodies: Default::default(),
+                cut_targets: vec![],
+            }))
+            .unwrap();
+        state.lock().unwrap().replies.push_back(SceneReply {
+            stamp,
+            result: Ok(Arc::new(scene)),
+        });
+        controller.poll(&session, &resources);
+        assert!(
+            controller.confirmation_ready(&session, &resources),
+            "{:?}",
+            controller.error()
+        );
+        let outputs = controller.apply(&mut session, &resources).unwrap();
+        let source = model::read_mechanical_part(session.document(), outputs[0].feature).unwrap();
+        let model::MechanicalPartParameters::Washer {
+            outside_diameter, ..
+        } = source.parameters
+        else {
+            panic!("Expected the final washer");
+        };
+        assert_eq!(outside_diameter, length(9.));
+        assert_eq!(session.revision(), 1);
+    }
+}
 #[test]
 fn abandoning_pending_native_preview_notifies_its_owner_and_rejects_late_replies() {
     let (session, sketch, profiles) = fixture();
@@ -279,12 +391,23 @@ fn only_matching_success_can_apply_exact_transaction_with_one_undo_and_handoff()
     let preview = controller
         .display_scene(&session, &Default::default())
         .unwrap();
+    assert!(
+        controller
+            .committed_preview(&session, &Default::default())
+            .is_none()
+    );
     let sent = state.lock().unwrap().requests[0].0.clone();
     let outputs = controller.apply(&mut session, &Default::default()).unwrap();
     assert_eq!(outputs.len(), 2);
     assert_eq!(session.document(), &sent);
     assert_eq!(session.revision(), 1);
     assert!(!controller.active());
+    assert!(Arc::ptr_eq(
+        &preview,
+        controller
+            .committed_preview(&session, &Default::default())
+            .unwrap()
+    ));
     assert_eq!(
         session.activity().last().unwrap().actor.channel,
         Channel::CommandLine
@@ -1042,5 +1165,118 @@ fn split_requires_both_native_outputs_and_original_input_consumption_before_atom
         assert_eq!(session.document(), &original);
         session.redo(5, Actor::local(Channel::Ui)).unwrap();
         assert_eq!(session.document(), &candidate);
+    }
+}
+
+#[test]
+fn new_panel_opens_viewport_dimensions_and_drag_works_while_an_inspector_field_has_focus() {
+    let session = super::super::cabinet::tests::session();
+    let before = session.document().clone();
+    let resources = ProjectResources::default();
+    let state = Arc::new(Mutex::new(State::default()));
+    let mut controller = ModelToolController::default();
+    controller.set_backend(Box::new(ScriptedBackend(state.clone())));
+    controller
+        .begin_panel(&session, &resources, Channel::Ui)
+        .unwrap();
+    assert!(
+        controller.primitive_corner_input_active(),
+        "new panels open their viewport dimension inputs"
+    );
+    let corners = controller.primitive_envelope(&session).unwrap();
+    assert_eq!(corners[0], [0.; 3]);
+    assert_eq!(corners[7], [800., 400., 18.]);
+
+    let context = egui::Context::default();
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024., 700.));
+    let camera = crate::camera::Camera {
+        yaw: 0.,
+        pitch: std::f32::consts::FRAC_PI_2,
+        scale: 0.8,
+        target: [400., 200., 0.],
+        perspective: false,
+    };
+    let project = |point: [f64; 3]| {
+        let [x, y, _] = camera.project(point.map(|value| value as f32), rect);
+        egui::pos2(x, y)
+    };
+    let inspector_field = egui::Id::new("inspector-length-field");
+    let frame = |controller: &mut ModelToolController, events| {
+        let mut owned = false;
+        context
+            .run_ui(
+                egui::RawInput {
+                    screen_rect: Some(rect),
+                    events,
+                    focused: true,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.interact(
+                        rect,
+                        ui.id().with("viewport"),
+                        egui::Sense::click_and_drag(),
+                    );
+                    owned =
+                        controller.primitive_viewport(ui, &session, &resources, camera, rect, true);
+                },
+            )
+            .drop_without_applying_deltas();
+        owned
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        pressed,
+        button: egui::PointerButton::Primary,
+        modifiers: egui::Modifiers::NONE,
+    };
+    frame(&mut controller, vec![]);
+    // An Inspector field owns keyboard focus; viewport handles still work.
+    context.memory_mut(|memory| memory.request_focus(inspector_field));
+    let handle = project([0., 400., 18.]);
+    let target = project([-100., 500., 18.]);
+    assert!(frame(
+        &mut controller,
+        vec![egui::Event::PointerMoved(handle), button(handle, true)]
+    ));
+    assert!(frame(
+        &mut controller,
+        vec![egui::Event::PointerMoved(target)]
+    ));
+    assert!(frame(&mut controller, vec![button(target, false)]));
+    let corners = controller.primitive_envelope(&session).unwrap();
+    for (actual, expected) in corners[0].into_iter().zip([-100., 0., 0.]) {
+        assert!((actual - expected).abs() < 1e-4, "{corners:?}");
+    }
+    for (actual, expected) in corners[7].into_iter().zip([800., 500., 18.]) {
+        assert!((actual - expected).abs() < 1e-4, "{corners:?}");
+    }
+    assert!(
+        !state.lock().unwrap().requests.is_empty(),
+        "release flushes an automatic preview of the dragged draft"
+    );
+    assert_eq!(session.document(), &before);
+    controller.cancel();
+    assert!(!controller.primitive_corner_input_active());
+    assert!(controller.primitive_envelope(&session).is_none());
+}
+
+#[test]
+fn new_primitives_open_viewport_dimension_inputs_but_reopened_edits_do_not() {
+    for kind in [
+        ModelingTool::Box,
+        ModelingTool::Cylinder,
+        ModelingTool::Sphere,
+    ] {
+        let session = Session::new(Document::new("Primitive inputs").unwrap()).unwrap();
+        let mut controller = ModelToolController::default();
+        controller.set_backend(Box::new(ScriptedBackend(Default::default())));
+        controller
+            .begin_primitive(&session, &Default::default(), kind, Channel::Ui)
+            .unwrap();
+        assert!(controller.primitive_corner_input_active(), "{kind:?}");
+        assert!(controller.primitive_envelope(&session).is_some());
+        controller.cancel();
+        assert!(!controller.primitive_corner_input_active());
     }
 }

@@ -1,0 +1,484 @@
+//! Plane sections of exact planar and trimmed cylindrical shell faces.
+use super::{
+    cylinder_patch::{ANGULAR, CylinderPatch, axis_offset, tilted, trim_station},
+    *,
+};
+use crate::trim_curve::{Cylinder, Plane, PlaneCrossings, cylinder_plane};
+use std::f64::consts::TAU;
+
+mod clip;
+mod vertices;
+pub use clip::{SectionClipPlane, clip_section_loops};
+use vertices::VertexContacts;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SectionEdge {
+    /// Shared endpoint positions, ordered with material to the left of the edge.
+    pub ends_mm: [Point; 2],
+    pub curve: Curve,
+}
+
+type Port = [usize; 2];
+
+#[derive(Clone, Copy)]
+struct Hit {
+    port: Port,
+    point: Point,
+}
+
+struct Section {
+    origin: Point,
+    normal: Point,
+    tolerance: f64,
+    limit: usize,
+    hits: Vec<Vec<Hit>>,
+    vertices: Option<VertexContacts>,
+    edges: BTreeMap<Port, (Port, SectionEdge)>,
+}
+
+impl Shell {
+    /// Intersect the boundary with a transverse cutting plane. Cylindrical
+    /// patches can have circular or certified tilted miter rims. Their section
+    /// curves are straight generators, circles or exact ellipses. Transverse
+    /// crossings at authored trim vertices use shared vertex identities.
+    pub fn section(
+        &self,
+        origin_mm: Point,
+        normal: Point,
+        tolerance_mm: f64,
+        segment_limit: usize,
+    ) -> Result<Vec<Vec<SectionEdge>>, Error> {
+        if !(1e-7..=1e-3).contains(&tolerance_mm)
+            || origin_mm
+                .into_iter()
+                .any(|v| !v.is_finite() || v.abs() > 1e8)
+        {
+            return Err(Error::Invalid);
+        }
+        let normal = unit(normal)?;
+        let plane = Plane::new(origin_mm, normal).map_err(|_| Error::Invalid)?;
+        let signed = |p| dot(sub(p, origin_mm), normal);
+        let mut distances: Vec<_> = self.vertices.iter().copied().map(signed).collect();
+        let shifted;
+        let mut vertices = None;
+        let shell = if distances.iter().any(|d| d.abs() <= tolerance_mm) {
+            if self.matched_quarter_rims.is_some_and(|rims| rims.circular) {
+                // Circular miters can move their artificial seams for this query.
+                (shifted, distances) = self.repartition_circular_miter(signed, tolerance_mm)?;
+                &shifted
+            } else {
+                vertices = Some(VertexContacts::new(
+                    self,
+                    &distances,
+                    origin_mm,
+                    normal,
+                    tolerance_mm,
+                )?);
+                self
+            }
+        } else {
+            self
+        };
+        if distances.iter().all(|&d| d > tolerance_mm)
+            || distances.iter().all(|&d| d < -tolerance_mm)
+        {
+            // Ellipse extrema may lie outside the vertex projection.
+            let outside = shell.edges.iter().all(|edge| match edge.curve {
+                Curve::Line => true,
+                Curve::Ellipse(arc) => {
+                    let [lo, hi] = arc.range_along(normal);
+                    let cut = dot(origin_mm, normal);
+                    lo > cut + tolerance_mm || hi < cut - tolerance_mm
+                }
+            });
+            if outside {
+                return Ok(Vec::new());
+            }
+        }
+        let hits = shell
+            .edges
+            .iter()
+            .enumerate()
+            .map(|(index, edge)| {
+                let endpoints = vertices.as_ref().and_then(|v| v.endpoints(shell, index));
+                if vertices
+                    .as_ref()
+                    .is_some_and(|v| v.in_plane().contains(&index))
+                {
+                    // Lies in the plane; closed later between vertex crossings.
+                    return Ok(Vec::new());
+                }
+                let points = match (edge.curve, endpoints) {
+                    (Curve::Line, Some(_)) => Vec::new(),
+                    (Curve::Ellipse(arc), Some(endpoints)) => {
+                        vertices::interior_arc_hits(arc, plane, endpoints, tolerance_mm)?
+                    }
+                    (Curve::Line, None) => {
+                        let [da, db] = edge.vertices.map(|id| distances[id]);
+                        if da.is_sign_positive() == db.is_sign_positive() {
+                            Vec::new()
+                        } else {
+                            let [a, b] = edge.vertices.map(|id| shell.vertices[id]);
+                            vec![translate(a, sub(b, a), da / (da - db))]
+                        }
+                    }
+                    (Curve::Ellipse(arc), None) => arc_hits(arc, plane, tolerance_mm)?,
+                };
+                Ok(points
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ordinal, point)| Hit {
+                        port: [index, ordinal],
+                        point,
+                    })
+                    .collect())
+            })
+            .collect::<Result<_, _>>()?;
+        let mut section = Section {
+            origin: origin_mm,
+            normal,
+            tolerance: tolerance_mm,
+            limit: segment_limit,
+            hits,
+            vertices,
+            edges: BTreeMap::new(),
+        };
+        for face in &shell.faces {
+            match face.support {
+                Support::Plane { normal } => section.planar(shell, face, normal)?,
+                Support::Cylinder {
+                    axis_origin_mm,
+                    axis_direction,
+                    radius_mm,
+                    outward,
+                } => section.cylinder(
+                    shell,
+                    face,
+                    axis_origin_mm,
+                    axis_direction,
+                    radius_mm,
+                    outward,
+                )?,
+            }
+        }
+        section.close_in_plane_edges(shell)?;
+        section.loops()
+    }
+}
+
+fn translate(a: Point, b: Point, t: f64) -> Point {
+    std::array::from_fn(|i| b[i].mul_add(t, a[i]))
+}
+
+fn unit(v: Point) -> Result<Point, Error> {
+    let length = length3(v);
+    if !length.is_finite() || length <= ANGULAR {
+        return Err(Error::Invalid);
+    }
+    Ok(v.map(|value| value / length))
+}
+
+fn travel(arc: EllipseArc, angle: f64) -> f64 {
+    ((angle - arc.start_rad()) * arc.sweep_rad().signum()).rem_euclid(TAU)
+}
+
+fn arc_hits(arc: EllipseArc, plane: Plane, tolerance: f64) -> Result<Vec<Point>, Error> {
+    let ellipse = arc.ellipse();
+    let within = |angle| travel(arc, angle) < arc.sweep_rad().abs();
+    match ellipse
+        .plane_crossings(plane, tolerance)
+        .map_err(|_| Error::Unsupported)?
+    {
+        PlaneCrossings::None => Ok(Vec::new()),
+        PlaneCrossings::Tangent(angle) if !within(angle) => Ok(Vec::new()),
+        PlaneCrossings::Coincident | PlaneCrossings::Tangent(_) => Err(Error::Unsupported),
+        PlaneCrossings::Crossing(angles) => Ok(angles
+            .into_iter()
+            .filter(|&angle| within(angle))
+            .map(|angle| ellipse.point_at(angle))
+            .collect()),
+    }
+}
+
+impl Section {
+    fn planar(&mut self, shell: &Shell, face: &Face, normal: Point) -> Result<(), Error> {
+        let tangent = cross(self.normal, normal);
+        let mut hits: Vec<_> = std::iter::once(&face.boundary)
+            .chain(&face.holes)
+            .flat_map(|wire| {
+                wire.iter()
+                    .flat_map(|edge| self.hits[edge.edge].iter().copied())
+                    .chain(self.vertices.iter().flat_map(|v| v.crossings(shell, wire)))
+            })
+            .collect();
+        hits.sort_unstable_by(|a, b| dot(a.point, tangent).total_cmp(&dot(b.point, tangent)));
+        let (pairs, remainder) = hits.as_chunks::<2>();
+        if !remainder.is_empty() {
+            return Err(Error::Unsupported);
+        }
+        for &pair in pairs {
+            self.add(pair, Curve::Line)?;
+        }
+        Ok(())
+    }
+
+    fn cylinder(
+        &mut self,
+        shell: &Shell,
+        face: &Face,
+        axis_origin: Point,
+        axis: Point,
+        radius: f64,
+        outward: bool,
+    ) -> Result<(), Error> {
+        let vertices: Vec<_> = self
+            .vertices
+            .iter()
+            .flat_map(|v| v.crossings(shell, &face.boundary))
+            .collect();
+        if vertices.is_empty()
+            && face
+                .boundary
+                .iter()
+                .all(|edge| self.hits[edge.edge].is_empty())
+        {
+            return Ok(());
+        }
+        let patch = CylinderPatch::new(shell, face, axis_origin, axis, radius, self.tolerance)?;
+        let cosine = dot(axis, self.normal);
+        if !vertices.is_empty() {
+            return self.oblique_cylinder(patch, axis_origin, axis, radius, outward, &vertices);
+        }
+        if length3(cross(axis, self.normal)) <= ANGULAR && !tilted(patch.arcs[1].1, axis) {
+            let (_, original) = patch.arcs[0];
+            let cap = original.ellipse();
+            let offset = dot(sub(self.origin, cap.center_mm()), self.normal) / cosine;
+            let ellipse = Ellipse::new(
+                translate(cap.center_mm(), axis, offset),
+                cap.normal(),
+                cap.major_axis(),
+                cap.semiaxes_mm(),
+            )
+            .map_err(|_| Error::Unsupported)?;
+            let arc = EllipseArc::new(ellipse, original.start_rad(), original.sweep_rad())
+                .map_err(|_| Error::Unsupported)?;
+            let [[first], [last]] = patch.rails.map(|id| self.hits[id].as_slice()) else {
+                return Err(Error::Unsupported);
+            };
+            let ends = arc.endpoints();
+            let mut pair = [*first, *last];
+            if length3(sub(pair[0].point, ends[0])) > self.tolerance {
+                pair.reverse();
+            }
+            if pair
+                .iter()
+                .zip(ends)
+                .any(|(hit, end)| length3(sub(hit.point, end)) > self.tolerance)
+            {
+                return Err(Error::Unsupported);
+            }
+            let positive = dot(cap.normal(), self.normal) * arc.sweep_rad() > 0.;
+            if positive == outward {
+                self.add(pair, Curve::Ellipse(arc))
+            } else {
+                pair.reverse();
+                let reverse =
+                    EllipseArc::new(ellipse, arc.start_rad() + arc.sweep_rad(), -arc.sweep_rad())
+                        .map_err(|_| Error::Unsupported)?;
+                self.add(pair, Curve::Ellipse(reverse))
+            }
+        } else if cosine.abs() <= ANGULAR {
+            let [a, b] = patch.arcs.map(|(id, _)| &self.hits[id]);
+            if a.len() != b.len() {
+                return Err(Error::Unsupported);
+            }
+            let mut used = [false; 2];
+            let mut pairs = Vec::new();
+            for &first in a {
+                let (index, &last) = b
+                    .iter()
+                    .enumerate()
+                    .find(|&(index, hit)| {
+                        !used[index]
+                            && length3(axis_offset(hit.point, first.point, axis)) <= self.tolerance
+                    })
+                    .ok_or(Error::Unsupported)?;
+                used[index] = true;
+                let radial = axis_offset(first.point, axis_origin, axis);
+                let tangent = cross(self.normal, radial);
+                let mut pair = [first, last];
+                if (dot(sub(last.point, first.point), tangent) > 0.) != outward {
+                    pair.reverse();
+                }
+                pairs.push(pair);
+            }
+            for pair in pairs {
+                self.add(pair, Curve::Line)?;
+            }
+            Ok(())
+        } else {
+            self.oblique_cylinder(patch, axis_origin, axis, radius, outward, &[])
+        }
+    }
+
+    fn oblique_cylinder(
+        &mut self,
+        patch: CylinderPatch,
+        axis_origin: Point,
+        axis: Point,
+        radius: f64,
+        outward: bool,
+        vertices: &[Hit],
+    ) -> Result<(), Error> {
+        let cylinder = Cylinder::new(axis_origin, axis, radius).map_err(|_| Error::Unsupported)?;
+        let plane = Plane::new(self.origin, self.normal).map_err(|_| Error::Unsupported)?;
+        let ellipse = cylinder_plane(cylinder, plane).map_err(|_| Error::Unsupported)?;
+        let reference = patch.radial_chart(axis)?;
+        let base = reference.ellipse();
+        let span = reference.sweep_rad().abs();
+        let angular_tolerance = 4. * self.tolerance / radius + ANGULAR;
+        let cosine = dot(axis, self.normal);
+        let mut hits = Vec::new();
+        let boundary = patch
+            .arcs
+            .map(|(edge, _)| (edge, false))
+            .into_iter()
+            .chain(patch.rails.map(|edge| (edge, true)))
+            .flat_map(|(edge, rail)| self.hits[edge].iter().map(move |&hit| (hit, rail)));
+        for (hit, rail) in boundary.chain(vertices.iter().map(|&hit| (hit, true))) {
+            let radial = axis_offset(hit.point, base.center_mm(), axis);
+            let point = translate(base.center_mm(), radial, 1.);
+            let angle = base
+                .parameter_at(point, self.tolerance)
+                .ok_or(Error::Unsupported)?;
+            let phase = travel(reference, angle);
+            let phase = if rail && phase.min(TAU - phase) <= angular_tolerance {
+                0.
+            } else if rail && (phase - span).abs() <= angular_tolerance {
+                span
+            } else if !rail && phase > angular_tolerance && phase < span - angular_tolerance {
+                phase
+            } else {
+                return Err(Error::Unsupported);
+            };
+            hits.push((phase, hit));
+        }
+        hits.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let (pairs, remainder) = hits.as_chunks::<2>();
+        if !remainder.is_empty()
+            || hits
+                .windows(2)
+                .any(|pair| pair[1].0 - pair[0].0 <= angular_tolerance)
+        {
+            return Err(Error::Unsupported);
+        }
+
+        // All cap roots and rail crossings were enumerated analytically.
+        // Between successive roots, the signed axial distances to both cap
+        // planes have constant signs. Classify each retained interval there.
+        let positive = dot(base.normal(), axis) * reference.sweep_rad() * cosine > 0.;
+        for &[(start, first), (end, last)] in pairs {
+            let angle =
+                reference.start_rad() + reference.sweep_rad().signum() * start.midpoint(end);
+            let radial_point = base.point_at(angle);
+            let [lower, upper] = patch
+                .arcs
+                .map(|(_, rim)| trim_station(rim, radial_point, axis));
+            let offset = dot(sub(self.origin, radial_point), self.normal) / cosine;
+            if offset <= lower.min(upper) + self.tolerance
+                || offset >= lower.max(upper) - self.tolerance
+            {
+                return Err(Error::Unsupported);
+            }
+            let mut pair = [first, last];
+            if positive != outward {
+                pair.reverse();
+            }
+            let arc = EllipseArc::from_endpoints(
+                ellipse,
+                pair.map(|hit| hit.point),
+                !outward,
+                self.tolerance,
+            )
+            .map_err(|_| Error::Unsupported)?;
+            if (arc.sweep_rad().abs() - (end - start)).abs() > angular_tolerance {
+                return Err(Error::Unsupported);
+            }
+            self.add(pair, Curve::Ellipse(arc))?;
+        }
+        Ok(())
+    }
+
+    fn add(&mut self, [a, b]: [Hit; 2], curve: Curve) -> Result<(), Error> {
+        if length3(sub(a.point, b.point)) <= self.tolerance {
+            return Err(Error::Unsupported);
+        }
+        self.limit = self.limit.checked_sub(1).ok_or(Error::Limit)?;
+        let edge = SectionEdge {
+            ends_mm: [a.point, b.point],
+            curve,
+        };
+        if self.edges.insert(a.port, (b.port, edge)).is_some() {
+            return Err(Error::Unsupported);
+        }
+        Ok(())
+    }
+
+    /// A straight shell edge lying in the cutting plane is part of the
+    /// section exactly where the faces on its two sides leave the plane to
+    /// opposite sides: a face section then ends at one of its vertices and
+    /// another starts at the other. Insert the edge in that direction, so it
+    /// keeps the material side of the loop it closes. An edge that only
+    /// touches the material, with neither vertex used, bounds no section
+    /// area and is omitted; any other use is not certified.
+    fn close_in_plane_edges(&mut self, shell: &Shell) -> Result<(), Error> {
+        let Some(contacts) = &self.vertices else {
+            return Ok(());
+        };
+        let seams = contacts.in_plane().to_vec();
+        let count = shell.edges.len();
+        for index in seams {
+            let ports = shell.edges[index].vertices.map(|vertex| [count, vertex]);
+            let ends: Vec<_> = self.edges.values().map(|(end, _)| *end).collect();
+            let [starts, finishes] = [
+                ports.map(|port| self.edges.contains_key(&port)),
+                ports.map(|port| ends.contains(&port)),
+            ];
+            let points = shell.edges[index]
+                .vertices
+                .map(|vertex| shell.vertices[vertex]);
+            let hit = |end: usize| Hit {
+                port: ports[end],
+                point: points[end],
+            };
+            match (starts, finishes) {
+                ([false, false], [false, false]) => {}
+                ([false, true], [true, false]) => self.add([hit(0), hit(1)], Curve::Line)?,
+                ([true, false], [false, true]) => self.add([hit(1), hit(0)], Curve::Line)?,
+                _ => return Err(Error::Unsupported),
+            }
+        }
+        Ok(())
+    }
+
+    fn loops(mut self) -> Result<Vec<Vec<SectionEdge>>, Error> {
+        let mut loops = Vec::new();
+        while let Some((&start, _)) = self.edges.first_key_value() {
+            let mut boundary = Vec::new();
+            let mut next = start;
+            loop {
+                let (end, edge) = self.edges.remove(&next).ok_or(Error::Unsupported)?;
+                boundary.push(edge);
+                if end == start {
+                    break;
+                }
+                next = end;
+            }
+            loops.push(boundary);
+        }
+        Ok(loops)
+    }
+}
+
+#[cfg(test)]
+pub(super) mod tests;

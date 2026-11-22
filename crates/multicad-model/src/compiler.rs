@@ -4,16 +4,18 @@ use multicad_core::{
     model::{self, CutTargetProbeResult, Operation},
     project_file::ContentHash,
     references::{self, Origin, ReferenceReport, TopologySnapshot},
-    sketch_regions::{Extraction, RegionIntent},
+    sketch_regions::{Extraction, RegionIntent, RegionQueries},
 };
 use multicad_kernel::{
-    Bounds, CurvedEdge2d, CurvedProfile, DisplayEdge, DisplayVertex, GeometryPolicy, Mesh,
-    MeshOptions, NativeRegionQueries, PlaneFrame, RevolutionAxis, Solid,
+    Bounds, CurvedEdge2d, CurvedProfile, DisplayEdge, DisplayVertex, GeometryErrorKind,
+    GeometryPolicy, Mesh, MeshOptions, NativeRegionQueries, PlaneFrame, RevolutionAxis, Solid,
+    TopologyDisplay,
 };
 use multicad_solver::SketchEvaluationContext;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
+    rc::Rc,
     sync::Arc,
 };
 #[path = "advanced_profiles.rs"]
@@ -31,10 +33,10 @@ pub struct ShapeSnapshot {
     pub bounds: Bounds,
     pub volume_mm3: f64,
     pub solid_count: u32,
-    pub mesh: Mesh,
+    pub mesh: Arc<Mesh>,
     pub topology: TopologySnapshot,
-    pub edges: Vec<DisplayEdge>,
-    pub vertices: Vec<DisplayVertex>,
+    pub edges: Arc<Vec<DisplayEdge>>,
+    pub vertices: Arc<Vec<DisplayVertex>>,
 }
 /// Source inspection is deliberately incomplete and cannot authorize a full-model operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,7 +138,7 @@ pub(crate) fn checkpoint(interrupt: Option<&dyn Fn() -> bool>) -> Result<(), Mod
 struct Profiles<'a> {
     context: &'a SketchEvaluationContext<'a>,
     references: Option<references::ReferenceInspector>,
-    queries: NativeRegionQueries,
+    queries: &'a dyn RegionQueries,
     body_heads: &'a BTreeMap<EntityId, EntityId>,
     policy: GeometryPolicy,
     cache: BTreeMap<EntityId, (multicad_core::sketch::Frame, Extraction)>,
@@ -176,7 +178,7 @@ impl Profiles<'_> {
                 .evaluate(sketch, Some(&report), interrupt)
                 .map_err(|e| error(e.source, e))?;
             let regions = evaluated
-                .regions_with_queries_and_interrupt(&self.queries, interrupt)
+                .regions_with_queries_and_interrupt(self.queries, interrupt)
                 .map_err(|e| error(e.source, e))?;
             entry.insert((evaluated.frame, regions));
         }
@@ -248,6 +250,11 @@ impl Profiles<'_> {
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct ModelTimings {
     pub total_ms: f64,
+    pub source_preparation_ms: f64,
+    pub feature_cache_lookup_ms: f64,
+    /// Time spent in feature providers, excluding display publication.
+    pub feature_providers_ms: BTreeMap<String, f64>,
+    pub reference_resolution_ms: f64,
     pub gear_construction_ms: f64,
     pub thread_construction_ms: f64,
     pub hardware_construction_ms: f64,
@@ -261,13 +268,24 @@ pub struct ModelTimings {
 /// The kernel's !Send/!Sync ownership also applies to this container.
 pub struct Model {
     pub(crate) policy: GeometryPolicy,
-    pub(crate) solids: BTreeMap<EntityId, Solid>,
-    snapshot: ModelSnapshot,
-    leaves: crate::assemblies::LeafStore,
-    gear_pair_checks: BTreeMap<EntityId, crate::GearPairCheck>,
+    pub(crate) solids: Rc<BTreeMap<EntityId, Solid>>,
+    snapshot: Arc<ModelSnapshot>,
+    leaves: Rc<crate::assemblies::LeafStore>,
+    gear_pair_checks: Rc<BTreeMap<EntityId, crate::GearPairCheck>>,
     timings: ModelTimings,
 }
 impl Model {
+    pub(crate) fn share_completed(&self) -> Self {
+        Self {
+            policy: self.policy,
+            solids: self.solids.clone(),
+            snapshot: self.snapshot.clone(),
+            leaves: self.leaves.clone(),
+            gear_pair_checks: self.gear_pair_checks.clone(),
+            timings: ModelTimings::default(),
+        }
+    }
+
     pub fn timings(&self) -> &ModelTimings {
         &self.timings
     }
@@ -317,7 +335,7 @@ impl Model {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Compiler {
     pub policy: GeometryPolicy,
     pub mesh: MeshOptions,
@@ -325,6 +343,19 @@ pub struct Compiler {
     /// geometry. Native solids, topology and dimensional references remain complete.
     pub omit_display: bool,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum GeometryBackend {
+    OpenCascade,
+    #[default]
+    Rust,
+}
+
+struct EvaluationMode {
+    roots: Option<Vec<EntityId>>,
+    backend: GeometryBackend,
+}
+
 pub const MAX_MODEL_FEATURES: usize = 4096;
 pub const MAX_MODEL_TRIANGLES: usize = 4_000_000;
 impl Compiler {
@@ -337,8 +368,23 @@ impl Compiler {
         revision: u64,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Model, ModelError> {
+        self.compile_with_backend(document, revision, GeometryBackend::default(), interrupt)
+    }
+
+    /// Evaluate the whole canonical document with one explicitly selected solid backend.
+    pub fn compile_with_backend(
+        &self,
+        document: &Document,
+        revision: u64,
+        backend: GeometryBackend,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Model, ModelError> {
+        let mode = EvaluationMode {
+            roots: None,
+            backend,
+        };
         crate::worker_cache::with_current_cache(|cache| {
-            self.compile_scoped(document, revision, None, interrupt, cache)
+            self.compile_scoped(document, revision, mode, interrupt, cache)
         })
     }
     /// A full compile that reuses unchanged feature results from earlier
@@ -351,7 +397,34 @@ impl Compiler {
         revision: u64,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Model, ModelError> {
-        self.compile_scoped(document, revision, None, interrupt, Some(cache))
+        self.compile_cached_with_backend(
+            cache,
+            document,
+            revision,
+            GeometryBackend::default(),
+            interrupt,
+        )
+    }
+
+    /// Use the caller's bounded owner cache with an explicit solid backend.
+    pub fn compile_cached_with_backend(
+        &self,
+        cache: &mut crate::EvaluationCache,
+        document: &Document,
+        revision: u64,
+        backend: GeometryBackend,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Model, ModelError> {
+        self.compile_scoped(
+            document,
+            revision,
+            EvaluationMode {
+                roots: None,
+                backend,
+            },
+            interrupt,
+            Some(cache),
+        )
     }
     /// [`Self::compile_sources_interruptible`] through an evaluation cache.
     pub fn compile_sources_cached(
@@ -362,8 +435,38 @@ impl Compiler {
         roots: &[EntityId],
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Model, ModelError> {
-        let roots = validate_source_roots(document, roots)?;
-        self.compile_scoped(document, revision, Some(roots), interrupt, Some(cache))
+        self.compile_sources_cached_with_backend(
+            cache,
+            document,
+            revision,
+            roots,
+            GeometryBackend::default(),
+            interrupt,
+        )
+    }
+
+    /// Reuse cached source dependencies without mixing solid backends.
+    pub fn compile_sources_cached_with_backend(
+        &self,
+        cache: &mut crate::EvaluationCache,
+        document: &Document,
+        revision: u64,
+        roots: &[EntityId],
+        backend: GeometryBackend,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Model, ModelError> {
+        let roots =
+            validate_source_roots(document, roots).inspect_err(|_| cache.reset_compile_stats())?;
+        self.compile_scoped(
+            document,
+            revision,
+            EvaluationMode {
+                roots: Some(roots),
+                backend,
+            },
+            interrupt,
+            Some(cache),
+        )
     }
     /// Evaluate only explicitly selected current source roots and their dependencies.
     /// The stamp still covers the complete canonical document. The result is an
@@ -383,9 +486,35 @@ impl Compiler {
         roots: &[EntityId],
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Model, ModelError> {
-        let roots = validate_source_roots(document, roots)?;
-        crate::worker_cache::with_current_cache(|cache| {
-            self.compile_scoped(document, revision, Some(roots), interrupt, cache)
+        self.compile_sources_with_backend(
+            document,
+            revision,
+            roots,
+            GeometryBackend::default(),
+            interrupt,
+        )
+    }
+
+    /// Evaluate only selected source roots using the requested solid backend.
+    pub fn compile_sources_with_backend(
+        &self,
+        document: &Document,
+        revision: u64,
+        roots: &[EntityId],
+        backend: GeometryBackend,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Model, ModelError> {
+        crate::worker_cache::with_current_cache(|mut cache| {
+            let roots = validate_source_roots(document, roots).inspect_err(|_| {
+                if let Some(cache) = cache.as_deref_mut() {
+                    cache.reset_compile_stats();
+                }
+            })?;
+            let mode = EvaluationMode {
+                roots: Some(roots),
+                backend,
+            };
+            self.compile_scoped(document, revision, mode, interrupt, cache)
         })
     }
     /// Nested evaluators report their own cancellation wording (for example
@@ -396,12 +525,38 @@ impl Compiler {
         &self,
         document: &Document,
         revision: u64,
-        roots: Option<Vec<EntityId>>,
+        mode: EvaluationMode,
         interrupt: Option<&dyn Fn() -> bool>,
         mut cache: Option<&mut crate::EvaluationCache>,
     ) -> Result<Model, ModelError> {
         let started = std::time::Instant::now();
-        let full_evaluation = roots.is_none();
+        // Cancellation belongs to the whole request. Nested providers can
+        // classify their errors without polling the caller after it cancelled.
+        let cancelled = std::cell::Cell::new(false);
+        let request_interrupt = || {
+            if cancelled.get() {
+                return true;
+            }
+            let value = interrupt.is_some_and(|probe| probe());
+            cancelled.set(value);
+            value
+        };
+        let interrupt = interrupt.map(|_| &request_interrupt as &dyn Fn() -> bool);
+        let native_backend = mode.backend == GeometryBackend::OpenCascade;
+        if native_backend && !multicad_kernel::OCCT_LINKED {
+            return Err(error(None, "OpenCascade is unavailable in this build"));
+        }
+        let full_evaluation = mode.roots.is_none() && native_backend;
+        let full_rust = mode.roots.is_none() && !native_backend;
+        if full_rust && let Some(cache) = cache.as_deref_mut() {
+            cache.reset_compile_stats();
+            checkpoint(interrupt)?;
+            if let Some(mut model) = cache.reuse_full_rust(self, document, revision) {
+                checkpoint(interrupt)?;
+                self.report_timings(&mut model, started);
+                return Ok(model);
+            }
+        }
         let publication = crate::pair_cycle_proofs::PublicationScope::begin();
         let native_publication =
             crate::native_intersection_proofs::PublicationScope::begin(if full_evaluation {
@@ -413,17 +568,21 @@ impl Compiler {
             });
         // An injected application store takes precedence over worker-local
         // receipts, including after clear or a change of application owner.
+        // Both backends use it; their cycle keys carry distinct prefixes, so
+        // one backend's proof never stands in for the other's.
         let store = crate::current_pair_cycle_proofs()
             .or_else(|| cache.as_deref().map(|cache| cache.gear_pairs.clone()));
         let mut pair_proofs = crate::pair_cycle_proofs::CycleTransaction::new(store);
         if let Some(cache) = cache.as_deref_mut() {
+            cache.reset_compile_stats();
             cache.begin_symbol_proofs();
+            cache.pipe_threads.begin_compile();
         }
         let mut result = self
             .compile_scoped_unchecked(
                 document,
                 revision,
-                roots,
+                mode,
                 interrupt,
                 cache.as_deref_mut(),
                 &mut pair_proofs,
@@ -439,60 +598,78 @@ impl Compiler {
                     e
                 }
             });
-        if let Some(cache) = cache {
+        if let Some(cache) = cache.as_deref_mut() {
             cache.finish_symbol_proofs(result.is_ok());
+            cache.pipe_threads.finish_compile(result.is_ok());
         }
         native_publication.finish(result.is_ok() && full_evaluation);
-        publication.finish(result.is_ok() && full_evaluation);
+        publication.finish(result.is_ok() && (full_evaluation || full_rust));
         if let Ok(model) = &mut result {
-            model.timings.total_ms = started.elapsed().as_secs_f64() * 1000.;
-            // Opt-in local diagnostics for controlled operator-path measurements.
-            // No model source, native handle or manufacturing payload is logged.
-            if let Some(path) = std::env::var_os("MULTICAD_MODEL_TIMINGS_JSONL") {
-                use std::io::Write;
-                if let Ok(mut output) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                    && let Ok(mut line) = serde_json::to_vec(&serde_json::json!({
-                        "document":document.id(), "revision":revision,
-                        "source_hash":model.snapshot.stamp.source_hash,
-                        "owner":std::thread::current().name(), "omit_display":self.omit_display,
-                        "scope":format!("{:?}",model.snapshot.scope),
-                        "timings":model.timings, "gear_pairs":model.gear_pair_checks,
-                    }))
-                {
-                    line.push(b'\n');
-                    let _ = output.write_all(&line);
-                }
+            // A gear-pair model re-certifies its current pose on every full
+            // compile, reusing only member geometry and the completed cycle
+            // proof, so its completed report is never replayed wholesale.
+            if full_rust
+                && model.gear_pair_checks().is_empty()
+                && let Some(cache) = cache
+            {
+                cache.store_full_rust(self, model);
             }
+            self.report_timings(model, started);
         }
         result
+    }
+
+    fn report_timings(&self, model: &mut Model, started: std::time::Instant) {
+        model.timings.total_ms = started.elapsed().as_secs_f64() * 1000.;
+        // Opt-in local diagnostics for controlled operator-path measurements.
+        // No model source, native handle or manufacturing payload is logged.
+        if let Some(path) = std::env::var_os("MULTICAD_MODEL_TIMINGS_JSONL") {
+            use std::io::Write;
+            let stamp = model.snapshot.stamp;
+            if let Ok(mut output) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                && let Ok(mut line) = serde_json::to_vec(&serde_json::json!({
+                    "document":stamp.document, "revision":stamp.revision,
+                    "source_hash":stamp.source_hash,
+                    "owner":std::thread::current().name(), "omit_display":self.omit_display,
+                    "scope":format!("{:?}",model.snapshot.scope),
+                    "timings":model.timings, "gear_pairs":model.gear_pair_checks(),
+                }))
+            {
+                line.push(b'\n');
+                let _ = output.write_all(&line);
+            }
+        }
     }
     fn compile_scoped_unchecked(
         &self,
         document: &Document,
         revision: u64,
-        roots: Option<Vec<EntityId>>,
+        mode: EvaluationMode,
         interrupt: Option<&dyn Fn() -> bool>,
         mut cache: Option<&mut crate::EvaluationCache>,
         pair_proofs: &mut crate::pair_cycle_proofs::CycleTransaction,
     ) -> Result<Model, ModelError> {
+        let EvaluationMode { roots, backend } = mode;
         let mut timings = ModelTimings::default();
+        let preparation_started = std::time::Instant::now();
         checkpoint(interrupt)?;
-        document.validate().map_err(|e| error(None, e))?;
+        let source = document.validated().map_err(|e| error(None, e))?;
         self.policy.validate().map_err(|e| error(None, e))?;
         if roots.is_none() {
             crate::symbols::validate_definitions(
                 self,
                 document,
                 revision,
+                backend,
                 interrupt,
                 cache.as_deref_mut(),
             )?;
         }
-        let context =
-            SketchEvaluationContext::new(document, revision).map_err(|e| error(e.source, e))?;
+        let context = SketchEvaluationContext::from_validated(&source, revision)
+            .map_err(|e| error(e.source, e))?;
         if roots.is_none() {
             crate::gear_pairs::validate_parameters(document, context.parameters())?;
             for entity in model::carcasses(document) {
@@ -586,13 +763,21 @@ impl Compiler {
                 }
             }
         }
+        if backend == GeometryBackend::Rust {
+            crate::rust_backend::validate_document(document, Some(&needed))?;
+        }
         let mut cached = cache.map(|cache| {
-            crate::eval_cache::Session::new(cache, self, document, context.parameters())
+            crate::eval_cache::Session::new(cache, self, backend, document, context.parameters())
         });
+        let geometry_queries = match backend {
+            GeometryBackend::OpenCascade => NativeRegionQueries::native(self.policy),
+            GeometryBackend::Rust => NativeRegionQueries::analytic(self.policy),
+        }
+        .map_err(|e| error(None, e))?;
         let mut profiles = Profiles {
             references: None,
             context: &context,
-            queries: NativeRegionQueries::new(self.policy).map_err(|e| error(None, e))?,
+            queries: &geometry_queries,
             body_heads: &bodies,
             policy: self.policy,
             cache: BTreeMap::new(),
@@ -606,12 +791,13 @@ impl Compiler {
         let mut member_paths = BTreeMap::new();
         let mut weld_paths = crate::weldment::Paths::new(&context);
         let mut sheet_layouts = BTreeMap::new();
-        let mut fences = crate::fences::Context::new(document, context.parameters());
+        let mut fences = crate::fences::Context::new(document, context.parameters(), backend);
         let mut compound_cutouts = crate::compound_cutouts::Context::default();
         let mut leaves = crate::assemblies::LeafStore::default();
         let mut topologies: BTreeMap<EntityId, TopologySnapshot> = BTreeMap::new();
         let mut triangles = 0usize;
-        for id in document.topological_order().map_err(|e| error(None, e))? {
+        timings.source_preparation_ms = preparation_started.elapsed().as_secs_f64() * 1000.;
+        for &id in source.topological_order() {
             checkpoint(interrupt)?;
             let entity = document
                 .get(id)
@@ -683,20 +869,28 @@ impl Compiler {
                     id,
                     &mut leaves,
                 )?;
-                let topology = solid
-                    .topology_snapshot(id, revision)
-                    .map_err(|e| error(Some(id), e))?;
-                multicad_core::model::wall_face_materials(document, &topology)
-                    .map_err(|e| error(Some(id), e))?;
                 timings.assembly_and_occurrence_ms +=
                     assembly_started.elapsed().as_secs_f64() * 1000.;
                 let publication_started = std::time::Instant::now();
+                let TopologyDisplay {
+                    topology,
+                    edges,
+                    vertices,
+                } = solid
+                    .topology_with_display(
+                        id,
+                        revision,
+                        (!self.omit_display).then_some(self.mesh.linear_deflection_mm),
+                    )
+                    .map_err(|e| error(Some(id), e))?;
+                multicad_core::model::wall_face_materials(document, &topology)
+                    .map_err(|e| error(Some(id), e))?;
                 let snapshot = ShapeSnapshot {
                     producer: id,
                     bounds: solid.bounds().map_err(|e| error(Some(id), e))?,
                     volume_mm3: solid.volume_mm3().map_err(|e| error(Some(id), e))?,
                     solid_count: solid.solid_count().map_err(|e| error(Some(id), e))?,
-                    mesh: if self.omit_display {
+                    mesh: Arc::new(if self.omit_display {
                         Mesh {
                             vertices: vec![],
                             indices: vec![],
@@ -704,19 +898,9 @@ impl Compiler {
                         }
                     } else {
                         solid.mesh(self.mesh).map_err(|e| error(Some(id), e))?
-                    },
-                    edges: if self.omit_display {
-                        vec![]
-                    } else {
-                        solid
-                            .display_edges(self.mesh.linear_deflection_mm)
-                            .map_err(|e| error(Some(id), e))?
-                    },
-                    vertices: if self.omit_display {
-                        vec![]
-                    } else {
-                        solid.display_vertices().map_err(|e| error(Some(id), e))?
-                    },
+                    }),
+                    edges: Arc::new(edges),
+                    vertices: Arc::new(vertices),
                     topology: topology.clone(),
                 };
                 timings.shape_publication_ms += publication_started.elapsed().as_secs_f64() * 1000.;
@@ -830,10 +1014,11 @@ impl Compiler {
             } else {
                 None
             };
+            let cache_started = std::time::Instant::now();
             let key = cached.as_mut().and_then(|c| c.key(id));
-            if let Some((solid, shape, extras)) =
-                key.and_then(|key| cached.as_mut().and_then(|c| c.lookup(&key, revision)))
-            {
+            let hit = key.and_then(|key| cached.as_mut().and_then(|c| c.lookup(&key, revision)));
+            timings.feature_cache_lookup_ms += cache_started.elapsed().as_secs_f64() * 1000.;
+            if let Some((solid, shape, extras)) = hit {
                 extras.apply(
                     id,
                     crate::eval_cache::Sides {
@@ -860,9 +1045,10 @@ impl Compiler {
             if let Some(cached) = cached.as_mut() {
                 cached.evaluated(id, key.is_some());
             }
-            let consumed_before = key.map(|_| consumed_versions.clone());
+            let mut consumed_by_feature = Vec::new();
             // Provider dispatch is confined to the native model layer. The UI,
             // document and storage layers do not implement geometry algorithms.
+            let feature_started = std::time::Instant::now();
             let solid = match (definition.type_id.as_str(), definition.schema_version) {
                 (model::EXTRUDE_TYPE, model::EXTRUDE_SCHEMA) => {
                     let source =
@@ -882,29 +1068,72 @@ impl Compiler {
                         .map_err(|e| error(Some(id), e))?;
                     let (profile, origins) =
                         profiles.model(&source.profile, id, &solids, &topologies, interrupt)?;
-                    crate::extrude::Extrusion {
-                        document,
-                        revision,
-                        feature: id,
-                        solids: &solids,
-                        topologies: &topologies,
-                        policy: self.policy,
-                        interrupt,
+                    let associative = crate::extrude::has_associative_end(&extent.extent);
+                    if backend == GeometryBackend::Rust && !associative {
+                        crate::rust_backend::extrude(
+                            id,
+                            &source.parameters,
+                            &extent,
+                            profile,
+                            &origins,
+                            context.parameters(),
+                            self.policy,
+                            interrupt,
+                        )?
+                    } else {
+                        let report = (associative && extent.taper_rad == 0.).then(|| {
+                            profiles
+                                .references
+                                .get_or_insert_with(|| {
+                                    references::ReferenceInspector::new(document, revision)
+                                })
+                                .inspect(&topologies)
+                        });
+                        let extrusion = crate::extrude::Extrusion {
+                            document,
+                            revision,
+                            feature: id,
+                            solids: &solids,
+                            report: report.as_ref(),
+                            policy: self.policy,
+                            interrupt,
+                        };
+                        match backend {
+                            GeometryBackend::OpenCascade => {
+                                extrusion.build(profile, &origins, &extent)?
+                            }
+                            GeometryBackend::Rust => {
+                                extrusion.build_rust_associative(profile, &origins, &extent)?
+                            }
+                        }
                     }
-                    .build(profile, &origins, &extent)?
                 }
                 (model::PRIMITIVE_TYPE, model::PRIMITIVE_SCHEMA) => {
                     let source =
                         model::read_primitive(document, id).map_err(|e| error(Some(id), e))?;
-                    let primitive = source
-                        .parameters
-                        .resolve(context.parameters())
-                        .map_err(|e| error(Some(id), e))?;
-                    build_primitive(primitive, id, self.policy).map_err(|e| error(Some(id), e))?
+                    if backend == GeometryBackend::Rust {
+                        crate::rust_backend::primitive(
+                            id,
+                            &source.parameters,
+                            context.parameters(),
+                            self.policy,
+                        )?
+                    } else {
+                        let primitive = source
+                            .parameters
+                            .resolve(context.parameters())
+                            .map_err(|e| error(Some(id), e))?;
+                        build_primitive(primitive, id, self.policy)
+                            .map_err(|e| error(Some(id), e))?
+                    }
                 }
-                (model::SLAB_TYPE, 1) => {
-                    crate::levels::build_slab(document, context.parameters(), id, self.policy)?
-                }
+                (model::SLAB_TYPE, 1) => crate::levels::build_slab(
+                    document,
+                    context.parameters(),
+                    id,
+                    self.policy,
+                    backend,
+                )?,
                 (model::COMPOUND_CUTOUT_TYPE, model::COMPOUND_CUTOUT_SCHEMA) => compound_cutouts
                     .build(
                         document,
@@ -912,6 +1141,7 @@ impl Compiler {
                         id,
                         &solids,
                         self.policy,
+                        backend,
                         interrupt,
                     )?,
                 (model::COMPOUND_CUTOUT_RECEIVER_TYPE, model::COMPOUND_CUTOUT_SCHEMA) => {
@@ -921,18 +1151,22 @@ impl Compiler {
                     let source = model::read_connection_receiver(document, id)
                         .map_err(|e| error(Some(id), e))?;
                     let started = std::time::Instant::now();
-                    let solid = crate::connection_receivers::build(
-                        crate::connection_receivers::Inputs {
-                            document,
-                            parameters: context.parameters(),
-                            revision,
-                            snapshots: &topologies,
-                            solids: &solids,
-                            policy: self.policy,
-                        },
-                        id,
-                        &source,
-                    )?;
+                    let inputs = crate::connection_receivers::Inputs {
+                        document,
+                        parameters: context.parameters(),
+                        revision,
+                        snapshots: &topologies,
+                        solids: &solids,
+                        policy: self.policy,
+                    };
+                    let solid = match backend {
+                        GeometryBackend::OpenCascade => {
+                            crate::connection_receivers::build(inputs, id, &source)?
+                        }
+                        GeometryBackend::Rust => {
+                            crate::connection_receivers::build_rust(inputs, id, &source, interrupt)?
+                        }
+                    };
                     timings.receiving_cut_ms += started.elapsed().as_secs_f64() * 1000.;
                     solid
                 }
@@ -940,13 +1174,24 @@ impl Compiler {
                     let source =
                         model::read_thread(document, id).map_err(|e| error(Some(id), e))?;
                     let started = std::time::Instant::now();
-                    let solid = crate::threads::build(
-                        id,
-                        &source,
-                        context.parameters(),
-                        &solids,
-                        self.policy,
-                    )?;
+                    let solid = if backend == GeometryBackend::Rust {
+                        crate::threads::build_rust(
+                            id,
+                            &source,
+                            context.parameters(),
+                            &solids,
+                            self.policy,
+                            interrupt,
+                        )?
+                    } else {
+                        crate::threads::build(
+                            id,
+                            &source,
+                            context.parameters(),
+                            &solids,
+                            self.policy,
+                        )?
+                    };
                     timings.thread_construction_ms += started.elapsed().as_secs_f64() * 1000.;
                     solid
                 }
@@ -954,32 +1199,52 @@ impl Compiler {
                     let source = model::read_mechanical_part(document, id)
                         .map_err(|e| error(Some(id), e))?;
                     let started = std::time::Instant::now();
-                    let solid = crate::mechanical_parts::build(
-                        id,
-                        &source,
-                        context.parameters(),
-                        self.policy,
-                    )?;
+                    let solid = match backend {
+                        GeometryBackend::Rust => {
+                            crate::mechanical_parts::build_rust_with_pipe_factory(
+                                id,
+                                &source,
+                                context.parameters(),
+                                self.policy,
+                                cached.as_mut().map(|c| c.pipe_thread_factory()),
+                                interrupt,
+                            )
+                        }
+                        GeometryBackend::OpenCascade => crate::mechanical_parts::build(
+                            id,
+                            &source,
+                            context.parameters(),
+                            self.policy,
+                        ),
+                    }?;
                     timings.hardware_construction_ms += started.elapsed().as_secs_f64() * 1000.;
                     solid
                 }
                 (model::GEAR_TYPE, model::GEAR_SCHEMA) => {
                     let source = model::read_gear(document, id).map_err(|e| error(Some(id), e))?;
                     let started = std::time::Instant::now();
-                    let solid =
-                        crate::gears::build(id, &source, context.parameters(), self.policy)?;
+                    let build = match backend {
+                        GeometryBackend::OpenCascade => crate::gears::build,
+                        GeometryBackend::Rust => crate::gears::build_rust,
+                    };
+                    let solid = build(id, &source, context.parameters(), self.policy)?;
                     timings.gear_construction_ms += started.elapsed().as_secs_f64() * 1000.;
                     solid
                 }
-                (model::STAIR_TYPE, 1) => {
-                    crate::levels::build_stair(document, context.parameters(), id, self.policy)?
-                }
+                (model::STAIR_TYPE, 1) => crate::levels::build_stair(
+                    document,
+                    context.parameters(),
+                    id,
+                    self.policy,
+                    backend,
+                )?,
                 (model::PANEL_TYPE, model::PANEL_SCHEMA | model::RECIPE_PANEL_SCHEMA) => {
                     let (solid, frame) = crate::cabinetry::build(
                         document,
                         context.parameters(),
                         id,
                         self.policy,
+                        backend,
                         |sketch, region| {
                             profiles.get(sketch, region, id, &solids, &topologies, interrupt)
                         },
@@ -1000,6 +1265,7 @@ impl Compiler {
                         id,
                         self.policy,
                         &solids,
+                        backend,
                     )?
                 }
                 (model::LOOSE_TENON_TYPE, model::LOOSE_TENON_SCHEMA) => {
@@ -1008,6 +1274,7 @@ impl Compiler {
                         context.parameters(),
                         id,
                         self.policy,
+                        backend,
                     )?
                 }
                 (model::MACHINING_CUT_TYPE, model::MACHINING_CUT_SCHEMA) => {
@@ -1017,23 +1284,31 @@ impl Compiler {
                         id,
                         self.policy,
                         &solids,
+                        backend,
                     )?
                 }
                 (model::imports::STEP_BODY_TYPE, 1) => {
-                    crate::imports::build_step_body(document, id, self.policy)?
+                    crate::imports::build_step_body(document, id, self.policy, backend)?
                 }
                 (model::imports::BOARD_TYPE, 1) => {
-                    crate::imports::build_board(document, id, self.policy)?
+                    crate::imports::build_board(document, id, self.policy, backend)?
                 }
                 (model::imports::COMPONENT_TYPE, 1) => {
-                    crate::imports::build_component(document, id, self.policy)?
+                    crate::imports::build_component(document, id, self.policy, backend)?
                 }
                 (model::AID_TYPE, model::AID_SCHEMA) => {
                     let target = model::read_aid(document, id)
                         .map_err(|e| error(Some(id), e))?
                         .target;
                     let target = bodies.get(&target).and_then(|head| solids.get(head));
-                    crate::fdm::build(document, context.parameters(), id, self.policy, target)?
+                    crate::fdm::build(
+                        document,
+                        context.parameters(),
+                        id,
+                        self.policy,
+                        target,
+                        backend,
+                    )?
                 }
                 (model::MEMBER_TYPE, model::MEMBER_SCHEMA) => {
                     let (solid, member) = crate::weldment::build(
@@ -1041,6 +1316,7 @@ impl Compiler {
                         context.parameters(),
                         id,
                         self.policy,
+                        backend,
                         &mut weld_paths,
                         interrupt,
                     )?;
@@ -1057,6 +1333,7 @@ impl Compiler {
                         policy: self.policy,
                     },
                     context.parameters(),
+                    backend,
                     interrupt,
                 )?,
                 (model::PROFILE_CONNECTION_OUTPUT_TYPE, 1) => crate::profile_connections::build(
@@ -1070,6 +1347,7 @@ impl Compiler {
                         policy: self.policy,
                     },
                     id,
+                    backend,
                 )?,
                 (model::SHEET_TYPE, model::SHEET_SCHEMA) => {
                     let (solid, layout) = crate::sheet_metal::build(
@@ -1077,6 +1355,7 @@ impl Compiler {
                         context.parameters(),
                         id,
                         self.policy,
+                        backend,
                         |sketch, region| {
                             profiles.get(sketch, region, id, &solids, &topologies, interrupt)
                         },
@@ -1124,6 +1403,7 @@ impl Compiler {
                         crate::sheet_metal::CutProfile {
                             geometry: profile,
                             developed: chart.is_some(),
+                            backend,
                         },
                         &origins,
                         self.policy,
@@ -1131,15 +1411,20 @@ impl Compiler {
                     sheet_layouts.insert(id, layout);
                     solid
                 }
-                (model::HARDWARE_TYPE, model::HARDWARE_SCHEMA) => {
-                    crate::sheet_hardware::build(document, id, &sheet_layouts, self.policy)?
-                }
+                (model::HARDWARE_TYPE, model::HARDWARE_SCHEMA) => crate::sheet_hardware::build(
+                    document,
+                    id,
+                    &sheet_layouts,
+                    self.policy,
+                    backend,
+                )?,
                 (model::WALL_TYPE, model::WALL_SCHEMA | model::LAYERED_WALL_SCHEMA) => {
                     crate::walls::build(
                         document,
                         context.parameters(),
                         id,
                         self.policy,
+                        backend,
                         &solids,
                         interrupt,
                     )?
@@ -1160,7 +1445,11 @@ impl Compiler {
                                 + profile.frame.v[i] * resolved.axis_direction[1]
                         }),
                     };
-                    Solid::revolve_curved_profile_named(
+                    let revolve = match backend {
+                        GeometryBackend::OpenCascade => Solid::revolve_curved_profile_named,
+                        GeometryBackend::Rust => Solid::rust_revolve_curved_profile_named,
+                    };
+                    revolve(
                         &profile,
                         axis,
                         resolved.angle_rad,
@@ -1220,11 +1509,49 @@ impl Compiler {
                             solids: &solids,
                             topologies: &topologies,
                             policy: self.policy,
+                            interrupt,
                         },
                         id,
                         &source,
                         &captures,
                     )?
+                }
+                (model::HELICAL_TUBE_CUT_TYPE, model::HELICAL_TUBE_CUT_SCHEMA) => {
+                    if backend != GeometryBackend::Rust {
+                        return Err(error(
+                            Some(id),
+                            "Helical tube cut requires the Rust geometry backend",
+                        ));
+                    }
+                    let source = model::read_helical_tube_cut(document, id)
+                        .map_err(|e| error(Some(id), e))?;
+                    let producer = source
+                        .input
+                        .resolve_producer(document)
+                        .map_err(|e| error(Some(id), e))?;
+                    let stock = solids.get(&producer).ok_or_else(|| {
+                        error(
+                            Some(id),
+                            "Helical tube cut stock has no current exact solid",
+                        )
+                    })?;
+                    let tool = source
+                        .parameters
+                        .resolve(context.parameters())
+                        .map_err(|e| error(Some(id), e))?;
+                    stock
+                        .rust_cut_helical_tube(
+                            multicad_kernel::HelicalTube {
+                                radius_mm: tool.radius_mm,
+                                pitch_mm: tool.pitch_mm,
+                                path_height_mm: tool.path_height_mm,
+                                start_height_mm: tool.start_height_mm,
+                                start_angle_rad: tool.start_angle_rad,
+                            },
+                            id,
+                            self.policy,
+                        )
+                        .map_err(|e| error(Some(id), e))?
                 }
                 (model::TRANSFER_TYPE, 1) => {
                     let (_, source, target, captures) = model::read_transfer_feature(document, id)
@@ -1254,6 +1581,7 @@ impl Compiler {
                         profiles.advanced(&source, id, &solids, &topologies, interrupt)?;
                     crate::advanced::build(
                         crate::advanced::Inputs {
+                            backend,
                             revision,
                             parameters: context.parameters(),
                             solids: &solids,
@@ -1280,7 +1608,7 @@ impl Compiler {
                         interrupt,
                     }
                     .build(id, &source)?;
-                    consumed_versions.extend(
+                    consumed_by_feature.extend(
                         source
                             .consumed_inputs()
                             .iter()
@@ -1298,7 +1626,7 @@ impl Compiler {
                         self.policy,
                         interrupt,
                     )?;
-                    consumed_versions.extend(
+                    consumed_by_feature.extend(
                         source
                             .consumed_inputs()
                             .iter()
@@ -1327,7 +1655,8 @@ impl Compiler {
                             ));
                         }
                     };
-                    let mut result: Option<Solid> = None;
+                    let mut operands = Vec::with_capacity(source.tools.len() + 1);
+                    operands.push(target);
                     for input in &source.tools {
                         checkpoint(interrupt)?;
                         input
@@ -1336,9 +1665,111 @@ impl Compiler {
                         let tool = solids.get(&input.producer).ok_or_else(|| {
                             error(Some(id), "Boolean tool has no current exact solid")
                         })?;
-                        result=Some(result.as_ref().unwrap_or(target).boolean(tool,operation,self.policy).map_err(|e|error(Some(id),e))?.ok_or_else(||error(Some(id),"Boolean removed all material; no output body can be committed"))?);
+                        operands.push(tool);
                     }
-                    let solid = result.ok_or_else(|| error(Some(id), "Boolean requires a tool"))?;
+                    let analytic = if backend == GeometryBackend::Rust {
+                        let certified = Solid::boolean_planar_certified(
+                            &operands, operation, id, self.policy, interrupt,
+                        ).map(|result| result.and_then(|solid| solid.ok_or_else(|| {
+                            multicad_kernel::GeometryError {
+                                operation: "planar Boolean",
+                                kind: multicad_kernel::GeometryErrorKind::InvalidResult,
+                                message: "Boolean removed all material; no output body can be committed".into(),
+                            }
+                        })));
+                        certified
+                            .or_else(|| {
+                                Solid::boolean_spline_cap_relief(
+                                    &operands,
+                                    operation,
+                                    id,
+                                    self.policy,
+                                    interrupt,
+                                )
+                            })
+                            .or_else(|| match operation {
+                                multicad_kernel::BooleanOperation::Union => {
+                                    Solid::union_coaxial_cylinders(&operands, id, self.policy)
+                                        .or_else(|| {
+                                            Solid::union_round_rectangular_stack(
+                                                &operands,
+                                                id,
+                                                self.policy,
+                                            )
+                                        })
+                                        .or_else(|| {
+                                            Solid::union_quarter_rounds(&operands, id, self.policy)
+                                        })
+                                        .or_else(|| {
+                                            Solid::union_planar_pieces(&operands, id, self.policy)
+                                        })
+                                }
+                                multicad_kernel::BooleanOperation::Subtract => target
+                                    .subtract_warped_tools(&operands[1..], id, self.policy)
+                                    .or_else(|| {
+                                        target.subtract_cylindrical_compound_tools(
+                                            &operands[1..],
+                                            self.policy,
+                                        )
+                                    }),
+                                multicad_kernel::BooleanOperation::Intersect => {
+                                    Solid::intersect_warped_box(&operands, id, self.policy)
+                                }
+                            })
+                    } else {
+                        None
+                    };
+                    let solid = if let Some(analytic) = analytic {
+                        analytic.map_err(|e| error(Some(id), e))?
+                    } else {
+                        let removed = || {
+                            error(
+                                Some(id),
+                                "Boolean removed all material; no output body can be committed",
+                            )
+                        };
+                        let mut result: Option<Solid> = None;
+                        for &tool in &operands[1..] {
+                            checkpoint(interrupt)?;
+                            let next = result.as_ref().unwrap_or(target).boolean(
+                                tool,
+                                operation,
+                                self.policy,
+                            );
+                            match next {
+                                Err(cause)
+                                    if backend == GeometryBackend::Rust
+                                        && operation
+                                            == multicad_kernel::BooleanOperation::Subtract
+                                        && cause.kind == GeometryErrorKind::Unsupported =>
+                                {
+                                    // Trim all tools against the original stock so adjacent cuts
+                                    // share boundaries in a single planar evaluation.
+                                    let cut = target.rust_subtract_planar_tools(
+                                        &operands[1..],
+                                        id,
+                                        self.policy,
+                                    );
+                                    result = Some(match cut {
+                                        Err(e) if e.kind == GeometryErrorKind::Unsupported => {
+                                            return Err(error(Some(id), cause));
+                                        }
+                                        cut => cut
+                                            .map_err(|e| error(Some(id), e))?
+                                            .ok_or_else(removed)?,
+                                    });
+                                    break;
+                                }
+                                next => {
+                                    result = Some(
+                                        next.map_err(|e| error(Some(id), e))?
+                                            .ok_or_else(removed)?,
+                                    );
+                                }
+                            }
+                        }
+                        result.ok_or_else(|| error(Some(id), "Boolean requires a tool"))?
+                    };
                     if solid.solid_count().map_err(|e| error(Some(id), e))? != 1 {
                         return Err(error(
                             Some(id),
@@ -1346,7 +1777,7 @@ impl Compiler {
                         ));
                     }
                     if !source.keep_tools {
-                        consumed_versions
+                        consumed_by_feature
                             .extend(source.tools.iter().map(|tool| (tool.body, tool.producer)));
                     }
                     solid
@@ -1358,17 +1789,33 @@ impl Compiler {
                     ));
                 }
             };
+            let elapsed = feature_started.elapsed().as_secs_f64() * 1000.;
+            if let Some(total) = timings.feature_providers_ms.get_mut(&definition.type_id) {
+                *total += elapsed;
+            } else {
+                timings
+                    .feature_providers_ms
+                    .insert(definition.type_id.clone(), elapsed);
+            }
             checkpoint(interrupt)?;
-            let topology = solid
-                .topology_snapshot(id, revision)
-                .map_err(|e| error(Some(id), e))?;
             let publication_started = std::time::Instant::now();
+            let TopologyDisplay {
+                topology,
+                edges,
+                vertices,
+            } = solid
+                .topology_with_display(
+                    id,
+                    revision,
+                    (!self.omit_display).then_some(self.mesh.linear_deflection_mm),
+                )
+                .map_err(|e| error(Some(id), e))?;
             let snapshot = ShapeSnapshot {
                 producer: id,
                 bounds: solid.bounds().map_err(|e| error(Some(id), e))?,
                 volume_mm3: solid.volume_mm3().map_err(|e| error(Some(id), e))?,
                 solid_count: solid.solid_count().map_err(|e| error(Some(id), e))?,
-                mesh: if self.omit_display {
+                mesh: Arc::new(if self.omit_display {
                     Mesh {
                         vertices: vec![],
                         indices: vec![],
@@ -1376,19 +1823,9 @@ impl Compiler {
                     }
                 } else {
                     solid.mesh(self.mesh).map_err(|e| error(Some(id), e))?
-                },
-                edges: if self.omit_display {
-                    vec![]
-                } else {
-                    solid
-                        .display_edges(self.mesh.linear_deflection_mm)
-                        .map_err(|e| error(Some(id), e))?
-                },
-                vertices: if self.omit_display {
-                    vec![]
-                } else {
-                    solid.display_vertices().map_err(|e| error(Some(id), e))?
-                },
+                }),
+                edges: Arc::new(edges),
+                vertices: Arc::new(vertices),
                 topology: topology.clone(),
             };
             timings.shape_publication_ms += publication_started.elapsed().as_secs_f64() * 1000.;
@@ -1400,18 +1837,14 @@ impl Compiler {
                 ));
             }
             let snapshot = Arc::new(snapshot);
-            if let (Some(cached), Some(key), Some(before)) = (cached.as_mut(), key, consumed_before)
-            {
-                let extras = crate::eval_cache::capture(
-                    id,
-                    crate::eval_cache::Sides {
-                        panel_frames: &mut panel_frames,
-                        sheet_layouts: &mut sheet_layouts,
-                        member_paths: &mut member_paths,
-                        consumed: &mut consumed_versions,
-                    },
-                    &before,
-                );
+            consumed_versions.extend(consumed_by_feature.iter().copied());
+            if let (Some(cached), Some(key)) = (cached.as_mut(), key) {
+                let extras = crate::eval_cache::Extras {
+                    panel_frame: panel_frames.get(&id).copied(),
+                    sheet_layout: sheet_layouts.get(&id).cloned(),
+                    member_path: member_paths.get(&id).copied(),
+                    consumed: consumed_by_feature,
+                };
                 cached.store(key, &solid, &snapshot, extras);
             }
             topologies.insert(id, topology);
@@ -1421,23 +1854,29 @@ impl Compiler {
         drop(cached);
         let pair_started = std::time::Instant::now();
         let gear_pair_checks = if roots.is_none() {
-            crate::gear_pairs::validate(
-                crate::gear_pairs::ValidationInputs {
-                    document,
-                    evaluated: context.parameters(),
-                    solids: &solids,
-                    occurrences: &occurrences,
-                    revision,
-                    policy: self.policy,
-                    interrupt,
-                },
-                Some(pair_proofs),
-            )?
+            let inputs = crate::gear_pairs::ValidationInputs {
+                document,
+                evaluated: context.parameters(),
+                solids: &solids,
+                occurrences: &occurrences,
+                revision,
+                policy: self.policy,
+                interrupt,
+            };
+            match backend {
+                GeometryBackend::OpenCascade => {
+                    crate::gear_pairs::validate(inputs, Some(pair_proofs))?
+                }
+                GeometryBackend::Rust => {
+                    crate::gear_pairs::validate_rust(inputs, Some(pair_proofs))?
+                }
+            }
         } else {
             BTreeMap::new()
         };
         checkpoint(interrupt)?;
         timings.pair_validation_ms = pair_started.elapsed().as_secs_f64() * 1000.;
+        let reference_started = std::time::Instant::now();
         let mut references = profiles
             .references
             .take()
@@ -1456,8 +1895,10 @@ impl Compiler {
             },
             &mut references,
             roots.is_none(),
+            backend,
             interrupt,
         )?;
+        timings.reference_resolution_ms = reference_started.elapsed().as_secs_f64() * 1000.;
         if roots.is_some() {
             bodies.retain(|_, producer| shapes.contains_key(producer));
         }
@@ -1545,11 +1986,11 @@ impl Compiler {
         let full = roots.is_none();
         let mut model = Model {
             policy: self.policy,
-            solids,
-            leaves,
-            gear_pair_checks,
+            solids: Rc::new(solids),
+            leaves: Rc::new(leaves),
+            gear_pair_checks: Rc::new(gear_pair_checks),
             timings,
-            snapshot: ModelSnapshot {
+            snapshot: Arc::new(ModelSnapshot {
                 screw_connection_checks: vec![],
                 scope: roots.map_or(EvaluationScope::Full, EvaluationScope::Sources),
                 stamp,
@@ -1568,23 +2009,30 @@ impl Compiler {
                 member_paths,
                 sheet_layouts,
                 fdm_aids: Ok(vec![]),
-            },
+            }),
         };
         if full {
             let connection_started = std::time::Instant::now();
-            model.snapshot.screw_connection_checks = crate::screw_connections::validate(
-                document,
-                revision,
-                context.parameters(),
-                &model,
-                interrupt,
-            )?;
+            let validate = match backend {
+                GeometryBackend::OpenCascade => crate::screw_connections::validate,
+                GeometryBackend::Rust => crate::screw_connections::validate_rust,
+            };
+            Arc::make_mut(&mut model.snapshot).screw_connection_checks =
+                validate(document, revision, context.parameters(), &model, interrupt)?;
             model.timings.connection_validation_ms =
                 connection_started.elapsed().as_secs_f64() * 1000.;
-            model.snapshot.envelope_boxes = model.envelope_boxes(document);
-            model.snapshot.guide_outlines = model.guide_outlines(document);
-            if model::aids(document).next().is_some() {
-                model.snapshot.fdm_aids = model.fdm_aids(document).map_err(|e| e.to_string());
+        }
+        if full {
+            let envelopes = model.envelope_boxes(document, context.parameters());
+            let guides = model.guide_outlines(document, context.parameters());
+            let aids = model::aids(document)
+                .next()
+                .map(|_| model.fdm_aids(document).map_err(|e| e.to_string()));
+            let snapshot = Arc::make_mut(&mut model.snapshot);
+            snapshot.envelope_boxes = envelopes;
+            snapshot.guide_outlines = guides;
+            if let Some(aids) = aids {
+                snapshot.fdm_aids = aids;
             }
         }
         Ok(model)

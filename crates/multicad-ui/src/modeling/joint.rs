@@ -2,8 +2,11 @@
 //! butt (either panel through), miter or finger joint, or panels that meet
 //! face to edge with loose tenons (Domino style). Every pair's cuts preview
 //! and apply together; an applied joint reopens to change its settings.
+mod guide;
 #[cfg(test)]
 mod placement_tests;
+#[cfg(test)]
+mod selection_tests;
 mod viewport;
 use super::{
     FormStamp, PreviewState,
@@ -194,8 +197,12 @@ pub(super) struct JointPanel {
     tenon: TenonFields,
     dowels: super::joinery_fields::DowelFields,
     pairs: Vec<[Option<EntityId>; 2]>,
+    /// The (pair, side) the next viewport click fills; None once every
+    /// pair is complete, so a click never silently replaces or adds one.
+    active: Option<(usize, usize)>,
     /// Pick pair panels by clicking their faces in the viewport.
     place: bool,
+    /// Why the last click was not used.
     pick_note: Option<String>,
     error: Option<String>,
 }
@@ -224,6 +231,7 @@ impl JointPanel {
             tenon: TenonFields::default(),
             dowels: Default::default(),
             pairs: vec![[None, None]],
+            active: Some((0, 0)),
             place: true,
             pick_note: None,
             error: None,
@@ -243,6 +251,7 @@ impl JointPanel {
     pub fn with_pair(mut self, a: Option<EntityId>, b: Option<EntityId>) -> Self {
         if self.existing.is_none() {
             self.pairs = vec![[a, b]];
+            self.active = self.first_open_slot();
         }
         self
     }
@@ -266,6 +275,7 @@ impl JointPanel {
         );
         form.existing = Some(joint_id);
         form.pairs = joint.pairs.iter().map(|p| [Some(p.a), Some(p.b)]).collect();
+        form.active = None;
         form.kind = match &joint.kind {
             PanelJointKind::ButtAThrough => Kind::ButtA,
             PanelJointKind::ButtBThrough => Kind::ButtB,
@@ -311,8 +321,14 @@ impl JointPanel {
             .iter()
             .enumerate()
             .map(|(i, [a, b])| match (a, b) {
+                (Some(a), Some(b)) if a == b => Err(format!(
+                    "Pair {} uses {} as both A and B; choose two different panels",
+                    i + 1,
+                    document.get(*a).map_or("one panel", |e| e.name.as_str())
+                )),
                 (Some(a), Some(b)) => Ok(PanelJointPair { a: *a, b: *b }),
-                _ => Err(format!("Choose both panels of pair {}", i + 1)),
+                (None, _) => Err(format!("Choose panel A of pair {}", i + 1)),
+                (_, None) => Err(format!("Choose panel B of pair {}", i + 1)),
             })
             .collect::<Result<Vec<_>, _>>()?;
         let kind = match self.kind {
@@ -350,13 +366,10 @@ impl JointPanel {
         } else if self.kind == Kind::LooseTenon {
             "One panel's edge must lie flat on the other panel's face. Each tenon gets a rounded mortise in both panels and the tenons become their own Part."
         } else {
-            "Panels must overlap at a right-angle corner: extend both to the outside corner. Each panel keeps its share of the corner block."
+            "Panels must overlap at a right-angle corner: each one runs through the other's thickness to the outside corner. Panels that only touch, butted face to edge, have no corner block; the viewport shows what is missing."
         });
         ui.checkbox(&mut self.place, "Pick pairs in the viewport")
-            .on_hover_text("Click panel A, then panel B, on their visible faces; the next click starts the next pair");
-        if let Some(note) = &self.pick_note {
-            ui.colored_label(egui::Color32::LIGHT_RED, note);
-        }
+            .on_hover_text("Click panel A, then panel B, on their visible faces. Use Pick beside A or B to replace one; Add pair for another corner.");
         ui.label("Joint name");
         let mut changed = ui
             .add_enabled(
@@ -413,32 +426,79 @@ impl JointPanel {
         };
         let mut remove = None;
         let editable = self.existing.is_none();
-        for (i, pair) in self.pairs.iter_mut().enumerate() {
+        let picking = self.place && editable;
+        let diagnoses = self.diagnoses(document);
+        for i in 0..self.pairs.len() {
             ui.push_id(i, |ui| {
+                ui.label(format!("Pair {}", i + 1));
                 for (k, label) in ["A", "B"].into_iter().enumerate() {
-                    ui.add_enabled_ui(editable, |ui| {
-                        controls::inspector_combo(ui, label)
-                            .selected_text(format!("{} {label}: {}", i + 1, name_of(pair[k])))
-                            .show_ui(ui, |ui| {
-                                for (id, name) in &parts {
-                                    changed |= ui
-                                        .selectable_value(&mut pair[k], Some(*id), name)
-                                        .changed();
+                    let waiting = picking && self.active == Some((i, k));
+                    ui.horizontal(|ui| {
+                        let color = if k == 0 {
+                            super::panel_face::TARGET
+                        } else {
+                            super::panel_face::ROLE_B
+                        };
+                        ui.colored_label(color, label);
+                        ui.add_enabled_ui(editable, |ui| {
+                            let before = self.pairs[i][k];
+                            controls::inspector_combo(ui, label)
+                                .selected_text(if waiting && before.is_none() {
+                                    "Waiting for a click…".to_owned()
+                                } else {
+                                    name_of(before)
+                                })
+                                .show_ui(ui, |ui| {
+                                    for (id, name) in &parts {
+                                        ui.selectable_value(&mut self.pairs[i][k], Some(*id), name);
+                                    }
+                                });
+                            if self.pairs[i][k] != before {
+                                changed = true;
+                                if self.active == Some((i, k)) {
+                                    self.active = self.next_open_slot(i);
                                 }
-                            });
+                            }
+                        });
+                        if picking
+                            && ui
+                                .selectable_label(waiting, if waiting { "Picking" } else { "Pick" })
+                                .on_hover_text(format!(
+                                    "Click a panel in the viewport to set pair {} panel {label}",
+                                    i + 1
+                                ))
+                                .clicked()
+                        {
+                            self.active = (!waiting).then_some((i, k));
+                            self.pick_note = None;
+                        }
                     });
+                }
+                if let Some(Some(guide)) = diagnoses.get(i) {
+                    guide::section(ui, guide);
                 }
                 if editable && ui.small_button("Remove pair").clicked() {
                     remove = Some(i);
                 }
             });
         }
+        if picking {
+            ui.small(match self.active {
+                Some((i, k)) => format!("Next click sets pair {} panel {}", i + 1, ["A", "B"][k]),
+                None => "Every pair is chosen. Use Pick beside A or B to replace one, or Add pair."
+                    .to_owned(),
+            });
+        }
+        if let Some(note) = &self.pick_note {
+            ui.colored_label(egui::Color32::LIGHT_RED, note);
+        }
         if let Some(i) = remove {
-            self.pairs.remove(i);
+            self.remove_pair(i);
             changed = true;
         }
         if editable && ui.button("Add pair").clicked() {
             self.pairs.push([None, None]);
+            self.active = Some((self.pairs.len() - 1, 0));
             changed = true;
         }
         ui.separator();

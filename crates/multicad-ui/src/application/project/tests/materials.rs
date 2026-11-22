@@ -37,7 +37,7 @@ fn project_buttons_create_shared_definitions_with_one_apply_each() {
     assert!(egui::PanelState::load(&ctx, egui::Id::new("parameters-metadata")).is_none());
     assert!(egui::PanelState::load(&ctx, egui::Id::new("project-material-tree")).is_some());
     assert!(egui::PanelState::load(&ctx, egui::Id::new("project-material-preview")).is_some());
-    for (i, label) in ["New material", "New sheet stock", "New profile stock"]
+    for (i, label) in ["New material", "New metal sheet stock", "New profile stock"]
         .into_iter()
         .enumerate()
     {
@@ -104,7 +104,7 @@ fn project_material_draft_discard_is_neutral_and_cannot_be_hidden_by_mode_or_par
     let (mut app, ctx, size) = native_app();
     let before = app.current().session.document().clone();
     click(&ctx, &mut app, size, "Materials");
-    click(&ctx, &mut app, size, "New sheet stock");
+    click(&ctx, &mut app, size, "New metal sheet stock");
     assert!(
         app.invoke(Command::Mode(Mode::Model), &[], Channel::Ui)
             .is_err()

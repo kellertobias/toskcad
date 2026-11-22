@@ -7,7 +7,9 @@ use crate::{
     host::{Host, with},
 };
 use multicad_core::model::imports;
-use multicad_model::imports::{KicadOptions, read_kicad_file, read_step_file};
+use multicad_model::imports::{
+    KicadOptions, read_kicad_file_with_backend, read_step_file_with_backend,
+};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -78,7 +80,11 @@ fn finish(
     revision: u64,
     mut out: Value,
 ) -> ToolResult {
-    compile(prepared.document(), revision, call)?;
+    let model = compile(prepared.document(), revision, call)?;
+    call.finish(multicad_model::imports::validate_references(
+        prepared.document(),
+        &model,
+    ))?;
     let call = call.clone();
     let committed = with(host, move |target| commit(target, &call, prepared))??;
     out["revision"] = json!(committed);
@@ -87,7 +93,8 @@ fn finish(
 
 pub(super) fn import_step(host: &dyn Host, call: &Request, args: StepImportArgs) -> ToolResult {
     let path = scoped(host, &args.file_name, &[".step", ".stp"])?;
-    let file = read_step_file(&path)?;
+    call.check()?;
+    let file = call.finish(read_step_file_with_backend(&path, call.backend))?;
     let source = args.source.as_deref().map(id).transpose()?;
     let revision = args.expected_revision;
     let call_owned = call.clone();
@@ -120,13 +127,14 @@ pub(super) fn import_step(host: &dyn Host, call: &Request, args: StepImportArgs)
 
 pub(super) fn import_kicad(host: &dyn Host, call: &Request, args: KicadImportArgs) -> ToolResult {
     let path = scoped(host, &args.file_name, &[".kicad_pcb"])?;
+    call.check()?;
     let options = KicadOptions {
         min_hole_mm: args.min_hole_mm.unwrap_or(2.),
         default_height_mm: args.default_height_mm.unwrap_or(5.),
         components: args.components.clone(),
         model_root: path.parent().map(PathBuf::from),
     };
-    let import = read_kicad_file(&path, &options)?;
+    let import = call.finish(read_kicad_file_with_backend(&path, &options, call.backend))?;
     let board = args.board.as_deref().map(id).transpose()?;
     let revision = args.expected_revision;
     let call_owned = call.clone();

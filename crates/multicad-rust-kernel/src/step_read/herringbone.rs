@@ -1,0 +1,822 @@
+//! Certify the decoded tensor-product B-rep of a known analytic twisted gear.
+use super::{
+    helical::{check_axis, face, orient, poles, require, ring, step_error},
+    *,
+};
+use crate::{
+    normal_sweep::Edge as PlanarEdge,
+    spur_gear::herringbone::Herringbone,
+    step::{
+        helical::product,
+        herringbone::{Chart, prepare},
+    },
+};
+use std::f64::consts::PI;
+
+struct Frame {
+    origin: Point,
+    u: Point,
+    v: Point,
+    normal: Point,
+}
+
+impl Frame {
+    fn world(&self, [x, y]: Point2, z: f64) -> Point {
+        std::array::from_fn(|i| self.origin[i] + self.u[i] * x + self.v[i] * y + self.normal[i] * z)
+    }
+
+    fn local(&self, world: Point) -> Point {
+        let relative = sub(world, self.origin);
+        [self.u, self.v, self.normal].map(|axis| dot(axis, relative))
+    }
+}
+
+/// Verify the closed authored shell and every transmitted spline control.
+/// The volume is integrated from the decoded radial section and axial chart.
+pub fn verify_herringbone(
+    input: &str,
+    gear: &Herringbone,
+    origin: Point,
+    u: Point,
+    v: Point,
+    tolerance: f64,
+) -> Result<f64> {
+    let mut volumes =
+        compound::read_members_by(input, tolerance, true, true, |shell, solid, _| {
+            verify_member(shell, solid, gear, [origin, u, v], tolerance)
+        })?;
+    volumes.pop().ok_or(ReadError::Invalid)
+}
+
+pub(super) fn verify_member(
+    shell: &mut Shell<'_, '_>,
+    solid: u32,
+    gear: &Herringbone,
+    [origin, u, v]: [Point; 3],
+    tolerance: f64,
+) -> Result<f64> {
+    require(
+        origin.into_iter().chain(u).chain(v).all(f64::is_finite)
+            && (dot(u, u) - 1.).abs() <= 1e-10
+            && (dot(v, v) - 1.).abs() <= 1e-10
+            && dot(u, v).abs() <= 1e-10,
+    )?;
+    let frame = Frame {
+        origin,
+        u,
+        v,
+        normal: cross(u, v),
+    };
+    let plan = prepare(gear, origin, tolerance).map_err(step_error)?;
+    let bore = gear.profile().bore().and_then(PlanarEdge::radius_mm);
+    let extensions = gear.hub_extensions();
+    let extension_count = extensions.iter().flatten().count();
+    let n = plan.transverse.len();
+    let faces = shell.member_faces(solid)?;
+    let stations = plan.levels.len();
+    let last = stations - 1;
+    require(
+        faces.len()
+            == 2 * n
+                + 2
+                + usize::from(bore.is_some())
+                + gear.gap_face_count() as usize
+                + 2 * extension_count
+            && faces.iter().collect::<BTreeSet<_>>().len() == faces.len(),
+    )?;
+    let mut rims = vec![vec![None; n]; stations];
+    let mut rails = [(); 2].map(|()| vec![None; n]);
+    let mut integral = 0.;
+    for band in 0..2 {
+        let station = plan.band_start(band);
+        let axial = &plan.spins[band];
+        let heights = &plan.heights[band];
+        for (index, radial) in plan.transverse.iter().enumerate() {
+            let (support, forward, bounds) = face(shell, faces[band * n + index])?;
+            let ([bound], true) = (bounds.as_slice(), forward) else {
+                return Err(ReadError::Invalid);
+            };
+            let decoded = surface(shell, support, radial, axial, heights, &frame)?;
+            if index == 0 {
+                integral += rotation_integral(&decoded, radial.poles[0], axial, &frame)?;
+            }
+            let uses = ring(shell, *bound, true)?;
+            let [(bottom, true), (next, true), (top, false), (prior, false)] = uses[..] else {
+                return Err(ReadError::Invalid);
+            };
+            let next_index = (index + 1) % n;
+            register(&mut rims[station][index], bottom)?;
+            register(&mut rims[station + 1][index], top)?;
+            register(&mut rails[band][index], prior)?;
+            register(&mut rails[band][next_index], next)?;
+        }
+    }
+    let rims = resolved_rows(rims)?;
+    let rails = resolved(rails)?;
+    let mut edge_ids: BTreeSet<_> = rims.iter().chain(&rails).flatten().copied().collect();
+    require(edge_ids.len() == (stations + 2) * n)?;
+    let mut vertices = vec![vec![None; n]; stations];
+    let mut area = 0.;
+    for station in 0..stations {
+        let spin = plan.phases[station];
+        let z = plan.levels[station];
+        for (index, radial) in plan.transverse.iter().enumerate() {
+            let id = rims[station][index];
+            let points = radial
+                .poles
+                .iter()
+                .map(|&p| frame.world(product(p, spin), z));
+            let (ends, decoded, curve) = trim(shell, id, radial, points)?;
+            register(&mut vertices[station][index], ends[0])?;
+            register(&mut vertices[station][(index + 1) % n], ends[1])?;
+            if station == 0 {
+                area += section_area(shell, curve, radial, &decoded, &frame)?;
+            }
+        }
+    }
+    let vertices = resolved_rows(vertices)?;
+    let mut vertex_ids: BTreeSet<_> = vertices.iter().flatten().copied().collect();
+    require(vertex_ids.len() == stations * n)?;
+    for (band, rails) in rails.iter().enumerate() {
+        let station = plan.band_start(band);
+        let axial = &plan.spins[band];
+        for (index, radial) in plan.transverse.iter().enumerate() {
+            let points = axial
+                .poles
+                .iter()
+                .zip(&plan.heights[band])
+                .map(|(&spin, &z)| frame.world(product(radial.poles[0], spin), z));
+            let (ends, _, _) = trim(shell, rails[index], axial, points)?;
+            require(ends == [vertices[station][index], vertices[station + 1][index]])?;
+        }
+    }
+    let core = if gear.is_gapped() {
+        let first = 2 * n + 2 + usize::from(bore.is_some());
+        verify_gap(
+            shell,
+            &faces[first..first + gear.gap_face_count() as usize],
+            gear,
+            &plan,
+            [&rims[1], &rims[2]],
+            [&vertices[1], &vertices[2]],
+            &frame,
+            &mut edge_ids,
+        )?
+    } else {
+        0.
+    };
+    let mut bore_rims = [0; 2];
+    let mut hub_rims = [[0; 2]; 2];
+    let mut circles = CircularChecks {
+        frame: &frame,
+        edges: &mut edge_ids,
+        vertices: &mut vertex_ids,
+    };
+    for (end, station) in [0, last].into_iter().enumerate() {
+        let top = end == 1;
+        let z = plan.levels[station];
+        let hole_radius = extensions[end].map(|hub| hub.radius_mm).or(bore);
+        let bounds = cap_bounds(
+            shell,
+            faces[2 * n + end],
+            &frame,
+            z,
+            top,
+            hole_radius.is_some(),
+        )?;
+        let outer = ring(shell, bounds[0], true)?;
+        let expected = rims[station]
+            .iter()
+            .copied()
+            .map(|id| (id, true))
+            .collect::<Vec<_>>();
+        require(orient(&outer, top) == expected)?;
+        if let Some(radius) = hole_radius {
+            let id = circles.rim(shell, bounds[1], radius, z, false, !top)?;
+            if extensions[end].is_some() {
+                hub_rims[end][1 - end] = id;
+            } else {
+                bore_rims[end] = id;
+            }
+        }
+    }
+    let mut added = 0.;
+    for (end, extension) in extensions.into_iter().enumerate() {
+        let Some(extension) = extension else {
+            continue;
+        };
+        let top = end == 1;
+        let z = extension.end_z_mm;
+        let bounds = cap_bounds(
+            shell,
+            faces[extension.cap_face as usize],
+            &frame,
+            z,
+            top,
+            bore.is_some(),
+        )?;
+        hub_rims[end][end] = circles.rim(shell, bounds[0], extension.radius_mm, z, true, top)?;
+        if let Some(radius) = bore {
+            bore_rims[end] = circles.rim(shell, bounds[1], radius, z, false, !top)?;
+        }
+    }
+    for (end, extension) in extensions.into_iter().enumerate() {
+        let Some(extension) = extension else {
+            continue;
+        };
+        let span = if end == 0 {
+            [extension.end_z_mm, extension.gear_z_mm]
+        } else {
+            [extension.gear_z_mm, extension.end_z_mm]
+        };
+        let height = cylindrical_wall(
+            shell,
+            faces[extension.wall_face as usize],
+            (extension.radius_mm, span[0]),
+            hub_rims[end],
+            &frame,
+            true,
+            &mut edge_ids,
+        )?;
+        require((height - (span[1] - span[0])).abs() <= tolerance)?;
+        added += PI * extension.radius_mm.powi(2) * height;
+    }
+    let void = if let Some(radius) = bore {
+        let height = cylindrical_wall(
+            shell,
+            faces[2 * n + 2],
+            (radius, gear.profile().axial_bounds()[0]),
+            bore_rims,
+            &frame,
+            false,
+            &mut edge_ids,
+        )?;
+        PI * radius * radius * height
+    } else {
+        0.
+    };
+    let volume = area * integral + core + added - void;
+    require(volume.is_finite() && volume > 0.)?;
+    Ok(volume)
+}
+
+fn cap_bounds(
+    shell: &Shell<'_, '_>,
+    face_id: u32,
+    frame: &Frame,
+    z: f64,
+    top: bool,
+    hole: bool,
+) -> Result<Vec<u32>> {
+    let (plane, outward, bounds) = face(shell, face_id)?;
+    require(outward && bounds.len() == 1 + usize::from(hole))?;
+    let [Value::String(_), placement] = shell.args(plane, "PLANE")? else {
+        return Err(ReadError::Invalid);
+    };
+    check_axis(
+        shell,
+        placement,
+        frame.world([0.; 2], z),
+        frame.normal.map(|x| if top { x } else { -x }),
+        frame.u,
+    )?;
+    Ok(bounds)
+}
+
+struct CircularChecks<'a> {
+    frame: &'a Frame,
+    edges: &'a mut BTreeSet<u32>,
+    vertices: &'a mut BTreeSet<u32>,
+}
+
+impl CircularChecks<'_> {
+    fn rim(
+        &mut self,
+        shell: &mut Shell<'_, '_>,
+        bound: u32,
+        radius: f64,
+        z: f64,
+        outer: bool,
+        forward: bool,
+    ) -> Result<u32> {
+        let uses = ring(shell, bound, outer)?;
+        let [(id, sense)] = uses[..] else {
+            return Err(ReadError::Invalid);
+        };
+        require(sense == forward && self.edges.insert(id))?;
+        let [a, b] = shell.edge(id)?;
+        let Curve::Circle(circle) = shell.edges[&id].curve else {
+            return Err(ReadError::Invalid);
+        };
+        let center = self.frame.world([0.; 2], z);
+        // Full circular rims share one seam vertex in the placed radial chart.
+        let vertex = std::array::from_fn(|i| center[i] + radius * self.frame.u[i]);
+        require(
+            a == b
+                && self.vertices.insert(a)
+                && circle.center_mm == center
+                && circle.radius_mm == radius
+                && length(sub(circle.normal, self.frame.normal)) < 1e-10
+                && shell.vertex(a)? == vertex,
+        )?;
+        Ok(id)
+    }
+}
+
+/// Verify the seamed root core, the root arcs under each tooth at both
+/// shoulders and every per-tooth shoulder plane. Returns the core volume
+/// inside the root radius between the shoulders.
+#[allow(clippy::too_many_arguments)]
+fn verify_gap(
+    shell: &mut Shell<'_, '_>,
+    faces: &[u32],
+    gear: &Herringbone,
+    plan: &crate::step::herringbone::Charts,
+    rims: [&[u32]; 2],
+    vertices: [&[u32]; 2],
+    frame: &Frame,
+    edges: &mut BTreeSet<u32>,
+) -> Result<f64> {
+    let teeth = plan.under.len();
+    let n = rims[0].len();
+    let per = n / teeth;
+    let root = |tooth: usize| tooth * per + per - 1;
+    let levels = [plan.levels[1], plan.levels[2]];
+    let radius = gear.root_radius_mm();
+    let (surface, forward, bounds) = face(shell, faces[0])?;
+    let [bound] = bounds.as_slice() else {
+        return Err(ReadError::Invalid);
+    };
+    require(forward)?;
+    let [Value::String(_), axis, Value::Number(actual)] =
+        shell.args(surface, "CYLINDRICAL_SURFACE")?
+    else {
+        return Err(ReadError::Invalid);
+    };
+    require(*actual == radius)?;
+    check_axis(
+        shell,
+        axis,
+        frame.world([0.; 2], levels[0]),
+        frame.normal,
+        frame.u,
+    )?;
+    let uses = ring(shell, *bound, true)?;
+    require(uses.len() == 4 * teeth + 2)?;
+    let (bottom, rest) = uses.split_at(2 * teeth);
+    let (seam_up, rest) = rest.split_at(1);
+    let (top, seam_down) = rest.split_at(2 * teeth);
+    let [(seam, true)] = seam_up[..] else {
+        return Err(ReadError::Invalid);
+    };
+    require(seam_down == [(seam, false)] && edges.insert(seam))?;
+    let mut arcs = [vec![0; teeth], vec![0; teeth]];
+    let top = top
+        .iter()
+        .rev()
+        .map(|&(id, sense)| (id, !sense))
+        .collect::<Vec<_>>();
+    for (side, ring) in [bottom, &top[..]].into_iter().enumerate() {
+        // Counterclockwise from the seam: root 0, then arc and root of each
+        // later tooth, closing with the arc under tooth 0.
+        require(ring[0] == (rims[side][root(0)], true))?;
+        for tooth in 1..teeth {
+            let (arc, false) = ring[2 * tooth - 1] else {
+                return Err(ReadError::Invalid);
+            };
+            require(ring[2 * tooth] == (rims[side][root(tooth)], true))?;
+            arcs[side][tooth] = arc;
+        }
+        let (arc, false) = ring[2 * teeth - 1] else {
+            return Err(ReadError::Invalid);
+        };
+        arcs[side][0] = arc;
+        for (tooth, chart) in plan.under.iter().enumerate() {
+            let points = chart
+                .poles
+                .iter()
+                .map(|&p| frame.world(product(p, plan.phases[1]), levels[side]));
+            let (ends, _, _) = trim(shell, arcs[side][tooth], chart, points)?;
+            require(
+                ends == [vertices[side][root(tooth)], vertices[side][tooth * per]]
+                    && edges.insert(arcs[side][tooth]),
+            )?;
+        }
+    }
+    let ends = shell.edge(seam)?;
+    require(
+        matches!(shell.edges[&seam].curve, Curve::Line)
+            && ends == [vertices[0][root(0)], vertices[1][root(0)]],
+    )?;
+    for (side, upper) in [(0, false), (1, true)] {
+        for tooth in 0..teeth {
+            let bounds = cap_bounds(
+                shell,
+                faces[1 + side * teeth + tooth],
+                frame,
+                levels[side],
+                !upper,
+                false,
+            )?;
+            let expected = (tooth * per..root(tooth))
+                .map(|index| (rims[side][index], true))
+                .chain([(arcs[side][tooth], true)])
+                .collect::<Vec<_>>();
+            require(orient(&ring(shell, bounds[0], true)?, !upper) == expected)?;
+        }
+    }
+    Ok(PI * radius * radius * (levels[1] - levels[0]))
+}
+
+fn resolved_rows(values: Vec<Vec<Option<u32>>>) -> Result<Vec<Vec<u32>>> {
+    values
+        .into_iter()
+        .map(|row| row.into_iter().collect::<Option<Vec<_>>>())
+        .collect::<Option<Vec<_>>>()
+        .ok_or(ReadError::Invalid)
+}
+
+fn register(slot: &mut Option<u32>, id: u32) -> Result<()> {
+    require(slot.is_none_or(|old| old == id))?;
+    *slot = Some(id);
+    Ok(())
+}
+
+fn resolved<const N: usize>(values: [Vec<Option<u32>>; N]) -> Result<[Vec<u32>; N]> {
+    let mut resolved = [(); N].map(|()| Vec::new());
+    for (dest, src) in resolved.iter_mut().zip(values) {
+        *dest = src
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or(ReadError::Invalid)?;
+    }
+    Ok(resolved)
+}
+
+fn list<'a, 'data>(value: &'a Value<'data>) -> Result<&'a [Value<'data>]> {
+    match value {
+        Value::List(items) => Ok(items),
+        _ => Err(ReadError::Invalid),
+    }
+}
+
+fn complex<'a, 'data>(
+    shell: &'a Shell<'_, 'data>,
+    id: u32,
+    names: [&str; 7],
+) -> Result<[&'a [Value<'data>]; 7]> {
+    let components: &[Entity<'data>; 7] = shell
+        .components(id)?
+        .try_into()
+        .map_err(|_| ReadError::Invalid)?;
+    let parts = components.each_ref();
+    require(parts.map(|part| part.name) == names)?;
+    Ok(parts.map(|part| part.args.as_slice()))
+}
+
+fn knots(mult: &Value<'_>, knots: &Value<'_>, expected: &Chart) -> Result<()> {
+    let [mult, knots] = [list(mult)?, list(knots)?];
+    require(mult.len() == expected.knots.len() && knots.len() == mult.len())?;
+    for (i, ((degree, knot), &parameter)) in mult.iter().zip(knots).zip(&expected.knots).enumerate()
+    {
+        let multiplicity = if i == 0 || i + 1 == mult.len() {
+            expected.degree + 1
+        } else {
+            expected.interior_mult
+        };
+        require(
+            *degree == Value::Number(multiplicity as f64) && *knot == Value::Number(parameter),
+        )?;
+    }
+    Ok(())
+}
+
+fn weights(value: &Value<'_>, expected: impl IntoIterator<Item = f64>) -> Result<()> {
+    let values = list(value)?;
+    let mut count = 0;
+    for (i, w) in expected.into_iter().enumerate() {
+        require(values.get(i) == Some(&Value::Number(w)))?;
+        count += 1;
+    }
+    require(count == values.len())
+}
+
+fn surface(
+    shell: &Shell<'_, '_>,
+    id: u32,
+    radial: &Chart,
+    axial: &Chart,
+    heights: &[f64],
+    frame: &Frame,
+) -> Result<Vec<Point>> {
+    let grid = if let Some(expected) = &radial.weights {
+        let parts = complex(
+            shell,
+            id,
+            [
+                "BOUNDED_SURFACE",
+                "B_SPLINE_SURFACE",
+                "B_SPLINE_SURFACE_WITH_KNOTS",
+                "GEOMETRIC_REPRESENTATION_ITEM",
+                "RATIONAL_B_SPLINE_SURFACE",
+                "REPRESENTATION_ITEM",
+                "SURFACE",
+            ],
+        )?;
+        let [
+            [],
+            [
+                Value::Number(du),
+                Value::Number(dv),
+                grid,
+                Value::Enum("UNSPECIFIED"),
+                Value::Enum("F"),
+                Value::Enum("F"),
+                Value::Enum("F"),
+            ],
+            [um, vm, uk, vk, Value::Enum("UNSPECIFIED")],
+            [],
+            [weight_rows],
+            [Value::String(_)],
+            [],
+        ] = parts
+        else {
+            return Err(ReadError::Invalid);
+        };
+        let rows = list(weight_rows)?;
+        require(rows.len() == expected.len())?;
+        for (row, &w) in rows.iter().zip(expected) {
+            weights(row, std::iter::repeat_n(w, axial.poles.len()))?;
+        }
+        surface_parameters([*du, *dv], [um, uk, vm, vk], radial, axial)?;
+        grid
+    } else {
+        let [
+            Value::String(_),
+            Value::Number(du),
+            Value::Number(dv),
+            grid,
+            Value::Enum("UNSPECIFIED"),
+            Value::Enum("F"),
+            Value::Enum("F"),
+            Value::Enum("F"),
+            um,
+            vm,
+            uk,
+            vk,
+            Value::Enum("UNSPECIFIED"),
+        ] = shell.args(id, "B_SPLINE_SURFACE_WITH_KNOTS")?
+        else {
+            return Err(ReadError::Invalid);
+        };
+        surface_parameters([*du, *dv], [um, uk, vm, vk], radial, axial)?;
+        grid
+    };
+    let rows = list(grid)?;
+    require(rows.len() == radial.poles.len())?;
+    let mut first_row = Vec::new();
+    for (i, (row, &point)) in rows.iter().zip(&radial.poles).enumerate() {
+        let decoded = poles(
+            shell,
+            row,
+            axial
+                .poles
+                .iter()
+                .zip(heights)
+                .map(|(&spin, &z)| frame.world(product(point, spin), z)),
+        )?;
+        if i == 0 {
+            first_row = decoded;
+        }
+    }
+    Ok(first_row)
+}
+
+fn surface_parameters(
+    [du, dv]: [f64; 2],
+    [um, uk, vm, vk]: [&Value<'_>; 4],
+    radial: &Chart,
+    axial: &Chart,
+) -> Result<()> {
+    require(du == radial.degree as f64 && dv == axial.degree as f64)?;
+    knots(um, uk, radial)?;
+    knots(vm, vk, axial)
+}
+
+fn trim(
+    shell: &mut Shell<'_, '_>,
+    id: u32,
+    chart: &Chart,
+    mut expected: impl Iterator<Item = Point>,
+) -> Result<([u32; 2], Vec<Point>, u32)> {
+    let [Value::String(_), a, b, curve, Value::Enum("T")] = shell.args(id, "EDGE_CURVE")? else {
+        return Err(ReadError::Invalid);
+    };
+    let ends = [reference(a)?, reference(b)?];
+    let curve = reference(curve)?;
+    require(ends[0] != ends[1])?;
+    let actual = [shell.vertex(ends[0])?, shell.vertex(ends[1])?];
+    require(actual[0] != actual[1])?;
+    if chart.degree == 1 {
+        shell.edge(id)?;
+        require(matches!(shell.edges[&id].curve, Curve::Line) && expected.eq(actual))?;
+        return Ok((ends, actual.into(), curve));
+    }
+    let (degree, controls, mult, parameters) = if let Some(expected_weights) = &chart.weights {
+        let parts = complex(
+            shell,
+            curve,
+            [
+                "BOUNDED_CURVE",
+                "B_SPLINE_CURVE",
+                "B_SPLINE_CURVE_WITH_KNOTS",
+                "CURVE",
+                "GEOMETRIC_REPRESENTATION_ITEM",
+                "RATIONAL_B_SPLINE_CURVE",
+                "REPRESENTATION_ITEM",
+            ],
+        )?;
+        let [
+            [],
+            [
+                Value::Number(degree),
+                control,
+                Value::Enum("UNSPECIFIED"),
+                Value::Enum("F"),
+                Value::Enum("F"),
+            ],
+            [mult, parameters, Value::Enum("UNSPECIFIED")],
+            [],
+            [],
+            [data],
+            [Value::String(_)],
+        ] = parts
+        else {
+            return Err(ReadError::Invalid);
+        };
+        weights(data, expected_weights.iter().copied())?;
+        (*degree, control, mult, parameters)
+    } else {
+        let [
+            Value::String(_),
+            Value::Number(degree),
+            controls,
+            Value::Enum("UNSPECIFIED"),
+            Value::Enum("F"),
+            Value::Enum("F"),
+            mult,
+            parameters,
+            Value::Enum("UNSPECIFIED"),
+        ] = shell.args(curve, "B_SPLINE_CURVE_WITH_KNOTS")?
+        else {
+            return Err(ReadError::Invalid);
+        };
+        (*degree, controls, mult, parameters)
+    };
+    require(degree == chart.degree as f64)?;
+    knots(mult, parameters, chart)?;
+    let points = poles(shell, controls, &mut expected)?;
+    require(points[0] == actual[0] && points[points.len() - 1] == actual[1])?;
+    Ok((ends, points, curve))
+}
+
+fn section_area(
+    shell: &Shell<'_, '_>,
+    curve: u32,
+    chart: &Chart,
+    points: &[Point],
+    frame: &Frame,
+) -> Result<f64> {
+    if chart.degree == 3 {
+        return Ok(shell
+            .spline_curve(curve)?
+            .signed_area(frame.origin, frame.normal));
+    }
+    let cross2 = |a: Point2, b: Point2| a[0] * b[1] - a[1] * b[0];
+    let project = |p| {
+        let [x, y, _] = frame.local(p);
+        [x, y]
+    };
+    if let Some(weights) = &chart.weights {
+        let mut area = 0.;
+        for (points, weights) in points
+            .windows(3)
+            .step_by(2)
+            .zip(weights.windows(3).step_by(2))
+        {
+            let [a, b, c] = [points[0], points[1], points[2]].map(project);
+            let w = weights[1];
+            require((0. ..1.).contains(&w))?;
+            let ab = std::array::from_fn(|i| b[i] - a[i]);
+            let ac = std::array::from_fn(|i| c[i] - a[i]);
+            let signed = cross2(ab, ac);
+            require(signed != 0.)?;
+            let radius = ac[0].hypot(ac[1]) / (2. * (1. - w * w).sqrt());
+            let angle = 2. * w.acos();
+            let segment = if angle < 0.01 {
+                let a2 = angle * angle;
+                angle * a2 / 6. * (1. - a2 / 20. + a2 * a2 / 840.)
+            } else {
+                angle - angle.sin()
+            };
+            area += (cross2(a, c) + signed.signum() * radius * radius * segment) / 2.;
+        }
+        return Ok(area);
+    }
+    Ok(cross2(project(points[0]), project(points[1])) / 2.)
+}
+
+fn binomial(n: usize, k: usize) -> f64 {
+    (1..=k.min(n - k)).fold(1., |value, i| value * (n + 1 - i) as f64 / i as f64)
+}
+
+fn rotation_integral(
+    points: &[Point],
+    reference: Point2,
+    axial: &Chart,
+    frame: &Frame,
+) -> Result<f64> {
+    let [x, y] = reference;
+    let norm_squared = x * x + y * y;
+    require(norm_squared > 0.)?;
+    let inverse = [x / norm_squared, -y / norm_squared];
+    let degree = axial.degree;
+    let mut result = 0.;
+    for segment in points.windows(degree + 1).step_by(degree) {
+        let local = segment
+            .iter()
+            .map(|&point| frame.local(point))
+            .collect::<Vec<_>>();
+        let duration = local[degree][2] - local[0][2];
+        require(duration > 0.)?;
+        let poles = local
+            .into_iter()
+            .map(|[x, y, _]| product([x, y], inverse))
+            .collect::<Vec<_>>();
+        // Integral of two degree-d Bernstein basis polynomials on [0,1].
+        for (i, a) in poles.iter().enumerate() {
+            for (j, b) in poles.iter().enumerate() {
+                let weight = binomial(degree, i) * binomial(degree, j)
+                    / ((2 * degree + 1) as f64 * binomial(2 * degree, i + j));
+                result += duration * weight * (a[0] * b[0] + a[1] * b[1]);
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn cylindrical_wall(
+    shell: &mut Shell<'_, '_>,
+    face_id: u32,
+    (radius, start_z): (f64, f64),
+    rims: [u32; 2],
+    frame: &Frame,
+    outward: bool,
+    edges: &mut BTreeSet<u32>,
+) -> Result<f64> {
+    let (surface, forward, bounds) = face(shell, face_id)?;
+    let [bound] = bounds.as_slice() else {
+        return Err(ReadError::Invalid);
+    };
+    require(forward == outward)?;
+    let [Value::String(_), axis, Value::Number(actual)] =
+        shell.args(surface, "CYLINDRICAL_SURFACE")?
+    else {
+        return Err(ReadError::Invalid);
+    };
+    require(*actual == radius)?;
+    check_axis(
+        shell,
+        axis,
+        frame.world([0.; 2], start_z),
+        frame.normal,
+        frame.u,
+    )?;
+    let uses = ring(shell, *bound, true)?;
+    let [
+        (bottom, bottom_sense),
+        (seam, true),
+        (top, top_sense),
+        (repeated, false),
+    ] = uses[..]
+    else {
+        return Err(ReadError::Invalid);
+    };
+    require(
+        [bottom, top] == rims
+            && bottom_sense == outward
+            && top_sense != outward
+            && seam == repeated
+            && edges.insert(seam),
+    )?;
+    let ends = shell.edge(seam)?;
+    require(
+        matches!(shell.edges[&seam].curve, Curve::Line)
+            && ends == rims.map(|id| shell.edges[&id].vertices[0]),
+    )?;
+    let [a, b] = [shell.vertex(ends[0])?, shell.vertex(ends[1])?];
+    Ok(dot(sub(b, a), frame.normal))
+}
+
+#[cfg(test)]
+mod tests;

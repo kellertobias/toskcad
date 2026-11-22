@@ -52,7 +52,7 @@ impl ModelToolController {
             .commit(prepared)
             .map_err(|error| error.to_string())?;
         match form {
-            ModelForm::Cabinet(panel) => panel.select_stock(stock),
+            ModelForm::Cabinet(panel) => panel.select_stock(stock, session.document()),
             ModelForm::Sheet(panel) => panel.select_stock(stock),
             ModelForm::Weldment(panel) => panel.select_stock(stock),
             _ => unreachable!("checked stock consumer"),

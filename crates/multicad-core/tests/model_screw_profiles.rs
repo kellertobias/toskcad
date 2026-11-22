@@ -183,7 +183,7 @@ fn invalid_profile_dimensions_units_kinds_and_hidden_neck_breakthrough_refuse_at
     for (path, v) in [
         ("/head/crown_radius", 1.),
         ("/head/top_land_diameter", 5.7),
-        ("/head/neck_radius", 1.1),
+        ("/head/neck_radius", 1.4),
         ("/drive/minor_diameter", 3.),
         ("/drive/outer_lobe_radius", 2.),
         ("/drive/depth", 20.),
@@ -447,5 +447,43 @@ fn cards_keep_angle_units_out_of_mm_and_reference_compares_every_new_physical_in
                 }
             }
         }
+    }
+}
+
+#[test]
+fn fully_threaded_head_necks_may_overlap_thread_but_must_end_before_tip() {
+    let s = session();
+    for head in [button(), csk()] {
+        let mut p = recipe(
+            head,
+            ScrewDrive::HexSocket {
+                across_flats: length(2.),
+                depth: length(0.6),
+            },
+        );
+        let MechanicalPartParameters::MachineScrew {
+            underhead_length,
+            thread,
+            ..
+        } = &mut p
+        else {
+            unreachable!()
+        };
+        *underhead_length = Some(length(2.));
+        thread.length = length(2.);
+        let resolved = p.resolve(s.parameters()).unwrap();
+        let ResolvedMechanicalPart::MachineScrew {
+            head,
+            drive,
+            thread,
+            ..
+        } = resolved
+        else {
+            unreachable!()
+        };
+        // No plain shank is required to contain the tangent neck. A full
+        // thread/neck union is a physical construction gate in the compiler.
+        validate_screw_profile_envelope(&head, &drive, 1.5, 2., &thread).unwrap();
+        assert!(validate_screw_profile_envelope(&head, &drive, 1.5, 0.01, &thread).is_err());
     }
 }

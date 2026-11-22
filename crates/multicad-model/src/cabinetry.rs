@@ -1,8 +1,8 @@
-//! Native cabinetry: panel solids from stock, and cut records and stack
+//! Cabinetry: panel solids from stock, and cut records and stack
 //! checks measured from the evaluated solids. A panel's final Part solid is
 //! measured in its panel frame, so later features that change the Part are
 //! reflected in its finished size.
-use crate::{Model, ModelError, error};
+use crate::{GeometryBackend, Model, ModelError, error};
 use multicad_core::{
     document::{Document, DocumentError, EntityData, EntityId},
     materials,
@@ -12,7 +12,8 @@ use multicad_core::{
     sketch_regions::RegionIntent,
 };
 use multicad_kernel::{
-    BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, RigidTransform,
+    BooleanOperation, CircularPocketTool, CurvedEdge2d, CurvedProfile, GeometryPolicy,
+    MAX_CABINET_PANEL_EDGES, MAX_CABINET_PANEL_HOLES, PlaneFrame, RigidTransform, RoundedSlotTool,
     Solid,
 };
 use std::collections::BTreeMap;
@@ -44,6 +45,7 @@ pub(crate) fn build(
     parameters: &EvaluatedParameters,
     id: EntityId,
     policy: GeometryPolicy,
+    backend: GeometryBackend,
     profile: impl FnOnce(EntityId, &RegionIntent) -> Result<(CurvedProfile, Vec<Origin>), ModelError>,
 ) -> Result<(Solid, PlaneFrame), ModelError> {
     let e = |e: DocumentError| error(Some(id), e);
@@ -87,15 +89,26 @@ pub(crate) fn build(
     if thickness <= 0. {
         return Err(error(Some(id), "Panel stock has no thickness"));
     }
-    let n = cross(profile.frame.u, profile.frame.v);
-    let solid = Solid::extrude_panel_profile_vector_named(
-        &profile,
-        n.map(|c| c * thickness),
-        id,
-        &origins,
-        policy,
-    )
-    .map_err(|e| error(Some(id), e))?;
+    let solid = match backend {
+        GeometryBackend::Rust => {
+            let edges = profile.outer.len() + profile.holes.iter().map(Vec::len).sum::<usize>();
+            if edges > MAX_CABINET_PANEL_EDGES || profile.holes.len() > MAX_CABINET_PANEL_HOLES {
+                return Err(error(
+                    Some(id),
+                    "Panel profile exceeds the 128-edge/32-hole manufacturing budget",
+                ));
+            }
+            crate::rust_backend::stock_profile(id, &profile, &origins, thickness, policy)?
+        }
+        GeometryBackend::OpenCascade => Solid::extrude_panel_profile_vector_named(
+            &profile,
+            profile.frame.normal().map(|c| c * thickness),
+            id,
+            &origins,
+            policy,
+        )
+        .map_err(|e| error(Some(id), e))?,
+    };
     Ok((solid, profile.frame))
 }
 
@@ -108,7 +121,15 @@ fn subtract(
     role: &str,
     policy: GeometryPolicy,
     what: &str,
+    backend: GeometryBackend,
 ) -> Result<Solid, ModelError> {
+    if backend == GeometryBackend::Rust
+        && prisms
+            .iter()
+            .any(|p| p.circle.is_some() || p.slot.is_some())
+    {
+        return subtract_analytic(base, prisms, id, role, None, policy);
+    }
     let batch_circles = prisms.len() > 1 && prisms.iter().all(|p| p.circle.is_some());
     let mut tools = Vec::with_capacity(prisms.len());
     let mut current: Option<Solid> = None;
@@ -141,29 +162,52 @@ fn subtract(
             outer,
             holes: vec![],
         };
-        let tool =
-            Solid::extrude_curved_profile_vector_named(&profile, prism.sweep, id, &origins, policy)
-                .map_err(|e| error(Some(id), e))?;
+        let tool = match backend {
+            GeometryBackend::Rust => {
+                Solid::rust_extrude_linear_named(&profile, prism.sweep, 0., id, &origins, policy)
+                    .map_err(|e| error(Some(id), e))?
+            }
+            GeometryBackend::OpenCascade => Solid::extrude_curved_profile_vector_named(
+                &profile,
+                prism.sweep,
+                id,
+                &origins,
+                policy,
+            )
+            .map_err(|e| error(Some(id), e))?,
+        };
         tools.push(tool);
     }
     // Circular drilling is bounded by the shared hole budget. Combine at
     // most 128 exact tool solids per native Boolean, preserving each tool's
     // named faces. The profile and removed-volume contracts are unchanged.
-    for chunk in tools.chunks(if batch_circles { 128 } else { 1 }) {
-        let compound;
-        let tool = if chunk.len() == 1 {
-            &chunk[0]
-        } else {
-            compound = Solid::compound_named(&chunk.iter().collect::<Vec<_>>(), id, policy)
-                .map_err(|e| error(Some(id), e))?;
-            &compound
+    let removed = || error(Some(id), format!("The {what} removed the whole panel"));
+    if backend == GeometryBackend::Rust && !tools.is_empty() {
+        let cut = match base.rust_subtract_orthogonal_tools(&tools, policy) {
+            Err(cause) if cause.kind == multicad_kernel::GeometryErrorKind::Unsupported => {
+                base.rust_subtract_planar_tools(&tools.iter().collect::<Vec<_>>(), id, policy)
+            }
+            result => result,
         };
-        let source = current.as_ref().unwrap_or(base);
-        current = source
-            .boolean(tool, BooleanOperation::Subtract, policy)
-            .map_err(|e| error(Some(id), e))?
-            .map(Some)
-            .ok_or_else(|| error(Some(id), format!("The {what} removed the whole panel")))?;
+        current = Some(cut.map_err(|e| error(Some(id), e))?.ok_or_else(removed)?);
+    } else {
+        for chunk in tools.chunks(if batch_circles { 128 } else { 1 }) {
+            let compound;
+            let tool = if chunk.len() == 1 {
+                &chunk[0]
+            } else {
+                compound = Solid::compound_named(&chunk.iter().collect::<Vec<_>>(), id, policy)
+                    .map_err(|e| error(Some(id), e))?;
+                &compound
+            };
+            let source = current.as_ref().unwrap_or(base);
+            current = Some(
+                source
+                    .boolean(tool, BooleanOperation::Subtract, policy)
+                    .map_err(|e| error(Some(id), e))?
+                    .ok_or_else(removed)?,
+            );
+        }
     }
     let solid = match current {
         Some(solid) => solid,
@@ -180,11 +224,82 @@ fn subtract(
     Ok(solid)
 }
 
+fn subtract_analytic(
+    base: &Solid,
+    prisms: &[model::CutPrism],
+    id: EntityId,
+    role: &str,
+    through: Option<&[bool]>,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    let mut circles = Vec::new();
+    let mut slots = Vec::new();
+    for (k, prism) in prisms.iter().enumerate() {
+        let frame = PlaneFrame {
+            origin: prism.origin,
+            u: prism.u,
+            v: prism.v,
+        };
+        let displacement_mm = prism.sweep;
+        let origin = Origin {
+            source: id,
+            role: format!("{role}.{k}.0"),
+        };
+        let (center_uv, radius_mm) = match (prism.circle, prism.slot) {
+            (Some(circle), None) => circle,
+            (None, Some((a, b, radius_mm))) if slot_span(a, b) <= 1e-9 => (a, radius_mm),
+            (None, Some((a, b, radius_mm))) => {
+                slots.push(RoundedSlotTool {
+                    frame,
+                    centers_uv: [a, b],
+                    radius_mm,
+                    displacement_mm,
+                    origin,
+                });
+                continue;
+            }
+            _ => {
+                return Err(error(
+                    Some(id),
+                    "Rust analytic cuts need circular or rounded slot tools",
+                ));
+            }
+        };
+        circles.push(CircularPocketTool {
+            frame,
+            center_uv,
+            radius_mm,
+            displacement_mm,
+            origin,
+        });
+    }
+    // A canonical operation has one cutter profile. A mortise with coincident
+    // end centers is the same circular cut as a bore.
+    let result = match (circles.is_empty(), slots.is_empty()) {
+        (false, true) => match through {
+            Some(modes) => base.rust_drill_circular_machining(&circles, modes, policy),
+            None => base.rust_drill_circular_pockets(&circles, policy),
+        },
+        (true, false) => base.rust_drill_rounded_slots(&slots, policy),
+        _ => {
+            return Err(error(
+                Some(id),
+                "Rust analytic cuts need a common cutter profile",
+            ));
+        }
+    };
+    result.map_err(|e| error(Some(id), e))
+}
+
+fn slot_span(a: [f64; 2], b: [f64; 2]) -> f64 {
+    (b[0] - a[0]).hypot(b[1] - a[1])
+}
+
 /// A rounded slot, counterclockwise: the end-circle centers `a` and `b`
 /// with radius `r`. Coincident centers give a circle.
 fn slot_edges(a: [f64; 2], b: [f64; 2], r: f64) -> Vec<CurvedEdge2d> {
     let d = [b[0] - a[0], b[1] - a[1]];
-    let len = (d[0] * d[0] + d[1] * d[1]).sqrt();
+    let len = slot_span(a, b);
     if len <= 1e-9 {
         return vec![CurvedEdge2d::Circle {
             center: a,
@@ -216,55 +331,94 @@ fn slot_edges(a: [f64; 2], b: [f64; 2], r: f64) -> Vec<CurvedEdge2d> {
         },
     ]
 }
-/// The tenons of one loose-tenon joint pair as one solid.
+/// Build the insert geometry for one loose-tenon joint pair.
 pub(crate) fn build_loose_tenon(
     document: &Document,
     parameters: &EvaluatedParameters,
     id: EntityId,
     policy: GeometryPolicy,
+    backend: GeometryBackend,
 ) -> Result<Solid, ModelError> {
     let tenons = model::resolve_loose_tenon_feature(document, parameters, id)
         .map_err(|e| error(Some(id), e))?;
-    let mut out: Option<Solid> = None;
+    if backend == GeometryBackend::Rust
+        && tenons.windows(2).any(|pair| {
+            let [a, b] = [&pair[0], &pair[1]];
+            let delta = [0, 1, 2].map(|i| b.center[i] - a.center[i]);
+            let reach = (a.width_mm.max(a.thickness_mm) + b.width_mm.max(b.thickness_mm)) / 2.;
+            dot(delta, a.long) <= reach + policy.linear_tolerance_mm
+        })
+    {
+        return Err(error(
+            Some(id),
+            "Rust loose tenon inserts must be separated along the joint",
+        ));
+    }
+    let mut solids = Vec::with_capacity(tenons.len());
     for (k, t) in tenons.iter().enumerate() {
         let v = cross(t.axis, t.long);
         let r = t.thickness_mm / 2.;
         let half = (t.width_mm / 2. - r).max(0.);
-        let start = [0, 1, 2].map(|i| t.center[i] - t.axis[i] * t.into_face_mm);
-        let edges = slot_edges([-half, 0.], [half, 0.], r);
-        let origins: Vec<_> = (0..edges.len())
-            .map(|i| Origin {
-                source: id,
-                role: format!("tenon.{k}.{i}"),
-            })
-            .collect();
+        let frame = PlaneFrame {
+            origin: [0, 1, 2].map(|i| t.center[i] - t.axis[i] * t.into_face_mm),
+            u: t.long,
+            v,
+        };
+        let centers = [[-half, 0.], [half, 0.]];
+        let length = t.into_face_mm + t.into_edge_mm;
+        let origin = |i| Origin {
+            source: id,
+            role: format!("tenon.{k}.{i}"),
+        };
+        if backend == GeometryBackend::Rust && slot_span(centers[0], centers[1]) > 1e-9 {
+            solids.push(
+                Solid::rust_extrude_rounded_slot(
+                    frame,
+                    centers,
+                    r,
+                    length,
+                    id,
+                    [0, 1, 2, 3].map(origin),
+                    policy,
+                )
+                .map_err(|e| error(Some(id), e))?,
+            );
+            continue;
+        }
+        let edges = slot_edges(centers[0], centers[1], r);
+        let origins: Vec<_> = (0..edges.len()).map(origin).collect();
         let profile = CurvedProfile {
-            frame: PlaneFrame {
-                origin: start,
-                u: t.long,
-                v,
-            },
+            frame,
             outer: edges,
             holes: vec![],
         };
-        let length = t.into_face_mm + t.into_edge_mm;
-        let solid = Solid::extrude_curved_profile_vector_named(
-            &profile,
-            t.axis.map(|c| c * length),
-            id,
-            &origins,
-            policy,
-        )
-        .map_err(|e| error(Some(id), e))?;
-        out = Some(match out {
-            None => solid,
-            Some(prev) => prev
-                .boolean(&solid, BooleanOperation::Union, policy)
-                .map_err(|e| error(Some(id), e))?
-                .ok_or_else(|| error(Some(id), "The tenons could not be combined"))?,
+        solids.push(match backend {
+            GeometryBackend::Rust => {
+                crate::rust_backend::stock_profile(id, &profile, &origins, length, policy)?
+            }
+            GeometryBackend::OpenCascade => Solid::extrude_curved_profile_vector_named(
+                &profile,
+                t.axis.map(|c| c * length),
+                id,
+                &origins,
+                policy,
+            )
+            .map_err(|e| error(Some(id), e))?,
         });
     }
-    out.ok_or_else(|| error(Some(id), "The joint has no tenons"))
+    if backend == GeometryBackend::Rust && solids.len() > 1 {
+        return Solid::compound_named(&solids.iter().collect::<Vec<_>>(), id, policy)
+            .map_err(|e| error(Some(id), e));
+    }
+    let mut solids = solids.into_iter();
+    let first = solids
+        .next()
+        .ok_or_else(|| error(Some(id), "The joint has no tenons"))?;
+    solids.try_fold(first, |prev, solid| {
+        prev.boolean(&solid, BooleanOperation::Union, policy)
+            .map_err(|e| error(Some(id), e))?
+            .ok_or_else(|| error(Some(id), "The tenons could not be combined"))
+    })
 }
 /// Remove the other panel's share of each joint corner from a panel solid.
 pub(crate) fn build_joint_cut(
@@ -273,6 +427,7 @@ pub(crate) fn build_joint_cut(
     id: EntityId,
     policy: GeometryPolicy,
     solids: &BTreeMap<EntityId, Solid>,
+    backend: GeometryBackend,
 ) -> Result<Solid, ModelError> {
     let e = |e: DocumentError| error(Some(id), e);
     let cut = model::read_panel_joint_cut(document, id).map_err(e)?;
@@ -293,6 +448,7 @@ pub(crate) fn build_joint_cut(
         &format!("joint.{}", cut.joint),
         policy,
         "joint",
+        backend,
     )
 }
 /// Cut one machining operation into one target panel.
@@ -302,6 +458,7 @@ pub(crate) fn build_machining_cut(
     id: EntityId,
     policy: GeometryPolicy,
     solids: &BTreeMap<EntityId, Solid>,
+    backend: GeometryBackend,
 ) -> Result<Solid, ModelError> {
     let e = |e: DocumentError| error(Some(id), e);
     let cut = model::read_machining_cut(document, id).map_err(e)?;
@@ -311,13 +468,25 @@ pub(crate) fn build_machining_cut(
     let base = solids
         .get(&cut.input.producer)
         .ok_or_else(|| error(Some(id), "The panel before this operation has no solid"))?;
+    let role = format!("machining.{}", cut.operation);
+    if backend == GeometryBackend::Rust && resolved.holes.iter().any(|hole| hole.through) {
+        if resolved.holes.len() != resolved.prisms.len() {
+            return Err(error(
+                Some(id),
+                "Rust through drilling needs circular tools",
+            ));
+        }
+        let through: Vec<_> = resolved.holes.iter().map(|hole| hole.through).collect();
+        return subtract_analytic(base, &resolved.prisms, id, &role, Some(&through), policy);
+    }
     subtract(
         base,
         &resolved.prisms,
         id,
-        &format!("machining.{}", cut.operation),
+        &role,
         policy,
         op.label(),
+        backend,
     )
 }
 

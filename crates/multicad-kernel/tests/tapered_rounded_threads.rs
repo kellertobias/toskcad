@@ -1,5 +1,46 @@
 use multicad_core::document::EntityId;
-use multicad_kernel::{BooleanOperation, RigidTransform, RoundedHelicalThread, Solid};
+use multicad_kernel::{
+    BooleanOperation, GeometryError, PlaneFrame, RigidTransform, RoundedHelicalThread, Solid,
+    rust_kernel::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec},
+};
+
+/// Owned-kernel tapered rounded (BSPT / ISO 7) pipe thread. Its tangent circle
+/// radius is derived from the exact closure equation; it must contain the
+/// independently sourced rounding radius of the canonical recipe.
+fn rust_tapered(s: RoundedHelicalThread) -> Result<Solid, GeometryError> {
+    assert_eq!((s.flank_angle_deg, s.starts, s.left_hand), (27.5, 1, false));
+    let solid = Solid::rust_authored_axial_pipe_thread_with_interrupt(
+        AuthoredSpec {
+            major_radius_mm: s.major_radius_mm,
+            pitch_mm: s.pitch_mm,
+            length_mm: s.length_mm,
+            radial_taper: s.radial_taper,
+            section: AuthoredSection::BsptRounded {
+                depth_mm: s.depth_mm,
+            },
+            crest_radius_limit_mm: None,
+        },
+        EntityId::new(),
+        PlaneFrame::default(),
+        Default::default(),
+        None,
+    )?;
+    let [low, high] = solid
+        .rust_authored_axial_pipe_thread_source()
+        .unwrap()
+        .0
+        .transport
+        .derived_rounding_radius_bounds_mm()
+        .unwrap()
+        .unwrap();
+    let tolerance = 1e-12 * s.pitch_mm;
+    assert!(
+        low - tolerance <= s.rounding_radius_mm && s.rounding_radius_mm <= high + tolerance,
+        "derived rounding [{low}, {high}] vs sourced {}",
+        s.rounding_radius_mm
+    );
+    Ok(solid)
+}
 
 fn expected_volume(s: RoundedHelicalThread) -> f64 {
     let a = 27.5_f64.to_radians();
@@ -94,14 +135,19 @@ fn sourced_pipe_recipe_extents_keep_all_native_circular_bands() {
                 starts: 1,
                 left_hand: false,
             };
-            let solid =
-                Solid::rounded_helical_thread_named(spec, EntityId::new(), Default::default())
-                    .unwrap_or_else(|error| panic!("{size:?}/{form:?}: {spec:?}: {error}"));
+            let solid = rust_tapered(spec)
+                .unwrap_or_else(|error| panic!("{size:?}/{form:?}: {spec:?}: {error}"));
             let bounds = solid.bounds().unwrap();
             assert!(bounds.min[2].abs() < 16e-7);
             assert!((bounds.max[2] - spec.length_mm).abs() < 16e-7);
             let volume = solid.volume_mm3().unwrap();
-            let area: f64 = solid.faces().unwrap().iter().map(|f| f.area_mm2).sum();
+            // Owned retained pipe bodies do not yet publish per-face areas
+            // (`faces()` refuses with a source-proof Limit). The threaded
+            // boundary always exceeds the lateral area of its smallest root
+            // cylinder, so this lower bound only tightens the former budget.
+            let area = std::f64::consts::TAU
+                * (spec.major_radius_mm - spec.depth_mm - spec.radial_taper.abs() * spec.length_mm)
+                * spec.length_mm;
             let expected = expected_volume(spec);
             assert!(
                 (volume - expected).abs() < 1e-7 * area + 1e-7 * volume,
@@ -150,8 +196,7 @@ fn tapered_profile_preserves_axial_circles_flanks_and_gauge_cones() {
             starts: 1,
             left_hand: false,
         };
-        let solid =
-            Solid::rounded_helical_thread_named(spec, EntityId::new(), Default::default()).unwrap();
+        let solid = rust_tapered(spec).unwrap();
         assert_eq!(solid.solid_count().unwrap(), 1);
         // Independently probe the sourced gauge cone and a second plane one
         // pitch inward. The point is the circle/cone tangency, not the crest

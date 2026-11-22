@@ -1,6 +1,7 @@
 //! A nominal wood screw envelope does not recover thread or point geometry.
 use super::*;
 use multicad_core::model::{ResolvedWoodScrew, WoodPointIntent, WoodScrewRepresentation};
+use multicad_kernel::rust_kernel::Rational;
 
 const MAX_ENTRIES: usize = 16;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -32,7 +33,7 @@ fn authored_role(role: &str) -> bool {
     })
 }
 fn valid_face_origins(origins: &std::collections::BTreeSet<Origin>, owner: EntityId) -> bool {
-    let side_prefix = format!("side/{}/", neutral_owner());
+    let side_prefix = format!("side/{owner}/");
     !origins.is_empty()
         && origins.iter().any(|origin| authored_role(&origin.role))
         && origins.iter().all(|origin| {
@@ -71,6 +72,10 @@ fn cached(key: &str, feature: EntityId) -> Option<Solid> {
     })
 }
 fn remember(key: String, feature: EntityId, solid: &Solid) {
+    // Rust solids rebuild exactly and are not retained as native text.
+    if solid.uses_rust_geometry() {
+        return;
+    }
     let Ok(owned) = solid.rebind_exclusive_owner(feature, feature) else {
         return;
     };
@@ -157,10 +162,105 @@ fn prism(
     })
     .map_err(|e| error(Some(feature), e))
 }
+// New authored stock retains the evaluator's actual binary64 dimensions.
+// This is construction from parameters, never normalization of existing stock.
+fn binary_dimension(feature: EntityId, value: f64) -> Result<Rational, ModelError> {
+    let failed = || {
+        error(
+            Some(feature),
+            "Wood stock dimensions exceed the exact arithmetic budget",
+        )
+    };
+    if !value.is_finite() || value <= 0. {
+        return Err(failed());
+    }
+    let bits = value.to_bits();
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let mut numerator = bits & ((1_u64 << 52) - 1);
+    let mut shift = if exponent == 0 {
+        -1074
+    } else {
+        exponent - 1075
+    };
+    if exponent != 0 {
+        numerator |= 1_u64 << 52;
+    }
+    let zeros = numerator.trailing_zeros();
+    numerator >>= zeros;
+    shift += zeros as i32;
+    let (n, d) = if shift >= 0 {
+        (
+            u128::from(numerator)
+                .checked_mul(1_u128.checked_shl(shift as u32).ok_or_else(failed)?)
+                .ok_or_else(failed)?,
+            1_u128,
+        )
+    } else {
+        (
+            u128::from(numerator),
+            1_u128.checked_shl((-shift) as u32).ok_or_else(failed)?,
+        )
+    };
+    let n = i64::try_from(n).map_err(|_| failed())?;
+    let d = i64::try_from(d).map_err(|_| failed())?;
+    Rational::new(n, d).map_err(|_| failed())
+}
+fn rust_stock(
+    feature: EntityId,
+    radius: f64,
+    height: f64,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    let zero = Rational::new(0, 1).expect("zero");
+    let circle =
+        multicad_kernel::rust_kernel::Circle::new([zero; 2], binary_dimension(feature, radius)?)
+            .map_err(|e| error(Some(feature), format!("Invalid wood stock circle: {e:?}")))?;
+    let cylinder = multicad_kernel::rust_kernel::cylinder::AxialCylinder::new(
+        feature.uuid_bits(),
+        circle,
+        zero,
+        binary_dimension(feature, height)?,
+    )
+    .map_err(|e| error(Some(feature), format!("Invalid wood stock: {e:?}")))?;
+    Solid::from_axial_cylinder_sweep(
+        cylinder,
+        PlaneFrame::default(),
+        [0.; 2],
+        false,
+        Origin {
+            source: feature,
+            role: "wood.envelope.stock/side/0".into(),
+        },
+        policy,
+    )
+    .and_then(|solid| {
+        solid.with_feature_cap_roles(
+            feature,
+            "wood.envelope.stock/start",
+            "wood.envelope.stock/end",
+        )
+    })
+    .map_err(|e| error(Some(feature), e))
+}
 pub(super) fn build(
     feature: EntityId,
     p: &ResolvedWoodScrew,
     policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    build_inner(feature, p, policy, false)
+}
+pub(super) fn build_rust(
+    feature: EntityId,
+    p: &ResolvedWoodScrew,
+    policy: GeometryPolicy,
+) -> Result<Solid, ModelError> {
+    build_inner(feature, p, policy, true)
+}
+fn build_inner(
+    feature: EntityId,
+    p: &ResolvedWoodScrew,
+    policy: GeometryPolicy,
+    rust: bool,
 ) -> Result<Solid, ModelError> {
     policy.validate().map_err(|e| error(Some(feature), e))?;
     let ResolvedScrewHead::ExternalHex {
@@ -199,10 +299,10 @@ pub(super) fn build(
         ));
     }
     let cache_key = key(p, policy);
-    if let Some(hit) = cached(&cache_key, feature) {
+    if !rust && let Some(hit) = cached(&cache_key, feature) {
         return Ok(hit);
     }
-    let neutral = neutral_owner();
+    let neutral = if rust { feature } else { neutral_owner() };
     let head = prism(
         neutral,
         "head",
@@ -211,21 +311,29 @@ pub(super) fn build(
         super::hexagon(across_flats_mm),
         policy,
     )?;
-    let stock = prism(
-        neutral,
-        "stock",
-        0.,
-        p.underhead_length_mm,
-        vec![CurvedEdge2d::Circle {
-            center: [0., 0.],
-            radius_mm: radius,
-        }],
-        policy,
-    )?;
-    let solid = head
-        .boolean(&stock, BooleanOperation::Union, policy)
-        .map_err(|e| error(Some(feature), e))?
-        .ok_or_else(|| error(Some(feature), "Wood envelope union produced no solid"))?;
+    let stock = if rust {
+        rust_stock(neutral, radius, p.underhead_length_mm, policy)?
+    } else {
+        prism(
+            neutral,
+            "stock",
+            0.,
+            p.underhead_length_mm,
+            vec![CurvedEdge2d::Circle {
+                center: [0., 0.],
+                radius_mm: radius,
+            }],
+            policy,
+        )?
+    };
+    let solid = if head.uses_rust_geometry() && stock.uses_rust_geometry() {
+        Solid::rust_join_planar_head_and_round_stock(&head, &stock, neutral, policy)
+            .map_err(|e| error(Some(feature), e))?
+    } else {
+        head.boolean(&stock, BooleanOperation::Union, policy)
+            .map_err(|e| error(Some(feature), e))?
+            .ok_or_else(|| error(Some(feature), "Wood envelope union produced no solid"))?
+    };
     if solid.solid_count().map_err(|e| error(Some(feature), e))? != 1 {
         return Err(error(
             Some(feature),
@@ -251,6 +359,12 @@ pub(super) fn build(
             translation_mm: frame.origin,
         })
         .map_err(|e| error(Some(feature), e))?;
+    // Rust's immutable Model evaluation cache already retains completed
+    // feature geometry. Keep its actual owner instead of native-handle
+    // serialization and neutral-owner rebinding.
+    if rust {
+        return Ok(completed);
+    }
     let result = completed
         .rebind_exclusive_owner(neutral, feature)
         .map_err(|e| error(Some(feature), e))?;
@@ -276,64 +390,34 @@ mod tests {
         *parameters
     }
     #[test]
-    fn completed_envelope_rebinds_all_provenance_and_native_policy_still_refuses_hits() {
-        ENVELOPES.with(|cache| *cache.borrow_mut() = Cache::default());
-        let p = resolved();
-        let a = EntityId::new();
-        let b = EntityId::new();
-        let policy = GeometryPolicy::default();
-        let source = build(a, &p, policy).unwrap();
-        let before = source.to_brep().unwrap();
-        let clock = ENVELOPES.with(|c| c.borrow().clock);
-        let hit = build(b, &p, policy).unwrap();
-        assert_eq!(ENVELOPES.with(|c| c.borrow().entries.len()), 1);
-        assert_eq!(ENVELOPES.with(|c| c.borrow().clock), clock + 1);
-        let t = hit.topology_snapshot(b, 3).unwrap();
-        let side = t
-            .elements
-            .iter()
-            .find(|element| {
-                element.key.kind == multicad_core::references::TopologyKind::Face
-                    && element
-                        .origins
-                        .iter()
-                        .any(|origin| origin.role.starts_with("side/"))
-            })
-            .unwrap();
-        eprintln!("Actual cached wood side-face origins: {:?}", side.origins);
-        assert!(t.elements.iter().flat_map(|e| &e.origins).all(|o| {
-            o.source == b
-                && (authored_role(&o.role)
-                    || o.role
-                        .starts_with(&format!("side/{}/wood.envelope.", neutral_owner())))
-        }));
-        ENVELOPES.with(|cache| *cache.borrow_mut() = Cache::default());
-        let fresh = build(b, &p, policy).unwrap();
-        assert_eq!(t, fresh.topology_snapshot(b, 3).unwrap());
-        let old_topology = source.topology_snapshot(a, 3).unwrap();
-        assert!(
-            old_topology
-                .elements
-                .iter()
-                .filter(|e| e.key.kind == multicad_core::references::TopologyKind::Face)
-                .all(|e| valid_face_origins(&e.origins, a))
+    fn authored_binary_dimensions_are_exact_and_refuse_out_of_budget_values() {
+        let feature = EntityId::new();
+        for value in [0.125, 3.3, 8.7, 12345.6789] {
+            assert_eq!(
+                binary_dimension(feature, value).unwrap().as_f64().to_bits(),
+                value.to_bits()
+            );
+        }
+        assert_eq!(
+            binary_dimension(feature, 3.3).unwrap().ratio(),
+            (3715469692580659, 1125899906842624)
         );
-        assert_eq!(source.to_brep().unwrap(), before);
-        assert_eq!(source.volume_mm3().unwrap(), hit.volume_mm3().unwrap());
-        assert_eq!(source.bounds().unwrap(), hit.bounds().unwrap());
-        assert!(
-            build(
-                EntityId::new(),
-                &p,
-                GeometryPolicy {
-                    minimum_feature_mm: 5.,
-                    ..policy
-                }
-            )
-            .is_err()
-        );
-        assert_eq!(ENVELOPES.with(|c| c.borrow().entries.len()), 1);
+        for value in [
+            0.,
+            -1.,
+            f64::NAN,
+            f64::INFINITY,
+            1e-300,
+            f64::from_bits(1),
+            0.001,
+            1e-20,
+            1e19,
+            f64::MAX,
+        ] {
+            assert!(binary_dimension(feature, value).is_err());
+        }
     }
+
     #[test]
     fn envelope_receipts_key_reference_intent_pose_and_all_policy_fields() {
         let p = resolved();

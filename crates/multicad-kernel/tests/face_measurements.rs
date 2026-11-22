@@ -1,6 +1,8 @@
 use multicad_core::{
+    constraint_sketch::SplineBasis,
     document::EntityId,
     references::{Origin, TopologyKind},
+    sketch_regions::{Edge, ExactCurve, RegionQueries},
 };
 use multicad_kernel::*;
 use std::f64::consts::{PI, TAU};
@@ -177,5 +179,33 @@ fn direct_exact_rational_profile_queries_use_the_same_accurate_measurement() {
         })],
         holes: vec![],
     };
-    near(profile.area_mm2(p()).unwrap(), 4. * PI);
+    // The exact Rust sketch-region service measures the same rational boundary.
+    let edges: Vec<_> = profile
+        .outer
+        .iter()
+        .map(|edge| {
+            let CurvedEdge2d::BSpline(s) = edge.clone() else {
+                unreachable!()
+            };
+            Edge {
+                authored: EntityId::new(),
+                reversed: false,
+                fragment: None,
+                curve: ExactCurve::BSpline {
+                    poles: s.poles,
+                    basis: SplineBasis {
+                        degree: s.degree,
+                        knots: s.knots,
+                        multiplicities: s.multiplicities,
+                        weights: s.weights,
+                    },
+                },
+            }
+        })
+        .collect();
+    let area = NativeRegionQueries::new(p())
+        .unwrap()
+        .signed_area(&edges, p().linear_tolerance_mm)
+        .unwrap();
+    near(area.abs(), 4. * PI);
 }

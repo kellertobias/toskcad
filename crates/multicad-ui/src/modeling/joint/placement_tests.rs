@@ -22,14 +22,25 @@ fn domino_form_picks_a_top_and_side_and_builds_mortises_and_tenons() {
     let top = form.pairs[0][0].unwrap();
     assert_eq!(s.document().get(top).unwrap().name, "Cabinet top");
     assert_eq!(form.pairs[0][1], Some(right));
-    // The same panel cannot be both sides of a pair.
+    // A complete pair is not silently replaced or extended by a click.
+    assert!(!pick(&mut form, &s, [300., 200., 720.]));
+    assert!(
+        form.pick_note
+            .as_deref()
+            .unwrap()
+            .contains("every pair is chosen")
+    );
+    assert_eq!(form.pairs.len(), 1);
+    // After Add pair, the same panel cannot be both sides of the new pair.
+    form.pairs.push([None, None]);
+    form.active = Some((1, 0));
     assert!(pick(&mut form, &s, [300., 200., 720.]));
     assert!(!pick(&mut form, &s, [300., 200., 720.]));
     assert!(
         form.pick_note
             .as_deref()
             .unwrap()
-            .contains("already panel A")
+            .contains("Already panel A")
     );
     form.pairs.truncate(1);
     let request = form.request(s.document(), true).unwrap();

@@ -192,17 +192,19 @@ impl Model {
                 if !overlap(shape.bounds, tool_shape.bounds) {
                     continue;
                 }
-                let common = target
-                    .boolean(
-                        self.solid(*tool).expect("validated tool"),
-                        BooleanOperation::Intersect,
-                        self.policy,
-                    )
-                    .map_err(|e| error(Some(body), e))?;
+                let tool = self.solid(*tool).expect("validated tool");
+                let overlaps = if target.uses_rust_geometry() && tool.uses_rust_geometry() {
+                    target
+                        .rust_occupied_overlap_volume(tool, self.policy)
+                        .map(|volume| volume > 0.)
+                } else {
+                    target
+                        .boolean(tool, BooleanOperation::Intersect, self.policy)
+                        .map(|solid| solid.is_some())
+                }
+                .map_err(|e| error(Some(body), e))?;
                 checkpoint(interrupt)?;
-                // Solid::boolean only returns Some after validating positive
-                // finite native volume; contact-only results return None.
-                if common.is_some() {
+                if overlaps {
                     hit = true;
                     break;
                 }

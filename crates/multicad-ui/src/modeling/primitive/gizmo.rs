@@ -8,12 +8,15 @@ const HIT_RADIUS: f32 = 9.;
 const DRAG_THRESHOLD: f32 = 4.;
 
 #[derive(Default)]
-pub(super) struct ResizeGizmo {
+pub(in crate::modeling) struct ResizeGizmo {
     drag: Option<Drag>,
+    /// Box axes (U, V, N) whose size a corner drag must not change, such as
+    /// a panel thickness that its stock controls.
+    locked: [bool; 3],
 }
 
 #[derive(Default)]
-pub(super) struct ResizeGesture {
+pub(in crate::modeling) struct ResizeGesture {
     pub input_owned: bool,
     pub released: bool,
     pub changed: Option<ResolvedPrimitive>,
@@ -22,6 +25,7 @@ pub(super) struct ResizeGesture {
 
 struct Drag {
     corner: usize,
+    locked: [bool; 3],
     camera: Camera,
     rect: egui::Rect,
     original: ResolvedPrimitive,
@@ -103,7 +107,7 @@ fn high(corner: usize, axis: usize) -> bool {
 
 /// The low and high sides of the primitive's oriented, local envelope.
 /// Bits 0, 1 and 2 select the high U, V and N sides, respectively.
-pub(super) fn corners(shape: &ResolvedPrimitive) -> [Point; 8] {
+pub(in crate::modeling) fn corners(shape: &ResolvedPrimitive) -> [Point; 8] {
     let [min, max] = match *shape {
         ResolvedPrimitive::Box { size_mm, .. } => [[0.; 3], size_mm],
         ResolvedPrimitive::Cylinder {
@@ -132,6 +136,7 @@ pub(super) fn corners(shape: &ResolvedPrimitive) -> [Point; 8] {
 impl Drag {
     fn new(
         corner: usize,
+        locked: [bool; 3],
         shape: &ResolvedPrimitive,
         camera: Camera,
         rect: egui::Rect,
@@ -146,8 +151,16 @@ impl Drag {
             ResolvedPrimitive::Box { .. } => {
                 // The plane with the largest ray-normal dot is the least
                 // sensitive to pointer motion and keeps the third size fixed.
-                let fixed =
-                    (0..3).max_by(|a, b| alignment(axes[*a]).total_cmp(&alignment(axes[*b])))?;
+                // A single locked axis that faces the viewer enough becomes
+                // the drag plane normal, so both free sizes follow the pointer.
+                let fixed = match locked {
+                    [false, false, true] if alignment(axes[2]) >= 0.2 => 2,
+                    [true, false, false] if alignment(axes[0]) >= 0.2 => 0,
+                    [false, true, false] if alignment(axes[1]) >= 0.2 => 1,
+                    _ => {
+                        (0..3).max_by(|a, b| alignment(axes[*a]).total_cmp(&alignment(axes[*b])))?
+                    }
+                };
                 Motion::Box {
                     pointer: WorldDrag::plane(ray, point, axes[fixed])?,
                     fixed,
@@ -195,6 +208,7 @@ impl Drag {
         };
         Some(Self {
             corner,
+            locked,
             camera,
             rect,
             original: shape.clone(),
@@ -215,7 +229,7 @@ impl Drag {
                 let mut next = *size_mm;
                 let delta = pointer.delta(ray()?)?;
                 for (axis, direction) in [frame.u, frame.v, frame.n].into_iter().enumerate() {
-                    if axis == *fixed {
+                    if axis == *fixed || self.locked[axis] {
                         continue;
                     }
                     let (size, shift) = move_side(
@@ -308,11 +322,15 @@ fn visible_handles(points: [Point; 8], camera: Camera, rect: egui::Rect) -> Vec<
 }
 
 impl ResizeGizmo {
-    pub(super) fn active(&self) -> bool {
+    pub(in crate::modeling) fn locked(locked: [bool; 3]) -> Self {
+        Self { drag: None, locked }
+    }
+
+    pub(in crate::modeling) fn active(&self) -> bool {
         self.drag.is_some()
     }
 
-    pub(super) fn show(
+    pub(in crate::modeling) fn show(
         &mut self,
         ui: &mut egui::Ui,
         shape: &ResolvedPrimitive,
@@ -396,6 +414,7 @@ impl ResizeGizmo {
         {
             self.drag = Drag::new(
                 handle.corner,
+                self.locked,
                 shape,
                 camera,
                 rect,
@@ -595,7 +614,16 @@ mod tests {
         let start = points[0];
         let delta = frame.vector([2., 3., 0.]);
         let camera = camera();
-        let drag = Drag::new(0, &shape, camera, rect(), project(camera, start), start).unwrap();
+        let drag = Drag::new(
+            0,
+            [false; 3],
+            &shape,
+            camera,
+            rect(),
+            project(camera, start),
+            start,
+        )
+        .unwrap();
         let result = drag.update(project(camera, add(start, delta))).unwrap();
         let ResolvedPrimitive::Box {
             size_mm,
@@ -630,7 +658,16 @@ mod tests {
             ..camera()
         };
         let start = points[3];
-        let drag = Drag::new(3, &shape, camera, rect(), project(camera, start), start).unwrap();
+        let drag = Drag::new(
+            3,
+            [false; 3],
+            &shape,
+            camera,
+            rect(),
+            project(camera, start),
+            start,
+        )
+        .unwrap();
         let resized = drag
             .update(project(camera, add(start, [3., 3., 4.])))
             .unwrap();
@@ -663,7 +700,7 @@ mod tests {
             };
             let start = project(camera, point);
             let projected_radius = start - project(camera, FRAME.origin);
-            let drag = Drag::new(7, &shape, camera, rect(), start, point).unwrap();
+            let drag = Drag::new(7, [false; 3], &shape, camera, rect(), start, point).unwrap();
             let result = drag.update(start + projected_radius * 0.5).unwrap();
             let ResolvedPrimitive::Sphere { radius_mm, frame } = result else {
                 panic!("sphere remains a sphere");

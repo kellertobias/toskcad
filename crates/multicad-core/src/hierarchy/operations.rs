@@ -11,6 +11,7 @@ pub enum Action {
         name: String,
         parent: Option<EntityId>,
     },
+    /// Rename a Part, component or group without changing its identity.
     Rename {
         id: EntityId,
         name: String,
@@ -354,12 +355,25 @@ pub fn prepare(
                 .get(id)
                 .ok_or_else(|| command_error("Unknown model container"))?
                 .clone();
-            if container_kind(&entity.data).is_none() {
-                return Err(command_error("Rename a component or group"));
+            let part = matches!(entity.data, EntityData::Part { .. });
+            if container_kind(&entity.data).is_none() && !part {
+                return Err(command_error("Rename a part, component or group"));
             }
+            if name.trim().is_empty() {
+                return Err(command_error("Enter a name; names cannot be empty"));
+            }
+            if name.len() > 1024 {
+                return Err(command_error("Enter a name of at most 1024 bytes"));
+            }
+            // Only the display name changes: identity, references, features
+            // and geometry stay with the same entity.
             entity.name = name;
             edits.push(Mutation::Replace(entity));
-            "Rename model container"
+            if part {
+                "Rename part"
+            } else {
+                "Rename model container"
+            }
         }
         Action::Move {
             entries,

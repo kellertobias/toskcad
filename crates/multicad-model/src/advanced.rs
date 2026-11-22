@@ -1,5 +1,5 @@
 //! Exact advanced geometry from canonical selection and bound source parameters.
-use crate::{ModelError, error};
+use crate::{GeometryBackend, ModelError, error};
 use multicad_core::{
     document::EntityId,
     model::{self, AdvancedDefinition, ResolvedAdvanced},
@@ -7,8 +7,8 @@ use multicad_core::{
     references::{self, GeometryIntent, Origin, Resolution, TopologyKind, TopologySnapshot},
 };
 use multicad_kernel::{
-    BooleanOperation, CurvedProfile, GeometryPolicy, PlaneFrame, RigidTransform, Solid,
-    TreatmentFace,
+    BooleanOperation, CurvedProfile, GeometryErrorKind, GeometryPolicy, PlaneFrame, RigidTransform,
+    Solid, TreatmentFace,
 };
 use std::collections::BTreeMap;
 pub(crate) type Section = (CurvedProfile, Vec<Origin>);
@@ -19,6 +19,7 @@ pub(crate) struct ProfileInputs {
     pub path: Option<Path>,
 }
 pub(crate) struct Inputs<'a> {
+    pub backend: GeometryBackend,
     pub revision: u64,
     pub parameters: &'a EvaluatedParameters,
     pub solids: &'a BTreeMap<EntityId, Solid>,
@@ -53,7 +54,11 @@ pub(crate) fn build(
             .path
             .as_ref()
             .ok_or_else(|| error(Some(feature), "Sweep path is unavailable"))?;
-        return Solid::sweep_polyline_named(
+        let sweep = match inputs.backend {
+            GeometryBackend::Rust => Solid::rust_sweep_polyline_named,
+            GeometryBackend::OpenCascade => Solid::sweep_polyline_named,
+        };
+        return sweep(
             profile,
             points,
             feature,
@@ -74,8 +79,15 @@ pub(crate) fn build(
             .iter()
             .map(|s| s.1.clone())
             .collect::<Vec<_>>();
-        return Solid::loft_profiles_named(&profiles, feature, &origins, ruled, inputs.policy)
-            .map_err(|e| error(Some(feature), e));
+        let solid = match inputs.backend {
+            GeometryBackend::Rust => {
+                Solid::rust_loft_profiles_named(&profiles, feature, &origins, ruled, inputs.policy)
+            }
+            GeometryBackend::OpenCascade => {
+                Solid::loft_profiles_named(&profiles, feature, &origins, ruled, inputs.policy)
+            }
+        };
+        return solid.map_err(|e| error(Some(feature), e));
     }
     let input = source
         .input
@@ -188,12 +200,12 @@ fn pattern(
     policy: GeometryPolicy,
 ) -> Result<Solid, ModelError> {
     let count = solid.solid_count().map_err(|e| error(Some(feature), e))? as usize;
-    if count.checked_mul(transforms.len()).is_none_or(|n| n > 1024) {
+    let Some(max_solids) = count.checked_mul(transforms.len()).filter(|&n| n <= 1024) else {
         return Err(error(
             Some(feature),
             "Pattern exceeds the 1024-solid budget; reduce count or simplify the source",
         ));
-    }
+    };
     if snapshot
         .elements
         .len()
@@ -217,6 +229,39 @@ fn pattern(
     if !merge {
         return Solid::compound_named(&members.iter().collect::<Vec<_>>(), feature, policy)
             .map_err(|e| error(Some(feature), e));
+    }
+    if solid.uses_rust_geometry()
+        && let Some((first, rest)) = members.split_first()
+        && !rest.is_empty()
+    {
+        match first.rust_union_orthogonal_tools(rest, policy) {
+            Ok(result) => {
+                return result
+                    .ok_or_else(|| error(Some(feature), "Pattern merge removed every solid"));
+            }
+            Err(cause) if cause.kind == GeometryErrorKind::Unsupported => {}
+            Err(cause) => return Err(error(Some(feature), cause)),
+        }
+        let solids: Vec<_> = members.iter().collect();
+        let merged = Solid::union_planar_pieces(&solids, feature, policy)
+            .ok_or_else(|| {
+                error(
+                    Some(feature),
+                    "Rust pattern merge requires certified straight-sided material",
+                )
+            })?
+            .map_err(|cause| error(Some(feature), cause))?;
+        // A union cannot split an input solid. If the certified count did not
+        // decrease, preserve the independent members and their STEP shells.
+        if merged
+            .solid_count()
+            .map_err(|cause| error(Some(feature), cause))? as usize
+            == max_solids
+        {
+            return Solid::compound_named(&solids, feature, policy)
+                .map_err(|cause| error(Some(feature), cause));
+        }
+        return Ok(merged);
     }
     let mut members = members.into_iter();
     let mut result = members

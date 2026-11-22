@@ -311,6 +311,13 @@ bounds.
 
 `thread_profiles` reports offline support and sourced presets. The
 [thread reference](threads.md) owns family coverage, geometry and fit limits.
+`families[].supported` means at least one modeled operation is available in
+the active geometry backend. Check `modeled_new_external_supported` and
+`modeled_cut_internal_supported`, with their respective fit-class lists,
+before choosing an operation. Family availability does not imply support for
+every receiving cut, headed screw or nut. `fit_classes` lists family-level
+classes; the operation-specific lists determine which classes that operation
+accepts.
 UNC and UNF are separate `unc` and `unf` families. The legacy ambiguous
 `unified` family remains unavailable. The catalog exposes each supported
 inch diameter/TPI combination, its millimeter dimensions, external `unified_2a`

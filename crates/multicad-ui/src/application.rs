@@ -1357,7 +1357,8 @@ impl Application {
                     return Err("No sketch is being edited".into());
                 }
                 let p = self.current_mut();
-                p.sketch.abort()?;
+                p.sketch.abort(&mut p.session, channel)?;
+                p.editor.reload(&p.session);
                 p.sheet_pattern.set_authoring(false);
                 self.mode = Mode::Model;
                 self.tab = 0;
@@ -2527,10 +2528,13 @@ impl Application {
                 self.cancel_close();
             } else if self.close_project_confirm.is_some() {
                 self.close_project_confirm = None;
-            } else if self.current().sketch.primitive_corner_input_active()
+            } else if self.current().sketch.primitive_corner_input_focused()
                 && !egui::Popup::is_any_open(ctx)
             {
                 self.current_mut().sketch.cancel_model();
+            } else if self.current().sketch.inline_input_active() {
+                // One Escape in a dimension field drops the pending creation.
+                self.current_mut().sketch.cancel_inline_creation();
             }
             self.focus_search = false;
             self.focus_command = false;
@@ -2541,6 +2545,47 @@ impl Application {
             });
         }
         let context = self.shortcut_context(ctx);
+        // While a wall, fence or slab path is drawn, Enter finishes the path,
+        // Escape cancels only the drawing and Backspace removes the last
+        // corner; none of them applies or discards the whole form.
+        if self.mode == Mode::Model
+            && !context.blocked
+            && !context.text_input
+            && !self.text_input_was_focused
+            && self.current().sketch.model_active()
+        {
+            for (key, gesture) in [
+                (egui::Key::Enter, crate::modeling::OutlineKey::Finish),
+                (egui::Key::Escape, crate::modeling::OutlineKey::Cancel),
+                (
+                    egui::Key::Backspace,
+                    crate::modeling::OutlineKey::RemoveLast,
+                ),
+            ] {
+                let pressed = ctx.input(|input| {
+                    input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::Key {
+                                key: k,
+                                pressed: true,
+                                repeat: false,
+                                modifiers: egui::Modifiers::NONE,
+                                ..
+                            } if *k == key
+                        )
+                    })
+                });
+                if pressed
+                    && let Some(message) = self.current_mut().sketch.model_outline_key(gesture)
+                {
+                    ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, key));
+                    self.message = message.into();
+                    self.message_error = false;
+                    ctx.request_repaint();
+                }
+            }
+        }
         if self.mode == Mode::Model
             && !context.blocked
             && !context.text_input
@@ -2601,6 +2646,14 @@ impl Application {
                 ShortcutAction::NextWorkspace | ShortcutAction::PreviousWorkspace => {
                     // Let a focused split control reach its neighboring target.
                     if self.mode == Mode::Sketch && crate::ribbon_ui::sketch_split_focused(ctx) {
+                        continue;
+                    }
+                    // While drawing, Tab enters the dimension fields beside the
+                    // preview instead of switching workbenches (CAD-384).
+                    if self.current().sketch.inline_fields_visible() {
+                        self.current_mut()
+                            .sketch
+                            .focus_inline_field(action == ShortcutAction::NextWorkspace);
                         continue;
                     }
                     // Cycle the ribbon's visible workbenches in their chosen order.
@@ -2852,6 +2905,17 @@ impl Application {
         }
         {
             let project = self.current_mut();
+            if let Some(preview) = project
+                .sketch
+                .committed_model_preview(&project.session, &project.resources)
+            {
+                let _ = project.scene.publish_committed_preview(
+                    project.session.document(),
+                    &project.resources,
+                    project.session.revision(),
+                    preview,
+                );
+            }
             project.scene.tick_project(
                 project.session.document(),
                 &project.resources,
@@ -3392,6 +3456,22 @@ mod tests {
         assert!(app.invoke(Command::Engraving, &[], Channel::Ui).is_err());
     }
     #[test]
+    fn abort_command_withdraws_an_untouched_new_sketch_and_its_history() {
+        let mut app = Application::new(Box::new(MemoryStorage)).unwrap();
+        let source = app.current().session.document().clone();
+        let undo = app.current().session.can_undo();
+        app.invoke(Command::NewSketch, &["xy"], Channel::Ui)
+            .unwrap();
+        assert_ne!(app.current().session.document(), &source);
+        assert!(app.enabled(Command::AbortSketch));
+        app.invoke(Command::AbortSketch, &[], Channel::Ui).unwrap();
+        assert_eq!(app.mode, Mode::Model);
+        assert_eq!(app.current().session.document(), &source);
+        assert_eq!(app.current().session.can_undo(), undo);
+        assert!(!app.current().session.can_redo());
+        assert!(app.enabled(Command::NewSketch));
+    }
+    #[test]
     fn abort_discards_the_active_tool_but_keeps_committed_sketch_edits() {
         let mut app = Application::new(Box::new(MemoryStorage)).unwrap();
         app.invoke(Command::NewSketch, &["xy"], Channel::Ui)
@@ -3541,6 +3621,70 @@ mod tests {
         assert!(app.welcome);
         assert_eq!(app.welcome_placeholder, Some(app.current().local_id));
         assert_ne!(app.current().local_id, first);
+    }
+    #[test]
+    fn tab_enters_inline_sketch_fields_and_one_escape_cancels_the_creation() {
+        let ctx = egui::Context::default();
+        let mut app = Application::new(Box::new(MemoryStorage)).unwrap();
+        app.invoke(Command::NewSketch, &["xy"], Channel::Ui)
+            .unwrap();
+        app.invoke(Command::Draw(DrawTool::Rectangle), &[], Channel::Ui)
+            .unwrap();
+        let source = app.current().session.document().clone();
+        let revision = app.current().session.revision();
+        let tab = app.tab;
+        let rect = app.current().sketch.viewport_rect;
+        shortcut_frame(&ctx, &mut app, vec![]);
+        let center = app
+            .current()
+            .sketch
+            .viewport_rect
+            .or(rect)
+            .expect("sketch viewport laid out")
+            .center();
+        for _ in 0..3 {
+            shortcut_frame(&ctx, &mut app, vec![egui::Event::PointerMoved(center)]);
+        }
+        assert!(app.current().sketch.inline_fields_visible());
+        // Tab enters the X field instead of switching the ribbon workspace.
+        shortcut_frame(
+            &ctx,
+            &mut app,
+            vec![key_event(egui::Key::Tab, egui::Modifiers::NONE)],
+        );
+        shortcut_frame(&ctx, &mut app, vec![]);
+        assert_eq!(app.tab, tab);
+        assert!(ctx.text_edit_focused());
+        assert!(app.current().sketch.inline_input_active());
+        shortcut_frame(&ctx, &mut app, vec![egui::Event::Text("4".into())]);
+        shortcut_frame(
+            &ctx,
+            &mut app,
+            vec![key_event(egui::Key::Tab, egui::Modifiers::NONE)],
+        );
+        shortcut_frame(&ctx, &mut app, vec![egui::Event::Text("2".into())]);
+        shortcut_frame(
+            &ctx,
+            &mut app,
+            vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        shortcut_frame(&ctx, &mut app, vec![]);
+        assert_eq!(app.current().sketch.pending_first(), Some([4., 2.]));
+        assert_eq!(app.current().session.revision(), revision);
+        // One Escape in a field drops the pending rectangle; the tool stays.
+        app.current_mut().sketch.focus_inline_field(true);
+        shortcut_frame(&ctx, &mut app, vec![]);
+        shortcut_frame(&ctx, &mut app, vec![]);
+        assert!(app.current().sketch.inline_input_active());
+        shortcut_frame(
+            &ctx,
+            &mut app,
+            vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert_eq!(app.current().sketch.pending_first(), None);
+        assert_eq!(app.current().sketch.tool, Some(DrawTool::Rectangle));
+        assert_eq!(app.current().session.document(), &source);
+        assert_eq!(app.current().session.revision(), revision);
     }
     #[test]
     fn tab_cycles_ribbon_workspaces_and_preserves_text_input_navigation() {

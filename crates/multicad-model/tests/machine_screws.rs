@@ -340,6 +340,39 @@ fn screw_edits_invalidate_cache_keep_identity_and_reopen_in_an_independent_sessi
 }
 
 #[test]
+fn rust_cosmetic_socket_caps_and_hex_heads_keep_the_same_metric_envelopes() {
+    let mut s = session();
+    let screws = [false, true].map(|hex| {
+        let mut source = parameters(hex, true, false, true);
+        let MechanicalPartParameters::MachineScrew { thread, .. } = &mut source else {
+            unreachable!();
+        };
+        thread.representation = ThreadRepresentation::CosmeticEnvelope;
+        add(&mut s, source)
+    });
+    let rust = Compiler::default()
+        .compile_with_backend(
+            s.document(),
+            s.revision(),
+            multicad_model::GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let native = compiler().compile(s.document(), s.revision()).unwrap();
+    for screw in screws {
+        let expected = native.solid(screw.feature).unwrap();
+        let actual = rust.solid(screw.feature).unwrap();
+        assert_screw_volumes(actual, expected, expected.volume_mm3().unwrap());
+        let bounds = actual.bounds().unwrap();
+        let expected_bounds = expected.bounds().unwrap();
+        for axis in 0..3 {
+            assert!((bounds.min[axis] - expected_bounds.min[axis]).abs() < 1e-6);
+            assert!((bounds.max[axis] - expected_bounds.max[axis]).abs() < 1e-6);
+        }
+    }
+}
+
+#[test]
 fn cosmetic_screw_threads_are_refused_by_step_mesh_and_print_manufacturing_paths() {
     let mut s = session();
     let mut p = parameters(false, false, false, false);
@@ -447,7 +480,7 @@ fn impossible_socket_floor_corner_wall_thread_extent_and_pitch_fail_atomically()
             0 => {
                 *drive = ScrewDrive::HexSocket {
                     across_flats: length(2.55),
-                    depth: length(3.),
+                    depth: length(9.),
                 }
             }
             1 => {
@@ -561,5 +594,331 @@ fn sourced_stock_length_representatives_preserve_fractional_turns_and_step_volum
             assert!(probe(geometry, [radius, 0., l - b + 1.20 * p]) > 0.999);
             assert!(probe(geometry, [radius, 0., l - b + 1.30 * p]) < 1e-5);
         }
+    }
+}
+
+#[test]
+fn rust_headed_screw_rebuilds_original_socket_and_hex_catalog_projects() {
+    use multicad_core::references::{GeometryIntent, Resolution, resolve};
+    use multicad_model::GeometryBackend;
+
+    for (file, socket) in [
+        ("screw-socket-m6-l20.tcd", true),
+        ("screw-hex-m6-l20.tcd", false),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../library")
+            .join(file);
+        let project = project_file::read(
+            &mut std::fs::File::open(path).unwrap(),
+            Default::default(),
+            &project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project;
+        let source = project.document.clone();
+        let exact = compiler()
+            .compile_with_backend(&source, 0, GeometryBackend::Rust, None)
+            .unwrap_or_else(|e| panic!("{file}: {e}"));
+        let native = compiler().compile(&source, 0).unwrap();
+        let (&part, &feature) = exact.snapshot().bodies.iter().next().unwrap();
+        assert_eq!(exact.snapshot().bodies.len(), 1);
+        assert_eq!(native.snapshot().bodies[&part], feature);
+        let screw = exact.solid(feature).unwrap();
+        let control = native.solid(feature).unwrap();
+        assert!(screw.uses_rust_geometry());
+        assert_eq!(screw.solid_count().unwrap(), 1);
+        let resolved = model::read_mechanical_part(&source, feature).unwrap();
+        let model::ResolvedMechanicalPart::MachineScrew { head, drive, .. } = resolved
+            .parameters
+            .resolve(&multicad_core::parameters::evaluate(&source).unwrap())
+            .unwrap()
+        else {
+            panic!("Expected catalog machine screw");
+        };
+        let h = head.height_mm();
+        if socket {
+            let model::ResolvedScrewDrive::HexSocket {
+                across_flats_mm,
+                depth_mm,
+            } = drive
+            else {
+                panic!("Expected catalog hex socket");
+            };
+            let between_flat_and_corner = (0.5 + 1. / 3_f64.sqrt()) * across_flats_mm / 2.;
+            assert!(
+                !screw
+                    .rust_thread_contains([0., between_flat_and_corner, -h + depth_mm / 2.])
+                    .unwrap()
+            );
+            assert!(
+                screw
+                    .rust_thread_contains([between_flat_and_corner, 0., -h + depth_mm / 2.])
+                    .unwrap()
+            );
+            assert!(
+                screw
+                    .rust_thread_contains([0., 0., -h + depth_mm + 0.1])
+                    .unwrap()
+            );
+        } else {
+            let model::ResolvedScrewHead::ExternalHex {
+                across_flats_mm, ..
+            } = head
+            else {
+                panic!("Expected catalog external hex");
+            };
+            let between_flat_and_corner = (0.5 + 1. / 3_f64.sqrt()) * across_flats_mm / 2.;
+            assert!(
+                screw
+                    .rust_thread_contains([0., between_flat_and_corner, -h / 2.])
+                    .unwrap()
+            );
+            assert!(
+                !screw
+                    .rust_thread_contains([between_flat_and_corner, 0., -h / 2.])
+                    .unwrap()
+            );
+        }
+        let volume = control.volume_mm3().unwrap();
+        let area: f64 = control
+            .faces()
+            .unwrap()
+            .iter()
+            .map(|face| face.area_mm2)
+            .sum();
+        let budget = GeometryPolicy::default().linear_tolerance_mm * area + 1e-7 * volume;
+        assert!(
+            (screw.volume_mm3().unwrap() - volume).abs() <= budget,
+            "{file}: Rust {}, native {volume}, budget {budget}",
+            screw.volume_mm3().unwrap()
+        );
+        let actual = screw.bounds().unwrap();
+        let expected = control.bounds().unwrap();
+        for (value, control) in actual
+            .min
+            .into_iter()
+            .chain(actual.max)
+            .zip(expected.min.into_iter().chain(expected.max))
+        {
+            assert!(
+                (value - control).abs() < 2e-5,
+                "{file}: {actual:?} vs {expected:?}"
+            );
+        }
+        let native_topology = control.topology_snapshot(feature, 0).unwrap();
+        let rust_topology = screw.topology_snapshot(feature, 0).unwrap();
+        for role in ["screw.thread/end", "screw.head/start"]
+            .into_iter()
+            .chain(socket.then_some("screw.socket/end"))
+        {
+            let native_face = native_topology
+                .elements
+                .iter()
+                .find(|element| {
+                    element.key.kind == TopologyKind::Face
+                        && element.origins.iter().any(|origin| origin.role == role)
+                })
+                .unwrap();
+            let intent = GeometryIntent::capture(&native_topology, native_face.key).unwrap();
+            assert!(
+                matches!(
+                    resolve(&intent, &rust_topology, 0),
+                    Resolution::Resolved { key, .. }
+                        if rust_topology.elements.iter().any(|element| element.key == key && element.origins.iter().any(|origin| origin.role == role))
+                ),
+                "{file}: retained face intent {role} did not resolve"
+            );
+        }
+        assert_eq!(project.document, source);
+    }
+}
+
+#[test]
+fn rust_headed_screw_fitted_partial_rotated_profile_retains_intent_through_edit_and_reopen() {
+    use multicad_core::{
+        model::ThreadFit,
+        references::{GeometryIntent, Resolution, resolve},
+    };
+    use multicad_model::GeometryBackend;
+
+    let mut session = session();
+    let mut source = parameters(false, true, true, true);
+    let MechanicalPartParameters::MachineScrew {
+        underhead_length,
+        shank_diameter,
+        head,
+        drive,
+        thread,
+        ..
+    } = &mut source
+    else {
+        unreachable!()
+    };
+    *underhead_length = Some(length(12.));
+    *shank_diameter = length(6.);
+    *head = ScrewHead::SocketCap {
+        diameter: length(10.),
+        height: length(6.),
+    };
+    *drive = ScrewDrive::HexSocket {
+        across_flats: length(5.),
+        depth: length(3.),
+    };
+    thread.major_diameter = length(6.);
+    thread.pitch = length(1.);
+    thread.length = length(6.5);
+    thread.fit = ThreadFit::Metric6gExternal;
+
+    let request = add(&mut session, source.clone());
+    let build = |document: &Document, revision| {
+        compiler()
+            .compile_with_backend(document, revision, GeometryBackend::Rust, None)
+            .unwrap()
+    };
+    let original = build(session.document(), 1);
+    let solid = original.solid(request.feature).unwrap();
+    let model::ResolvedMechanicalPart::MachineScrew { thread, .. } =
+        source.resolve(session.parameters()).unwrap()
+    else {
+        unreachable!()
+    };
+    let radius = thread.major_radius_mm - thread.profile.depth_mm / 2.;
+    for (p, is_material) in [
+        ([2.95, 0., 4.], true),
+        ([0., -radius, 6.75], true),
+        ([0., -radius, 7.25], false),
+        ([0., 2.65, -4.5], false),
+        ([2.65, 0., -4.5], true),
+    ] {
+        assert_eq!(
+            solid.rust_thread_contains(world(p, true)).unwrap(),
+            is_material,
+            "{p:?}"
+        );
+    }
+    assert_eq!(solid.bounds().unwrap().min[0], 4.);
+    assert_eq!(solid.bounds().unwrap().max[0], 22.);
+    let snapshot = solid.topology_snapshot(request.feature, 1).unwrap();
+    let tip = snapshot
+        .elements
+        .iter()
+        .find(|element| {
+            element.key.kind == TopologyKind::Face
+                && element.origins.iter().any(|o| o.role == "screw.thread/end")
+        })
+        .unwrap();
+    let intent = GeometryIntent::capture(&snapshot, tip.key).unwrap();
+
+    let MechanicalPartParameters::MachineScrew { thread, .. } = &mut source else {
+        unreachable!()
+    };
+    thread.hand = ThreadHand::Right;
+    let prepared =
+        model::prepare_mechanical_part_edit(&session, 1, actor(), request.feature, &source)
+            .unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let mut bytes = Vec::new();
+    project_file::write(
+        &ProjectFile::new(session.document().clone()).unwrap(),
+        &mut bytes,
+        Default::default(),
+    )
+    .unwrap();
+    let reopened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project;
+    assert_eq!(
+        model::read_mechanical_part(&reopened.document, request.feature)
+            .unwrap()
+            .parameters,
+        source
+    );
+    let rebuilt = build(&reopened.document, 0);
+    assert_eq!(rebuilt.snapshot().bodies[&request.body], request.feature);
+    let current = rebuilt.solid(request.feature).unwrap();
+    assert!(
+        matches!(resolve(&intent, &current.topology_snapshot(request.feature, 0).unwrap(), 0), Resolution::Resolved { key, .. } if key == tip.key)
+    );
+    assert_eq!(current.volume_mm3().unwrap(), solid.volume_mm3().unwrap());
+    assert!(
+        current
+            .rust_thread_contains(world([0., radius, 6.75], true))
+            .unwrap()
+    );
+    assert!(
+        !current
+            .rust_thread_contains(world([0., -radius, 6.75], true))
+            .unwrap()
+    );
+}
+
+#[test]
+fn socket_floor_can_enter_plain_shank_with_physical_manufacturing_and_step_proof() {
+    for (height, depth) in [(3., 3.), (1., 1.3)] {
+        let mut p = parameters(false, true, false, false);
+        let MechanicalPartParameters::MachineScrew { head, drive, .. } = &mut p else {
+            unreachable!()
+        };
+        *head = ScrewHead::SocketCap {
+            diameter: length(5.68),
+            height: length(height),
+        };
+        *drive = ScrewDrive::HexSocket {
+            across_flats: length(2.55),
+            depth: length(depth),
+        };
+        let mut s = session();
+        let r = add(&mut s, p);
+        let compiled = compiler()
+            .compile_with_backend(
+                s.document(),
+                s.revision(),
+                multicad_model::GeometryBackend::Rust,
+                None,
+            )
+            .unwrap();
+        let solid = compiled.solid(r.feature).unwrap();
+        let floor = depth - height;
+        assert!(!solid.rust_thread_contains([0., 0., floor - 0.01]).unwrap());
+        assert!(solid.rust_thread_contains([0., 0., floor + 0.01]).unwrap());
+        assert!(
+            solid
+                .rust_thread_contains([1.49, 0., floor - 0.01])
+                .unwrap()
+        );
+        let mesh = solid
+            .manufacturing_mesh_with_receipt(Default::default())
+            .unwrap();
+        assert_eq!(mesh.edge_pairs as usize * 2, mesh.mesh.indices.len());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plain-zone-socket.step");
+        solid.write_step(&path).unwrap();
+        let decoded = Solid::import_rust_step(
+            &std::fs::read_to_string(path).unwrap(),
+            EntityId::new(),
+            GeometryPolicy::default(),
+        )
+        .unwrap();
+        assert!((solid.volume_mm3().unwrap() - decoded.volume_mm3().unwrap()).abs() < 1e-6);
+        assert!(
+            !decoded
+                .rust_thread_contains([0., 0., floor - 0.01])
+                .unwrap()
+        );
+        assert!(
+            decoded
+                .rust_thread_contains([0., 0., floor + 0.01])
+                .unwrap()
+        );
+        assert!(
+            decoded
+                .rust_thread_contains([1.49, 0., floor - 0.01])
+                .unwrap()
+        );
     }
 }

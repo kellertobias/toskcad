@@ -1,5 +1,9 @@
 //! Wood intent is independent of the machine-thread recipe and its controls.
-use super::super::dimension::DimensionField;
+use super::super::{
+    diagram::{self, DiagramLink, Key},
+    dimension::DimensionField,
+};
+use super::visual;
 use crate::{controls, egui};
 use multicad_core::{
     document::{Document, EntityId},
@@ -70,7 +74,27 @@ impl WoodForm {
             parameters: Box::new(source),
         })
     }
+    pub(super) fn convention(&self) -> ScrewLengthConvention {
+        self.convention
+    }
+    pub(super) fn field(&self, index: usize) -> &DimensionField {
+        &self.fields[index]
+    }
+    pub(super) fn linked_fields(&self) -> Vec<(Key, &DimensionField)> {
+        visual::WOOD.into_iter().zip(self.fields.iter()).collect()
+    }
+    #[cfg(test)]
     pub fn show(&mut self, ui: &mut egui::Ui, feature: EntityId) -> bool {
+        self.show_linked(ui, feature, &mut DiagramLink::default())
+    }
+    /// Envelope dimensions first; the reference thread profile, which does not
+    /// shape the modeled envelope, is a named section that opens on demand.
+    pub(super) fn show_linked(
+        &mut self,
+        ui: &mut egui::Ui,
+        feature: EntityId,
+        link: &mut DiagramLink,
+    ) -> bool {
         let mut changed = false;
         ui.strong("Simplified wood-screw envelope");
         ui.small("External hex head and drive. Smooth stock envelope; thread and manufacturer point are not modeled. Manufacturing export is unavailable.");
@@ -89,7 +113,8 @@ impl WoodForm {
                         .changed();
                 }
             });
-        for (i, label) in [
+        let help = "Retained value or bound expression; reference intent does not establish modeled manufacturing geometry.";
+        let labels = [
             "Length",
             "Nominal stock diameter",
             "Head across flats",
@@ -98,12 +123,35 @@ impl WoodForm {
             "Reference core diameter",
             "Reference V angle",
             "Minimum thread extent including point",
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            changed |= self.fields[i].show_named(ui,(feature,"wood",i),label,"Retained value or bound expression; reference intent does not establish modeled manufacturing geometry.");
+        ];
+        for i in [0, 1, 2, 3, 7] {
+            changed |= link.field(
+                ui,
+                visual::WOOD[i],
+                &mut self.fields[i],
+                (feature, "wood", i),
+                labels[i],
+                help,
+            );
         }
+        let title = format!(
+            "Reference thread profile · pitch {}",
+            diagram::field_value(&self.fields[4])
+        );
+        let reveal = link.reveals(&visual::WOOD[4..7]);
+        diagram::section(ui, (feature, "wood-reference"), &title, reveal, |ui| {
+            ui.small("Reference intent only; the modeled envelope is a smooth stock cylinder.");
+            for (i, field) in self.fields.iter_mut().enumerate().take(7).skip(4) {
+                changed |= link.field(
+                    ui,
+                    visual::WOOD[i],
+                    field,
+                    (feature, "wood", i),
+                    labels[i],
+                    help,
+                );
+            }
+        });
         ui.small("The minimum extent includes the unspecified point and thread-start transition. It is a lower bound, not the actual thread length or start. The flat distal plane encloses the unknown point. Changing length convention retains the authored value.");
         changed
     }

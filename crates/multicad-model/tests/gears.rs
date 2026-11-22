@@ -8,6 +8,106 @@ use multicad_core::{
 };
 use multicad_kernel::{GeometryPolicy, Solid};
 use multicad_model::Compiler;
+
+#[test]
+fn rust_straight_rack_preserves_placement_tooth_origins_and_step_exchange() {
+    let mut session = Session::new(Document::new("Placed straight rack").unwrap()).unwrap();
+    let request = GearRequest::new(
+        "Rack",
+        GearParameters {
+            family: GearFamily::Rack,
+            teeth: multicad_core::constraint_sketch::Dimension::Literal {
+                value: 25.,
+                unit: "count".into(),
+            },
+            module: length(2.),
+            rack: Some(model::RackDimensions {
+                backing_thickness: length(4.),
+            }),
+            face_width: length(7.),
+            bore_diameter: length(0.),
+            frame: PrimitiveFrame {
+                origin: [length(10.), length(20.), length(30.)],
+                u: [0., 1., 0.],
+                v: [0., 0., 1.],
+            },
+            ..Default::default()
+        },
+    );
+    let prepared = model::prepare_gear(&session, 0, actor(), &request).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let compiler = Compiler::default();
+    use multicad_model::GeometryBackend;
+    let rust = compiler
+        .compile_with_backend(
+            session.document(),
+            session.revision(),
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let feature = request.feature;
+    let actual = rust.solid(feature).unwrap();
+    let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-6, "{a} != {b}");
+    // Independent expectation from the resolved rack recipe: a sharp
+    // trapezoid per pitch cell plus two concave tangent root-fillet corners.
+    let geometry = request
+        .parameters
+        .resolve_geometry(session.parameters())
+        .unwrap();
+    let r = geometry.rack().unwrap();
+    let alpha = r.pressure_angle_rad;
+    let corner = r.root_fillet_radius_mm.powi(2)
+        * (1. / alpha.cos() - alpha.tan() - (std::f64::consts::FRAC_PI_2 - alpha) / 2.);
+    let expected_volume = f64::from(r.teeth)
+        * r.face_width_mm
+        * (r.pitch_mm * r.backing_thickness_mm
+            + (r.addendum_mm + r.dedendum_mm)
+                * (r.physical_tooth_thickness_mm + (r.dedendum_mm - r.addendum_mm) * alpha.tan())
+            + 2. * corner);
+    // Local rack X runs along frame u, the pitch-line normal Y along v and the
+    // face width along u x v = +X from the placed origin (10, 20, 30).
+    let half = r.length_mm / 2.;
+    let expected_min = [
+        10.,
+        20. - half,
+        30. - r.dedendum_mm - r.backing_thickness_mm,
+    ];
+    let expected_max = [10. + r.face_width_mm, 20. + half, 30. + r.addendum_mm];
+    assert!(actual.uses_rust_geometry());
+    assert_eq!(actual.solid_count().unwrap(), 1);
+    near(actual.volume_mm3().unwrap(), expected_volume);
+    let a = actual.bounds().unwrap();
+    for i in 0..3 {
+        near(a.min[i], expected_min[i]);
+        near(a.max[i], expected_max[i]);
+    }
+    let topology = &rust.snapshot().shapes[&feature].topology;
+    for tooth in 0..25 {
+        let role = format!("rack/tooth/{tooth}/fillet/right");
+        assert!(topology.elements.iter().any(|element| {
+            element.key.kind == multicad_core::references::TopologyKind::Face
+                && element.origins.iter().any(|origin| origin.role == role)
+        }));
+    }
+    actual
+        .manufacturing_mesh_with_receipt(Default::default())
+        .unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("rack.step");
+    actual.write_step(&path).unwrap();
+    let readback = Solid::read_step(&path, compiler.policy).unwrap();
+    near(readback.volume_mm3().unwrap(), expected_volume);
+    let verified = multicad_model::export::verify_rust_step_shape(
+        &path,
+        rust.solid(feature).unwrap(),
+        &rust.snapshot().shapes[&feature],
+        compiler.policy.linear_tolerance_mm,
+    )
+    .unwrap();
+    near(verified, expected_volume);
+}
+
 #[test]
 fn unchanged_gear_reuses_native_result_and_recipe_edits_invalidate_it() {
     let mut s = Session::new(Document::new("Cached gear").unwrap()).unwrap();

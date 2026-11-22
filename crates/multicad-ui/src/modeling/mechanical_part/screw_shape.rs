@@ -1,5 +1,9 @@
 //! Independent head/drive drafts retain their original canonical dimensions.
-use super::super::dimension::DimensionField;
+use super::super::{
+    diagram::{DiagramLink, Key},
+    dimension::DimensionField,
+};
+use super::visual;
 use crate::{controls, egui};
 use multicad_core::{
     constraint_sketch::Dimension,
@@ -350,6 +354,42 @@ impl<T: CanonicalShape> ShapeDraft<T> {
     fn show(&mut self, ui: &mut egui::Ui, namespace: impl egui::AsIdSalt) -> bool {
         ui.push_id(namespace,|ui|{let mut changed=false;for (spec,field) in &mut self.fields {changed|=field.show_named(ui,spec.0,spec.1,"Retained value or bound expression. Millimeters/degrees are explicit; native Preview validates the complete profile.");}changed}).inner
     }
+    /// Head inputs drawn on the screw diagram are linked to their callouts.
+    fn show_linked(
+        &mut self,
+        ui: &mut egui::Ui,
+        namespace: impl egui::AsIdSalt,
+        link: &mut DiagramLink,
+    ) -> bool {
+        ui.push_id(namespace, |ui| {
+            let mut changed = false;
+            for (spec, field) in &mut self.fields {
+                let help = "Retained value or bound expression. Millimeters/degrees are explicit; native Preview validates the complete profile.";
+                changed |= match head_key(spec.0) {
+                    Some(key) => link.field(ui, key, field, spec.0, spec.1, help),
+                    None => field.show_named(ui, spec.0, spec.1, help),
+                };
+            }
+            changed
+        })
+        .inner
+    }
+    fn field(&self, path: &str) -> Option<&DimensionField> {
+        self.fields
+            .iter()
+            .find(|(spec, _)| spec.0 == path)
+            .map(|(_, field)| field)
+    }
+}
+/// Diagram key of a head profile input, where the diagram draws it.
+fn head_key(path: &str) -> Option<Key> {
+    match path {
+        "/diameter" => Some(visual::HEAD_DIAMETER),
+        "/across_flats" => Some(visual::HEAD_FLATS),
+        "/height" => Some(visual::HEAD_HEIGHT),
+        "/included_angle" => Some(visual::HEAD_ANGLE),
+        _ => None,
+    }
 }
 pub(super) struct ScrewShapeForm {
     pub(super) head: HeadKind,
@@ -412,11 +452,37 @@ impl ScrewShapeForm {
                 .resolve(document)?,
         ))
     }
+    /// The selected head draft's size (diameter or across flats) and height.
+    pub(super) fn head_fields(&self) -> (Option<&DimensionField>, Option<&DimensionField>) {
+        let head = self.heads.get(&self.head).expect("all head drafts");
+        (
+            head.field("/diameter")
+                .or_else(|| head.field("/across_flats")),
+            head.field("/height"),
+        )
+    }
+    /// Linked head inputs in display order, for validation targeting.
+    pub(super) fn linked_fields(&self) -> Vec<(Key, &DimensionField)> {
+        let head = self.heads.get(&self.head).expect("all head drafts");
+        head.fields
+            .iter()
+            .filter_map(|(spec, field)| head_key(spec.0).map(|key| (key, field)))
+            .collect()
+    }
+    #[cfg(test)]
     pub(super) fn show(&mut self, ui: &mut egui::Ui, owner: EntityId) -> bool {
+        self.show_linked(ui, owner, &mut DiagramLink::default())
+    }
+    pub(super) fn show_linked(
+        &mut self,
+        ui: &mut egui::Ui,
+        owner: EntityId,
+        link: &mut DiagramLink,
+    ) -> bool {
         ui.push_id(("screw_shape",owner),|ui|{
    let mut changed=false;ui.label("Head form");
    controls::inspector_combo(ui,"head_kind").selected_text(self.head.label()).show_ui(ui,|ui|for kind in HeadKind::ALL {changed|=ui.selectable_value(&mut self.head,kind,kind.label()).changed();});
-   changed|=self.heads.get_mut(&self.head).expect("all head drafts").show(ui,("head",self.head));
+   changed|=self.heads.get_mut(&self.head).expect("all head drafts").show_linked(ui,("head",self.head),link);
    if self.head==HeadKind::Countersunk {ui.small("Neck/construction datum, not a flat bearing seat. Overall length includes the actual head height.");}
    ui.separator();ui.label("Drive form");
    controls::inspector_combo(ui,"drive_kind").selected_text(self.drive.label()).show_ui(ui,|ui|for kind in DriveKind::ALL {changed|=ui.selectable_value(&mut self.drive,kind,kind.label()).changed();});

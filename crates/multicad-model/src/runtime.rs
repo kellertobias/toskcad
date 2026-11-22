@@ -3,7 +3,7 @@
 //! the next Rust/native boundary. UI polling never waits.
 //! Unchanged feature results are reused from earlier requests through a
 //! worker-owned [`crate::EvaluationCache`].
-use crate::{Compiler, Model, ModelError, ModelSnapshot};
+use crate::{Compiler, GeometryBackend, Model, ModelError, ModelSnapshot};
 use multicad_core::{
     document::Document,
     model::{CutTargetProbeResult, EvaluationOptions, ModelQueryError},
@@ -133,13 +133,20 @@ impl<T: Send + 'static> Runtime<T> {
         cached: impl Fn(&Document, u64, u64) -> Option<T> + Send + 'static,
         publish: impl Fn(&Document, &Model, u64) -> Result<T, ModelError> + Send + 'static,
     ) -> Result<Self, String> {
-        Self::with_scoped_cached_model_publisher(compiler, cached, |_, _| None, publish)
+        Self::with_scoped_cached_model_publisher(
+            compiler,
+            GeometryBackend::default(),
+            cached,
+            |_, _| None,
+            publish,
+        )
     }
-    /// Select the native sources needed for an exact derived publication after
+    /// Select the model sources needed for an exact derived publication after
     /// a cache miss. The publisher must verify that the resulting scope covers
     /// its request. Returning `None` keeps the complete evaluation path.
     pub fn with_scoped_cached_model_publisher(
         compiler: Compiler,
+        backend: GeometryBackend,
         cached: impl Fn(&Document, u64, u64) -> Option<T> + Send + 'static,
         sources: impl Fn(&Document, u64) -> Option<Vec<multicad_core::document::EntityId>>
         + Send
@@ -148,6 +155,7 @@ impl<T: Send + 'static> Runtime<T> {
     ) -> Result<Self, String> {
         Self::with_worker_cache(
             compiler,
+            backend,
             true,
             cached,
             sources,
@@ -163,10 +171,29 @@ impl<T: Send + 'static> Runtime<T> {
         + Send
         + 'static,
     ) -> Result<Self, String> {
-        Self::with_worker_cache(compiler, false, |_, _, _| None, |_, _| None, publish)
+        Self::with_model_and_snapshot_backend(compiler, GeometryBackend::default(), publish)
+    }
+
+    /// Pin the backend for all evaluations on this worker and its forked lanes.
+    pub fn with_model_and_snapshot_backend(
+        compiler: Compiler,
+        backend: GeometryBackend,
+        publish: impl Fn(&Document, &Model, &ModelSnapshot, u64) -> Result<T, ModelError>
+        + Send
+        + 'static,
+    ) -> Result<Self, String> {
+        Self::with_worker_cache(
+            compiler,
+            backend,
+            false,
+            |_, _, _| None,
+            |_, _| None,
+            publish,
+        )
     }
     fn with_worker_cache(
         compiler: Compiler,
+        backend: GeometryBackend,
         reuse_model: bool,
         cached: impl Fn(&Document, u64, u64) -> Option<T> + Send + 'static,
         sources: impl Fn(&Document, u64) -> Option<Vec<multicad_core::document::EntityId>>
@@ -281,17 +308,19 @@ impl<T: Send + 'static> Runtime<T> {
                         Ok(retained.take().expect("matching retained drawing model"))
                     } else {
                         match &roots {
-                            Some(roots) => compiler.compile_sources_cached(
+                            Some(roots) => compiler.compile_sources_cached_with_backend(
                                 &mut cache,
                                 &job.document,
                                 job.revision,
                                 roots,
+                                backend,
                                 Some(&superseded),
                             ),
-                            None => compiler.compile_cached(
+                            None => compiler.compile_cached_with_backend(
                                 &mut cache,
                                 &job.document,
                                 job.revision,
+                                backend,
                                 Some(&superseded),
                             ),
                         }
@@ -481,7 +510,7 @@ impl<T: Send + 'static> Runtime<T> {
         self.shared.wake.notify_one();
         Ok(generation)
     }
-    /// Statistics of this lane's latest accepted native compile. A detached
+    /// Statistics of this lane's latest accepted compile. A detached
     /// publication-cache hit or retained whole-model reuse has no new compile.
     pub fn last_compile_stats(&self) -> Option<crate::CompileStats> {
         self.lane

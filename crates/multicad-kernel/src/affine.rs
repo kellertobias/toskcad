@@ -53,7 +53,7 @@ impl AffineTransform {
             cross(self.matrix[0], self.matrix[1]),
         ]
     }
-    fn determinant(self) -> f64 {
+    pub(crate) fn determinant(self) -> f64 {
         dot(self.matrix[0], cross(self.matrix[1], self.matrix[2]))
     }
     /// Matrix and inverse coefficients are bounded to 1e6. Positive determinant
@@ -88,7 +88,7 @@ impl AffineTransform {
     fn vector(self, v: [f64; 3]) -> [f64; 3] {
         self.matrix.map(|row| dot(row, v))
     }
-    fn point(self, p: [f64; 3]) -> [f64; 3] {
+    pub(crate) fn point(self, p: [f64; 3]) -> [f64; 3] {
         let p = self.vector(p);
         std::array::from_fn(|i| p[i] + self.translation_mm[i])
     }
@@ -127,7 +127,11 @@ impl AffineTransform {
             AnalyticGeometry::Plane { frame } => AnalyticGeometry::Plane {
                 frame: self.frame(frame)?,
             },
-            AnalyticGeometry::CircularArc { .. } => return Ok(None),
+            AnalyticGeometry::CircularArc { .. }
+            | AnalyticGeometry::EllipticArc { .. }
+            | AnalyticGeometry::InvoluteArc { .. } => {
+                return Ok(None);
+            }
         };
         value
             .validate()
@@ -142,6 +146,19 @@ impl Solid {
         feature: EntityId,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
+        let result = self.affine_geometry(transform, feature, policy)?;
+        if self.has_unattributed_topology() {
+            return result.without_authored_provenance();
+        }
+        Ok(result)
+    }
+
+    fn affine_geometry(
+        &self,
+        transform: AffineTransform,
+        feature: EntityId,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
         policy.validate()?;
         transform.validate()?;
         policy.point(transform.translation_mm)?;
@@ -151,10 +168,46 @@ impl Solid {
                 "Affine feature identity is nil",
             ));
         }
+        if self.uses_rust_geometry() {
+            if self.geometry_policy() != policy {
+                return Err(failure(
+                    GeometryErrorKind::Unsupported,
+                    "Rust Scale requires the source geometry policy",
+                ));
+            }
+            if transform == AffineTransform::default() {
+                return self.share();
+            }
+            if let Some(compound) = self.rust_compound()
+                && self.solid_count()? > 1
+            {
+                // Keep member grouping and ancestry; publish the compound only
+                // after every leaf has accepted the exact transform.
+                let members = compound
+                    .members()
+                    .map(|member| member.affine_transformed_named(transform, feature, policy))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut result = Self::make_rust_compound(
+                    &members.iter().collect::<Vec<_>>(),
+                    feature,
+                    policy,
+                    None,
+                )?;
+                result.rust_origins = self.rust_origins.clone();
+                return Ok(result);
+            }
+            // Curved solids map through their exact retained boundary.
+            return match self.rust_scale_planar(transform, feature, policy) {
+                Err(cause) if cause.kind == GeometryErrorKind::Unsupported => self
+                    .rust_scale_brep(transform, feature, policy)
+                    .unwrap_or(Err(cause)),
+                result => result,
+            };
+        }
         let matrix: Vec<_> = transform.matrix.into_iter().flatten().collect();
         let mut result = Self::adopt(
             ffi::affine_transform_shape(
-                &self.native.0,
+                self.occt()?,
                 &matrix,
                 &ffi::Point3 {
                     x: transform.translation_mm[0],

@@ -177,7 +177,8 @@ fn eight_real_family_builds_keep_physical_top_length_choices_literal_references_
             .position(|e| e.family == family && e.nominal_mm == nominal)
             .unwrap();
         let entry = &c.entries[index];
-        let p = catalog::build(&c, index).unwrap();
+        let p = catalog::build(&c, index)
+            .unwrap_or_else(|cause| panic!("{family} M{nominal}: {cause:?}"));
         assert!(documents.insert(p.document.id()));
         assert!(p.document.id().to_string().starts_with("cad23600-"));
         let saved = bytes(&p);
@@ -279,7 +280,9 @@ fn eight_real_family_builds_keep_physical_top_length_choices_literal_references_
         assert!(project_file::read(&mut saved.as_slice(), Default::default(), &old).is_err());
         if matches!(family, "iso14581-2013" | "iso7045-2011-h") {
             let path = dir.path().join(format!("{family}.step"));
-            solid.write_step(&path).unwrap();
+            solid
+                .write_step(&path)
+                .unwrap_or_else(|cause| panic!("{family} M{nominal}: STEP export: {cause:?}"));
             let step = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
             assert_eq!(step.solid_count().unwrap(), 1);
             let v = solid.volume_mm3().unwrap();
@@ -623,4 +626,37 @@ fn regeneration_accepts_unchanged_selected_profile_and_refuses_identity_hash_or_
         .is_err()
     );
     assert_eq!(bytes(&project), saved);
+}
+
+#[test]
+fn iso7045_m2_native_thumbnail_and_manufacturing_survive_reopen() {
+    let catalog = catalog::curated().unwrap();
+    let index = catalog
+        .entries
+        .iter()
+        .position(|entry| entry.family == "iso7045-2011-h" && entry.nominal_mm == 2.)
+        .unwrap();
+    let project = catalog::build(&catalog, index).unwrap();
+    let saved = bytes(&project);
+    let project = reopen(&saved);
+    assert_eq!(saved, bytes(&project));
+    let info = project_file::info::read(&project.document).unwrap();
+    let preview = info.preview.as_ref().unwrap();
+    assert!(preview.width() >= 128 && preview.height() >= 128);
+    let blank = multicad_ui::preview_capture::preview_from(&multicad_ui::egui::ColorImage::filled(
+        [preview.width() as usize, preview.height() as usize],
+        multicad_ui::egui::Color32::from_rgb(244, 244, 242),
+    ))
+    .unwrap();
+    assert_ne!(preview.png(), blank.png());
+    let model = Compiler::default().compile(&project.document, 0).unwrap();
+    let cards = model::mechanical_part_cards(&project.document);
+    assert_eq!(cards.len(), 1);
+    let solid = model.solid(cards[0].feature).unwrap();
+    assert_eq!(solid.solid_count().unwrap(), 1);
+    assert!(solid.volume_mm3().unwrap() > 0.);
+    let mesh = solid
+        .manufacturing_mesh(multicad_kernel::MeshOptions::default())
+        .unwrap();
+    assert!(!mesh.indices.is_empty());
 }

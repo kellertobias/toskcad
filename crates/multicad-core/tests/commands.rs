@@ -428,3 +428,79 @@ fn delayed_save_acknowledges_disk_snapshot_without_rewinding_live_source_or_hist
     );
     assert!(!session.dirty());
 }
+#[test]
+fn retract_withdraws_only_the_latest_unchanged_commit_and_restores_both_stacks() {
+    let document = Document::new("Retract").unwrap();
+    let mut session = Session::new(document.clone()).unwrap();
+    let ui = || Actor::local(Channel::Ui);
+    session
+        .apply(request(
+            0,
+            Channel::Ui,
+            vec![Mutation::Insert(parameter("width", "80"))],
+        ))
+        .unwrap();
+    let first = session.document().clone();
+    session
+        .apply(request(
+            1,
+            Channel::Ui,
+            vec![Mutation::Insert(parameter("height", "20"))],
+        ))
+        .unwrap();
+    // A pending redo entry must survive a commit that is later withdrawn.
+    session.undo(session.revision(), ui()).unwrap();
+    assert_eq!(session.document(), &first);
+    assert!(session.can_redo());
+    session
+        .apply(request(
+            session.revision(),
+            Channel::Ui,
+            vec![Mutation::Insert(parameter("depth", "5"))],
+        ))
+        .unwrap();
+    assert!(!session.can_redo());
+    let created = session.revision();
+    // Stale or foreign expectations change nothing.
+    assert_eq!(
+        session.retract(created - 1, ui()).unwrap_err().code,
+        ErrorCode::StaleRevision
+    );
+    session.retract(created, ui()).unwrap();
+    assert_eq!(session.document(), &first);
+    assert!(session.revision() > created);
+    assert!(session.can_redo(), "the earlier redo entry is restored");
+    session.redo(session.revision(), ui()).unwrap();
+    let names: Vec<_> = session
+        .document()
+        .entities()
+        .map(|e| e.name.clone())
+        .collect();
+    assert!(names.iter().any(|n| n == "height"), "{names:?}");
+    assert!(!names.iter().any(|n| n == "depth"), "{names:?}");
+    session.undo(session.revision(), ui()).unwrap();
+    session.undo(session.revision(), ui()).unwrap();
+    assert_eq!(session.document(), &document);
+    assert!(!session.can_undo(), "no phantom history remains");
+    let last = session.activity().last().unwrap();
+    assert_eq!(last.kind, ActivityKind::Undo);
+    // Retract is never available after Undo/Redo or twice for one commit.
+    session.redo(session.revision(), ui()).unwrap();
+    assert_eq!(
+        session.retract(session.revision(), ui()).unwrap_err().code,
+        ErrorCode::NoHistory
+    );
+    session
+        .apply(request(
+            session.revision(),
+            Channel::Ui,
+            vec![Mutation::Insert(parameter("depth", "5"))],
+        ))
+        .unwrap();
+    session.retract(session.revision(), ui()).unwrap();
+    assert_eq!(
+        session.retract(session.revision(), ui()).unwrap_err().code,
+        ErrorCode::NoHistory
+    );
+    assert!(session.activity().any(|a| a.label.starts_with("Cancel: ")));
+}

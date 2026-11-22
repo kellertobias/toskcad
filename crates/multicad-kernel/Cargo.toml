@@ -1,25 +1,24 @@
 [package]
 name = "multicad-kernel"
-description = "Owned OCCT boundary; general modeling policy is implemented separately"
+description = "MultiCAD geometry providers and shared modeling API"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+
 [dependencies]
-cxx = "=1.0.205"
 multicad-core.workspace = true
+multicad-rust-kernel.workspace = true
 
 [dev-dependencies]
 tempfile = "=3.27.0"
 serde_json = "=1.0.154"
 
-[build-dependencies]
-cxx-build = "=1.0.205"
-multicad-native-build.workspace = true
-
-# The audited CXX declaration is the only unsafe-code exception in this crate.
+# Geometry and transfer data use safe Rust.
 [lints.rust]
 unsafe_code = "deny"
 

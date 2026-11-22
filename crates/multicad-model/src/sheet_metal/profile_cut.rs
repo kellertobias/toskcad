@@ -1,5 +1,7 @@
-use super::{SheetLayout, cross, dot, flat_contours, polygon_edges, scale};
-use crate::{ModelError, error, sheet_forming::FlatFrame};
+use super::{
+    SheetLayout, channel, cross, dot, flat_contours, inset, polygon_edges, rebuild_rust_flat, scale,
+};
+use crate::{GeometryBackend, ModelError, error, sheet_forming::FlatFrame};
 use multicad_core::{document::EntityId, model::CutoutFace, references::Origin};
 use multicad_kernel::{BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, Solid};
 
@@ -9,11 +11,13 @@ pub(crate) struct ProfileCut {
     pub face: CutoutFace,
     pub outline: Vec<CurvedEdge2d>,
     pub area_mm2: f64,
+    pub origins: Vec<Origin>,
 }
 
 pub(crate) struct CutProfile {
     pub geometry: CurvedProfile,
     pub developed: bool,
+    pub backend: GeometryBackend,
 }
 
 pub(crate) fn build_profile_cut(
@@ -28,6 +32,7 @@ pub(crate) fn build_profile_cut(
     let CutProfile {
         geometry: profile,
         developed,
+        backend,
     } = profile;
     let failure = |message: String| error(Some(feature), message);
     let native = |e: multicad_kernel::GeometryError| failure(e.to_string());
@@ -108,6 +113,50 @@ pub(crate) fn build_profile_cut(
             transform(&outer, |p| flat_frame.point(p), flat_frame.reflected()).map_err(failure)?;
         (outer, outline)
     };
+    if backend == GeometryBackend::Rust {
+        let mut layout = previous.clone();
+        layout.profile_cuts.push(ProfileCut {
+            feature,
+            face,
+            outline,
+            area_mm2: 0.,
+            origins: origins.to_vec(),
+        });
+        let cut = if layout.flanges.is_empty() {
+            rebuild_rust_flat(&mut layout, feature, policy)?
+        } else if !channel::fits(&layout) {
+            let origins = layout.rust_base_origins.clone().unwrap_or_default();
+            inset::build(&mut layout, &origins, policy).map_err(|cause| {
+                failure(format!("Keep the cut inside one flat sheet face, clear of its edges, bends and other openings. {cause}"))
+            })?
+        } else {
+            let (solid, developed) = channel::append_profile(
+                previous,
+                sheet,
+                outer,
+                layout
+                    .profile_cuts
+                    .last()
+                    .expect("newly appended profile cut"),
+                policy,
+            )
+            .map_err(failure)?;
+            layout.developed = Some(developed);
+            solid
+        };
+        let removed = sheet.volume_mm3().map_err(native)? - cut.volume_mm3().map_err(native)?;
+        if removed <= 0. || !removed.is_finite() {
+            return Err(failure(
+                "The exact cut does not remove material from the sheet".into(),
+            ));
+        }
+        layout
+            .profile_cuts
+            .last_mut()
+            .expect("newly appended profile cut")
+            .area_mm2 = removed / thickness;
+        return Ok((cut, layout));
+    }
     let support = flange.map_or_else(
         || previous.base.outer.clone(),
         |flange| {
@@ -164,6 +213,7 @@ pub(crate) fn build_profile_cut(
         face,
         outline,
         area_mm2: expected / thickness,
+        origins: origins.to_vec(),
     });
     layout.developed = None;
     layout.developed = Some(
@@ -173,7 +223,7 @@ pub(crate) fn build_profile_cut(
     Ok((cut, layout))
 }
 
-fn transform(
+pub(super) fn transform(
     edges: &[CurvedEdge2d],
     map: impl Fn([f64; 2]) -> [f64; 2],
     reflected: bool,
@@ -216,6 +266,10 @@ mod tests {
 
     #[test]
     fn c_channel_refuses_crossing_the_bend_and_recurring_openings() {
+        checks_invalid_channel_cuts(GeometryBackend::Rust);
+    }
+
+    fn checks_invalid_channel_cuts(backend: GeometryBackend) {
         let document = project_file::read(
             &mut include_bytes!("../../../../examples/front-panel.tcd").as_slice(),
             Default::default(),
@@ -234,7 +288,9 @@ mod tests {
             omit_display: true,
             ..Default::default()
         };
-        let model = compiler.compile(&document, 0).unwrap();
+        let model = compiler
+            .compile_with_backend(&document, 0, backend, None)
+            .unwrap();
         let layout = &model.snapshot().sheet_layouts[&forming];
         let sheet = model.solid(forming).unwrap();
         let before = sheet.volume_mm3().unwrap();
@@ -259,6 +315,7 @@ mod tests {
                         holes: vec![],
                     },
                     developed: false,
+                    backend,
                 },
                 &origins,
                 compiler.policy,

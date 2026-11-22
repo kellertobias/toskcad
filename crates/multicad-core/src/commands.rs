@@ -161,6 +161,9 @@ pub struct Session {
     dirty: OnceLock<bool>,
     undo: VecDeque<History>,
     redo: VecDeque<History>,
+    /// Redo entries cleared by the latest commit, keyed by the revision that
+    /// commit produced, so `retract` can restore history exactly.
+    retractable: Option<(u64, VecDeque<History>)>,
     activity: VecDeque<Activity>,
 }
 
@@ -217,6 +220,7 @@ impl Session {
             dirty: OnceLock::new(),
             undo: VecDeque::new(),
             redo: VecDeque::new(),
+            retractable: None,
             activity: VecDeque::new(),
         })
     }
@@ -275,6 +279,7 @@ impl Session {
                 dirty: OnceLock::new(),
                 undo: VecDeque::new(),
                 redo: VecDeque::new(),
+                retractable: None,
                 activity: VecDeque::new(),
             },
         }
@@ -424,7 +429,7 @@ impl Session {
         if self.undo.len() > 128 {
             self.undo.pop_front();
         }
-        self.redo.clear();
+        self.retractable = Some((revision, std::mem::take(&mut self.redo)));
         self.replace_current(preview.evaluated, revision);
         self.record(Activity {
             actor: preview.actor,
@@ -518,6 +523,43 @@ impl Session {
             actor,
             label,
             kind: ActivityKind::Redo,
+            change: change.clone(),
+        });
+        Ok(change)
+    }
+    /// Withdraw the latest commit as though it had never been applied: the
+    /// source returns to its prior document and Undo/Redo return to their prior
+    /// stacks, so no undoable or redoable trace remains. Only the commit that
+    /// produced `expected` qualifies; any later edit, Undo, Redo or source
+    /// replacement makes it stale. The revision still advances so outstanding
+    /// previews revalidate, and the attributable activity log keeps the event.
+    pub fn retract(&mut self, expected: u64, actor: Actor) -> Result<Change, CommandError> {
+        self.check_revision(expected)?;
+        Self::validate_actor(&actor)?;
+        let stale = || {
+            CommandError::new(
+                ErrorCode::NoHistory,
+                "Only the latest unchanged commit can be withdrawn",
+            )
+        };
+        if !matches!(self.retractable, Some((revision, _)) if revision == expected) {
+            return Err(stale());
+        }
+        let history = self.undo.back().ok_or_else(stale)?;
+        if &history.after != self.document() {
+            return Err(stale());
+        }
+        let revision = self.next_revision()?;
+        let evaluated = parameters::evaluate(&history.before)?;
+        let change = difference(self.document(), &evaluated.document, revision)?;
+        let history = self.undo.pop_back().unwrap();
+        let (_, redo) = self.retractable.take().unwrap();
+        self.redo = redo;
+        self.replace_current(evaluated, revision);
+        self.record(Activity {
+            actor,
+            label: format!("Cancel: {}", history.label),
+            kind: ActivityKind::Undo,
             change: change.clone(),
         });
         Ok(change)

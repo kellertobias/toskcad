@@ -3,7 +3,9 @@
 use crate::{GeometryError, GeometryErrorKind, GeometryPolicy, Solid, ffi};
 use multicad_core::{
     document::EntityId,
-    references::{GeometryIntent, Origin, TopologyKey, TopologyKind},
+    references::{
+        AnalyticGeometry, GeometryIntent, Origin, TopologyKey, TopologyKind, TopologySnapshot,
+    },
 };
 use std::collections::BTreeSet;
 
@@ -78,13 +80,8 @@ impl Solid {
             }
         };
         let selections: Vec<_> = edges.iter().map(|edge| edge.edge.clone()).collect();
-        let indices = self.validate_treatment_edges(&selections, feature)?;
-        let available: BTreeSet<_> = self
-            .topology_snapshot(feature, 0)?
-            .elements
-            .into_iter()
-            .map(|e| e.key)
-            .collect();
+        let (indices, topology) = self.validate_treatment_edges(&selections, feature)?;
+        let available: BTreeSet<_> = topology.elements.iter().map(|e| e.key).collect();
         if edges.iter().any(|edge| {
             edge.reference_face.kind != TopologyKind::Face
                 || !available.contains(&edge.reference_face)
@@ -94,11 +91,46 @@ impl Solid {
                 "Each asymmetric chamfer edge needs a current explicitly selected reference face",
             ));
         }
+        if self.uses_rust_geometry() {
+            let distance = if mode == 3 {
+                first * second.tan()
+            } else {
+                second
+            };
+            let faces: Vec<_> = edges
+                .iter()
+                .map(|selection| selection.reference_face)
+                .collect();
+            if let Some(result) = self.chamfer_cylinder_rims(
+                &selections,
+                Some(&faces),
+                [first, distance],
+                feature,
+                policy,
+                &topology,
+            ) {
+                return result;
+            }
+            let [selection] = edges else {
+                return Err(failure(
+                    GeometryErrorKind::Unsupported,
+                    "Rust sided chamfer requires one straight edge",
+                ));
+            };
+            return self.rust_chamfer_box_edge(
+                &selection.edge,
+                Some(selection.reference_face),
+                [first, distance],
+                feature,
+                policy,
+                topology,
+            );
+        }
         let sides: Vec<_> = edges
             .iter()
             .map(|edge| edge.reference_face.ordinal)
             .collect();
-        let handle = ffi::treat_edges_sided(&self.native.0, &indices, &sides, mode, first, second)
+        let handle = ffi::treat_edges_sided(self.occt()?, &indices, &sides, mode, first, second)
             .map_err(|e| failure(GeometryErrorKind::Native, e.to_string()))?;
         let mut result = Self::adopt(handle, policy, "sided chamfer")?;
         if result.solid_count()? != 1 {
@@ -119,14 +151,95 @@ impl Solid {
         feature: EntityId,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
+        self.treat_edges_named_with_interrupt(edges, treatment, feature, policy, None)
+    }
+    /// The canonical edge treatment with cooperative cancellation for the
+    /// certified simultaneous box-chamfer construction.
+    pub fn treat_edges_named_with_interrupt(
+        &self,
+        edges: &[TreatmentEdge],
+        treatment: EdgeTreatment,
+        feature: EntityId,
+        policy: GeometryPolicy,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, GeometryError> {
+        if interrupt.is_some_and(|f| f()) {
+            return Err(failure(
+                GeometryErrorKind::Cancelled,
+                "Edge treatment superseded",
+            ));
+        }
         policy.validate()?;
         let (mode, size) = match treatment {
             EdgeTreatment::Fillet { radius_mm } => (0, radius_mm),
             EdgeTreatment::Chamfer { distance_mm } => (1, distance_mm),
         };
         policy.length(size)?;
-        let indices = self.validate_treatment_edges(edges, feature)?;
-        let handle = ffi::treat_edges(&self.native.0, &indices, mode, size)
+        let (indices, topology) = self.validate_treatment_edges(edges, feature)?;
+        if self.uses_rust_geometry() {
+            if let EdgeTreatment::Fillet { radius_mm } = treatment
+                && let Some(result) =
+                    self.fillet_cylinder_rims(edges, radius_mm, feature, policy, &topology)
+            {
+                return result;
+            }
+            if let EdgeTreatment::Chamfer { distance_mm } = treatment
+                && let Some(result) = self.chamfer_cylinder_rims(
+                    edges,
+                    None,
+                    [distance_mm; 2],
+                    feature,
+                    policy,
+                    &topology,
+                )
+            {
+                return result;
+            }
+            return match treatment {
+                EdgeTreatment::Chamfer { distance_mm } => match edges {
+                    [edge]
+                        if topology.elements.iter().any(|element| {
+                            element.key == edge.key
+                                && matches!(element.geometry, Some(AnalyticGeometry::Line { .. }))
+                        }) =>
+                    {
+                        self.rust_chamfer_box_edge(
+                            edge,
+                            None,
+                            [distance_mm; 2],
+                            feature,
+                            policy,
+                            topology,
+                        )
+                    }
+                    _ if edges.len() > 1
+                        && edges.iter().all(|edge| {
+                            topology.elements.iter().any(|element| {
+                                element.key == edge.key
+                                    && matches!(
+                                        element.geometry,
+                                        Some(AnalyticGeometry::Line { .. })
+                                    )
+                            })
+                        }) =>
+                    {
+                        self.rust_chamfer_box_edges(
+                            edges,
+                            distance_mm,
+                            feature,
+                            policy,
+                            topology,
+                            interrupt,
+                        )
+                    }
+                    _ => self.chamfer_polygon_bores(edges, distance_mm, policy),
+                },
+                EdgeTreatment::Fillet { radius_mm } => {
+                    self.rust_fillet_box_edges(edges, radius_mm, feature, policy, &topology)
+                }
+            };
+        }
+        let handle = ffi::treat_edges(self.occt()?, &indices, mode, size)
             .map_err(|e| failure(GeometryErrorKind::Native, e.to_string()))?;
         let mut result = Self::adopt(handle, policy, "edge treatment")?;
         if result.solid_count()? != 1 {
@@ -142,7 +255,7 @@ impl Solid {
         &self,
         edges: &[TreatmentEdge],
         feature: EntityId,
-    ) -> Result<Vec<u32>, GeometryError> {
+    ) -> Result<(Vec<u32>, TopologySnapshot), GeometryError> {
         if feature.is_nil() || edges.is_empty() || edges.len() > 128 {
             return Err(failure(
                 GeometryErrorKind::Input,
@@ -191,6 +304,6 @@ impl Solid {
                 ));
             }
         }
-        Ok(edges.iter().map(|e| e.key.ordinal).collect())
+        Ok((edges.iter().map(|e| e.key.ordinal).collect(), snapshot))
     }
 }

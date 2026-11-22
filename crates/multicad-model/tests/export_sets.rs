@@ -9,11 +9,18 @@ use multicad_core::{
     project_file::{self, ContentHash, ProjectFile},
 };
 use multicad_kernel::{GeometryPolicy, Solid};
-use multicad_model::export::{ExportWorker, Exporter};
+use multicad_model::{
+    GeometryBackend,
+    export::{ExportWorker, Exporter},
+};
 use std::{
     path::Path,
     time::{Duration, Instant},
 };
+#[allow(dead_code)]
+#[path = "support/rust_polygon.rs"]
+mod rust_polygon;
+
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -427,6 +434,343 @@ fn native_worker_preserves_repeated_run_intents_and_current_scope_provenance() {
     assert!(matches!(second.result,ExportResult::Run(Ok(ref r)) if r.reused));
     assert!(!worker.pending());
 }
+#[test]
+fn rust_worker_requires_its_own_current_preview_and_attributes_each_run() {
+    let f = Fixture::new();
+    let default = f.preview();
+    let worker =
+        ExportWorker::with_geometry_backend(Exporter::default(), GeometryBackend::Rust).unwrap();
+    let document = f.session.document();
+    let revision = f.session.revision();
+    let root = tempfile::tempdir().unwrap();
+    let preview_actor = Actor::local(Channel::Ui);
+    worker
+        .preview(document, revision, f.set, preview_actor.clone())
+        .unwrap();
+    let ExportResult::Preview(Ok(preview)) = reply(&worker).result else {
+        panic!("Rust preview failed")
+    };
+    assert!(preview.can_run());
+    assert_eq!(preview.requested_by, preview_actor);
+    if multicad_kernel::OCCT_LINKED {
+        assert_ne!(preview.key, default.key);
+    } else {
+        assert_eq!(preview.key, default.key);
+    }
+    let mut unpreviewed = preview.key.clone();
+    unpreviewed.plan_hash = ContentHash::of(b"unpreviewed export plan");
+    let mut stale = vec![(revision, &unpreviewed), (revision + 1, &preview.key)];
+    if multicad_kernel::OCCT_LINKED {
+        stale.push((revision, &default.key));
+    }
+    for (revision, key) in stale {
+        worker
+            .run(document, revision, key, root.path(), actor())
+            .unwrap();
+        let ExportResult::Run(Err(error)) = reply(&worker).result else {
+            panic!("Stale preview published an export")
+        };
+        assert_eq!(error.kind, ErrorKind::Stale);
+    }
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    for (run_actor, reused) in [(actor(), false), (Actor::local(Channel::Ui), true)] {
+        worker
+            .run(
+                document,
+                revision,
+                &preview.key,
+                root.path(),
+                run_actor.clone(),
+            )
+            .unwrap();
+        let ExportResult::Run(Ok(run)) = reply(&worker).result else {
+            panic!("Rust run failed")
+        };
+        assert_eq!(run.actor, run_actor);
+        assert_eq!(run.reused, reused);
+        let manifest =
+            std::fs::read(Path::new(&run.directory).join("multicad-export.json")).unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        // The bundle manifest remains attributed to its original publication.
+        assert_eq!(manifest["actor"], serde_json::to_value(actor()).unwrap());
+    }
+}
+#[test]
+fn rust_worker_publishes_a_concave_extrusion_with_an_open_hole() {
+    let (session, _, feature, _) = rust_polygon::fixture();
+    verify_rust_prism_export(session, feature, 552., None);
+}
+
+#[test]
+fn rust_worker_publishes_a_concave_extrusion_with_straight_and_round_holes() {
+    let (session, _, feature, _) =
+        rust_polygon::build_fixture("-6", true, multicad_core::sketch::Datum::Xz, 2.);
+    let expected_volume = 552. - std::f64::consts::PI * 1.25_f64.powi(2) * 6.;
+    verify_rust_prism_export(
+        session,
+        feature,
+        expected_volume,
+        Some([[9., -2., 3.], [9., 4., 3.]]),
+    );
+}
+
+#[test]
+fn rust_worker_publishes_the_exact_circular_boolean_cut_in_a_box() {
+    let Fixture {
+        mut session, part, ..
+    } = Fixture::new();
+    let feature = bore_box(&mut session, &part);
+    let expected_volume = 6000. - std::f64::consts::PI * 1.25_f64.powi(2) * 30.;
+    verify_rust_prism_export(
+        session,
+        feature,
+        expected_volume,
+        Some([[5., 6., 0.], [5., 6., 30.]]),
+    );
+}
+
+fn bore_box(session: &mut Session, part: &PrimitiveRequest) -> EntityId {
+    let tool = PrimitiveRequest::new(
+        "Boring tool",
+        PrimitiveParameters::Cylinder {
+            radius: length(1.25),
+            height: length(32.),
+            frame: model::PrimitiveFrame {
+                origin: [length(5.), length(6.), length(-1.)],
+                ..Default::default()
+            },
+        },
+    );
+    let prepared = model::prepare_primitive(session, session.revision(), actor(), &tool).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    let cut = BooleanRequest::new(
+        Operation::Cut,
+        BodyInput {
+            body: part.body,
+            producer: part.feature,
+        },
+        vec![BodyInput {
+            body: tool.body,
+            producer: tool.feature,
+        }],
+    );
+    let prepared = model::prepare_boolean(session, session.revision(), actor(), &cut).unwrap();
+    session.commit(prepared.prepared).unwrap();
+    cut.feature
+}
+
+#[test]
+fn rust_worker_verifies_each_nested_leaf_in_world_space() {
+    let mut f = Fixture::new();
+    let feature = bore_box(&mut f.session, &f.part);
+    let q = std::f64::consts::FRAC_1_SQRT_2;
+    let instance = |name, component, translation_mm, rotation_xyzw| {
+        Entity::new(
+            name,
+            EntityData::Instance {
+                component,
+                placement: Placement {
+                    translation_mm,
+                    rotation_xyzw,
+                },
+                placement_source: None,
+            },
+        )
+    };
+    let rotated = instance("Rotated member", f.part.body, [8., 4., -3.], [0., 0., q, q]);
+    let translated = instance(
+        "Translated member",
+        f.part.body,
+        [-10., 30., 2.],
+        [0., 0., 0., 1.],
+    );
+    let members = [rotated.id, translated.id];
+    let subassembly = Entity::new(
+        "Bored stock subassembly",
+        EntityData::Assembly {
+            instances: members.to_vec(),
+        },
+    );
+    let outer = instance(
+        "Placed subassembly",
+        subassembly.id,
+        [50., 10., 20.],
+        [q, 0., 0., q],
+    );
+    let outer_id = outer.id;
+    let assembly = Entity::new(
+        "Export assembly",
+        EntityData::Assembly {
+            instances: vec![outer_id],
+        },
+    );
+    let assembly_id = assembly.id;
+    apply(
+        &mut f.session,
+        [rotated, translated, subassembly, outer, assembly]
+            .into_iter()
+            .map(Mutation::Insert)
+            .collect(),
+    );
+    let mut definition = read(f.session.document(), f.set).unwrap();
+    definition.scope.root = ScopeRoot::Assembly {
+        assembly: assembly_id,
+    };
+    f.replace_set(&definition);
+
+    let document = f.session.document();
+    let revision = f.session.revision();
+    let worker =
+        ExportWorker::with_geometry_backend(Exporter::default(), GeometryBackend::Rust).unwrap();
+    worker.preview(document, revision, f.set, actor()).unwrap();
+    let ExportResult::Preview(preview) = reply(&worker).result else {
+        panic!("expected Rust preview reply");
+    };
+    let preview = preview.unwrap();
+    assert!(preview.can_run());
+    assert_eq!(preview.artifacts.len(), 2);
+    assert_ne!(
+        preview.artifacts[0].output.filename,
+        preview.artifacts[1].output.filename
+    );
+
+    let root = tempfile::tempdir().unwrap();
+    worker
+        .run(document, revision, &preview.key, root.path(), actor())
+        .unwrap();
+    let ExportResult::Run(run) = reply(&worker).result else {
+        panic!("expected Rust run reply");
+    };
+    let run = run.unwrap();
+    assert_eq!(run.files.len(), 2);
+    let expected_volume = 6000. - std::f64::consts::PI * 1.25_f64.powi(2) * 30.;
+    for (member, expected_bounds, expected_centers) in [
+        (
+            members[0],
+            [[38., -17., 24.], [58., 13., 34.]],
+            [[52., 13., 29.], [52., -17., 29.]],
+        ),
+        (
+            members[1],
+            [[40., -22., 50.], [50., 8., 70.]],
+            [[45., 8., 56.], [45., -22., 56.]],
+        ),
+    ] {
+        let file = run
+            .files
+            .iter()
+            .find(|file| {
+                matches!(&file.artifact.output.subject, OutputSubject::Part(part)
+                    if part.part == f.part.body
+                        && part.root_assembly == Some(assembly_id)
+                        && part.occurrence_path == [outer_id, member])
+            })
+            .unwrap();
+        assert_eq!(file.artifact.solid, outer_id);
+        assert_eq!(file.artifact.producer, feature);
+        let path = Path::new(&run.directory).join(&file.artifact.output.filename);
+        let imported = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
+        let bounds = imported.bounds().unwrap();
+        assert_eq!(imported.solid_count().unwrap(), 1);
+        near(imported.volume_mm3().unwrap(), expected_volume);
+        for (actual, expected) in [bounds.min, bounds.max]
+            .into_iter()
+            .flatten()
+            .zip(expected_bounds.into_iter().flatten())
+        {
+            near(actual, expected);
+        }
+        verify_bore_circles(&imported, feature, revision, Some(expected_centers));
+    }
+}
+
+fn verify_rust_prism_export(
+    mut session: Session,
+    feature: EntityId,
+    expected_volume: f64,
+    expected_centers: Option<[[f64; 3]; 2]>,
+) {
+    let set = EntityId::new();
+    let prepared = prepare_set(
+        &session,
+        session.revision(),
+        actor(),
+        set,
+        "Exact prism",
+        &SetDefinition::default(),
+    )
+    .unwrap();
+    session.commit(prepared).unwrap();
+    let document = session.document();
+    let revision = session.revision();
+    let worker =
+        ExportWorker::with_geometry_backend(Exporter::default(), GeometryBackend::Rust).unwrap();
+    worker.preview(document, revision, set, actor()).unwrap();
+    let ExportResult::Preview(Ok(preview)) = reply(&worker).result else {
+        panic!("Rust preview failed");
+    };
+    assert!(preview.can_run());
+    assert_eq!(preview.artifacts[0].solid, feature);
+
+    let root = tempfile::tempdir().unwrap();
+    worker
+        .run(document, revision, &preview.key, root.path(), actor())
+        .unwrap();
+    let ExportResult::Run(result) = reply(&worker).result else {
+        panic!("expected Rust run reply");
+    };
+    let run = result.unwrap();
+    let [file] = run.files.as_slice() else {
+        panic!("expected one STEP artifact");
+    };
+    let path = Path::new(&run.directory).join(&file.artifact.output.filename);
+    let imported = Solid::read_step(&path, GeometryPolicy::default()).unwrap();
+    assert_eq!(imported.solid_count().unwrap(), 1);
+    assert!((imported.volume_mm3().unwrap() - expected_volume).abs() < 1e-6);
+    verify_bore_circles(&imported, feature, revision, expected_centers);
+}
+
+fn verify_bore_circles(
+    imported: &Solid,
+    feature: EntityId,
+    revision: u64,
+    expected_centers: Option<[[f64; 3]; 2]>,
+) {
+    let topology = imported.topology_snapshot(feature, revision).unwrap();
+    let circles: Vec<_> = topology
+        .elements
+        .iter()
+        .filter_map(|element| match element.geometry {
+            Some(multicad_core::references::AnalyticGeometry::CircularArc {
+                frame,
+                radius_mm,
+                sweep_rad,
+                ..
+            }) => Some((frame.origin_mm, radius_mm, sweep_rad)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        circles.len(),
+        if expected_centers.is_some() { 2 } else { 0 }
+    );
+    for (center, radius, sweep) in &circles {
+        assert!((radius - 1.25).abs() < 1e-7);
+        assert!((sweep.abs() - std::f64::consts::TAU).abs() < 1e-7);
+        assert!(center.iter().all(|value| value.is_finite()));
+    }
+    if let Some(expected_centers) = expected_centers {
+        for expected in expected_centers {
+            assert!(circles.iter().any(|(center, _, _)| {
+                center
+                    .iter()
+                    .zip(expected)
+                    .all(|(a, b)| (a - b).abs() < 1e-7)
+            }));
+        }
+    }
+}
+
 #[test]
 fn duplicate_part_names_get_short_suffixes_on_disk_with_identities_in_the_manifest() {
     let mut f = Fixture::new();

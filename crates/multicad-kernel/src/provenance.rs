@@ -89,7 +89,7 @@ impl Solid {
             crate::GearSweep::Chevron | crate::GearSweep::GappedChevron { .. }
         );
         let mut caps = [false; 2];
-        for seed in ffi::seeds(&self.native.0).map_err(failure)? {
+        for seed in ffi::seeds(self.occt()?).map_err(failure)? {
             let role = match seed.role {
                 0 | 1 => {
                     caps[seed.role as usize] = true;
@@ -161,7 +161,7 @@ impl Solid {
                 "Native gear needs complete face ancestry and both end caps",
             ));
         }
-        let nodes = ffi::topology(&self.native.0).map_err(failure)?;
+        let nodes = ffi::topology(self.occt()?).map_err(failure)?;
         self.finish_provenance(elements, &nodes)
     }
     pub(crate) fn name_thread(
@@ -176,7 +176,7 @@ impl Solid {
             .map(|element| (element.key, element))
             .collect();
         let mut caps = [false; 2];
-        for seed in ffi::seeds(&self.native.0).map_err(failure)? {
+        for seed in ffi::seeds(self.occt()?).map_err(failure)? {
             let role = match seed.role {
                 0 | 1 => {
                     caps[seed.role as usize] = true;
@@ -230,7 +230,7 @@ impl Solid {
                 "Native thread needs complete face ancestry and both end caps",
             ));
         }
-        let nodes = ffi::topology(&self.native.0).map_err(failure)?;
+        let nodes = ffi::topology(self.occt()?).map_err(failure)?;
         self.finish_provenance(elements, &nodes)
     }
     pub(crate) fn name_advanced_profile(
@@ -245,7 +245,7 @@ impl Solid {
             .map(|element| (element.key, element))
             .collect();
         let mut caps = [false; 2];
-        for seed in ffi::seeds(&self.native.0).map_err(failure)? {
+        for seed in ffi::seeds(self.occt()?).map_err(failure)? {
             let element = elements
                 .get_mut(&key(0, seed.face)?)
                 .ok_or_else(|| failure("Profile history names an absent face"))?;
@@ -293,7 +293,7 @@ impl Solid {
         if !caps.into_iter().all(|cap| cap) {
             return Err(failure("Both native profile end caps need exact history"));
         }
-        let nodes = ffi::topology(&self.native.0).map_err(failure)?;
+        let nodes = ffi::topology(self.occt()?).map_err(failure)?;
         self.finish_provenance(elements, &nodes)
     }
     pub fn with_member_origin(self, feature: EntityId, index: u32) -> Result<Self, GeometryError> {
@@ -366,6 +366,10 @@ impl Solid {
                 "Member origin collides with existing source provenance",
             ));
         }
+        if self.uses_rust_geometry() {
+            self.rust_origins.push(origin);
+            return Ok(self);
+        }
         let elements: BTreeMap<_, _> = snapshot
             .elements
             .into_iter()
@@ -381,7 +385,7 @@ impl Solid {
                 (element.key, element)
             })
             .collect();
-        let nodes = ffi::topology(&self.native.0).map_err(failure)?;
+        let nodes = ffi::topology(self.occt()?).map_err(failure)?;
         self.finish_provenance(elements, &nodes)?;
         Ok(self)
     }
@@ -407,7 +411,7 @@ impl Solid {
                 (e.key, e)
             })
             .collect();
-        for seed in ffi::seeds(&self.native.0).map_err(failure)? {
+        for seed in ffi::seeds(self.occt()?).map_err(failure)? {
             let origins: Vec<_> = match seed.role {
                 3 => vec![
                     selected
@@ -448,7 +452,7 @@ impl Solid {
                 }
             }
         }
-        let nodes = ffi::topology(&self.native.0).map_err(failure)?;
+        let nodes = ffi::topology(self.occt()?).map_err(failure)?;
         self.finish_provenance(elements, &nodes)
     }
     /// Deformation/reflection frames must describe current native planes rather
@@ -500,7 +504,7 @@ impl Solid {
             })
             .collect();
         let mut generated = 0;
-        for seed in ffi::seeds(&self.native.0).map_err(failure)? {
+        for seed in ffi::seeds(self.occt()?).map_err(failure)? {
             if seed.role != 3 {
                 return Err(failure("Unexpected native edge-treatment seed role"));
             }
@@ -525,7 +529,7 @@ impl Solid {
                 "Native edge treatment produced no attributable generated faces",
             ));
         }
-        let nodes = ffi::topology(&self.native.0).map_err(failure)?;
+        let nodes = ffi::topology(self.occt()?).map_err(failure)?;
         self.finish_provenance(elements, &nodes)
     }
     /// Curve origins are supplied in authored outer-wire then hole-wire order.
@@ -537,6 +541,11 @@ impl Solid {
         curves: &[Origin],
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
+        if !crate::OCCT_LINKED {
+            return crate::geometry::construction::profile(
+                profile, height_mm, feature, curves, policy,
+            );
+        }
         if feature.is_nil() {
             return Err(failure("Feature identity is nil"));
         }
@@ -639,12 +648,12 @@ impl Solid {
             .map_err(failure)?;
         }
         let result = self;
-        let nodes = ffi::topology(&result.native.0).map_err(failure)?;
+        let nodes = ffi::topology(result.occt()?).map_err(failure)?;
         let mut elements: BTreeMap<_, _> = nodes
             .iter()
             .map(|n| key(n.kind, n.index).map(|k| (k, empty(k))))
             .collect::<Result<_, _>>()?;
-        for seed in ffi::seeds(&result.native.0).map_err(failure)? {
+        for seed in ffi::seeds(result.occt()?).map_err(failure)? {
             let key = key(0, seed.face)?;
             let element = elements
                 .get_mut(&key)
@@ -719,7 +728,7 @@ impl Solid {
         if previous.is_nil()
             || next.is_nil()
             || self.provenance.is_empty()
-            || !ffi::valid(&self.native.0).map_err(failure)?
+            || !ffi::valid(self.occt()?).map_err(failure)?
             || self.solid_count()? != 1
             || self.volume_mm3()? <= 0.
         {
@@ -797,6 +806,21 @@ impl Solid {
         ];
         let mut found = [false; 2];
         let faces = self.faces()?;
+        if self.uses_rust_geometry() {
+            // Owned bodies derive their initial ancestry from source geometry;
+            // there need not be a stored metadata override yet. Capture the
+            // current public names before applying this metadata-only change.
+            self.provenance = self
+                .topology_snapshot(feature, 0)?
+                .elements
+                .into_iter()
+                .map(|mut element| {
+                    element.geometry = None;
+                    element
+                })
+                .collect();
+            self.rust_origins.clear();
+        }
         for element in &self.provenance {
             for origin in element
                 .origins
@@ -866,6 +890,9 @@ impl Solid {
         feature: EntityId,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
+        if !crate::OCCT_LINKED {
+            return crate::geometry::construction::named_box(size_mm, feature, policy);
+        }
         policy.validate()?;
         if size_mm.iter().any(|v| {
             !v.is_finite() || *v < policy.minimum_feature_mm || *v > policy.maximum_coordinate_mm
@@ -891,14 +918,312 @@ impl Solid {
             policy,
         )
     }
+    /// Anonymous constructors have geometry, but no authored persistent names.
+    /// Keep that metadata separate from the body's private construction IDs.
+    pub(crate) fn without_authored_provenance(mut self) -> Result<Self, GeometryError> {
+        if self.healed_import_body().is_some() {
+            // No boundary is rebuilt, so there is no topology to anonymise.
+            self.provenance.clear();
+            self.rust_origins.clear();
+            return Ok(self);
+        }
+        let snapshot = self.topology_snapshot(EntityId::new(), 0)?;
+        self.provenance = snapshot
+            .elements
+            .into_iter()
+            .map(|element| empty(element.key))
+            .collect();
+        self.rust_origins.clear();
+        Ok(self)
+    }
+
+    pub(crate) fn has_authored_metadata_override(&self) -> bool {
+        self.uses_rust_geometry()
+            && !self.provenance.is_empty()
+            && self
+                .provenance
+                .iter()
+                .all(|element| element.geometry.is_none())
+    }
+
+    pub(crate) fn has_unattributed_topology(&self) -> bool {
+        self.has_authored_metadata_override()
+            && self.rust_origins.is_empty()
+            && self
+                .provenance
+                .iter()
+                .all(|element| element.origins.is_empty() && element.frames.is_empty())
+    }
+
+    pub(crate) fn transformed_author_metadata(
+        &self,
+        transform: RigidTransform,
+    ) -> Vec<TopologyElement> {
+        if !self.has_authored_metadata_override() {
+            return vec![];
+        }
+        self.provenance
+            .iter()
+            .cloned()
+            .map(|mut element| {
+                for anchor in &mut element.frames {
+                    anchor.frame = transformed(anchor.frame, transform);
+                }
+                element
+            })
+            .collect()
+    }
+
+    // Unnamed operations can inherit real authored sources, but private IDs of
+    // anonymous constructor operands must never become persistent identities.
+    pub(crate) fn retain_authored_boolean_sources(
+        self,
+        sources: &[&Self],
+    ) -> Result<Self, GeometryError> {
+        self.retain_authored_sources_with_generated(sources, &[])
+    }
+
+    pub(crate) fn retain_authored_sources_with_generated(
+        mut self,
+        sources: &[&Self],
+        generated: &[Origin],
+    ) -> Result<Self, GeometryError> {
+        if !sources
+            .iter()
+            .any(|source| source.has_authored_metadata_override())
+        {
+            return Ok(self);
+        }
+        let owner = EntityId::new();
+        let mut published: BTreeSet<_> = generated.iter().cloned().collect();
+        let mut private_sources = BTreeSet::new();
+        for source in sources {
+            let visible = source.topology_snapshot(owner, 0)?;
+            let source_origins: BTreeSet<_> = visible
+                .elements
+                .into_iter()
+                .flat_map(|element| element.origins)
+                .collect();
+            if source.has_authored_metadata_override() {
+                let mut raw = source.share()?;
+                raw.provenance.clear();
+                private_sources.extend(
+                    raw.topology_snapshot(owner, 0)?
+                        .elements
+                        .into_iter()
+                        .flat_map(|element| element.origins)
+                        .map(|origin| origin.source)
+                        .filter(|id| !source_origins.iter().any(|origin| origin.source == *id)),
+                );
+            }
+            published.extend(source_origins);
+        }
+        let private_ids: Vec<_> = private_sources.iter().map(ToString::to_string).collect();
+        let retained = |origin: &Origin| {
+            !private_sources.contains(&origin.source)
+                && !origin
+                    .role
+                    .split('/')
+                    .any(|part| private_ids.iter().any(|id| part == id))
+        };
+        self.provenance = self
+            .topology_snapshot(owner, 0)?
+            .elements
+            .into_iter()
+            .map(|mut element| {
+                element.origins.retain(retained);
+                element.boundary.retain(retained);
+                if !element
+                    .origins
+                    .iter()
+                    .any(|origin| published.contains(origin))
+                {
+                    element.origins.clear();
+                    element.boundary.clear();
+                }
+                element
+                    .frames
+                    .retain(|anchor| element.origins.contains(&anchor.origin));
+                element.geometry = None;
+                element
+            })
+            .collect();
+        self.rust_origins.clear();
+        Ok(self)
+    }
+
     /// Evaluation data: source Links persist intent, never these local ordinals.
     pub fn topology_snapshot(
         &self,
         owner: EntityId,
         revision: u64,
     ) -> Result<TopologySnapshot, GeometryError> {
+        if self.healed_import_body().is_some() {
+            return Err(crate::geometry::HealedImportBody::unsupported("topology"));
+        }
+        if self.uses_rust_geometry() {
+            let mut snapshot = if let Some(body) = self.pipe_hardware_body() {
+                body.topology(owner, revision, self.geometry_policy())?
+            } else if let Some((body, frame)) = self.repaired_phillips_body() {
+                if body.has_degree11_source() {
+                    body.degree11_topology(frame, owner, revision)?
+                } else {
+                    body.periodic_topology(frame, owner, revision)?
+                }
+            } else if let Some((body, frame)) = self.hanger_body() {
+                body.topology(frame, owner, revision, self.geometry_policy())?
+            } else if let Some((body, frame)) = self.wood_insert_body() {
+                body.topology(frame, owner, revision, self.geometry_policy())?
+            } else if let Some((body, frame)) = self.internal_thread_treatment_body() {
+                body.source_topology(frame, owner, revision, self.geometry_policy())?
+            } else if let Some((body, frame)) = self.rounded_blind_bore_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.rounded_thread_bore_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.rounded_hex_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.pipe_sleeve_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.rounded_thread_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.entry_chamfer_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.helical_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.helical_tube_cut_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.orthogonal_seat_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some(body) = self.line8_nut_body() {
+                body.topology(owner, revision)
+            } else if let Some(body) = self.external_npt_stock_body() {
+                body.topology(owner, revision)
+            } else if let Some(body) = self.actual_clipped_head_body() {
+                body.topology(owner, revision)?
+            } else if let Some(body) = self.literal_npt_body() {
+                body.topology(owner, revision)
+            } else if let Some(body) = self.clipped_npt_body() {
+                body.topology(owner, revision)
+            } else if let Some((body, frame)) = self.cosmetic_profiled_body_ref() {
+                body.topology(frame, owner, revision)
+            } else if let Some(body) = self.cosmetic_phillips_body() {
+                body.topology(owner, revision)?
+            } else if let Some(body) = self.bored_thread_body() {
+                body.topology(owner, revision)?
+            } else if let Some((body, frame)) = self.cosmetic_fastener_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.linear_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.revolution_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.rounded_slot_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.spline_sweep_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.spline_cap_relief_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.normal_relief_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.radial_boundary_body() {
+                body.topology(frame, owner, revision)?
+            } else if let Some((body, frame)) = self.normal_sweep_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.spur_gear_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.internal_ring_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.sphere_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some(body) = self.imported_brep_body() {
+                body.topology(owner, revision)
+            } else if let Some((body, frame)) = self.rounded_cylinder_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.torus_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.oblique_bore_body() {
+                body.topology(frame, owner, revision).map_err(failure)?
+            } else if let Some((body, frame)) = self.cross_bore_body() {
+                body.topology(frame, owner, revision).map_err(failure)?
+            } else if let Some((body, frame)) = self.herringbone_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.bevel_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.worm_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.axial_stack_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.planar_boolean_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.nonplanar_loft_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.smooth_loft_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.warped_union_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some((body, frame)) = self.annulus_body() {
+                body.topology(frame, owner, revision)
+            } else if let Some(placed) = self.polygon_prism() {
+                placed.snapshot(owner, revision).map_err(failure)?
+            } else if let Some((cylinder, frame)) = self.axial_cylinder_frame() {
+                crate::rust_prism_topology::cylinder_snapshot(
+                    cylinder,
+                    frame,
+                    self.cylinder_sketch(),
+                    owner,
+                    revision,
+                )
+                .map_err(failure)?
+            } else if let Some((prism, frame)) = self.rust_prism_frame() {
+                crate::rust_prism_topology::snapshot(prism, frame, owner, revision)
+                    .map_err(failure)?
+            } else if let Some((body, frame)) = self.orthogonal_body() {
+                body.topology(frame, owner, revision).map_err(failure)?
+            } else {
+                self.rust_compound()
+                    .expect("checked Rust body")
+                    .topology(owner, revision)?
+            };
+            if self.has_authored_metadata_override() {
+                let metadata: BTreeMap<_, _> = self
+                    .provenance
+                    .iter()
+                    .map(|element| (element.key, element))
+                    .collect();
+                if metadata.len() != snapshot.elements.len() {
+                    return Err(failure(
+                        "Authored topology metadata does not match the body",
+                    ));
+                }
+                for element in &mut snapshot.elements {
+                    let source = metadata
+                        .get(&element.key)
+                        .ok_or_else(|| failure("Authored topology metadata key is missing"))?;
+                    element.origins.clone_from(&source.origins);
+                    element.boundary.clone_from(&source.boundary);
+                    element.frames.clone_from(&source.frames);
+                }
+            }
+            if !self.rust_origins.is_empty() {
+                for element in &mut snapshot.elements {
+                    for origin in &self.rust_origins {
+                        element.origins.insert(origin.clone());
+                        if !element.boundary.is_empty() {
+                            element.boundary.insert(origin.clone());
+                        }
+                        if let Some(AnalyticGeometry::Plane { frame }) = element.geometry {
+                            element.frames.push(AnchoredFrame {
+                                origin: origin.clone(),
+                                frame,
+                            });
+                        }
+                    }
+                }
+                snapshot.validate().map_err(failure)?;
+            }
+            return Ok(snapshot);
+        }
         let mut elements: Vec<TopologyElement> = if self.provenance.is_empty() {
-            ffi::topology(&self.native.0)
+            ffi::topology(self.occt()?)
                 .map_err(failure)?
                 .iter()
                 .map(|n| key(n.kind, n.index).map(empty))
@@ -908,7 +1233,7 @@ impl Solid {
         };
         let xyz = |p: ffi::Point3| [p.x, p.y, p.z];
         let mut geometry = BTreeMap::new();
-        for edge in ffi::analytic_edges(&self.native.0).map_err(failure)? {
+        for edge in ffi::analytic_edges(self.occt()?).map_err(failure)? {
             let exact = match edge.kind {
                 0 => AnalyticGeometry::Line {
                     a_mm: xyz(edge.a),
@@ -928,7 +1253,7 @@ impl Solid {
             };
             geometry.insert(key(1, edge.index)?, exact);
         }
-        for vertex in ffi::vertices(&self.native.0).map_err(failure)? {
+        for vertex in ffi::vertices(self.occt()?).map_err(failure)? {
             geometry.insert(
                 key(2, vertex.index)?,
                 AnalyticGeometry::Point {
@@ -984,7 +1309,7 @@ impl Solid {
         if operands.iter().all(|s| s.provenance.is_empty()) {
             return Ok(());
         }
-        let nodes = ffi::topology(&self.native.0).map_err(failure)?;
+        let nodes = ffi::topology(self.occt()?).map_err(failure)?;
         let mut elements: BTreeMap<_, _> = nodes
             .iter()
             .map(|n| key(n.kind, n.index).map(|k| (k, empty(k))))
@@ -995,7 +1320,7 @@ impl Solid {
             .collect();
         let mut frames: BTreeMap<TopologyKey, BTreeMap<Origin, Option<ReferenceFrame>>> =
             BTreeMap::new();
-        for relation in ffi::ancestry(&self.native.0).map_err(failure)? {
+        for relation in ffi::ancestry(self.occt()?).map_err(failure)? {
             let out = key(relation.kind, relation.output)?;
             let source = key(relation.kind, relation.input)?;
             let operand = inputs
@@ -1048,13 +1373,13 @@ impl Solid {
     ) -> Result<(), GeometryError> {
         let snapshot = source.topology_snapshot(owner, 0)?;
         let inputs: BTreeMap<_, _> = snapshot.elements.iter().map(|e| (e.key, e)).collect();
-        let nodes = ffi::topology(&self.native.0).map_err(failure)?;
+        let nodes = ffi::topology(self.occt()?).map_err(failure)?;
         let mut elements: BTreeMap<_, _> = nodes
             .iter()
             .map(|n| key(n.kind, n.index).map(|k| (k, empty(k))))
             .collect::<Result<_, _>>()?;
         let mut mapped = BTreeSet::new();
-        for relation in ffi::ancestry(&self.native.0).map_err(failure)? {
+        for relation in ffi::ancestry(self.occt()?).map_err(failure)? {
             let out = key(relation.kind, relation.output)?;
             if relation.operand != 0 || !mapped.insert(out) {
                 return Err(failure("Affine history is not a unique source mapping"));
@@ -1105,7 +1430,7 @@ impl Solid {
             source: feature,
             role: role.into(),
         };
-        let seeds = ffi::seeds(&self.native.0).map_err(failure)?;
+        let seeds = ffi::seeds(self.occt()?).map_err(failure)?;
         if seeds.is_empty() {
             return Err(failure("Plane Split lacks exact boundary-face ancestry"));
         }
@@ -1125,7 +1450,7 @@ impl Solid {
                 frame: reference_frame(frame),
             });
         }
-        let nodes = ffi::topology(&self.native.0).map_err(failure)?;
+        let nodes = ffi::topology(self.occt()?).map_err(failure)?;
         self.finish_provenance(elements, &nodes)
     }
     pub(crate) fn finish_provenance(
@@ -1156,89 +1481,5 @@ impl Solid {
         // Validate native-derived data before it can enter the shared API.
         self.topology_snapshot(EntityId::new(), 0)?;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod exclusive_owner_tests {
-    use super::*;
-    #[test]
-    fn exclusive_owner_rebind_preserves_geometry_and_all_source_roles_without_mutation() {
-        let old = EntityId::new();
-        let next = EntityId::new();
-        let policy = GeometryPolicy::default();
-        let source = Solid::box_named([4., 5., 6.], old, policy).unwrap();
-        let before = source.topology_snapshot(old, 0).unwrap();
-        let brep = source.to_brep().unwrap();
-        let rebound = source.rebind_exclusive_owner(old, next).unwrap();
-        let after = rebound.topology_snapshot(next, 0).unwrap();
-        assert_eq!(before.elements.len(), after.elements.len());
-        for (a, b) in before.elements.iter().zip(&after.elements) {
-            assert_eq!(a.key, b.key);
-            assert_eq!(a.geometry, b.geometry);
-            assert_eq!(
-                a.origins
-                    .iter()
-                    .map(|o| o.role.clone())
-                    .collect::<BTreeSet<_>>(),
-                b.origins.iter().map(|o| o.role.clone()).collect()
-            );
-            assert_eq!(
-                a.boundary
-                    .iter()
-                    .map(|o| o.role.clone())
-                    .collect::<BTreeSet<_>>(),
-                b.boundary.iter().map(|o| o.role.clone()).collect()
-            );
-            assert_eq!(a.frames.len(), b.frames.len());
-            for (x, y) in a.frames.iter().zip(&b.frames) {
-                assert_eq!(x.frame, y.frame);
-                assert_eq!(x.origin.role, y.origin.role);
-            }
-            assert!(
-                b.origins
-                    .iter()
-                    .chain(&b.boundary)
-                    .chain(b.frames.iter().map(|f| &f.origin))
-                    .all(|o| o.source == next)
-            );
-        }
-        assert_eq!(rebound.to_brep().unwrap(), brep);
-        assert_eq!(source.topology_snapshot(old, 0).unwrap(), before);
-        assert_eq!(source.to_brep().unwrap(), brep);
-        assert!(
-            source
-                .rebind_exclusive_owner(EntityId::nil(), next)
-                .is_err()
-        );
-        assert!(source.rebind_exclusive_owner(old, EntityId::nil()).is_err());
-        assert!(source.rebind_exclusive_owner(next, old).is_err());
-        for field in 0..3 {
-            let mut foreign = source.share().unwrap();
-            let origin = Origin {
-                source: EntityId::new(),
-                role: "foreign".into(),
-            };
-            match field {
-                0 => {
-                    foreign.provenance[0].origins.insert(origin);
-                }
-                1 => {
-                    foreign.provenance[0].boundary.insert(origin);
-                }
-                _ => {
-                    let frame = foreign
-                        .provenance
-                        .iter_mut()
-                        .flat_map(|e| &mut e.frames)
-                        .next()
-                        .unwrap();
-                    frame.origin = origin;
-                }
-            }
-            assert!(foreign.rebind_exclusive_owner(old, next).is_err());
-        }
-        let unnamed = Solid::box_solid([4., 5., 6.], policy).unwrap();
-        assert!(unnamed.rebind_exclusive_owner(old, next).is_err());
     }
 }

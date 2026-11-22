@@ -13,6 +13,12 @@ use std::{
     collections::BTreeMap,
     f64::consts::{PI, TAU},
 };
+mod rust_bevel;
+mod rust_spur;
+mod rust_worm;
+
+pub(crate) use rust_spur::validate as validate_rust;
+
 const SAMPLES: usize = 9;
 const MAX_PAIRS: usize = 64;
 pub(crate) fn validate_parameters(
@@ -59,7 +65,7 @@ pub struct GearPairCheck {
     pub current_engagement: Option<GearEngagementWitness>,
     pub cycle_drive_angles_rad: Vec<f64>,
     pub cycle_reused: bool,
-    /// Wall time in native sampled checks; zero when a completed cycle is reused.
+    /// Wall time in sampled interference checks; zero when a completed cycle is reused.
     pub sampled_cycle_ms: f64,
     pub current_pose_ms: f64,
     pub current_drive_angle_rad: f64,
@@ -75,16 +81,7 @@ fn placed(solid: &Solid, pose: model::RigidPose, pair: EntityId) -> Result<Solid
         })
         .map_err(|e| error(Some(pair), e))
 }
-#[cfg(test)]
-fn overlap(
-    pair: EntityId,
-    a: &Solid,
-    b: &Solid,
-    drive: f64,
-    policy: GeometryPolicy,
-) -> Result<(), ModelError> {
-    overlap_checked(pair, a, b, drive, policy, false)
-}
+
 fn overlap_checked(
     pair: EntityId,
     a: &Solid,
@@ -555,28 +552,71 @@ fn shifted_engagement(document: &Document, features: [EntityId; 2]) -> bool {
     })
 }
 
-#[cfg(test)]
-fn check_pose(
-    document: &Document,
-    evaluated: &EvaluatedParameters,
-    source: &GearPairDefinition,
+/// Process-local signature of every actual constructor input. Debug is
+/// derived on these closed structs and never persisted as a file format.
+/// Drive is excluded only from the periodic cycle proof; its actual current
+/// pose is checked independently on every compile. Each backend has its own
+/// prefix, so one backend's proof never stands in for the other's.
+fn cycle_key(
+    prefix: &str,
+    inputs: &ValidationInputs<'_>,
     pair: EntityId,
-    solids: [&Solid; 2],
-    drive: f64,
-    policy: GeometryPolicy,
-) -> Result<Option<GearEngagementWitness>, ModelError> {
-    let current_source = model::read_gear_pair(document, pair).map_err(|e| error(Some(pair), e))?;
-    let resolved =
-        model::resolve_gear_pair_parameters(document, evaluated, &current_source.parameters)
-            .map_err(|e| error(Some(pair), e))?;
-    PoseCheck {
-        pair,
-        features: source.parameters.gears,
-        policy,
-        shifted: shifted_engagement(document, source.parameters.gears),
-        interrupt: None,
+    source: &GearPairDefinition,
+    resolved: &model::ResolvedGearPair,
+) -> Result<String, ModelError> {
+    let document = inputs.document;
+    let specifications = [
+        crate::gears::specification(source.parameters.gears[0], &resolved.gears[0])?,
+        crate::gears::specification(source.parameters.gears[1], &resolved.gears[1])?,
+    ];
+    let base = source
+        .parameters
+        .frame
+        .resolve(inputs.evaluated)
+        .map_err(|e| error(Some(pair), e))?;
+    let shifted_engagement = shifted_engagement(document, source.parameters.gears);
+    let key = format!(
+        "{prefix}/{SAMPLES}|{:?}|{pair:?}|{:?}|{:?}|{specifications:?}|{:?}|{base:?}|{:?}|shifted-engagement:{shifted_engagement}",
+        document.id(),
+        source.parameters.gears,
+        source.outputs,
+        resolved.gears.each_ref().map(|g| g.frame()),
+        inputs.policy,
+    );
+    Ok(if let Some(worm) = &resolved.worm {
+        format!("{key}|{worm:?}")
+    } else if let Some(travel) = &resolved.rack_travel {
+        format!(
+            "{key}|{:?}|{:?}|{}|{}|{}",
+            travel.rack_member,
+            travel.pinion_member,
+            travel.min_drive_angle_rad,
+            travel.max_drive_angle_rad,
+            travel.pinion_period_rad
+        )
+    } else {
+        key
+    })
+}
+
+/// Nine phases over one tooth (or worm) period; a finite rack adds both
+/// conservative travel endpoints.
+fn cycle_phases(resolved: &model::ResolvedGearPair) -> Vec<f64> {
+    if let Some(travel) = &resolved.rack_travel {
+        let mut phases = (0..SAMPLES)
+            .map(|i| travel.pinion_period_rad * (i as f64 / (SAMPLES - 1) as f64 - 0.5))
+            .collect::<Vec<_>>();
+        phases.extend([travel.min_drive_angle_rad, travel.max_drive_angle_rad]);
+        phases
+    } else if let Some(worm) = &resolved.worm {
+        (0..SAMPLES)
+            .map(|i| worm.worm_period_rad * i as f64 / (SAMPLES - 1) as f64)
+            .collect()
+    } else {
+        (0..SAMPLES)
+            .map(|i| TAU / f64::from(resolved.gears[0].teeth()) * i as f64 / (SAMPLES - 1) as f64)
+            .collect()
     }
-    .with_placement(document, evaluated, source, &resolved, solids, drive)
 }
 
 pub(crate) struct ValidationInputs<'a> {
@@ -610,7 +650,7 @@ impl ValidationInputs<'_> {
         let invalid = || {
             error(
                 Some(pair),
-                "Current chevron occurrence does not match its checked Part, producer, pose or revision",
+                "Current gear occurrence does not match its checked Part, producer, pose or revision",
             )
         };
         let occurrence = self.occurrences.get(&instance).ok_or_else(invalid)?;
@@ -688,19 +728,6 @@ pub(crate) fn validate(
         let b = solids
             .get(&source.parameters.gears[1])
             .ok_or_else(|| error(Some(pair), "Second paired native gear is unavailable"))?;
-        let specifications = [
-            crate::gears::specification(source.parameters.gears[0], &resolved.gears[0])?,
-            crate::gears::specification(source.parameters.gears[1], &resolved.gears[1])?,
-        ];
-        let base = source
-            .parameters
-            .frame
-            .resolve(evaluated)
-            .map_err(|e| error(Some(pair), e))?;
-        // Process-local signature of every actual constructor input. Debug is
-        // derived on these closed structs and never persisted as a file format.
-        // Drive is excluded only from the periodic cycle proof; its actual
-        // current pose is checked independently below on every compile.
         let shifted_engagement = shifted_engagement(document, source.parameters.gears);
         let checker = PoseCheck {
             pair,
@@ -709,50 +736,14 @@ pub(crate) fn validate(
             shifted: shifted_engagement,
             interrupt,
         };
-        let key = format!(
-            "gear-pair-cycle/6/{SAMPLES}|{:?}|{pair:?}|{:?}|{:?}|{specifications:?}|{:?}|{base:?}|{policy:?}|shifted-engagement:{shifted_engagement}",
-            document.id(),
-            source.parameters.gears,
-            source.outputs,
-            resolved.gears.each_ref().map(|g| g.frame())
-        );
-        let key = if let Some(worm) = &resolved.worm {
-            format!("{key}|{worm:?}")
-        } else if let Some(travel) = &resolved.rack_travel {
-            format!(
-                "{key}|{:?}|{:?}|{}|{}|{}",
-                travel.rack_member,
-                travel.pinion_member,
-                travel.min_drive_angle_rad,
-                travel.max_drive_angle_rad,
-                travel.pinion_period_rad
-            )
-        } else {
-            key
-        };
+        let key = cycle_key("gear-pair-cycle/6", &inputs, pair, &source, &resolved)?;
         let previous = cache.as_deref().and_then(|c| c.lookup(&key));
         let reused = previous.is_some();
         let cycle_started = std::time::Instant::now();
         let phases = if let Some(phases) = previous {
             phases
         } else {
-            let phases = if let Some(travel) = &resolved.rack_travel {
-                let mut phases = (0..SAMPLES)
-                    .map(|i| travel.pinion_period_rad * (i as f64 / (SAMPLES - 1) as f64 - 0.5))
-                    .collect::<Vec<_>>();
-                phases.extend([travel.min_drive_angle_rad, travel.max_drive_angle_rad]);
-                phases
-            } else if let Some(worm) = &resolved.worm {
-                (0..SAMPLES)
-                    .map(|i| worm.worm_period_rad * i as f64 / (SAMPLES - 1) as f64)
-                    .collect::<Vec<_>>()
-            } else {
-                (0..SAMPLES)
-                    .map(|i| {
-                        TAU / f64::from(resolved.gears[0].teeth()) * i as f64 / (SAMPLES - 1) as f64
-                    })
-                    .collect::<Vec<_>>()
-            };
+            let phases = cycle_phases(&resolved);
             for drive in &phases {
                 checkpoint(interrupt)?;
                 let sample = sample_document(document, pair, &source, *drive)?;
@@ -802,395 +793,4 @@ pub(crate) fn validate(
         reports.insert(pair,GearPairCheck{pair,current_engagement,center_distance_mm:resolved.center_distance_mm,bevel:resolved.bevel.clone(),worm:resolved.worm.clone(),cycle_drive_angles_rad:phases,cycle_reused:reused,sampled_cycle_ms,current_pose_ms,current_drive_angle_rad:current,current_pose_checked:true,maximum_overlap_volume_mm3:0.,scope:if resolved.worm.is_some() { "Native current pose and nine sampled phases over one full ZA worm turn with native no-overlap and engagement proximity witnesses for its generated wheel. No continuous collision-free motion, strength or manufacturing-fit certification." } else if resolved.rack_travel.is_some() { "Native current pose, nine sampled phases over one pinion tooth period and both conservative finite travel endpoints. No continuous collision-free motion, strength or manufacturing-fit certification." } else if resolved.bevel.is_some() { "Native current pose and nine sampled phases over one spherical-involute bevel tooth cycle with native no-overlap and engagement proximity witnesses. No continuous collision-free motion, strength or manufacturing-fit certification." } else if shifted_engagement { "Native current pose and nine sampled phases over one matched shifted external tooth cycle, with whole-solid no-overlap and native named-flank proximity in each chevron band, or a whole-solid fallback for single-band gears. No continuous collision-free motion, strength or manufacturing-fit certification." } else { "Native current pose and nine sampled phases over one pinion tooth cycle, under the unmodified periodic generator assumption. No continuous collision-free motion, strength or manufacturing-fit certification." }});
     }
     Ok(reports)
-}
-
-#[cfg(test)]
-#[path = "gear_pairs/bevel_tests.rs"]
-mod bevel_tests;
-
-#[cfg(test)]
-#[path = "gear_pairs/coverage_tests.rs"]
-mod coverage_tests;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use multicad_core::{
-        commands::{Actor, Channel, Session},
-        model::*,
-    };
-    use std::cell::Cell;
-    fn candidate() -> (Session, GearPairRequest, BTreeMap<EntityId, Solid>) {
-        candidate_with_family(GearFamily::Spur)
-    }
-
-    fn candidate_with_family(
-        family: GearFamily,
-    ) -> (Session, GearPairRequest, BTreeMap<EntityId, Solid>) {
-        let mut session =
-            Session::new(Document::new("Native pair failure controls").unwrap()).unwrap();
-        let requests = std::array::from_fn(|i| {
-            GearRequest::new(
-                if i == 0 { "Pinion" } else { "Wheel" },
-                GearParameters {
-                    teeth: Dimension::Literal {
-                        value: if i == 0 { 20. } else { 30. },
-                        unit: "count".into(),
-                    },
-                    family,
-                    face_width: length(4.),
-                    helix_angle: angle(if family == GearFamily::Spur { 0. } else { 15. }),
-                    hand: if family == GearFamily::Spur {
-                        GearHand::None
-                    } else if i == 0 {
-                        GearHand::Left
-                    } else {
-                        GearHand::Right
-                    },
-                    ..Default::default()
-                },
-            )
-        });
-        let request = GearPairRequest::new("Pair", requests);
-        let prepared = prepare_gear_pair(&session, 0, Actor::local(Channel::Ui), &request).unwrap();
-        session.commit(prepared.prepared).unwrap();
-        let solids = request
-            .parameters
-            .gears
-            .into_iter()
-            .map(|id| {
-                let source = read_gear(session.document(), id).unwrap();
-                (
-                    id,
-                    crate::gears::build(
-                        id,
-                        &source,
-                        session.parameters(),
-                        GeometryPolicy::default(),
-                    )
-                    .unwrap(),
-                )
-            })
-            .collect();
-        (session, request, solids)
-    }
-    #[test]
-    fn chevron_parallel_common_and_exact_occurrence_receipt() {
-        let (session, request, solids) = candidate_with_family(GearFamily::Herringbone);
-        let document = session.document();
-        let evaluated = session.parameters();
-        let revision = session.revision();
-        let policy = GeometryPolicy::default();
-        let source = read_gear_pair(document, request.pair).unwrap();
-        let body_heads = solids
-            .keys()
-            .map(|id| (read_gear(document, *id).unwrap().output.body, *id))
-            .collect();
-        let topologies = solids
-            .iter()
-            .map(|(id, solid)| (*id, solid.topology_snapshot(*id, revision).unwrap()))
-            .collect();
-        let mut occurrences = BTreeMap::new();
-        let mut world = BTreeMap::new();
-        for instance in source.outputs.instances {
-            let (occurrence, solid) = crate::occurrences::build(
-                crate::occurrences::Inputs {
-                    document,
-                    parameters: evaluated,
-                    body_heads: &body_heads,
-                    solids: &solids,
-                    topologies: &topologies,
-                    policy,
-                },
-                instance,
-                revision,
-            )
-            .unwrap();
-            occurrences.insert(instance, std::sync::Arc::new(occurrence));
-            world.insert(instance, solid);
-        }
-        let [a, b] = source.outputs.instances;
-        let inputs = |occurrences| ValidationInputs {
-            document,
-            evaluated,
-            solids: &world,
-            occurrences,
-            revision,
-            policy,
-            interrupt: None,
-        };
-        let current = inputs(&occurrences);
-        let a_solid = current.current_member(request.pair, &source, 0).unwrap();
-        assert!(std::ptr::eq(a_solid, &world[&a]));
-        let b_solid = &world[&b];
-        assert!(
-            a_solid
-                .boolean(b_solid, BooleanOperation::Intersect, policy)
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            a_solid
-                .intersect_parallel(b_solid, policy)
-                .unwrap()
-                .is_none()
-        );
-
-        // At this center distance, removing the half-tooth phase offset
-        // brings opposing teeth into real interference.
-        let wrong = placed(
-            &solids[&source.parameters.gears[1]],
-            RigidPose {
-                translation_mm: occurrences[&b].pose.translation_mm,
-                rotation: [[-1., 0., 0.], [0., -1., 0.], [0., 0., 1.]],
-            },
-            request.pair,
-        )
-        .unwrap();
-        let serial = a_solid
-            .boolean(&wrong, BooleanOperation::Intersect, policy)
-            .unwrap()
-            .unwrap()
-            .volume_mm3()
-            .unwrap();
-        let parallel = a_solid
-            .intersect_parallel(&wrong, policy)
-            .unwrap()
-            .unwrap()
-            .volume_mm3()
-            .unwrap();
-        assert!(serial > 1e-6);
-        assert!((serial - parallel).abs() <= 1e-6);
-
-        let mut stale = occurrences.clone();
-        std::sync::Arc::make_mut(stale.get_mut(&a).unwrap())
-            .topology
-            .revision -= 1;
-        assert!(
-            inputs(&stale)
-                .current_member(request.pair, &source, 0)
-                .is_err()
-        );
-        let mut wrong_pose = occurrences.clone();
-        std::sync::Arc::make_mut(wrong_pose.get_mut(&a).unwrap())
-            .pose
-            .translation_mm[0] += 0.01;
-        assert!(
-            inputs(&wrong_pose)
-                .current_member(request.pair, &source, 0)
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn cancellation_after_last_sample_and_after_current_pose_publish_nothing() {
-        let (session, request, _) = candidate();
-        let compiler = crate::Compiler {
-            omit_display: true,
-            ..Default::default()
-        };
-        // Record the first and last pending checkpoints of the actual
-        // successful path, including any checkpoints inside the current pose.
-        let successful_store = crate::PairCycleProofStore::default();
-        let successful_visits = Cell::new(0);
-        crate::with_pair_cycle_proofs(successful_store.clone(), || {
-            compiler.compile_interruptible(
-                session.document(),
-                session.revision(),
-                Some(&|| {
-                    if crate::pair_cycle_proofs::pending_entries() > 0 {
-                        successful_visits.set(successful_visits.get() + 1);
-                    }
-                    false
-                }),
-            )
-        })
-        .unwrap();
-        assert_eq!(successful_store.stats().entries, 1);
-        assert!(successful_visits.get() > 1);
-        for after_pending_visits in [0, successful_visits.get() - 1] {
-            let store = crate::PairCycleProofStore::default();
-            let visits = Cell::new(0);
-            let interrupt = || {
-                if crate::pair_cycle_proofs::pending_entries() > 0 {
-                    visits.set(visits.get() + 1);
-                    visits.get() > after_pending_visits
-                } else {
-                    false
-                }
-            };
-            let result = crate::with_pair_cycle_proofs(store.clone(), || {
-                compiler.compile_interruptible(
-                    session.document(),
-                    session.revision(),
-                    Some(&interrupt),
-                )
-            });
-            assert!(result.is_err());
-            assert_eq!(store.stats().entries, 0);
-            assert!(visits.get() > after_pending_visits);
-            assert_eq!(session.revision(), 1);
-            assert_eq!(
-                read_gear_pair(session.document(), request.pair)
-                    .unwrap()
-                    .outputs,
-                request.outputs
-            );
-        }
-    }
-    #[test]
-    fn deliberately_wrong_phase_produces_a_real_native_overlap_diagnostic() {
-        let (session, request, solids) = candidate();
-        let source = read_gear_pair(session.document(), request.pair).unwrap();
-        let a = &solids[&request.parameters.gears[0]];
-        let b = &solids[&request.parameters.gears[1]];
-        check_pose(
-            session.document(),
-            session.parameters(),
-            &source,
-            request.pair,
-            [a, b],
-            0.,
-            GeometryPolicy::default(),
-        )
-        .unwrap();
-        let wrong = placed(
-            b,
-            RigidPose {
-                translation_mm: [50., 0., 0.],
-                rotation: [[-1., 0., 0.], [0., -1., 0.], [0., 0., 1.]],
-            },
-            request.pair,
-        )
-        .unwrap();
-        let diagnostic =
-            overlap(request.pair, a, &wrong, 0., GeometryPolicy::default()).unwrap_err();
-        assert_eq!(diagnostic.entity, Some(request.pair));
-        assert!(diagnostic.message.contains("overlaps"));
-    }
-    #[test]
-    fn superseded_cycle_never_stores_a_partial_validation_proof() {
-        let (session, request, solids) = candidate();
-        let store = crate::PairCycleProofStore::default();
-        let mut cache = crate::pair_cycle_proofs::CycleTransaction::new(Some(store.clone()));
-        let visits = Cell::new(0);
-        let interrupt = || {
-            visits.set(visits.get() + 1);
-            visits.get() > 2
-        };
-        let result = validate(
-            ValidationInputs {
-                document: session.document(),
-                evaluated: session.parameters(),
-                solids: &solids,
-                occurrences: &BTreeMap::new(),
-                revision: session.revision(),
-                policy: GeometryPolicy::default(),
-                interrupt: Some(&interrupt),
-            },
-            Some(&mut cache),
-        );
-        assert!(result.is_err());
-        assert!(visits.get() > 2);
-        assert_eq!(store.stats().entries, 0);
-        assert_eq!(session.revision(), 1);
-        assert_eq!(
-            read_gear_pair(session.document(), request.pair)
-                .unwrap()
-                .outputs,
-            request.outputs
-        );
-    }
-    #[test]
-    fn separated_rack_and_wrong_phase_cannot_pass_native_pair_validation() {
-        let mut session =
-            Session::new(Document::new("Native rack negative controls").unwrap()).unwrap();
-        let request = GearPairRequest::new(
-            "Rack pair",
-            [
-                GearRequest::new(
-                    "Rack",
-                    GearParameters {
-                        family: GearFamily::Rack,
-                        teeth: Dimension::Literal {
-                            value: 20.,
-                            unit: "count".into(),
-                        },
-                        rack: Some(RackDimensions {
-                            backing_thickness: length(3.),
-                        }),
-                        module: length(1.),
-                        face_width: length(2.),
-                        bore_diameter: length(0.),
-                        ..Default::default()
-                    },
-                ),
-                GearRequest::new(
-                    "Pinion",
-                    GearParameters {
-                        module: length(1.),
-                        face_width: length(2.),
-                        ..Default::default()
-                    },
-                ),
-            ],
-        );
-        session
-            .commit(
-                prepare_gear_pair(&session, 0, Actor::local(Channel::Ui), &request)
-                    .unwrap()
-                    .prepared,
-            )
-            .unwrap();
-        let source = read_gear_pair(session.document(), request.pair).unwrap();
-        let policy = GeometryPolicy::default();
-        let solids: Vec<_> = request
-            .parameters
-            .gears
-            .iter()
-            .map(|id| {
-                let recipe = read_gear(session.document(), *id).unwrap();
-                crate::gears::build(*id, &recipe, session.parameters(), policy).unwrap()
-            })
-            .collect();
-        let separated = solids[1]
-            .transformed(RigidTransform {
-                translation_mm: [1000., 0., 0.],
-                rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-            })
-            .unwrap();
-        let failure = check_pose(
-            session.document(),
-            session.parameters(),
-            &source,
-            request.pair,
-            [&solids[0], &separated],
-            0.,
-            policy,
-        )
-        .unwrap_err();
-        assert!(
-            failure
-                .to_string()
-                .contains("no native engagement proximity")
-        );
-        let wrong_phase = solids[0]
-            .transformed(RigidTransform {
-                translation_mm: [std::f64::consts::PI / 2., 0., 0.],
-                rotation: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-            })
-            .unwrap();
-        let failure = check_pose(
-            session.document(),
-            session.parameters(),
-            &source,
-            request.pair,
-            [&wrong_phase, &solids[1]],
-            0.,
-            policy,
-        )
-        .unwrap_err();
-        assert!(failure.to_string().contains("overlaps by"));
-        assert_eq!(session.revision(), 1);
-    }
 }

@@ -548,6 +548,16 @@ impl FencePanel {
                 .and_then(|d| d.value_in(Unit::Millimeter, Some(parameters)).ok())
                 .unwrap_or(0.)
     }
+    pub(in crate::modeling) fn outline_key(
+        &mut self,
+        key: super::outline::OutlineKey,
+    ) -> Option<bool> {
+        let changed = self.outline.key(key)?;
+        if changed {
+            self.invalidate();
+        }
+        Some(changed)
+    }
     pub fn viewport(&mut self, session: &Session, view: TerminationViewport<'_>) -> bool {
         self.sync_source(session);
         let z = self.plane_z();

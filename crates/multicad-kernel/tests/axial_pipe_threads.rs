@@ -1,7 +1,36 @@
 use multicad_core::document::EntityId;
 use multicad_kernel::{
-    AxialFlatHelicalThread, BooleanOperation, HelicalThread, RigidTransform, Solid,
+    AxialFlatHelicalThread, BooleanOperation, GeometryError, HelicalThread, PlaneFrame,
+    RigidTransform, Solid,
+    rust_kernel::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec},
 };
+
+/// Owned-kernel authored NPT transport: cone-parallel crest flats on straight
+/// 60-degree flanks, with an optional actual stock-OD crest ceiling.
+fn rust_npt(spec: AxialFlatHelicalThread, feature: EntityId) -> Result<Solid, GeometryError> {
+    let p = spec.profile;
+    assert_eq!(
+        (p.lower_flank_deg, p.upper_flank_deg, p.starts, p.left_hand),
+        (30., 30., 1, false)
+    );
+    Solid::rust_authored_axial_pipe_thread_with_interrupt(
+        AuthoredSpec {
+            major_radius_mm: p.major_radius_mm,
+            pitch_mm: p.pitch_mm,
+            length_mm: p.length_mm,
+            radial_taper: p.radial_taper,
+            section: AuthoredSection::NptFlat {
+                depth_mm: p.depth_mm,
+                flat_width_mm: p.crest_width_mm,
+            },
+            crest_radius_limit_mm: spec.crest_radius_limit_mm,
+        },
+        feature,
+        PlaneFrame::default(),
+        Default::default(),
+        None,
+    )
+}
 
 fn material(solid: &Solid, point: [f64; 3]) -> f64 {
     let edge = 0.0002;
@@ -53,7 +82,7 @@ fn axial_npt_flanks_and_stock_clipped_crests_preserve_gauge_cones_and_native_rol
                 crest_radius_limit_mm: (!internal).then_some(od * 25.4 / 2.),
             };
             let feature = EntityId::new();
-            let solid = Solid::axial_flat_helical_thread_named(spec, feature, Default::default())
+            let solid = rust_npt(spec, feature)
                 .unwrap_or_else(|error| panic!("{tpi}TPI internal={internal} {spec:?}: {error}"));
             assert_eq!(solid.solid_count().unwrap(), 1);
             // Integrate squared radial sections over phase and then along the
@@ -138,10 +167,18 @@ fn axial_npt_flanks_and_stock_clipped_crests_preserve_gauge_cones_and_native_rol
             }
             let topology = solid.topology_snapshot(feature, 0).unwrap();
             assert!(topology.elements.iter().all(|e| !e.origins.is_empty()));
+            // The unclipped internal law names its bands on the thread start;
+            // stock-clipped external material is a distinct retained source
+            // whose natural (cone-parallel) crest keeps its own namespace.
+            let crest = if internal {
+                "thread/start/0/crest"
+            } else {
+                "pipe.npt.clipped/face/crest.natural"
+            };
             assert!(topology.elements.iter().any(|e| {
                 e.origins
                     .iter()
-                    .any(|origin| origin.source == feature && origin.role == "thread/start/0/crest")
+                    .any(|origin| origin.source == feature && origin.role == crest)
             }));
         }
     }

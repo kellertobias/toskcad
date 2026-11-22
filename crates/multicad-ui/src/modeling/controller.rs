@@ -70,6 +70,7 @@ struct Candidate {
     proof: SceneProof,
     pending: bool,
     scene: Option<Arc<Scene>>,
+    evaluated_scene: Option<Arc<Scene>>,
     requires_info: bool,
     /// An FDM aid feature whose native placement review gates Apply.
     aid: Option<EntityId>,
@@ -106,6 +107,7 @@ struct Handoff {
     revision: u64,
     resources: ProjectResources,
     scene: Arc<Scene>,
+    evaluated_scene: Arc<Scene>,
     architecture_levels: std::sync::OnceLock<crate::architecture_view::Levels>,
 }
 #[derive(Default)]
@@ -706,6 +708,9 @@ impl ModelToolController {
             channel,
             ModelForm::Primitive(Box::new(PrimitivePanel::new(request)?)),
         )?;
+        if let Some(ModelForm::Primitive(panel)) = &mut self.form {
+            panel.open_dimension_inputs();
+        }
         // The form remains open if the preview provider reports an error.
         let _ = self.preview(session, resources, channel);
         Ok(())
@@ -736,7 +741,11 @@ impl ModelToolController {
                 selected,
                 false,
             )?)),
-        )
+        )?;
+        if self.supports_fast_hardware_preview() {
+            let _ = self.preview(session, resources, channel);
+        }
+        Ok(())
     }
     pub fn begin_mechanical_part(
         &mut self,
@@ -763,7 +772,10 @@ impl ModelToolController {
                 session.parameters().clone(),
                 false,
             )?)),
-        )
+        )?;
+        // Keep the form open if its default washer preview reports an error.
+        let _ = self.preview(session, resources, channel);
+        Ok(())
     }
     pub fn begin_gear(
         &mut self,
@@ -948,6 +960,21 @@ impl ModelToolController {
             Some(ModelForm::Architecture(panel)) => panel.outlines(),
             _ => false,
         }
+    }
+    /// Give Enter, Escape or Backspace to a wall, fence or slab path while it
+    /// is being drawn or a corner is moved. Returns `None` when the key is not
+    /// the path's, so the form keeps its usual Apply and Cancel meaning.
+    pub(crate) fn outline_key(&mut self, key: super::OutlineKey) -> Option<bool> {
+        let changed = match self.form.as_mut() {
+            Some(ModelForm::Wall(panel)) => panel.outline_key(key),
+            Some(ModelForm::Fence(panel)) => panel.outline_key(key),
+            Some(ModelForm::Architecture(panel)) => panel.outline_key(key),
+            _ => None,
+        }?;
+        if changed {
+            self.invalidate();
+        }
+        Some(changed)
     }
     pub fn outline_viewport(
         &mut self,
@@ -1157,16 +1184,18 @@ impl ModelToolController {
         resources: &ProjectResources,
         channel: Channel,
     ) -> Result<(), String> {
-        let name = GeneratedNames::new(session.document()).numbered("Panel", "");
         self.begin_form(
             session,
             resources,
             channel,
-            ModelForm::Cabinet(Box::new(super::cabinet::CabinetPanel::panel(
+            ModelForm::Cabinet(Box::new(super::cabinet::CabinetPanel::generated_panel(
                 session.document(),
-                name,
             ))),
-        )
+        )?;
+        if let Some(ModelForm::Cabinet(form)) = &mut self.form {
+            form.open_dimension_inputs();
+        }
+        Ok(())
     }
     /// Envelope dimensions of the open Panel / carcass form, for the viewport.
     pub fn cabinet_guide(
@@ -1970,6 +1999,7 @@ impl ModelToolController {
             proof,
             pending: true,
             scene: None,
+            evaluated_scene: None,
             requires_info: matches!(
                 request,
                 ModelRequest::ExtrudeBoolean(_)
@@ -2126,24 +2156,27 @@ impl ModelToolController {
                         return Err("Native preview tool membership disagrees with the requested producer-version consumption".into());
                     }
                 }
-                VisibilityFilter::default().apply(
+                let visible = VisibilityFilter::default().apply(
                     &scene,
                     candidate.prepared.document(),
                     candidate.stamp.revision,
-                )
+                )?;
+                Ok((scene, visible))
             })();
             let candidate = self.candidate.as_mut().expect("matching candidate");
             candidate.pending = false;
             match result {
-                Ok(scene) => {
+                Ok((evaluated, scene)) => {
                     candidate.blocked = candidate
                         .aid
                         .and_then(|aid| super::fdm_aid::placement_block(&scene, aid));
                     candidate.scene = Some(scene);
+                    candidate.evaluated_scene = Some(evaluated);
                     self.error = None;
                 }
                 Err(error) => {
                     candidate.scene = None;
+                    candidate.evaluated_scene = None;
                     self.error = Some(error);
                 }
             }
@@ -2234,6 +2267,16 @@ impl ModelToolController {
             if self.scale_origin_picking() {
                 return Err("Place the scale origin or cancel the pick before applying".into());
             }
+            if self.placement_point_picking() {
+                return Err(
+                    "Choose the Move target point or cancel point-to-point before applying".into(),
+                );
+            }
+            if self.panel_point_picking() {
+                return Err(
+                    "Choose the panel target point or cancel Place by point before applying".into(),
+                );
+            }
             self.current(session, resources, true)?;
             if let Some(blocked) = self.candidate.as_ref().and_then(|c| c.blocked.clone()) {
                 return Err(blocked);
@@ -2270,13 +2313,15 @@ impl ModelToolController {
                 // keep its chosen floor and wall instead of reseeding them.
                 self.begin_form_with_level_seed(session, resources, channel, form, false)?;
             }
-            // Keep the same checked geometry visible while the canonical lane
-            // rebuilds the new revision. It remains noninteractive/display-only.
+            // Keep the checked geometry visible until the canonical lane accepts it.
             self.handoff = Some(Handoff {
                 document: session.document().id(),
                 revision: session.revision(),
                 resources: resources.clone(),
                 scene,
+                evaluated_scene: candidate
+                    .evaluated_scene
+                    .expect("checked preview evaluation"),
                 architecture_levels: candidate.architecture_levels,
             });
             Ok(candidate.outputs)
@@ -2285,6 +2330,17 @@ impl ModelToolController {
             self.error = Some(error.clone());
         }
         result
+    }
+    pub(crate) fn committed_preview(
+        &self,
+        session: &Session,
+        resources: &ProjectResources,
+    ) -> Option<&Arc<Scene>> {
+        let handoff = self.handoff.as_ref()?;
+        (handoff.document == session.document().id()
+            && handoff.revision == session.revision()
+            && &handoff.resources == resources)
+            .then_some(&handoff.evaluated_scene)
     }
     pub fn display_scene(
         &self,
@@ -2310,8 +2366,8 @@ impl ModelToolController {
             })
             .map(|handoff| handoff.scene.clone())
     }
-    /// The viewport may still show checked geometry after Apply while its
-    /// canonical revision rebuilds. Both views use solid bounds for camera Fit.
+    /// The viewport may show checked geometry before canonical publication.
+    /// Both views use solid bounds for camera Fit.
     pub(crate) fn owns_display_scene(&self, scene: &Arc<Scene>) -> bool {
         self.candidate.as_ref().is_some_and(|candidate| {
             candidate
@@ -2339,6 +2395,7 @@ impl ModelToolController {
         self.placement_interaction.active()
             || self.scale_interaction.active()
             || matches!(&self.form, Some(ModelForm::Primitive(panel)) if panel.dragging())
+            || matches!(&self.form, Some(ModelForm::Cabinet(form)) if form.dragging())
     }
 
     pub(crate) fn arm_confirmation(
@@ -2351,6 +2408,8 @@ impl ModelToolController {
         };
         if self.preview_waits_for_input()
             || self.transform_dragging()
+            || self.placement_point_picking()
+            || self.panel_point_picking()
             || !(self.can_apply(session, resources)
                 || self.current(session, resources, false).is_ok()
                     && (self
@@ -2421,6 +2480,11 @@ impl ModelToolController {
                 | ModelForm::Scale(_)
                 | ModelForm::Revolve(_),
             ) => 0.075,
+            Some(ModelForm::MechanicalPart(_) | ModelForm::Thread(_))
+                if self.supports_fast_hardware_preview() =>
+            {
+                0.075
+            }
             Some(ModelForm::Extrude(_))
                 if self
                     .operations
@@ -2433,6 +2497,12 @@ impl ModelToolController {
         };
         self.auto_preview = Some((stamp, ui.input(|input| input.time) + delay));
         ui.ctx().request_repaint();
+    }
+
+    fn supports_fast_hardware_preview(&self) -> bool {
+        self.backend
+            .as_ref()
+            .is_some_and(|backend| backend.supports_fast_hardware_preview())
     }
 
     pub(crate) fn tick_auto_preview(
@@ -2493,15 +2563,31 @@ impl ModelToolController {
         }
     }
 
+    /// The live draft envelope of a primitive or rectangular panel form.
     pub(crate) fn primitive_envelope(&self, session: &Session) -> Option<[[f64; 3]; 8]> {
         match self.form.as_ref()? {
             ModelForm::Primitive(panel) => panel.envelope(session),
+            ModelForm::Cabinet(form) => form.envelope(session),
             _ => None,
         }
     }
 
+    /// Whether a viewport dimension input owned keyboard focus last frame.
+    pub(crate) fn primitive_corner_input_focused(&self) -> bool {
+        match &self.form {
+            Some(ModelForm::Primitive(panel)) => panel.corner_input_focused(),
+            Some(ModelForm::Cabinet(form)) => form.corner_input_focused(),
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn primitive_corner_input_active(&self) -> bool {
-        matches!(&self.form, Some(ModelForm::Primitive(panel)) if panel.corner_input_active())
+        match &self.form {
+            Some(ModelForm::Primitive(panel)) => panel.corner_input_active(),
+            Some(ModelForm::Cabinet(form)) => form.corner_input_active(),
+            _ => false,
+        }
     }
 
     pub fn primitive_viewport(
@@ -2513,17 +2599,24 @@ impl ModelToolController {
         rect: egui::Rect,
         start_allowed: bool,
     ) -> bool {
-        if !matches!(self.form, Some(ModelForm::Primitive(_)))
-            || self.current(session, resources, false).is_err()
+        if !matches!(
+            self.form,
+            Some(ModelForm::Primitive(_) | ModelForm::Cabinet(_))
+        ) || self.current(session, resources, false).is_err()
         {
             return false;
         }
         let guide = !self.preview_visible(session, resources);
-        let start_allowed = start_allowed && ui.is_enabled();
-        let Some(ModelForm::Primitive(panel)) = &mut self.form else {
-            unreachable!()
+        let start_allowed = start_allowed && ui.is_enabled() && !self.panel_point_picking();
+        let result = match &mut self.form {
+            Some(ModelForm::Primitive(panel)) => {
+                panel.viewport(ui, session, camera, rect, start_allowed, guide)
+            }
+            Some(ModelForm::Cabinet(form)) => {
+                form.viewport(ui, session, camera, rect, start_allowed, guide)
+            }
+            _ => unreachable!(),
         };
-        let result = panel.viewport(ui, session, camera, rect, start_allowed, guide);
         if result.changed {
             self.schedule_auto_preview(ui, self.stamp().expect("active primitive form"));
         }
@@ -2692,7 +2785,10 @@ impl ModelToolController {
             .as_mut()
             .ok_or("Start a modeling tool first")?
             .show(ui, session.document(), capabilities, preview);
-        if self.scale_origin_picking() {
+        if self.scale_origin_picking()
+            || self.placement_point_picking()
+            || self.panel_point_picking()
+        {
             self.keyboard_confirm = None;
         }
         let result = match event {
@@ -2756,6 +2852,7 @@ mod groups;
 mod legacy;
 mod operation_interaction;
 mod operations;
+mod panel_points;
 mod placement_interaction;
 mod preparation;
 mod stock;
@@ -2779,6 +2876,8 @@ mod tests;
 #[cfg(test)]
 mod wood_box_tests;
 
+#[cfg(test)]
+mod panel_points_tests;
 #[cfg(test)]
 mod placement_tests;
 

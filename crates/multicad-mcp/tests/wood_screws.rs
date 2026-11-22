@@ -36,11 +36,14 @@ fn wood_retains_typed_sources_pose_and_identity_through_edits_history_reopen_and
             .iter()
             .any(|v| v == "wood_screw")
     );
-    assert!(
-        profiles["wood_screw"]
-            .as_str()
-            .unwrap()
-            .contains("No modeled wood")
+    assert_eq!(
+        profiles["active_geometry_support"]["wood_screw"],
+        json!({
+            "representation": "simplified_envelope",
+            "head": "external_hex",
+            "drive": "external_hex",
+            "manufacturing_available": false
+        })
     );
     let mut rev = run(
         &h,

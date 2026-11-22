@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,readFileSync,rmSync,writeFileSync,chmodSync,statSync,copyFileSync,cpSync} from 'node:fs';
+import {existsSync,mkdtempSync,mkdirSync,readFileSync,rmSync,writeFileSync,chmodSync,statSync,copyFileSync,cpSync} from 'node:fs';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import test from 'node:test';
-import {assembleRuntime,checkProjectContainer,collectNotices,isNoticeFile,nativeSourceHash,peImports,runtimeExecutable,validateExamples,validateBundledLibrary} from './native-package.mjs';
+import {assembleRuntime,auditRuntime,checkProjectContainer,collectNotices,isNoticeFile,peImports,runtimeExecutable,rustBuildArgs,stageSourceSupport,validateExamples,validateBundledLibrary} from './native-package.mjs';
 import {readdirSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 
@@ -16,6 +16,32 @@ function executableFixture(directory){
   else{writeFileSync(binary,'layout fixture only');chmodSync(binary,0o755);}
   return binary;
 }
+
+test('all runtime resources and source instructions use the owned Rust kernel',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'multicad-rust-layout-'));
+  try{
+    const stage=join(directory,'runtime'),source=join(directory,'source');
+    const layout=assembleRuntime(stage,executableFixture(directory),'1.2.3');
+    for(const name of ['native-dependencies.json','OCCT-LICENSE-LGPL-2.1.txt','OCCT-LGPL-EXCEPTION.txt']){
+      assert(!existsSync(join(layout.resources,name)),name);
+    }
+    assert(existsSync(join(layout.resources,'examples/examples.json')));
+    assert(existsSync(join(layout.resources,'library/library.json')));
+    assert.match(readFileSync(join(stage,'README.txt'),'utf8'),/MultiCAD Rust kernel/);
+    mkdirSync(source);
+    const commit='a'.repeat(40);
+    stageSourceSupport(source,commit,'1.2.3');
+    const reproduction=readFileSync(join(source,'SOURCE-REPRODUCTION.md'),'utf8');
+    assert(reproduction.includes(`Source commit: ${commit}`));
+    assert.deepEqual(rustBuildArgs,['--workspace','--release','--locked']);
+    assert(reproduction.includes(`cargo build ${rustBuildArgs.join(' ')} --offline`));
+    assert(!reproduction.includes('foundation-deps'));
+    const native=join(source,'artifacts/native-deps');
+    assert(!existsSync(native));
+    mkdirSync(native,{recursive:true});
+    assert.throws(()=>stageSourceSupport(source,commit,'1.2.3'),/native dependency assets/);
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});
 
 test('hardware packaging refuses damaged data, missing notices, duplicate IDs and escaping paths',()=>{
   const directory=mkdtempSync(join(tmpdir(),'multicad-hardware-package-'));
@@ -123,24 +149,19 @@ test('native build entry loads without a pre-existing node_modules directory',()
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
 
-test('native source identity includes content and relative names, not checkout location',()=>{
-  const directory=mkdtempSync(join(tmpdir(),'multicad-source-id-'));
-  try{
-    for(const name of ['a','b']){mkdirSync(join(directory,name,'nested'),{recursive:true});writeFileSync(join(directory,name,'nested/source.cpp'),'source');writeFileSync(join(directory,name,'nested.cpp'),'flat');}
-    assert.equal(nativeSourceHash(join(directory,'a')),'dedfba9092ed6c79fa868edb60508eb5373cf77e22910d45ee6368b770075067');
-    assert.equal(nativeSourceHash(join(directory,'a')),nativeSourceHash(join(directory,'b')));
-    writeFileSync(join(directory,'b/nested/source.cpp'),'edited source');
-    assert.notEqual(nativeSourceHash(join(directory,'a')),nativeSourceHash(join(directory,'b')));
-  }finally{rmSync(directory,{recursive:true,force:true});}
-});
-test('native development layout includes a copied executable, identity pin and notices',()=>{
+test('native development layout preserves executable, bundle identity and notices',()=>{
   const directory=mkdtempSync(join(tmpdir(),'multicad-layout-'));
   try{
     const binary=executableFixture(directory),original=readFileSync(binary);
     const stage=join(directory,'stage');const layout=assembleRuntime(stage,binary,'1.2.3-dev');
     assert.deepEqual(readFileSync(binary),original,'Packaging must never sign or modify the compiler output');
     if(process.platform!=='darwin')assert.deepEqual(readFileSync(runtimeExecutable(stage)),original);
-    assert.equal(JSON.parse(readFileSync(join(layout.resources,'native-dependencies.json'),'utf8')).occt.version,'7.9.3');
+    assert(!existsSync(join(layout.resources,'native-dependencies.json')));
+    if(process.platform==='darwin'){
+      const libraries=auditRuntime(layout.executable);
+      assert(libraries.length>0,'inspect the actual signed Mach-O fixture');
+      assert(libraries.every(library=>!/(?:lib)?TKernel|OpenCascade|OCCT/i.test(library)));
+    }
     const iconName=process.platform==='darwin'?'AppIcon.icns':process.platform==='win32'?'AppIcon.ico':'AppIcon.png';
     assert.deepEqual(readFileSync(join(layout.resources,iconName)),readFileSync(new URL(`../assets/branding/app/${iconName}`,import.meta.url)));
     if(process.platform==='linux'){
@@ -153,7 +174,7 @@ test('native development layout includes a copied executable, identity pin and n
       assert.match(mime,/<glob pattern="\*\.multicad" case-sensitive="false"\/>/);
       assert.deepEqual(readFileSync(join(stage,'share/icons/hicolor/512x512/apps/multicad.png')),readFileSync(new URL('../assets/branding/app/multicad.png',import.meta.url)));
     }
-    assert(readFileSync(join(layout.resources,'OCCT-LGPL-EXCEPTION.txt'),'utf8').length>100);
+    assert(!existsSync(join(layout.resources,'OCCT-LGPL-EXCEPTION.txt')));
     const cantarell=readFileSync(join(layout.resources,'third-party/bundled-fonts/Cantarell-Regular.txt'),'utf8');
     assert.match(cantarell,/SIL OPEN FONT LICENSE Version 1\.1/);
     assert.match(cantarell,/Jakub Steiner/);
@@ -192,6 +213,10 @@ test('macOS development bundle declares its principal class and seals every reso
     assert.equal(execFileSync('plutil',['-extract','CFBundleShortVersionString','raw','-o','-',plist],{encoding:'utf8'}).trim(),'1.2.3');
     // Document types: .tcd is the current ToskCAD project; .multicad stays openable.
     const info=JSON.parse(execFileSync('plutil',['-convert','json','-o','-',plist],{encoding:'utf8'}));
+    assert.equal(info.CFBundleIdentifier,'de.tokenet.multicad');
+    assert.equal(info.CFBundleName,'ToskCAD');
+    assert.equal(info.CFBundleDisplayName,'ToskCAD');
+    assert.equal(info.CFBundleExecutable,'multicad');
     const exported=Object.fromEntries(info.UTExportedTypeDeclarations.map(type=>[type.UTTypeIdentifier,type]));
     assert.deepEqual(exported['de.tokenet.toskcad.project'].UTTypeTagSpecification['public.filename-extension'],['tcd']);
     assert.deepEqual(exported['de.tokenet.multicad.project'].UTTypeTagSpecification['public.filename-extension'],['multicad']);

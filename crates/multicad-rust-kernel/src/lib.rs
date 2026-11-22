@@ -1,0 +1,142 @@
+//! Bounded exact lengths and one analytic curve probe for the kernel study.
+
+mod exact_binary;
+
+pub mod annulus;
+pub mod authored_flat_thread;
+pub mod authored_hanger_bolt;
+pub mod authored_internal_treatment;
+pub mod authored_metric_thread;
+pub mod axial_pipe_thread;
+pub mod axial_profile_stack;
+pub mod bevel_gear;
+pub mod brep;
+pub mod chamfered_bores;
+pub mod circular_distance;
+pub mod circular_pockets;
+pub mod conical_screw_seat;
+pub mod cosmetic_fastener;
+pub mod cosmetic_profiled_screw;
+pub mod cross_bore;
+pub mod curved_projection;
+pub mod cylinder;
+pub mod cylindrical_blind_pocket;
+pub mod display;
+mod drawing_events;
+pub mod hanger_bolt;
+pub mod head_profile;
+pub mod headed_screw;
+pub mod helical_receiver;
+pub mod helical_thread;
+pub mod helical_thread_mesh;
+pub mod helical_tube_cut;
+pub mod hex_drive;
+pub mod hex_nut;
+pub mod hexalobular_drive;
+pub mod line8_nut;
+pub mod linear_sweep;
+pub mod linear_sweep_mesh;
+pub mod literal_triangle;
+pub mod manufacturing;
+pub mod normal_relief;
+pub mod normal_sweep;
+pub mod oblique_bore;
+pub mod orthogonal;
+pub mod orthogonal_bore_seats;
+pub mod orthogonal_boundary;
+pub mod orthogonal_pockets;
+pub mod orthogonal_section;
+pub mod orthogonal_slots;
+pub mod phillips_drive;
+pub mod planar_boolean;
+pub mod planar_distance;
+pub mod planar_projection;
+pub mod planar_section;
+pub mod polar_loop11;
+pub mod polygon;
+pub mod prism;
+pub mod profiled_screw;
+pub mod radial_tensor;
+pub mod retained_section;
+pub mod revolution;
+pub mod revolution_mesh;
+pub mod round_occlusion;
+pub mod rounded_cylinder;
+pub mod rounded_thread;
+pub mod rounded_thread_mesh;
+pub mod screw_recess;
+pub mod section_hatch;
+pub mod sketch_reference;
+pub mod sphere;
+pub mod spline_cap_relief;
+pub mod spline_intersection;
+pub mod spline_sweep;
+pub mod spur_gear;
+pub mod stadium;
+pub mod step;
+pub mod step_read;
+pub mod straight_rack;
+pub mod tapered_thread;
+mod thread_cavity_volume;
+pub mod thread_counterbore;
+pub mod thread_end_relief;
+pub mod thread_entry_chamfer;
+pub mod thread_internal_treatment;
+pub mod threaded_shaft;
+pub mod torus;
+pub mod trim_curve;
+pub mod trimmed_sweep;
+pub mod warped_union;
+pub mod wood_insert;
+pub mod wood_thread_contact;
+pub mod worm_gear;
+
+pub use multicad_precision::{Error, GridCoordinate, Quantum, Rational, parse_length_mm};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Circle {
+    center: [Rational; 2],
+    radius: Rational,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VerticalIntersection {
+    Disjoint,
+    Tangent {
+        y: Rational,
+    },
+    /// The two ordinates are exactly `y_center ± sqrt(radicand)`.
+    Secant {
+        y_center: Rational,
+        radicand: Rational,
+    },
+}
+
+impl Circle {
+    pub fn new(center: [Rational; 2], radius: Rational) -> Result<Self, Error> {
+        if radius.ratio().0 <= 0 {
+            return Err(Error::NonPositiveRadius);
+        }
+        Ok(Self { center, radius })
+    }
+
+    pub fn center(self) -> [Rational; 2] {
+        self.center
+    }
+
+    pub fn radius(self) -> Rational {
+        self.radius
+    }
+
+    pub fn intersect_vertical(self, x: Rational) -> Result<VerticalIntersection, Error> {
+        let [center_x, y_center] = self.center;
+        let dx = x.checked_sub(center_x)?;
+        let radius_squared = self.radius.checked_mul(self.radius)?;
+        let radicand = radius_squared.checked_sub(dx.checked_mul(dx)?)?;
+        Ok(match radicand.ratio().0.signum() {
+            -1 => VerticalIntersection::Disjoint,
+            0 => VerticalIntersection::Tangent { y: y_center },
+            _ => VerticalIntersection::Secant { y_center, radicand },
+        })
+    }
+}

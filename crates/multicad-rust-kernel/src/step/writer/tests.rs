@@ -1,0 +1,669 @@
+use super::*;
+
+const X: Point = [1., 0., 0.];
+const Y: Point = [0., 1., 0.];
+const ORIGIN: Point = [0.; 3];
+
+fn size() -> [Rational; 3] {
+    [5, 7, 9].map(|value| Rational::new(value, 1).unwrap())
+}
+
+#[test]
+fn point_interning_preserves_exact_coordinates_and_separate_topology() {
+    let mut file = StepFile::new();
+    let point = [0., 1., 2.];
+    let first = file.point(point);
+    assert_eq!(file.point([-0., 1., 2.]).0, first.0);
+    let near = [0., f64::from_bits(1_f64.to_bits() + 1), 2.];
+    assert_ne!(file.point(near).0, first.0);
+    let a = file.vertex(point);
+    let b = file.vertex(point);
+    assert_eq!(a.cartesian.0, b.cartesian.0);
+    assert_ne!(a.vertex.0, b.vertex.0);
+    assert_eq!(file.data.matches("=CARTESIAN_POINT(").count(), 2);
+    assert!(!file.data.contains("-0.0000000000000000E0"));
+
+    let write = || {
+        let mut writer = Writer::new();
+        writer.append_box(size(), ORIGIN, X, Y).unwrap();
+        writer.append_box(size(), [-0.; 3], X, Y).unwrap();
+        writer.finish().unwrap()
+    };
+    let source = write();
+    assert_eq!(source, write());
+    assert_eq!(source.matches("=CARTESIAN_POINT(").count(), 8);
+    assert_eq!(source.matches("=VERTEX_POINT(").count(), 16);
+    let members = crate::step_read::read_analytic_compound(&source, 1e-7).unwrap();
+    assert_eq!(members.len(), 2);
+    assert!(members.iter().all(|member| member.volume_mm3 == 315.));
+}
+
+#[test]
+fn failed_appends_forget_interned_points_before_retrying_the_same_geometry() {
+    let mut writer = Writer::new();
+    writer.append_box(size(), ORIGIN, X, Y).unwrap();
+    let existing_points = writer.file.points.len();
+    let next = writer.file.next;
+    let retry_origin: Point = [42., 43., 44.];
+    for _ in 0..2 {
+        assert_eq!(
+            writer.append(|file| {
+                file.point(ORIGIN);
+                file.vertex(retry_origin);
+                Err(StepError::InvalidGeometry)
+            }),
+            Err(StepError::InvalidGeometry),
+        );
+        assert_eq!(writer.file.points.len(), existing_points);
+        assert_eq!(writer.file.next, next);
+        assert!(
+            !writer
+                .file
+                .points
+                .contains_key(&retry_origin.map(f64::to_bits))
+        );
+    }
+    writer.append_box(size(), retry_origin, X, Y).unwrap();
+    let actual = writer.finish().unwrap();
+    let mut expected = Writer::new();
+    expected.append_box(size(), ORIGIN, X, Y).unwrap();
+    expected.append_box(size(), retry_origin, X, Y).unwrap();
+    assert_eq!(actual, expected.finish().unwrap());
+    let members = crate::step_read::read_analytic_compound(&actual, 1e-7).unwrap();
+    assert_eq!(members.len(), 2);
+    assert_eq!(members[1].bounds_mm, [retry_origin, [47., 50., 53.]]);
+}
+
+#[test]
+fn canonical_hubbed_twenty_four_thirty_six_pair_fits_the_shared_exchange_budget() {
+    use crate::{
+        spur_gear::{Hub, Spec, herringbone::Herringbone},
+        step_read::{ExpectedStepMember, VerifiedStepMember, verify_authored_compound},
+    };
+    use std::{f64::consts::PI, time::Instant};
+
+    let beta = 15_f64.to_radians();
+    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
+    let module = 2. / beta.cos();
+    let gears = [24, 36].map(|teeth| {
+        let pitch = f64::from(teeth) * module / 2.;
+        Herringbone::new(
+            Spec {
+                teeth,
+                pitch_radius_mm: pitch,
+                base_radius_mm: pitch * pressure.cos(),
+                tip_radius_mm: pitch + 2.,
+                root_radius_mm: pitch - 2.5,
+                root_fillet_radius_mm: 0.4,
+                half_base_angle_rad: (PI * module / 2. - 0.05) / (2. * pitch) + pressure.tan()
+                    - pressure,
+                face_width_mm: 4.,
+                bore_radius_mm: 4.,
+            },
+            if teeth == 24 { 1. } else { -1. } * beta.tan() / pitch,
+            1e-5,
+            1e7,
+        )
+        .unwrap()
+        .with_hub(
+            Hub {
+                radius_mm: 8.,
+                axial_start_mm: -2.,
+                axial_end_mm: 6.,
+            },
+            1e-5,
+            1e7,
+        )
+        .unwrap()
+    });
+    let center = 30. * module;
+    let (sin, cos) = (PI + PI / 36.).sin_cos();
+    let frames = [
+        [[12., 23., 34.], [0., 1., 0.], [0., 0., 1.]],
+        [[12., 23. + center, 34.], [0., cos, sin], [0., -sin, cos]],
+    ];
+    let mut writer = Writer::new();
+    let start = Instant::now();
+    for (gear, [origin, u, v]) in gears.iter().zip(frames) {
+        writer.append_herringbone(gear, origin, u, v, 1e-7).unwrap();
+    }
+    let points = writer.file.points.len();
+    let entities = writer.file.next - 1;
+    let source = writer.finish().unwrap();
+    let write_time = start.elapsed();
+    let expected = gears
+        .iter()
+        .zip(frames)
+        .map(|(gear, [origin, u, v])| ExpectedStepMember::TwistedGear { gear, origin, u, v })
+        .collect::<Vec<_>>();
+    let start = Instant::now();
+    let verified = verify_authored_compound(&source, &expected, 1e-7).unwrap();
+    for (proof, gear) in verified.iter().zip(&gears) {
+        let VerifiedStepMember::TwistedGear { volume_mm3 } = proof else {
+            panic!("expected the authored gear proof");
+        };
+        assert!((volume_mm3 - gear.volume_mm3()).abs() < 1e-5);
+    }
+    assert_eq!(verified.len(), 2);
+    eprintln!(
+        "Canonical pair STEP {} bytes, {points} unique points, {entities} entities, write {write_time:?}, verify {:?}",
+        source.len(),
+        start.elapsed()
+    );
+}
+
+#[test]
+fn orthogonal_through_bores_share_two_stock_mouths_and_coexist_with_blind_pockets() {
+    use crate::{
+        orthogonal::{Box3, Operation, boolean},
+        orthogonal_boundary::build,
+        step_read::{ReadError, read_analytic_solid, read_import_solid},
+    };
+    let stock = boolean(
+        &[Box3 {
+            min: ORIGIN,
+            max: [20., 16., 10.],
+        }],
+        &[],
+        Operation::Union,
+        1e-7,
+    )
+    .unwrap()
+    .unwrap();
+    let boundary = build(stock.quads()).unwrap();
+    let side = |normal| {
+        boundary
+            .faces
+            .iter()
+            .position(|face| face.normal == normal)
+            .unwrap()
+    };
+    let bore = OrthogonalThroughBore {
+        faces: [side([-1., 0., 0.]), side(X)],
+        centers_mm: [[0., 5., 4.], [20., 5., 4.]],
+        radius_mm: 1.5,
+    };
+    let blind = OrthogonalPocket {
+        face: side([0., 0., 1.]),
+        center_mm: [16., 12., 10.],
+        radius_mm: 2.,
+        depth_mm: 3.,
+    };
+    let place = |[x, y, z]: Point| [z + 18., x - 2., y + 7.];
+    assert!(supports_drilled_orthogonal(&boundary, &[blind], &[bore]));
+    let write = |through: &[OrthogonalThroughBore]| {
+        write_drilled_orthogonal(&stock, &boundary, &[blind], through, &place)
+    };
+    let source = write(&[bore]).unwrap();
+    let read = read_analytic_solid(&source, 1e-7).unwrap();
+    assert_eq!(read.face_count, 9);
+    assert_eq!(read.circles.len(), 4);
+    let expected =
+        stock.volume_mm3() - (20. * 1.5_f64.powi(2) + 3. * 2_f64.powi(2)) * std::f64::consts::PI;
+    assert!((read.volume_mm3 - expected).abs() < 1e-7);
+    let mut reversed = bore;
+    reversed.faces.reverse();
+    reversed.centers_mm.reverse();
+    let reversed = read_analytic_solid(&write(&[reversed]).unwrap(), 1e-7).unwrap();
+    assert!((reversed.volume_mm3 - expected).abs() < 1e-7);
+    for center in bore.centers_mm.map(place) {
+        assert!(
+            reversed
+                .circles
+                .iter()
+                .any(|rim| rim.center_mm == center && rim.radius_mm == bore.radius_mm)
+        );
+    }
+    let slot = OrthogonalSlot {
+        face: blind.face,
+        centers_mm: [[3., 10., 10.], [7., 10., 10.]],
+        radius_mm: 1.,
+        depth_mm: 2.,
+    };
+    // A valid boundary using both cuts is recognizable STEP. The current
+    // Rust solid representation deliberately rejects the combined profile.
+    let mut foreign = Writer::new();
+    foreign
+        .append(|file| encode_orthogonal(file, &boundary, &[blind], &[slot], &[bore], &place))
+        .unwrap();
+    let foreign = foreign.finish().unwrap();
+    assert_eq!(read_analytic_solid(&foreign, 1e-7).unwrap().face_count, 14);
+    assert_eq!(
+        read_import_solid(&foreign, 1e-7),
+        Err(ReadError::Unsupported)
+    );
+    assert_eq!(
+        write(&[]).unwrap(),
+        write_pocketed_orthogonal(&stock, &boundary, &[blind], &place).unwrap()
+    );
+    let missing = OrthogonalThroughBore {
+        faces: [bore.faces[0], boundary.faces.len()],
+        ..bore
+    };
+    assert_eq!(write(&[missing]), Err(StepError::Unsupported));
+    assert_eq!(write(&[bore, bore]), Err(StepError::InvalidGeometry));
+    assert_eq!(
+        write_drilled_orthogonal(&stock, &boundary, &[blind], &[bore], &|p| {
+            if p == bore.centers_mm[0] {
+                [f64::NAN; 3]
+            } else {
+                place(p)
+            }
+        }),
+        Err(StepError::InvalidPlacement),
+    );
+}
+
+fn split_cone_seam_identity(source: &str, cone_face: &str) -> String {
+    let record = |id: &str| {
+        source
+            .lines()
+            .find(|line| line.split_once('=').unwrap_or(("", "")).0 == id)
+            .unwrap()
+    };
+    let (_, args) = cone_face.split_once(",(").unwrap();
+    let bound_id = args.split_once(')').unwrap().0;
+    let loop_id = record(bound_id).split(',').nth(1).unwrap();
+    let oriented_id = record(loop_id)
+        .trim_end_matches("));")
+        .rsplit(',')
+        .next()
+        .unwrap();
+    let oriented = record(oriented_id);
+    let seam_id = oriented.split(',').nth(3).unwrap();
+    let duplicate = record(seam_id).replacen(seam_id, "#999999", 1);
+    source
+        .replacen(oriented, &oriented.replacen(seam_id, "#999999", 1), 1)
+        .replace(
+            "ENDSEC;\nEND-ISO",
+            &format!("{duplicate}\nENDSEC;\nEND-ISO"),
+        )
+}
+
+#[test]
+fn chamfered_through_bores_share_rims_with_analytic_cones_and_caps() {
+    use crate::step_read::{ImportProfile, ReadError, read_analytic_solid, read_import_solid};
+    let exact = |value| Rational::new(value, 1).unwrap();
+    let prism = PolygonPrism::with_circular_holes(
+        vec![
+            [[0, 0], [24, 0], [24, 18], [0, 18]]
+                .map(|uv| uv.map(exact))
+                .to_vec(),
+        ],
+        vec![
+            Circle::new([6, 9].map(exact), exact(2)).unwrap(),
+            Circle::new([18, 9].map(exact), exact(1)).unwrap(),
+        ],
+        exact(8),
+    )
+    .unwrap();
+    let chamfers = [
+        BoreChamfer {
+            hole: 0,
+            end: false,
+            size_mm: 1.,
+        },
+        BoreChamfer {
+            hole: 0,
+            end: true,
+            size_mm: 2.,
+        },
+    ];
+    let bores = ChamferedBores::new(&prism, &chamfers, 1e-7, 1e-7).unwrap();
+    let u = [0.8, 0.6, 0.];
+    let v = [-0.36, 0.48, 0.8];
+    for reverse in [false, true] {
+        let source =
+            write_chamfered_polygon_prism(&prism, &chamfers, [900., -200., 500.], u, v, reverse)
+                .unwrap();
+        let readback = read_analytic_solid(&source, 1e-7).unwrap();
+        assert_eq!(readback.face_count, 10);
+        assert_eq!(readback.circles.len(), 6);
+        assert_eq!(readback.edges_mm.len(), 12);
+        assert!((readback.volume_mm3 - bores.volume_mm3()).abs() < 1e-7);
+        assert_eq!(source.matches("=CONICAL_SURFACE(").count(), 2);
+        assert_eq!(source.matches("=CYLINDRICAL_SURFACE(").count(), 2);
+        let (_, imported) = read_import_solid(&source, 1e-7).unwrap();
+        let ImportProfile::CountersunkPolygon {
+            rings,
+            circular_holes,
+            countersinks,
+            ..
+        } = imported.profile
+        else {
+            panic!("expected a polygon with countersunk bores");
+        };
+        assert_eq!(rings.len(), 1);
+        assert_eq!(circular_holes.len(), 2);
+        assert_eq!(countersinks.len(), 2);
+        assert!((imported.height_mm - 8.).abs() < 1e-7);
+        let sizes = if reverse { [1., 2.] } else { [2., 1.] };
+        for (i, chamfer) in countersinks.iter().enumerate() {
+            assert_eq!(chamfer.end, i == 1);
+            assert!((chamfer.depth_mm - sizes[i]).abs() < 1e-7);
+            assert!((circular_holes[chamfer.hole].1 - 2.).abs() < 1e-7);
+            assert!((chamfer.radius_mm - circular_holes[chamfer.hole].1 - sizes[i]).abs() < 1e-7);
+        }
+
+        let cone = source
+            .lines()
+            .find(|line| line.contains("=CONICAL_SURFACE("))
+            .unwrap();
+        let (parameters, _) = cone.rsplit_once(',').unwrap();
+        let bad_angle = source.replacen(cone, &format!("{parameters},0.3);"), 1);
+        let (id, _) = cone.split_once('=').unwrap();
+        let cone_face = source
+            .lines()
+            .find(|line| line.ends_with(&format!(",{id},.F.);")))
+            .unwrap();
+        let bad_sense = source.replacen(cone_face, &cone_face.replace(".F.", ".T."), 1);
+        let missing_angle = source.replacen(cone, &format!("{parameters});"), 1);
+        let zero_angle = source.replacen(cone, &format!("{parameters},0.);"), 1);
+        let split_seam = split_cone_seam_identity(&source, cone_face);
+        for invalid in [bad_angle, bad_sense, missing_angle, zero_angle, split_seam] {
+            assert_eq!(read_analytic_solid(&invalid, 1e-7), Err(ReadError::Invalid));
+        }
+        let bad_units = source.replace("SI_UNIT($,.RADIAN.)", "SI_UNIT($,.DEGREE.)");
+        assert_eq!(
+            read_analytic_solid(&bad_units, 1e-7),
+            Err(ReadError::Unsupported)
+        );
+    }
+
+    // The stock is well-defined at its placement, but the nearly coincident
+    // cylinder rim vertices collapse after adding the large world offset.
+    let nearly_merged = [
+        BoreChamfer {
+            size_mm: 3.,
+            ..chamfers[0]
+        },
+        BoreChamfer {
+            size_mm: 2.999999,
+            ..chamfers[1]
+        },
+    ];
+    let thinner = PolygonPrism::with_circular_holes(
+        prism.rings().to_vec(),
+        prism.circular_holes().to_vec(),
+        exact(6),
+    )
+    .unwrap();
+    assert_eq!(
+        write_chamfered_polygon_prism(&thinner, &nearly_merged, [0., 0., 1e15], X, Y, false),
+        Err(StepError::InvalidGeometry),
+    );
+
+    let stadium = Stadium::new([[0., 0.], [4., 0.]], 1.).unwrap();
+    let source = write_stadium_prism(&stadium, 8., ORIGIN, X, Y, false).unwrap();
+    let cylinder = source
+        .lines()
+        .find(|line| line.contains("=CYLINDRICAL_SURFACE("))
+        .unwrap();
+    let cone = cylinder
+        .trim_end_matches(");")
+        .replace("CYLINDRICAL_SURFACE(", "CONICAL_SURFACE(");
+    let source = source.replacen(cylinder, &format!("{cone},0.5);"), 1);
+    assert_eq!(
+        read_analytic_solid(&source, 1e-7),
+        Err(ReadError::Unsupported)
+    );
+}
+
+#[test]
+fn rejected_member_rolls_back_geometry_and_entity_ids() {
+    let mut writer = Writer::default();
+    assert_eq!(writer.finish(), Err(StepError::InvalidGeometry));
+
+    writer = Writer::new();
+    writer.append_box(size(), ORIGIN, X, Y).unwrap();
+    assert_eq!(
+        writer.append_box(size(), [1e100; 3], X, Y),
+        Err(StepError::InvalidGeometry)
+    );
+    let single = write_box(size(), ORIGIN, X, Y).unwrap();
+    assert_eq!(writer.finish().unwrap(), single);
+
+    let mut writer = Writer::new();
+    writer.append_box(size(), ORIGIN, X, Y).unwrap();
+    assert!(writer.append_box(size(), [1e100; 3], X, Y).is_err());
+    writer.append_box(size(), [14., 0., 0.], X, Y).unwrap();
+    let actual = writer.finish().unwrap();
+    let mut writer = Writer::new();
+    writer.append_box(size(), ORIGIN, X, Y).unwrap();
+    writer.append_box(size(), [14., 0., 0.], X, Y).unwrap();
+    assert_eq!(actual, writer.finish().unwrap());
+}
+
+#[test]
+fn compound_respects_member_and_part21_budgets() {
+    let mut writer = Writer::new();
+    for index in 0..MAX_COMPOUND_SOLIDS {
+        writer
+            .append_placed_circular_sweep(1., None, 2., [3. * index as f64, 0., 0.], X, Y)
+            .unwrap();
+    }
+    assert_eq!(
+        writer.append_box(size(), ORIGIN, X, Y),
+        Err(StepError::Limit)
+    );
+    assert_eq!(
+        writer
+            .finish()
+            .unwrap()
+            .matches("MANIFOLD_SOLID_BREP(")
+            .count(),
+        MAX_COMPOUND_SOLIDS
+    );
+
+    let mut writer = Writer::new();
+    writer.append_box(size(), ORIGIN, X, Y).unwrap();
+    writer.file.next = MAX_STEP_ENTITIES;
+    let before = writer.file.data.clone();
+    assert_eq!(
+        writer.append_box(size(), [10., 0., 0.], X, Y),
+        Err(StepError::Limit)
+    );
+    assert_eq!(writer.file.data, before);
+    assert_eq!(writer.file.next, MAX_STEP_ENTITIES);
+    writer
+        .file
+        .data
+        .push_str(&" ".repeat(MAX_PLANAR_STEP_BYTES));
+    assert_eq!(
+        writer.append_box(size(), [10., 0., 0.], X, Y),
+        Err(StepError::Limit)
+    );
+
+    let mut writer = Writer::new();
+    writer.append_box(size(), ORIGIN, X, Y).unwrap();
+    writer.append_box(size(), [10., 0., 0.], X, Y).unwrap();
+    writer.file.next = MAX_STEP_ENTITIES;
+    assert_eq!(writer.finish(), Err(StepError::Limit));
+}
+
+#[test]
+fn mixed_compound_keeps_placed_stadiums_and_machined_stock_as_separate_shells() {
+    use crate::{
+        orthogonal::{Box3, Operation, boolean},
+        orthogonal_boundary::build,
+        step_read::{ReadError, read_analytic_compound, read_analytic_solid},
+    };
+    let stock = boolean(
+        &[Box3 {
+            min: ORIGIN,
+            max: [20., 16., 10.],
+        }],
+        &[],
+        Operation::Union,
+        1e-7,
+    )
+    .unwrap()
+    .unwrap();
+    let boundary = build(stock.quads()).unwrap();
+    let face = boundary
+        .faces
+        .iter()
+        .position(|face| face.normal == [0., 0., 1.])
+        .unwrap();
+    let pocket = OrthogonalPocket {
+        face,
+        center_mm: [16., 7., 10.],
+        radius_mm: 1.,
+        depth_mm: 2.,
+    };
+    let slot = OrthogonalSlot {
+        face,
+        centers_mm: [[4., 7., 10.], [9., 7., 10.]],
+        radius_mm: 1.5,
+        depth_mm: 3.,
+    };
+    let profile = Stadium::new([[2., 3.], [8., 3.]], 1.5).unwrap();
+    let place = |[x, y, z]: Point| [y + 7., -x + 2., z + 9.];
+    let round = |writer: &mut Writer| {
+        writer.append_placed_circular_sweep(4., Some(1.), 3., [0., 0., 30.], X, Y)
+    };
+    let mut writer = Writer::new();
+    writer
+        .append_stadium_prism(&profile, 4., ORIGIN, X, Y, false)
+        .unwrap();
+    writer
+        .append_slotted_orthogonal(&stock, &boundary, &[pocket], &[slot], &place)
+        .unwrap();
+    writer
+        .append_stadium_prism(&profile, 4., [35., 0., 0.], Y, [0., 0., 1.], true)
+        .unwrap();
+    round(&mut writer).unwrap();
+    let encoded = writer.finish().unwrap();
+    assert_eq!(
+        encoded
+            .matches("ADVANCED_BREP_SHAPE_REPRESENTATION(")
+            .count(),
+        1
+    );
+    assert_eq!(encoded.matches("CLOSED_SHELL(").count(), 4);
+    assert_eq!(encoded.matches("MANIFOLD_SOLID_BREP(").count(), 4);
+    assert_eq!(
+        read_analytic_solid(&encoded, 1e-7),
+        Err(ReadError::Unsupported)
+    );
+
+    let readback = read_analytic_compound(&encoded, 1e-7).unwrap();
+    let expected = [
+        write_stadium_prism(&profile, 4., ORIGIN, X, Y, false).unwrap(),
+        write_slotted_orthogonal(&stock, &boundary, &[pocket], &[slot], &place).unwrap(),
+        write_stadium_prism(&profile, 4., [35., 0., 0.], Y, [0., 0., 1.], true).unwrap(),
+        write_placed_circular_sweep(4., Some(1.), 3., [0., 0., 30.], X, Y).unwrap(),
+    ];
+    assert_eq!(
+        readback,
+        expected.map(|member| read_analytic_solid(&member, 1e-7).unwrap())
+    );
+}
+
+#[test]
+fn enclosed_box_void_consumes_one_logical_capacity_slot() {
+    use crate::{
+        orthogonal::{Box3, Operation, boolean},
+        planar_boolean::{ConvexPiece, Union},
+    };
+    let geometry = boolean(
+        &[Box3 {
+            min: [0.; 3],
+            max: [15., 10., 8.],
+        }],
+        &[Box3 {
+            min: [2., 3., 1.],
+            max: [7., 7., 4.],
+        }],
+        Operation::Subtract,
+        1e-7,
+    )
+    .unwrap()
+    .unwrap();
+    let pieces = geometry
+        .cells()
+        .iter()
+        .map(|cell| ConvexPiece::from_box(cell.min, cell.max, 1e-7).unwrap())
+        .collect::<Vec<_>>();
+    let union = Union::new(&pieces, 1e-7).unwrap();
+    let mut writer = Writer::new();
+    writer.solids.resize(MAX_COMPOUND_SOLIDS - 1, Entity(1));
+    writer
+        .append_planar_union(&union, [0.; 3], [1., 0., 0.], [0., 1., 0.])
+        .unwrap();
+    assert_eq!(writer.solids.len(), MAX_COMPOUND_SOLIDS);
+    let before = writer.file.data.clone();
+    assert_eq!(
+        writer.append_planar_union(&union, [0.; 3], [1., 0., 0.], [0., 1., 0.]),
+        Err(StepError::Limit)
+    );
+    assert_eq!(writer.file.data, before);
+}
+
+#[test]
+fn invalid_prism_placement_cannot_publish_or_change_an_existing_member() {
+    let prism = Prism::rectangular(1, size()).unwrap();
+    let mut writer = Writer::new();
+    writer.append_box(size(), ORIGIN, X, Y).unwrap();
+    let before = writer.file.data.clone();
+    assert_eq!(
+        writer.append_rectangular_prism(&prism, ORIGIN, [0.; 3], Y),
+        Err(StepError::InvalidPlacement)
+    );
+    assert_eq!(writer.file.data, before);
+    assert_eq!(writer.solids.len(), 1);
+}
+
+#[test]
+fn outside_circle_caps_accept_line_and_cubic_cavities() {
+    use super::super::{
+        cubic_trim::CubicTrim,
+        normal_sweep::{ProfileEdge, encode_rings},
+    };
+    use crate::{normal_sweep::Edge as Planar, spur_gear::Involute};
+
+    // A clockwise cavity: three lines through P and Q and a reversed flank,
+    // with every join turning by less than a right angle and a quarter.
+    let flank = Involute::new(5., [0.2, 0.8], 0.).unwrap();
+    let [a, b] = [flank.point(0.), flank.point(1.)];
+    let p = [b[0] - 0.3, b[1] + 1.];
+    let q = [a[0] - 1., a[1] + 1.];
+    let mut writer = Writer::new();
+    writer
+        .append(|file| {
+            let cavity = vec![
+                ProfileEdge::Analytic(Planar::Line { a, b: q }),
+                ProfileEdge::Analytic(Planar::Line { a: q, b: p }),
+                ProfileEdge::Analytic(Planar::Line { a: p, b }),
+                ProfileEdge::Cubic(CubicTrim::flank(flank.reversed(), 1e-7)?),
+            ];
+            let rim = Planar::Circle {
+                center: [0.; 2],
+                radius_mm: 20.,
+                clockwise: false,
+            };
+            encode_rings(
+                file,
+                &mut [vec![ProfileEdge::Analytic(rim)], cavity].into_iter(),
+                1.,
+                &[],
+                Placement::new([3., -2., 1.], X, Y)?,
+                false,
+            )
+        })
+        .unwrap();
+    let step = writer.finish().unwrap();
+    let [member] = crate::step_read::read_analytic_compound(&step, 1e-7)
+        .unwrap()
+        .try_into()
+        .unwrap();
+    // Green integrals of the counterclockwise A, B, P, Q boundary.
+    let cross = crate::revolution::cross;
+    let cavity = flank.signed_area_mm2() + (cross(b, p) + cross(p, q) + cross(q, a)) / 2.;
+    assert!(
+        (member.volume_mm3 - (std::f64::consts::PI * 400. - cavity)).abs() < 1e-5,
+        "{} {cavity}",
+        member.volume_mm3
+    );
+    assert_eq!(member.edges_mm.len(), 2 * 3 + 4);
+}

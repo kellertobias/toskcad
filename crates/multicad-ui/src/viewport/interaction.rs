@@ -62,6 +62,10 @@ impl Interaction {
     pub fn highlight_reference(&mut self, selection: Option<Selection>) {
         self.reference_highlight = selection;
     }
+    #[cfg(test)]
+    pub(crate) fn reference_highlight(&self) -> Option<&Selection> {
+        self.reference_highlight.as_ref()
+    }
     pub fn clear(&mut self) {
         self.selected = None;
         self.faces.clear();

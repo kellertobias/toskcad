@@ -23,8 +23,31 @@ fn frame(
     source: &NumericTransform,
     camera: Camera,
     basis: GizmoBasis,
+    events: Vec<Event>,
+    modifiers: Modifiers,
+) -> Gesture {
+    // Pointer-math tests drag freely; snapping tests opt into increments.
+    snapped_frame(
+        ctx,
+        state,
+        source,
+        camera,
+        basis,
+        events,
+        modifiers,
+        TransformSnap::OFF,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn snapped_frame(
+    ctx: &Context,
+    state: &mut Interaction,
+    source: &NumericTransform,
+    camera: Camera,
+    basis: GizmoBasis,
     mut events: Vec<Event>,
     modifiers: Modifiers,
+    snap: TransformSnap,
 ) -> Gesture {
     let mut result = None;
     events.insert(0, Event::ModifiersChanged(modifiers));
@@ -45,6 +68,7 @@ fn frame(
                             rect: rect(),
                             basis,
                             start_allowed: true,
+                            snap,
                         },
                         source,
                         &parameters(),
@@ -271,4 +295,168 @@ fn empty_space_does_not_own_selection_and_invalid_coordinate_frames_fail() {
     ] {
         assert!(GizmoBasis { axes }.validate().is_err());
     }
+}
+
+fn translation(gesture: &Gesture) -> Point {
+    gesture
+        .changed
+        .as_ref()
+        .unwrap()
+        .resolve(&parameters())
+        .unwrap()
+        .translation_mm
+}
+
+#[test]
+fn move_snaps_to_the_grid_and_shift_frees_it_without_ending_the_gesture() {
+    let ctx = Context::default();
+    let mut interaction = Interaction::default();
+    let source = NumericTransform::default();
+    let camera = camera();
+    let basis = GizmoBasis::default();
+    let snap = TransformSnap::grid(10.);
+    let mut run = |source: &NumericTransform, events, shift| {
+        snapped_frame(
+            &ctx,
+            &mut interaction,
+            source,
+            camera,
+            basis,
+            events,
+            Modifiers {
+                shift,
+                ..Modifiers::NONE
+            },
+            snap,
+        )
+    };
+    let start = point(camera, [0., 18., 0.]);
+    run(&source, vec![Event::PointerMoved(start)], false);
+    assert!(run(&source, vec![press(start)], false).started);
+    // 7 mm along Y stages exactly one 10 mm grid step.
+    let snapped = run(
+        &source,
+        vec![Event::PointerMoved(point(camera, [0., 25., 0.]))],
+        false,
+    );
+    assert_eq!(translation(&snapped), [0., 10., 0.]);
+    let staged = snapped.changed.clone().unwrap();
+    // Holding Shift re-solves the same pointer without increments.
+    let free = run(&staged, vec![], true);
+    assert!(free.input_owned && !free.released);
+    let t = translation(&free);
+    assert!(t[0].abs() < 1e-9 && (t[1] - 7.).abs() < 1e-5 && t[2].abs() < 1e-9);
+    // Releasing Shift restores the grid; the gesture is still captured.
+    let restored = run(&free.changed.clone().unwrap(), vec![], false);
+    assert!(restored.input_owned && !restored.released);
+    assert_eq!(translation(&restored), [0., 10., 0.]);
+    // 14 mm rounds down to one step; the pivot is never changed by snapping.
+    let end = point(camera, [0., 32., 0.]);
+    let last = run(&staged, vec![Event::PointerMoved(end)], false);
+    assert!(last.changed.is_none(), "still one grid step");
+    let done = run(&staged, vec![release(end)], false);
+    assert!(done.released && done.moved);
+    assert!(!interaction.active());
+    assert_eq!(staged.pivot, source.pivot);
+    assert_eq!(source, NumericTransform::default());
+}
+
+#[test]
+fn plane_snapping_uses_the_active_rotated_coordinate_frame() {
+    let ctx = Context::default();
+    let mut interaction = Interaction::default();
+    let source = NumericTransform::default();
+    let camera = camera();
+    let (c, s) = (30_f64.to_radians().cos(), 30_f64.to_radians().sin());
+    let (u, v) = ([c, s, 0.], [-s, c, 0.]);
+    let basis = GizmoBasis {
+        axes: [u, v, [0., 0., 1.]],
+    };
+    let at = |a: f64, b: f64| point(camera, add(mul(u, a), mul(v, b)));
+    let snap = TransformSnap::grid(10.);
+    let run = |interaction: &mut Interaction, events| {
+        snapped_frame(
+            &ctx,
+            interaction,
+            &source,
+            camera,
+            basis,
+            events,
+            Modifiers::NONE,
+            snap,
+        )
+    };
+    run(&mut interaction, vec![Event::PointerMoved(at(5.1, 5.1))]);
+    run(&mut interaction, vec![press(at(5.1, 5.1))]);
+    assert!(matches!(
+        interaction.drag.as_ref().unwrap().handle,
+        Handle::Plane(2)
+    ));
+    let moved = run(&mut interaction, vec![Event::PointerMoved(at(22.1, 9.1))]);
+    let t = translation(&moved);
+    let expected = mul(u, 20.);
+    for i in 0..3 {
+        assert!((t[i] - expected[i]).abs() < 1e-9, "{t:?} != {expected:?}");
+    }
+    let readout = interaction.drag.as_ref().unwrap().readout.clone().unwrap();
+    assert!(readout.contains("grid 10"), "{readout}");
+}
+
+#[test]
+fn rotate_snaps_to_45_degree_steps_shows_the_angle_and_shift_frees_it() {
+    let parameters = parameters();
+    let ctx = Context::default();
+    let mut interaction = Interaction::default();
+    let source = NumericTransform::default();
+    let camera = camera();
+    let snap = TransformSnap::grid(10.);
+    let radius = 82. / camera.scale as f64 * 0.74;
+    let ring = |degrees: f64| {
+        let t = degrees.to_radians();
+        point(camera, [radius * t.cos(), radius * t.sin(), 0.])
+    };
+    let run = |interaction: &mut Interaction, source: &NumericTransform, events, shift| {
+        snapped_frame(
+            &ctx,
+            interaction,
+            source,
+            camera,
+            GizmoBasis::default(),
+            events,
+            Modifiers {
+                shift,
+                ..Modifiers::NONE
+            },
+            snap,
+        )
+    };
+    run(
+        &mut interaction,
+        &source,
+        vec![Event::PointerMoved(ring(45.))],
+        false,
+    );
+    run(&mut interaction, &source, vec![press(ring(45.))], false);
+    // Sweep 80 degrees in small samples; the staged angle is 90.
+    let samples = (1..=8).map(|k| Event::PointerMoved(ring(45. + 10. * k as f64)));
+    let snapped = run(&mut interaction, &source, samples.collect(), false);
+    let staged = snapped.changed.clone().unwrap();
+    let angle =
+        |t: &NumericTransform| Values::read(t, &parameters).unwrap().angle_deg * t.axis[2].signum();
+    assert!((angle(&staged) - 90.).abs() < 1e-9, "{staged:?}");
+    let readout = interaction.drag.as_ref().unwrap().readout.clone().unwrap();
+    assert!(
+        readout.contains("90.0°") && readout.contains("45° steps"),
+        "{readout}"
+    );
+    let free = run(&mut interaction, &staged, vec![], true)
+        .changed
+        .unwrap();
+    assert!((angle(&free) - 80.).abs() < 1e-3, "{free:?}");
+    let readout = interaction.drag.as_ref().unwrap().readout.clone().unwrap();
+    assert!(readout.contains("free (Shift)"), "{readout}");
+    let restored = run(&mut interaction, &free, vec![], false);
+    assert!(restored.input_owned && !restored.released);
+    assert!((angle(&restored.changed.unwrap()) - 90.).abs() < 1e-9);
+    assert_eq!(staged.pivot, source.pivot);
 }

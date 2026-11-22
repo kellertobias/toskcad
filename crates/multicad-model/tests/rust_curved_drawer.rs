@@ -1,0 +1,84 @@
+use multicad_core::{document::EntityId, project_file, references::AnalyticGeometry};
+use multicad_kernel::Solid;
+use multicad_model::{Compiler, GeometryBackend, export::verify_rust_step_shape};
+#[path = "support/drawer_oracle.rs"]
+mod drawer_oracle;
+use drawer_oracle::{area, near};
+
+#[test]
+fn saved_toolcase_drawer_keeps_exact_floor_fillet_intersections() {
+    let document = project_file::read(
+        &mut include_bytes!("../../../examples/toolcase.tcd").as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project
+    .document;
+    let features = [
+        EntityId::parse("13c5fd30-fc3f-4a30-ab7a-d0de04cbe358").unwrap(),
+        EntityId::parse("ae86a32d-9a2c-458f-9b8c-1c824d96a3ef").unwrap(),
+    ];
+    let compiler = Compiler {
+        omit_display: true,
+        ..Compiler::default()
+    };
+    let rust = compiler
+        .compile_sources_with_backend(&document, 0, &features, GeometryBackend::Rust, None)
+        .unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    for feature in features {
+        let actual = rust.solid(feature).unwrap();
+        assert!(actual.uses_rust_geometry());
+        assert_eq!(actual.solid_count().unwrap(), 1);
+        drawer_oracle::check_against_operands(&document, 0, feature, &compiler, actual);
+        let b = actual.bounds().unwrap();
+        let topology = actual.topology_snapshot(feature, 0).unwrap();
+        assert!(
+            topology.elements.iter().any(|element| matches!(
+                element.geometry,
+                Some(AnalyticGeometry::EllipticArc { .. })
+            ))
+        );
+        assert!(actual.supports_step_export());
+        let path = scratch.path().join(format!("drawer-{feature}.step"));
+        actual.write_step(&path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("=ELLIPSE("));
+        for independent in [
+            Solid::read_step(&path, compiler.policy).unwrap(),
+            Solid::import_rust_step(&content, feature, compiler.policy).unwrap(),
+        ] {
+            assert_eq!(independent.solid_count().unwrap(), 1);
+            near(
+                independent.volume_mm3().unwrap(),
+                actual.volume_mm3().unwrap(),
+            );
+            near(area(&independent), area(actual));
+            let exported = independent.bounds().unwrap();
+            for i in 0..3 {
+                near(exported.min[i], b.min[i]);
+                near(exported.max[i], b.max[i]);
+            }
+        }
+        let receipt = verify_rust_step_shape(
+            &path,
+            rust.solid(feature).unwrap(),
+            &rust.snapshot().shapes[&feature],
+            compiler.policy.linear_tolerance_mm,
+        )
+        .unwrap();
+        near(receipt, actual.volume_mm3().unwrap());
+    }
+    for feature in features {
+        let actual = rust.solid(feature).unwrap();
+        assert!(
+            !actual
+                .manufacturing_mesh_with_receipt(Default::default())
+                .unwrap()
+                .mesh
+                .indices
+                .is_empty()
+        );
+    }
+}

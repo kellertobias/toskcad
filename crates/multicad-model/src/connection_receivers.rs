@@ -11,6 +11,10 @@ use multicad_kernel::{
     Solid,
 };
 use std::{collections::BTreeMap, f64::consts::TAU};
+mod rust_blind;
+mod rust_round_blind;
+pub(crate) mod rust_through;
+
 fn native<T>(
     id: EntityId,
     result: Result<T, multicad_kernel::GeometryError>,
@@ -49,7 +53,7 @@ fn covered(
     }
     Ok(())
 }
-fn origin(id: EntityId, role: &str) -> Origin {
+pub(crate) fn origin(id: EntityId, role: &str) -> Origin {
     Origin {
         source: id,
         role: format!("connection.receiver/{role}"),
@@ -149,6 +153,28 @@ pub(crate) struct Inputs<'a> {
     pub snapshots: &'a BTreeMap<EntityId, TopologySnapshot>,
     pub solids: &'a BTreeMap<EntityId, Solid>,
     pub policy: GeometryPolicy,
+}
+pub(crate) fn build_rust(
+    inputs: Inputs<'_>,
+    id: EntityId,
+    source: &ConnectionReceiverDefinition,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<Solid, ModelError> {
+    match source.cut {
+        multicad_core::model::ConnectionReceiverCut::Tapped { .. } => {
+            rust_blind::build(inputs, id, source)
+        }
+        multicad_core::model::ConnectionReceiverCut::Round { .. } => {
+            if matches!(
+                source.extent,
+                multicad_core::model::ConnectionReceiverExtent::Blind { .. }
+            ) {
+                rust_round_blind::build(inputs, id, source, interrupt)
+            } else {
+                rust_through::build(inputs, id, source).map(|(solid, _)| solid)
+            }
+        }
+    }
 }
 pub(crate) fn build(
     inputs: Inputs<'_>,

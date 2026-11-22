@@ -29,7 +29,8 @@ fn close(a: f64, b: f64, tol: f64) {
 fn native_spherical_bevel_bootstrap_is_one_named_volumetric_solid() {
     let id = EntityId::new();
     let solid =
-        Solid::spherical_bevel_gear_named(specimen(24, 24), id, GeometryPolicy::default()).unwrap();
+        Solid::rust_spherical_bevel_gear_named(specimen(24, 24), id, GeometryPolicy::default())
+            .unwrap();
     assert_eq!(solid.solid_count().unwrap(), 1);
     assert!(solid.volume_mm3().unwrap() > 0.);
     let topology = solid.topology_snapshot(id, 0).unwrap();
@@ -72,9 +73,9 @@ fn invalid_bevel_domains_and_toe_bore_wall_are_refused() {
             ..good
         },
     ] {
-        assert!(Solid::spherical_bevel_gear_named(invalid, EntityId::new(), p).is_err());
+        assert!(Solid::rust_spherical_bevel_gear_named(invalid, EntityId::new(), p).is_err());
     }
-    assert!(Solid::spherical_bevel_gear_named(good, EntityId::nil(), p).is_err());
+    assert!(Solid::rust_spherical_bevel_gear_named(good, EntityId::nil(), p).is_err());
     close(
         involute(good.base_cone_angle_rad, good.base_cone_angle_rad),
         0.,
@@ -344,7 +345,7 @@ fn both_root_branches_and_64_tooth_boundary_match_independent_volume_cap_flank_a
             assert_eq!(root_oracle(s).meridian, teeth == 24);
         }
         let feature = EntityId::new();
-        let solid = Solid::spherical_bevel_gear_named(s, feature, policy).unwrap();
+        let solid = Solid::rust_spherical_bevel_gear_named(s, feature, policy).unwrap();
         let expected = independent_volume(s);
         let area: f64 = solid.faces().unwrap().iter().map(|f| f.area_mm2).sum();
         let budget = policy.linear_tolerance_mm * area + 1e-7 * expected;
@@ -471,7 +472,7 @@ fn zero_bore_asymmetric_bevels_keep_independent_volume_after_rigid_scale_and_raw
         s.face_width_mm = 2.;
         s.bore_radius_mm = 0.;
         let solid =
-            Solid::spherical_bevel_gear_named(s, EntityId::new(), GeometryPolicy::default())
+            Solid::rust_spherical_bevel_gear_named(s, EntityId::new(), GeometryPolicy::default())
                 .unwrap();
         let expected = independent_volume(s);
         volume_and_raw_step(&solid, expected);
@@ -507,13 +508,21 @@ fn directional_native_flux_preserves_known_box_cone_and_holed_volumes_and_raw_st
             .collect(),
         holes: vec![],
     };
-    let cone = Solid::revolve_curved_profile(
+    let origins: Vec<_> = (0..3)
+        .map(|i| multicad_core::references::Origin {
+            source: EntityId::new(),
+            role: format!("profile/{i}"),
+        })
+        .collect();
+    let cone = Solid::rust_revolve_curved_profile_named(
         &profile,
         RevolutionAxis {
             origin_mm: [0.; 3],
             direction: [0., 0., 1.],
         },
         2. * PI,
+        EntityId::new(),
+        &origins,
         policy,
     )
     .unwrap();
@@ -552,9 +561,12 @@ fn centered_basis_flux_preserves_offcenter_void_shells_and_compound_multiplicity
     let path = directory.join("offcenter-void.step");
     cavity.write_step(&path).unwrap();
     assert_eq!(
+        // Count CLOSED_SHELL entity records regardless of writer spacing;
+        // the leading `=` excludes ORIENTED_CLOSED_SHELL references.
         std::fs::read_to_string(&path)
             .unwrap()
-            .matches("= CLOSED_SHELL(")
+            .replace(" = ", "=")
+            .matches("=CLOSED_SHELL(")
             .count(),
         2,
         "raw STEP must retain outer and inward void shells"

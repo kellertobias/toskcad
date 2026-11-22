@@ -1,5 +1,11 @@
 //! Exact native feature evaluation. Native solids stay on the constructing
 //! thread; immutable display and reference snapshots may cross to the UI.
+#[cfg(test)]
+extern crate self as multicad_model;
+#[cfg(test)]
+#[path = "../../multicad-mcp/tests/support/screw_connection.rs"]
+pub(crate) mod test_screw_connection_fixture;
+
 mod screw_connections;
 pub use screw_connections::ScrewConnectionCheck;
 mod advanced;
@@ -25,6 +31,7 @@ mod gear_pairs;
 mod gears;
 mod mechanical_parts;
 pub mod native_intersection_proofs;
+mod rust_backend;
 mod worker_cache;
 pub use gear_pairs::{GearEngagementWitness, GearPairCheck};
 mod equipment_plans;
@@ -52,6 +59,7 @@ mod surface_structure;
 mod symbols;
 mod targets;
 mod threads;
+pub use threads::{rust_thread_family_supported, rust_thread_mode_supported};
 mod transfer;
 mod transform;
 mod walls;

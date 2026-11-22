@@ -15,6 +15,7 @@ pub(crate) struct Inputs<'a> {
     pub solids: &'a BTreeMap<EntityId, Solid>,
     pub topologies: &'a BTreeMap<EntityId, TopologySnapshot>,
     pub policy: GeometryPolicy,
+    pub interrupt: Option<&'a dyn Fn() -> bool>,
 }
 pub(crate) fn build(
     inputs: Inputs<'_>,
@@ -118,6 +119,12 @@ pub(crate) fn build(
         EdgeTreatmentProfile::Chamfer => EdgeTreatment::Chamfer { distance_mm: size },
     };
     solid
-        .treat_edges_named(&edges, treatment, feature, inputs.policy)
+        .treat_edges_named_with_interrupt(
+            &edges,
+            treatment,
+            feature,
+            inputs.policy,
+            inputs.interrupt,
+        )
         .map_err(|e| error(Some(feature), e))
 }
