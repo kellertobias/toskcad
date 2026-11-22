@@ -92,8 +92,8 @@ impl Drive {
             let end = contacts[i];
             let [center_mm, start_mm, end_mm] = [center, start, end].map(midpoint);
             let radius_mm = radius.midpoint();
-            let a = (start_mm[1] - center_mm[1]).atan2(start_mm[0] - center_mm[0]);
-            let b = (end_mm[1] - center_mm[1]).atan2(end_mm[0] - center_mm[0]);
+            let a = (start_mm[1] - center_mm[1]).portable_atan2(start_mm[0] - center_mm[0]);
+            let b = (end_mm[1] - center_mm[1]).portable_atan2(end_mm[0] - center_mm[0]);
             let sweep = if convex {
                 (b - a).rem_euclid(TAU)
             } else {

@@ -265,8 +265,8 @@ fn a_retained_cylinder_clips_a_harmonic_candidate_at_both_depth_planes() {
     .unwrap();
     let hidden: Vec<_> = output.iter().filter(|vector| vector.edge.hidden).collect();
     assert_eq!(hidden.len(), 2);
-    let a = 0.6_f64.asin();
-    let b = 0.75_f64.sqrt().asin();
+    let a = 0.6_f64.portable_asin();
+    let b = 0.75_f64.sqrt().portable_asin();
     for (vector, expected) in hidden.into_iter().zip([[a, b], [PI - b, PI - a]]) {
         let Curve::Ellipse(ellipse) = vector.edge.curve else {
             panic!("Expected an ellipse")
@@ -411,7 +411,7 @@ fn a_rotated_rim_keeps_exact_trim_parameters_under_all_three_window_axes() {
     rim.ellipse.u = [0., 1.];
     rim.ellipse.v = [-1., 0.];
     let pieces = range.clip_rim(rim).unwrap();
-    let limit = (11_f64 / 12.).asin();
+    let limit = (11_f64 / 12.).portable_asin();
     assert_eq!(pieces.len(), 2);
     for (piece, [start, end]) in pieces
         .into_iter()

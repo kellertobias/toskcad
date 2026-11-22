@@ -4,6 +4,7 @@ use multicad_kernel::{
     RigidTransform, Solid,
     rust_kernel::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec},
 };
+use multicad_precision::PortableMath as _;
 
 /// Owned-kernel authored NPT transport: cone-parallel crest flats on straight
 /// 60-degree flanks, with an optional actual stock-OD crest ceiling.
@@ -149,8 +150,8 @@ fn axial_npt_flanks_and_stock_clipped_crests_preserve_gauge_cones_and_native_rol
                     let boundary = (spec.profile.major_radius_mm + k * z).min(limit);
                     for (offset, inside) in [(-0.001, true), (0.001, false)] {
                         let p = [
-                            (boundary + offset) * angle.cos(),
-                            (boundary + offset) * angle.sin(),
+                            (boundary + offset) * angle.portable_cos(),
+                            (boundary + offset) * angle.portable_sin(),
                             z,
                         ];
                         let fraction = material(&solid, p);

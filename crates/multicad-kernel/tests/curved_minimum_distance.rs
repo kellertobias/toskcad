@@ -5,6 +5,7 @@ use multicad_kernel::{
     rust_kernel::{Circle, Rational, polygon::PolygonPrism},
     *,
 };
+use multicad_precision::PortableMath as _;
 
 fn p() -> GeometryPolicy {
     GeometryPolicy::default()
@@ -40,8 +41,8 @@ fn parallel_rings_split_into_radial_and_axial_gaps_with_material_witnesses() {
     near(inside.distance_mm, 3.);
     check(&inside);
     let w = inside.witnesses[0];
-    near(w.a_mm[0].hypot(w.a_mm[1]), 6.);
-    near((w.b_mm[0] - 1.).hypot(w.b_mm[1]), 2.);
+    near(w.a_mm[0].portable_hypot(w.a_mm[1]), 6.);
+    near((w.b_mm[0] - 1.).portable_hypot(w.b_mm[1]), 2.);
     // An axial overlap leaves a continuum of closest pairs.
     assert_eq!(inside.total_solutions, None);
     assert!(!inside.witnesses_complete && !inside.inner_solution);
@@ -65,8 +66,8 @@ fn parallel_rings_split_into_radial_and_axial_gaps_with_material_witnesses() {
         } else {
             (w.a_mm, w.b_mm)
         };
-        near(ring[0].hypot(ring[1]), 10.);
-        near((rod[0] - 20.).hypot(rod[1]), 2.);
+        near(ring[0].portable_hypot(ring[1]), 10.);
+        near((rod[0] - 20.).portable_hypot(rod[1]), 2.);
     }
     // Both gaps positive off center: one unique closest pair.
     let corner = whole(&tube, &pin([1., 0., 12.], 2., 3.));
@@ -161,7 +162,7 @@ fn parallel_faces_with_hole_arcs_measure_their_separation_or_refuse() {
     // The witness lies on both faces: inside the plate top, off the hole,
     // and under the block.
     assert!((0. ..=20.).contains(&w.a_mm[0]) && (0. ..=16.).contains(&w.a_mm[1]));
-    assert!((w.a_mm[0] - 10.).hypot(w.a_mm[1] - 8.) > 1.);
+    assert!((w.a_mm[0] - 10.).portable_hypot(w.a_mm[1] - 8.) > 1.);
     assert!((2. ..=6.).contains(&w.b_mm[0]) && (2. ..=6.).contains(&w.b_mm[1]));
     assert_eq!(result.total_solutions, None);
     // A block covering the hole still meets the plate material.
@@ -210,7 +211,7 @@ fn mating_worm_and_generated_wheel_measure_a_certified_flank_gap() {
     )
     .unwrap();
     let place = |angle: f64| {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         wheel
             .transformed(RigidTransform {
                 rotation: [[c, -s, 0.], [0., 0., 1.], [-s, -c, 0.]],

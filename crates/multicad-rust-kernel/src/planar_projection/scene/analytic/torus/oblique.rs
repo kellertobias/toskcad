@@ -11,7 +11,7 @@ impl Torus {
         work: &mut Work,
     ) -> Result<(), ProjectionError> {
         let [a, b, c] = self.axis;
-        let s = a.hypot(b);
+        let s = a.portable_hypot(b);
         let [x, y, z] = [[a / s, b / s, 0.], [b / s, -a / s, 0.], [0., 0., 1.]]
             .map(|axis| path.coordinate(self.center, axis));
         let scale = self.major + self.minor;
@@ -225,10 +225,10 @@ fn discriminant_events(
             let [a, b, c] = trace.coefficients.map(|coefficient| coefficient / scale);
             [a + sign * b, 2. * sign * c, a - sign * b]
         });
-        let domain = [start, end].map(|angle| ((angle - phase) / 2.).tan());
+        let domain = [start, end].map(|angle| ((angle - phase) / 2.).portable_tan());
         cuts.extend(
             solve(numerators, [1., 0., 1.], domain)
-                .map(|t| phase + 2. * t.atan())
+                .map(|t| phase + 2. * t.portable_atan())
                 .filter(|&t| t > start && t < end),
         );
         if end < hi {

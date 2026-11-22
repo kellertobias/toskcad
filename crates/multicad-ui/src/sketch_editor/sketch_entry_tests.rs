@@ -109,8 +109,8 @@ impl Panel {
             ..Default::default()
         };
         editor.camera.target = self.pose.point([50., 30., 9.]).map(|v| v as f32);
-        editor.camera.yaw = normal[0].atan2(normal[1]) as f32;
-        editor.camera.pitch = normal[2].clamp(-1., 1.).asin() as f32;
+        editor.camera.yaw = normal[0].portable_atan2(normal[1]) as f32;
+        editor.camera.pitch = normal[2].clamp(-1., 1.).portable_asin() as f32;
         editor
     }
     pub fn screen(&self, editor: &SketchEditor, local: [f64; 3]) -> Pos2 {
@@ -369,8 +369,8 @@ fn datum_planes_still_need_use_plane_and_invalid_faces_change_nothing() {
 }
 
 fn toward_eye(camera: &crate::camera::Camera) -> [f64; 3] {
-    let (s, c) = (camera.yaw as f64).sin_cos();
-    let (sp, cp) = (camera.pitch as f64).sin_cos();
+    let (s, c) = (camera.yaw as f64).portable_sin_cos();
+    let (sp, cp) = (camera.pitch as f64).portable_sin_cos();
     [cp * s, cp * c, sp]
 }
 fn near(a: [f64; 3], b: [f64; 3], tolerance: f64) -> bool {

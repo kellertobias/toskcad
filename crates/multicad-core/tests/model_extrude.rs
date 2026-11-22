@@ -10,6 +10,7 @@ use multicad_core::{
     sketch::Datum,
     sketch_regions,
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeSet;
 fn actor() -> Actor {
     Actor {
@@ -180,9 +181,15 @@ fn direction_uses_both_sides_of_normal_and_normal_offset_stays_independent() {
             };
             let resolved = parameters.resolve(session.parameters()).unwrap();
             let sign = if reverse { -1. } else { 1. };
-            near(resolved.direction[0], elevation.to_radians().cos() * sign);
+            near(
+                resolved.direction[0],
+                elevation.to_radians().portable_cos() * sign,
+            );
             near(resolved.direction[1], 0.);
-            near(resolved.direction[2], elevation.to_radians().sin() * sign);
+            near(
+                resolved.direction[2],
+                elevation.to_radians().portable_sin() * sign,
+            );
             near(resolved.start_offset_mm, 7.);
             // Offset moves a datum origin along N, not along the tilted sweep.
             let origin = Datum::Xy.frame().point([0., 0.]);

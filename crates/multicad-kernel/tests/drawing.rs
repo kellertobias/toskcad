@@ -1,5 +1,6 @@
 use multicad_core::drawings::{VectorCurve, VectorRole};
 use multicad_kernel::*;
+use multicad_precision::PortableMath as _;
 fn options() -> DrawingProjection {
     DrawingProjection {
         frame: PlaneFrame {
@@ -156,7 +157,7 @@ fn section_hatches_only_cut_material_and_respects_a_real_hole() {
         };
         for t in [0.25, 0.5, 0.75] {
             let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-            assert!((p[0] - 20.).hypot(p[1] - 15.) >= 5. - 1e-6);
+            assert!((p[0] - 20.).portable_hypot(p[1] - 15.) >= 5. - 1e-6);
         }
     }
     for pattern in [
@@ -204,7 +205,7 @@ fn section_hatches_only_cut_material_and_respects_a_real_hole() {
                     panic!("expected a clipped stroke")
                 };
                 let midpoint = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
-                assert!((midpoint[0] - 20.).hypot(midpoint[1] - 15.) >= 5. - 1e-6);
+                assert!((midpoint[0] - 20.).portable_hypot(midpoint[1] - 15.) >= 5. - 1e-6);
             }
         }
     }
@@ -229,7 +230,7 @@ fn detail_crops_exact_curves_and_limits_fail_explicitly() {
         detail
             .iter()
             .flat_map(|v| &v.preview_mm)
-            .all(|p| p[0].hypot(p[1] - 15.) <= 8. + 1e-6)
+            .all(|p| p[0].portable_hypot(p[1] - 15.) <= 8. + 1e-6)
     );
     assert!(
         project_drawing(
@@ -363,7 +364,7 @@ fn oblique_triangular_section_hatches_in_its_actual_plane_and_clips_a_real_hole(
                 assert!((world.iter().sum::<f64>() - 1.).abs() < 1e-7);
                 if hole {
                     assert!(
-                        p[0].hypot(p[1]) >= 0.1 - 1e-6,
+                        p[0].portable_hypot(p[1]) >= 0.1 - 1e-6,
                         "Hatch crosses the real bore"
                     );
                 }

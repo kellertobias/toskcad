@@ -1,5 +1,6 @@
 use super::*;
 use crate::{display::Tessellation, normal_sweep, spline_sweep::Cubic};
+use multicad_precision::PortableMath as _;
 fn square(x: f64, y: f64, s: f64) -> Vec<Edge> {
     let p = [[x, y], [x + s, y], [x + s, y + s], [x, y + s]];
     (0..4)
@@ -440,7 +441,7 @@ fn reversing_every_actual_edge_preserves_its_image_and_restores_literal_source_d
         for t in [0., 0.125, 0.5, 0.875, 1.] {
             let a = edge.point(1. - t);
             let b = reversed.point(t);
-            assert!((a[0] - b[0]).hypot(a[1] - b[1]) < 1e-12);
+            assert!((a[0] - b[0]).portable_hypot(a[1] - b[1]) < 1e-12);
         }
     }
 }

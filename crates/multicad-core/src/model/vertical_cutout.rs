@@ -22,6 +22,7 @@ use crate::{
     document::{Document, DocumentError, EntityData, EntityId, Mutation},
     parameters::{EvaluatedParameters, Unit},
 };
+use multicad_precision::PortableMath as _;
 
 /// A plan rectangle for slab holes: center in world X/Y, width along the
 /// direction `rotation_deg` from +X, depth across it.
@@ -190,7 +191,9 @@ fn wall_with_cutout(
             ],
             width: b - a,
             depth: high - low,
-            rotation_deg: seg.direction[1].atan2(seg.direction[0]).to_degrees(),
+            rotation_deg: seg.direction[1]
+                .portable_atan2(seg.direction[0])
+                .to_degrees(),
         },
     ))
 }

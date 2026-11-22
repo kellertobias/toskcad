@@ -4,6 +4,7 @@ use crate::{
     headed_screw::{hex_area, hex_radius, hex_support},
     helical_thread::{Thread, ThreadError},
 };
+use multicad_precision::PortableMath as _;
 
 const MAX_DIMENSION_MM: f64 = 1e7;
 
@@ -66,8 +67,8 @@ impl Nut {
             return false;
         }
         let length = self.thread.spec().length_mm;
-        let radius = x.hypot(y);
-        let theta = y.atan2(x);
+        let radius = x.portable_hypot(y);
+        let theta = y.portable_atan2(x);
         z >= -tolerance
             && z <= length + tolerance
             && radius <= self.outer_radius(theta) + tolerance

@@ -69,7 +69,7 @@ pub(crate) fn constrain(
     };
     let along = |length: f64| {
         let d = [pointer[0] - a[0], pointer[1] - a[1]];
-        let n = d[0].hypot(d[1]);
+        let n = d[0].portable_hypot(d[1]);
         let d = if n > 1e-12 {
             [d[0] / n, d[1] / n]
         } else {
@@ -94,7 +94,7 @@ fn measured(tool: DrawTool, first: Option<[f64; 2]>, p: [f64; 2]) -> Vec<f64> {
     let Some(a) = first else {
         return vec![p[0], p[1]];
     };
-    let distance = (p[0] - a[0]).hypot(p[1] - a[1]);
+    let distance = (p[0] - a[0]).portable_hypot(p[1] - a[1]);
     match tool {
         DrawTool::Rectangle => vec![(p[0] - a[0]).abs(), (p[1] - a[1]).abs()],
         DrawTool::Circle => vec![2. * distance],

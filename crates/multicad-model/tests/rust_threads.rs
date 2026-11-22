@@ -9,6 +9,7 @@ use multicad_core::{
     references::{self, GeometryIntent, Resolution, TopologyKind},
 };
 use multicad_model::{Compiler, GeometryBackend, Model};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 fn actor() -> Actor {
@@ -29,7 +30,7 @@ fn m8_volume(length_mm: f64) -> f64 {
     let radius: f64 = 4.;
     let root = radius - 5. * 3_f64.sqrt() / 16. * pitch;
     let crest = pitch / 8.;
-    let flanks = 2. * 30_f64.to_radians().tan();
+    let flanks = 2. * 30_f64.to_radians().portable_tan();
     let radius_integral = (radius * radius - root * root) / 2.;
     let ridge = crest * radius_integral
         + flanks * (radius * radius_integral - (radius.powi(3) - root.powi(3)) / 3.);
@@ -303,7 +304,7 @@ fn rust_6g_m6_matches_native_fitted_profile_mass_and_major_extent() {
     let drop = 0.4 * resolved.profile.depth_mm;
     let z = 2. * resolved.pitch_mm
         + resolved.profile.crest_width_mm / 2.
-        + drop * resolved.profile.upper_flank_deg.to_radians().tan();
+        + drop * resolved.profile.upper_flank_deg.to_radians().portable_tan();
     assert!(
         solid
             .rust_thread_contains([radius - drop - 0.001, 0., z])

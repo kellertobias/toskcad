@@ -1,3 +1,4 @@
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     Circle, Rational,
     cylinder::AxialCylinder,
@@ -158,7 +159,7 @@ fn concave_polygon_with_round_and_straight_holes_meshes_in_analytic_face_order()
                 wall_triangles += 1;
                 for &vertex in triangle {
                     let [x, y, _] = vertices[vertex as usize];
-                    assert!(((x - cx).hypot(y - cy) - 1.).abs() < 1e-14);
+                    assert!(((x - cx).portable_hypot(y - cy) - 1.).abs() < 1e-14);
                 }
             }
         }
@@ -190,7 +191,10 @@ fn rust_prism_mesh_is_closed_and_keeps_the_cap_holes_open() {
         let [a, b, c] = triangle.map(|id| points[id as usize]);
         let centroid = [(a[0] + b[0] + c[0]) / 3., (a[1] + b[1] + c[1]) / 3.];
         for (x, radius) in [(12., 3.), (28., 4.)] {
-            assert!((centroid[0] - x).hypot(centroid[1] - 10.) >= radius - options().deflection);
+            assert!(
+                (centroid[0] - x).portable_hypot(centroid[1] - 10.)
+                    >= radius - options().deflection
+            );
         }
     }
 }

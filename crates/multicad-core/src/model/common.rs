@@ -5,6 +5,7 @@ use crate::{
     document::{Definition, Document, DocumentError, Entity, EntityData, EntityId, Link, Mutation},
     parameters::{EvaluatedParameters, Unit},
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeSet;
 
 /// Preserve exact cardinal directions instead of introducing libm residuals.
@@ -22,7 +23,7 @@ pub(super) fn cardinal_sin_cos(angle: f64) -> (f64, f64) {
     } else if reduced == 3. * FRAC_PI_2 {
         (-1., 0.)
     } else {
-        angle.sin_cos()
+        angle.portable_sin_cos()
     }
 }
 

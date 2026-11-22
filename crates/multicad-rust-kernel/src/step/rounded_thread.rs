@@ -168,16 +168,17 @@ fn circle_spline(
     sense: f64,
     error: f64,
 ) -> Result<Spline, StepError> {
-    let angles = phases.map(|p| ((p - c.center_phase_mm) / c.radius_mm).asin());
+    let angles = phases.map(|p| ((p - c.center_phase_mm) / c.radius_mm).portable_asin());
     let amplitude = c.radius_mm / rate;
     let span_limit = [1.5_f64, 2., 2.5, 3.]
         .into_iter()
         .map(|rho| {
             // Entire signed circle chart times exp(i*s/rate), bounded on a
             // complex disk; Cauchy's estimate cancels 12! in Hermite's remainder.
-            let log_bound =
-                (c.center_radius_mm.abs() + c.radius_mm * rho.cosh()).ln() + amplitude * rho.sinh();
-            2. * rho * ((error.ln() - log_bound) / (DEGREE + 1) as f64).exp()
+            let log_bound = (c.center_radius_mm.abs() + c.radius_mm * rho.portable_cosh())
+                .portable_ln()
+                + amplitude * rho.portable_sinh();
+            2. * rho * ((error.portable_ln() - log_bound) / (DEGREE + 1) as f64).portable_exp()
         })
         .fold(0., f64::max);
     let mut spline = Spline::with_jets(angles[0], angles[1], span_limit, |t| {
@@ -189,10 +190,10 @@ fn circle_spline(
     Ok(spline)
 }
 fn circle_jet(c: Circle, t: f64, rate: f64, sense: f64) -> [[f64; 2]; JETS] {
-    let (s, co) = t.sin_cos();
+    let (s, co) = t.portable_sin_cos();
     let trig = [[s, co], [co, -s], [-s, -co], [-co, s]];
     let amplitude = sense * c.radius_mm / rate;
-    let (si, cs) = (sense * ((c.center_phase_mm + c.radius_mm * s) / rate)).sin_cos();
+    let (si, cs) = (sense * ((c.center_phase_mm + c.radius_mm * s) / rate)).portable_sin_cos();
     let mut radial = std::array::from_fn::<_, JETS, _>(|i| {
         c.radial_sign * c.radius_mm * trig[i % 4][1] / FACTORIALS[i]
     });

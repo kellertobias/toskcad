@@ -5,6 +5,7 @@ use super::super::diagram::{Diagram, Key, Line, Notation, legible};
 use super::Kind;
 use super::screw_shape::HeadKind;
 use multicad_core::model::ScrewLengthConvention;
+use multicad_precision::PortableMath as _;
 
 pub(super) const WASHER: [Key; 3] = ["washer.bore", "washer.outside", "washer.thickness"];
 pub(super) const BEARING: [Key; 3] = ["bearing.bore", "bearing.outside", "bearing.width"];
@@ -86,7 +87,7 @@ fn nut(v: &Values) -> Diagram {
     let hex: Vec<[f32; 2]> = (0..6)
         .map(|i| {
             let a = i as f32 * std::f32::consts::FRAC_PI_3;
-            [corner * a.cos(), corner * a.sin()]
+            [corner * a.portable_cos(), corner * a.portable_sin()]
         })
         .collect();
     let x = corner * 1.9;
@@ -159,15 +160,16 @@ fn screw(shape: &ScrewShape, v: &Values) -> Diagram {
             let crown: Vec<[f32; 2]> = (0..=12)
                 .map(|i| {
                     let a = i as f32 / 12. * std::f32::consts::PI;
-                    let x = hr * a.cos();
+                    let x = hr * a.portable_cos();
                     let y = hh
                         * (0.35
                             + 0.65
-                                * a.sin().powf(if shape.head == HeadKind::Pan {
-                                    0.5
-                                } else {
-                                    0.9
-                                }));
+                                * a.portable_sin()
+                                    .portable_powf(if shape.head == HeadKind::Pan {
+                                        0.5
+                                    } else {
+                                        0.9
+                                    }));
                     [x, y]
                 })
                 .collect();

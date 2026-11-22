@@ -47,7 +47,7 @@ impl Coaxial {
         if radial_mm.is_nan() || radial_mm > rounding {
             return None;
         }
-        let angle_rad = dot(b.u, a.v).atan2(dot(b.u, a.u));
+        let angle_rad = dot(b.u, a.v).portable_atan2(dot(b.u, a.u));
         Some(Self {
             axial_mm,
             angle_rad,

@@ -13,6 +13,7 @@ use multicad_kernel::{
     BRepSelection, BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame,
     Solid, SolidPairRelation,
 };
+use multicad_precision::PortableMath as _;
 
 /// Contact tolerance for aid inspections.
 const CONTACT_MM: f64 = 1e-3;
@@ -83,7 +84,7 @@ fn oriented_box(
     .map_err(|e| error(Some(id), e))
 }
 fn plan_axes(angle_rad: f64) -> ([f64; 3], [f64; 3]) {
-    let (s, c) = angle_rad.sin_cos();
+    let (s, c) = angle_rad.portable_sin_cos();
     ([c, s, 0.], [-s, c, 0.])
 }
 
@@ -309,7 +310,7 @@ impl Model {
         let z = base + ((b.max[2] - base) * 0.5).min(0.05);
         let mut xy = [near_mm[0], near_mm[1]];
         if let Some(h) = outward_hint {
-            let n = h[0].hypot(h[1]);
+            let n = h[0].portable_hypot(h[1]);
             if n.is_finite() && n > 1e-9 {
                 xy = [
                     xy[0] + h[0] / n * PROBE_OFFSET_MM,
@@ -346,7 +347,7 @@ impl Model {
         // Measured to one probe vertex, the witness segment is normal to
         // the part at its outline point.
         let along = [w.b_mm[0] - w.a_mm[0], w.b_mm[1] - w.a_mm[1]];
-        let length = along[0].hypot(along[1]);
+        let length = along[0].portable_hypot(along[1]);
         if length < d.distance_mm * 0.5 {
             return Err(error(
                 Some(target),
@@ -357,7 +358,7 @@ impl Model {
         Ok(TabContact {
             point_mm: [w.a_mm[0], w.a_mm[1], base],
             outward,
-            angle_deg: outward[1].atan2(outward[0]).to_degrees(),
+            angle_deg: outward[1].portable_atan2(outward[0]).to_degrees(),
             probe_distance_mm: d.distance_mm,
         })
     }
@@ -445,7 +446,11 @@ impl Model {
                 ResolvedAid::Tab {
                     origin, angle_rad, ..
                 } => self
-                    .fdm_tab_contact(aid.target, origin, Some([angle_rad.cos(), angle_rad.sin()]))
+                    .fdm_tab_contact(
+                        aid.target,
+                        origin,
+                        Some([angle_rad.portable_cos(), angle_rad.portable_sin()]),
+                    )
                     .ok(),
                 _ => None,
             };

@@ -4,6 +4,7 @@ use super::{
     circular_pole, helical, knot, multiplicities,
 };
 use crate::helical_tube_cut::Cut;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 
 /// Clamped piecewise Bézier STEP curve in surface coordinates.
@@ -36,10 +37,10 @@ impl CavityCapPcurve {
         let rise = spec.pitch_mm / TAU;
         let tube = spec.tube_radius_mm;
         let radius = spec.stock_radius_mm;
-        let vertical = radius / radius.hypot(rise);
+        let vertical = radius / radius.portable_hypot(rise);
         let domain = support.domains()[0];
         let ends = domain.map(|angle| support.top_parameter(angle).expect("chart endpoint"));
-        let sweep_speed = (radius + tube).hypot(rise);
+        let sweep_speed = (radius + tube).portable_hypot(rise);
         let roundoff = 128. * f64::EPSILON * (sweep_speed * (1. + ends[0]) + tube);
         Ok(Self {
             domain,

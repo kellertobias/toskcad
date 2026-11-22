@@ -51,7 +51,7 @@ pub(in crate::drawing) fn project_worm_gearing(
         .or_else(|| input.solid.rust_worm_wheel().map(|(_, frame)| frame))?;
     let [u, v, toward_viewer] = planar::view_axes(options.frame);
     let axis = frame.normal();
-    if dot(axis, u).hypot(dot(axis, v)) > 64. * f64::EPSILON || options.detail.is_some() {
+    if dot(axis, u).portable_hypot(dot(axis, v)) > 64. * f64::EPSILON || options.detail.is_some() {
         return Some(Err(unsupported(
             "Rust worm and worm-wheel drawings require an uncropped view along the gear axis",
         )));
@@ -206,12 +206,12 @@ fn view_edges(
 
 /// A closed circle polyline within `tolerance`, clockwise for a hole.
 fn circle(radius: f64, tolerance: f64, hole: bool) -> Vec<Point> {
-    let step = 2. * (1. - tolerance / radius).max(-1.).acos();
+    let step = 2. * (1. - tolerance / radius).max(-1.).portable_acos();
     let count = (TAU / step).ceil().max(3.) as usize;
     let sign = if hole { -1. } else { 1. };
     (0..count)
         .map(|i| {
-            let (s, c) = (sign * TAU * i as f64 / count as f64).sin_cos();
+            let (s, c) = (sign * TAU * i as f64 / count as f64).portable_sin_cos();
             [radius * c, radius * s]
         })
         .collect()

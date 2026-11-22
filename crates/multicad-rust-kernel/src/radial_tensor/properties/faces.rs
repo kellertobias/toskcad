@@ -1,6 +1,7 @@
 //! Retained face ownership and oriented edge parameterizations.
 use super::*;
 use measure::Density;
+use multicad_precision::PortableMath as _;
 use source::{Circle, Source, Tensor};
 pub(super) struct FaceSources {
     pub index: usize,
@@ -198,7 +199,7 @@ pub(in crate::radial_tensor) fn argument(p: [I; 2]) -> Result<I, Error> {
     let delta = ((h[0] * p[1] - h[1] * p[0]) / dot).atan();
     // As in the interval atan/sin/cos primitives, include libm's directed
     // preparation reserve; the relative interval proves the branch choice.
-    let a = h[1].lo.atan2(h[0].lo);
+    let a = h[1].lo.portable_atan2(h[0].lo);
     (I::new(
         (a - 8. * f64::EPSILON).next_down(),
         (a + 8. * f64::EPSILON).next_up(),

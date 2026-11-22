@@ -23,9 +23,9 @@ fn numerical(geometry: &RoundedCylinder) -> [f64; 3] {
             let n = 2048;
             for j in 0..=n {
                 let angle = if i == 0 { -FRAC_PI_2 } else { 0. } + FRAC_PI_2 * j as f64 / n as f64;
-                let rho = r - f + f * angle.cos();
-                let z = if i == 0 { f } else { h - f } + f * angle.sin();
-                let dz = f * angle.cos();
+                let rho = r - f + f * angle.portable_cos();
+                let z = if i == 0 { f } else { h - f } + f * angle.portable_sin();
+                let dz = f * angle.portable_cos();
                 let weight = if j == 0 || j == n {
                     1.
                 } else if j % 2 == 0 {
@@ -97,7 +97,7 @@ fn exact_metrics_match_independent_meridian_quadrature_and_scale_symmetry() {
             [-0.3, 0.4, -0.8],
         ] {
             let [x, y, z] = direction;
-            let radial = x.hypot(y);
+            let radial = x.portable_hypot(y);
             let mut dense = f64::NEG_INFINITY;
             let mut visit = |rho: f64, axial: f64| dense = dense.max(radial * rho + z * axial);
             visit(5. - radii[0].unwrap_or(0.), 0.);
@@ -110,8 +110,8 @@ fn exact_metrics_match_independent_meridian_quadrature_and_scale_symmetry() {
                         let phase =
                             if i == 0 { -FRAC_PI_2 } else { 0. } + FRAC_PI_2 * j as f64 / 2048.;
                         visit(
-                            5. - f + f * phase.cos(),
-                            if i == 0 { f } else { 12. - f } + f * phase.sin(),
+                            5. - f + f * phase.portable_cos(),
+                            if i == 0 { f } else { 12. - f } + f * phase.portable_sin(),
                         );
                     }
                 }

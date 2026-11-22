@@ -26,8 +26,8 @@ impl Round {
                 let c = point(sketch, center);
                 let a = sub(point(sketch, start), c);
                 let b = sub(point(sketch, end), c);
-                let first = a[1].atan2(a[0]);
-                let last = b[1].atan2(b[0]);
+                let first = a[1].portable_atan2(a[0]);
+                let last = b[1].portable_atan2(b[0]);
                 (
                     center,
                     length(a),
@@ -75,13 +75,13 @@ impl Round {
     fn point(&self, t: f64) -> Position {
         let angle = self.start_angle + if self.clockwise { -t } else { t };
         [
-            self.center[0] + self.radius * angle.cos(),
-            self.center[1] + self.radius * angle.sin(),
+            self.center[0] + self.radius * angle.portable_cos(),
+            self.center[1] + self.radius * angle.portable_sin(),
         ]
     }
     fn parameter(&self, p: Position) -> f64 {
         let d = sub(p, self.center);
-        let a = d[1].atan2(d[0]);
+        let a = d[1].portable_atan2(d[0]);
         (if self.clockwise {
             self.start_angle - a
         } else {

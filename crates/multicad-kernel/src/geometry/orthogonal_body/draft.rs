@@ -35,7 +35,7 @@ impl Solid {
                 .max(1.);
             // Remote plane origins and steep slopes amplify chart restoration
             // error; bound their resulting wall displacement before snapping.
-            let amplification = (1. + angle.tan().abs()).powi(2);
+            let amplification = (1. + angle.portable_tan().abs()).powi(2);
             // Only restore roundoff introduced by the retained rigid chart.
             // An oblique pull or neutral plane needs a different Draft proof.
             let aligned = |direction: Point| {
@@ -144,7 +144,7 @@ impl Solid {
             let mut ranges = chart.map(|i| [0., stock.max[i] - stock.min[i]]);
             for &(side, positive) in selected.keys() {
                 let sign = if positive { 1. } else { -1. };
-                let slope = -sign * pull[up] * angle.tan();
+                let slope = -sign * pull[up] * angle.portable_tan();
                 let changing = usize::from(side == v);
                 ranges[changing][usize::from(positive)] += slope * (level - neutral.origin[up]);
             }

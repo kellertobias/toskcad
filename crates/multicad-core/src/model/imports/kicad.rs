@@ -3,6 +3,7 @@
 //! references. KiCad uses millimeters with Y pointing down; everything here
 //! is converted to Y up. Unsupported items are listed, never dropped
 //! silently.
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -182,9 +183,9 @@ impl OutlineEdge {
                 b,
                 clockwise,
             } => {
-                let r = (a[0] - center[0]).hypot(a[1] - center[1]);
-                let s = (a[1] - center[1]).atan2(a[0] - center[0]);
-                let mut e = (b[1] - center[1]).atan2(b[0] - center[0]);
+                let r = (a[0] - center[0]).portable_hypot(a[1] - center[1]);
+                let s = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
+                let mut e = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
                 if *clockwise {
                     while e > s {
                         e -= std::f64::consts::TAU;
@@ -197,14 +198,20 @@ impl OutlineEdge {
                 (0..16)
                     .map(|i| {
                         let t = s + (e - s) * i as f64 / 16.;
-                        [center[0] + r * t.cos(), center[1] + r * t.sin()]
+                        [
+                            center[0] + r * t.portable_cos(),
+                            center[1] + r * t.portable_sin(),
+                        ]
                     })
                     .collect()
             }
             Self::Circle { center, radius } => (0..32)
                 .map(|i| {
                     let t = std::f64::consts::TAU * i as f64 / 32.;
-                    [center[0] + radius * t.cos(), center[1] + radius * t.sin()]
+                    [
+                        center[0] + radius * t.portable_cos(),
+                        center[1] + radius * t.portable_sin(),
+                    ]
                 })
                 .collect(),
         }
@@ -273,7 +280,7 @@ fn layer(s: &Sexp) -> Option<&str> {
 }
 /// Rotate footprint-local (Y up) coordinates by the footprint rotation.
 fn place(at: [f64; 2], rot_deg: f64, p: [f64; 2]) -> [f64; 2] {
-    let (s, c) = rot_deg.to_radians().sin_cos();
+    let (s, c) = rot_deg.to_radians().portable_sin_cos();
     [at[0] + p[0] * c - p[1] * s, at[1] + p[0] * s + p[1] * c]
 }
 fn arc_from_three(a: [f64; 2], m: [f64; 2], b: [f64; 2]) -> Option<OutlineEdge> {
@@ -336,7 +343,7 @@ pub fn read_board(text: &str, min_hole_mm: f64) -> Result<KicadBoard, String> {
                 if let Some(c) = item.child("center").and_then(xy) {
                     edges.push(OutlineEdge::Circle {
                         center: c,
-                        radius: (e[0] - c[0]).hypot(e[1] - c[1]),
+                        radius: (e[0] - c[0]).portable_hypot(e[1] - c[1]),
                     });
                 }
             }
@@ -420,7 +427,7 @@ pub fn read_board(text: &str, min_hole_mm: f64) -> Result<KicadBoard, String> {
                     && let (Some(c), Some(e)) =
                         (g.child("center").and_then(xy), g.child("end").and_then(xy))
                 {
-                    let r = (e[0] - c[0]).hypot(e[1] - c[1]);
+                    let r = (e[0] - c[0]).portable_hypot(e[1] - c[1]);
                     grow([c[0] - r, c[1] - r]);
                     grow([c[0] + r, c[1] + r]);
                     continue;
@@ -522,7 +529,7 @@ pub fn read_board(text: &str, min_hole_mm: f64) -> Result<KicadBoard, String> {
 
 /// Chain outline edges into closed loops; circles are loops on their own.
 fn chain(edges: Vec<OutlineEdge>) -> Result<Vec<Vec<OutlineEdge>>, String> {
-    let close = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-3;
+    let close = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).portable_hypot(p[1] - q[1]) < 1e-3;
     let mut loops = vec![];
     let mut open: Vec<OutlineEdge> = vec![];
     for e in edges {

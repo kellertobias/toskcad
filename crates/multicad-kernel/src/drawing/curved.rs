@@ -1,5 +1,6 @@
 //! Drawing adapter for exact circular cylinders and annuli.
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     curved_projection::{self, Curve, Cylinder, Detail, Error},
     planar_projection,
@@ -196,7 +197,7 @@ fn project_members(
         }
         if let Some((body, frame)) = solid.torus_body() {
             let (center, axis) = torus::drawing_frame(frame, options.frame);
-            if axis[0].hypot(axis[1]) > torus::ANGULAR && axis[2].abs() > torus::ANGULAR {
+            if axis[0].portable_hypot(axis[1]) > torus::ANGULAR && axis[2].abs() > torus::ANGULAR {
                 let used = (contours.len() + intrinsic_hidden.len()) as u32;
                 let (visible, hidden) = torus::oblique::contours(
                     center,
@@ -415,7 +416,7 @@ pub(super) fn project_annulus_depth(
     let [u, v, toward_viewer] = planar::view_axes(options.frame);
     let axis = unit(frame.normal());
     let facing = dot(axis, toward_viewer);
-    if dot(axis, u).hypot(dot(axis, v)) > 32. * f64::EPSILON
+    if dot(axis, u).portable_hypot(dot(axis, v)) > 32. * f64::EPSILON
         || options.section_u_mm.is_some()
         || options.section_v_mm.is_some()
         || options.detail.is_some()

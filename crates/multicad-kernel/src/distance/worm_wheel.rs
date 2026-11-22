@@ -2,6 +2,7 @@
 //! and bound over the exact generating patch.
 use super::*;
 use multicad_core::references::{AnalyticGeometry, TopologyKind};
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::worm_gear::wheel_distance::Error;
 
 type Point = [f64; 3];
@@ -13,7 +14,7 @@ fn dot(a: Point, b: Point) -> f64 {
     (0..3).map(|i| a[i] * b[i]).sum()
 }
 fn norm(a: Point) -> f64 {
-    a[0].hypot(a[1]).hypot(a[2])
+    a[0].portable_hypot(a[1]).portable_hypot(a[2])
 }
 fn sub(a: Point, b: Point) -> Point {
     std::array::from_fn(|i| a[i] - b[i])
@@ -80,7 +81,7 @@ pub(super) fn measure(
             ));
         }
         let m = wheel.module_mm();
-        let (s, c) = (-wheel.sector_angle(sector)).sin_cos();
+        let (s, c) = (-wheel.sector_angle(sector)).portable_sin_cos();
         let local = [dot(delta, u), dot(delta, v), dot(delta, n)].map(|x| x / m);
         let query = [
             c * local[0] - s * local[1],
@@ -98,7 +99,7 @@ pub(super) fn measure(
                     unsupported("Worm-wheel face distance bounds could not be certified")
                 }
             })?;
-        let (s, c) = wheel.sector_angle(sector).sin_cos();
+        let (s, c) = wheel.sector_angle(sector).portable_sin_cos();
         let [x, y, z] = found.point.map(|x| x * m);
         let on_face =
             crate::rust_prism_topology::position(frame, [c * x - s * y, s * x + c * y, z]);

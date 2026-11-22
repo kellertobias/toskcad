@@ -7,6 +7,7 @@
 //! shared edge samples.
 use super::domain::{Domain, Key, LoopPoint, UvLoop};
 use super::{Error, Result, Surface, ensure, norm};
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -60,7 +61,7 @@ fn between(a: [f64; 2], b: [f64; 2], p: [f64; 2], tolerance: f64) -> bool {
     let along = (p[0] - a[0]) * dx + (p[1] - a[1]) * dy;
     p != a
         && p != b
-        && orient(a, b, p).abs() <= tolerance * dx.hypot(dy)
+        && orient(a, b, p).abs() <= tolerance * dx.portable_hypot(dy)
         && along > 0.
         && along < dx * dx + dy * dy
 }
@@ -68,7 +69,7 @@ fn between(a: [f64; 2], b: [f64; 2], p: [f64; 2], tolerance: f64) -> bool {
 /// The widest parameter distance of the ring from its first point.
 fn spread(ring: &[Corner]) -> f64 {
     ring.iter().fold(0., |e: f64, c| {
-        e.max((c.uv[0] - ring[0].uv[0]).hypot(c.uv[1] - ring[0].uv[1]))
+        e.max((c.uv[0] - ring[0].uv[0]).portable_hypot(c.uv[1] - ring[0].uv[1]))
     })
 }
 
@@ -88,7 +89,7 @@ struct Metric([f64; 2]);
 
 impl Metric {
     fn distance(&self, a: [f64; 2], b: [f64; 2]) -> f64 {
-        ((a[0] - b[0]) * self.0[0]).hypot((a[1] - b[1]) * self.0[1])
+        ((a[0] - b[0]) * self.0[0]).portable_hypot((a[1] - b[1]) * self.0[1])
     }
 }
 

@@ -1,3 +1,4 @@
+use multicad_precision::PortableMath as _;
 use super::*;
 use multicad_core::{
     commands::{Actor, Channel, Session},
@@ -174,7 +175,7 @@ fn native_bevel_wrong_phase_and_separated_members_fail_actual_guards() {
             .contains("no native engagement proximity")
     );
     let phase = PI / 32.;
-    let (s, c) = phase.sin_cos();
+    let (s, c) = phase.portable_sin_cos();
     let wrong = solids[1]
         .transformed(RigidTransform {
             translation_mm: [0., 0., 0.],

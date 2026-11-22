@@ -21,6 +21,7 @@ use multicad_kernel::{
 use multicad_model::{
     Compiler, DrawingProviders, GeometryBackend, imports::read_step_file_with_backend,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_1_SQRT_2, PI, TAU};
 
 const PLACEMENT: PlaneFrame = PlaneFrame {
@@ -37,11 +38,11 @@ fn step_fixture() -> String {
         Spec {
             teeth: 20,
             pitch_radius_mm: 20.,
-            base_radius_mm: 20. * pressure.cos(),
+            base_radius_mm: 20. * pressure.portable_cos(),
             tip_radius_mm: 22.,
             root_radius_mm: 17.5,
             root_fillet_radius_mm: 0.4,
-            half_base_angle_rad: PI / 40. + pressure.tan() - pressure - 0.05 / 40.,
+            half_base_angle_rad: PI / 40. + pressure.portable_tan() - pressure - 0.05 / 40.,
             face_width_mm: 8.,
             bore_radius_mm: 2.,
         },
@@ -78,11 +79,11 @@ fn distance(point: [f64; 2], [a, b]: [[f64; 2]; 2]) -> f64 {
     let delta = [b[0] - a[0], b[1] - a[1]];
     let offset = [point[0] - a[0], point[1] - a[1]];
     let t = (dot(offset, delta) / dot(delta, delta)).clamp(0., 1.);
-    (offset[0] - t * delta[0]).hypot(offset[1] - t * delta[1])
+    (offset[0] - t * delta[0]).portable_hypot(offset[1] - t * delta[1])
 }
 
 fn near(a: [f64; 2], b: [f64; 2]) -> bool {
-    (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-9
+    (a[0] - b[0]).portable_hypot(a[1] - b[1]) < 1e-9
 }
 
 #[test]

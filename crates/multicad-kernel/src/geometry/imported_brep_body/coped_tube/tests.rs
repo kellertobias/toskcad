@@ -27,7 +27,7 @@ fn names(feature: EntityId) -> CopedTubeNames {
 
 fn branch(angle_deg: f64, grow: f64, length: f64) -> Result<Solid, GeometryError> {
     let feature = EntityId::new();
-    let (s, c) = angle_deg.to_radians().sin_cos();
+    let (s, c) = angle_deg.to_radians().portable_sin_cos();
     Solid::rust_coped_round_tube(
         &CopedTube {
             origin_mm: [300., 0., 0.],

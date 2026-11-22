@@ -3,6 +3,7 @@ use multicad_kernel::{
     BooleanOperation, GeometryPolicy, PlaneFrame, RigidTransform, Solid,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder, polygon::PolygonPrism},
 };
+use multicad_precision::PortableMath as _;
 
 fn n(value: i64) -> Rational {
     Rational::new(value, 1).unwrap()
@@ -174,11 +175,11 @@ fn imported_spline_compound_retains_exact_geometry_and_viewport_edge_identity() 
         Spec {
             teeth: 20,
             pitch_radius_mm: 20.,
-            base_radius_mm: 20. * pressure.cos(),
+            base_radius_mm: 20. * pressure.portable_cos(),
             tip_radius_mm: 22.,
             root_radius_mm: 17.5,
             root_fillet_radius_mm: 0.4,
-            half_base_angle_rad: std::f64::consts::PI / 40. + pressure.tan()
+            half_base_angle_rad: std::f64::consts::PI / 40. + pressure.portable_tan()
                 - pressure
                 - 0.05 / 40.,
             face_width_mm: 8.,

@@ -1,5 +1,6 @@
 use super::{DisplayMesh, MeshError, TAU, Tessellation, append_cap, straight_footprint, wall};
 use crate::{chamfered_bores::ChamferedBores, polygon::PolygonPrism};
+use multicad_precision::PortableMath as _;
 
 /// Tessellate a certified prism and its cap, conical and cylindrical surfaces.
 /// Every ring of a bore uses the same angular sampling as its largest rim.
@@ -61,7 +62,7 @@ pub fn chamfered_polygon_prism(
             offsets.push(mesh.vertices.len() / 3);
             let [cx, cy] = stack.center_mm;
             for i in 0..count {
-                let (sin, cos) = (-TAU * i as f64 / count as f64).sin_cos();
+                let (sin, cos) = (-TAU * i as f64 / count as f64).portable_sin_cos();
                 mesh.vertices.extend([
                     cx + layer.radius_mm * cos,
                     cy + layer.radius_mm * sin,

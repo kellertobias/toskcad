@@ -5,6 +5,7 @@ use crate::{
     drawing_events::{self, Harmonic},
     planar_projection::ProjectionError,
 };
+use multicad_precision::PortableMath as _;
 
 type Point = [f64; 3];
 type Span = [f64; 2];
@@ -42,7 +43,7 @@ impl RoundOccluder {
         height: f64,
         bore: Option<f64>,
     ) -> Result<Self, ProjectionError> {
-        let norm = axis[0].hypot(axis[1]).hypot(axis[2]);
+        let norm = axis[0].portable_hypot(axis[1]).portable_hypot(axis[2]);
         if !bounded(base)
             || !(1. - 1e-9..=1. + 1e-9).contains(&norm)
             || !(1e-7..=1e7).contains(&radius)
@@ -52,7 +53,7 @@ impl RoundOccluder {
             return Err(ProjectionError::Invalid);
         }
         let axis = axis.map(|v| v / norm);
-        let projected = axis[0].hypot(axis[1]);
+        let projected = axis[0].portable_hypot(axis[1]);
         let screen_axis = if projected == 0. {
             [1., 0.]
         } else {
@@ -60,7 +61,7 @@ impl RoundOccluder {
         };
         let extents: [Span; 3] = std::array::from_fn(|i| {
             let end = height * axis[i];
-            let radial = radius * axis[(i + 1) % 3].hypot(axis[(i + 2) % 3]);
+            let radial = radius * axis[(i + 1) % 3].portable_hypot(axis[(i + 2) % 3]);
             [
                 base[i] + end.min(0.) - radial,
                 base[i] + end.max(0.) + radial,
@@ -188,7 +189,7 @@ impl RoundOccluder {
     pub(crate) fn covers_axial_contour(&self, rim: Rim, ceiling: f64, tolerance: f64) -> bool {
         if self.cross.is_some()
             || self.projected > curved_projection::ANGULAR_ROUNDOFF
-            || rim.depth_cosine.hypot(rim.depth_sine)
+            || rim.depth_cosine.portable_hypot(rim.depth_sine)
                 > curved_projection::ANGULAR_ROUNDOFF * rim.ellipse.major
         {
             return false;
@@ -301,7 +302,7 @@ impl RoundOccluder {
             return Err(ProjectionError::Invalid);
         }
         let mut hidden = Vec::new();
-        if (edge[1][0] - edge[0][0]).hypot(edge[1][1] - edge[0][1]) > tolerance
+        if (edge[1][0] - edge[0][0]).portable_hypot(edge[1][1] - edge[0][1]) > tolerance
             && self.may_hide(edge, tolerance)
         {
             self.hide(edge, tolerance, false, |span| hidden.push(span));
@@ -504,7 +505,7 @@ impl RoundOccluder {
             let lifted = [origin[0], origin[1], origin[2] + depth_gap];
             void.rim_events([lifted, cosine, sine], trim, cuts);
             let at = |t: f64| -> Point {
-                let (s, c) = t.sin_cos();
+                let (s, c) = t.portable_sin_cos();
                 std::array::from_fn(|i| c.mul_add(cosine[i], s.mul_add(sine[i], lifted[i])))
             };
             drawing_events::spans(
@@ -592,7 +593,7 @@ impl RoundOccluder {
             }
         }
         if p == 0. {
-            let distance = radial.hypot(y);
+            let distance = radial.portable_hypot(y);
             return distance < outer && bore.is_none_or(|inner| distance > inner);
         }
         let Some(outer) = chord_half(outer, y.abs()) else {
@@ -680,7 +681,7 @@ impl Events {
     }
 
     fn circle(&mut self, x: Affine, y: Affine, radius: f64) {
-        let speed = x.delta.hypot(y.delta);
+        let speed = x.delta.portable_hypot(y.delta);
         if speed == 0. {
             return;
         }

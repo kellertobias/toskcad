@@ -591,7 +591,7 @@ pub(super) fn offnominal_text(radius: f64, x: f64, y: f64) -> String {
     thread.major_radius_mm = radius;
     thread.depth_mm = 0.08;
     thread.length_mm = 0.8;
-    thread.crest_width_mm = f64::atan2(y, x) / std::f64::consts::PI * 0.4;
+    thread.crest_width_mm = f64::portable_atan2(y, x) / std::f64::consts::PI * 0.4;
     let head = Head::Crowned {
         radius_mm: 2. * radius,
         height_mm: 1.6 * radius,

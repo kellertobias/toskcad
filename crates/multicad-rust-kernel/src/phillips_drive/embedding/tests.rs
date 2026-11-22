@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 #[test]
 fn all_actual_authored_sources_have_complete_embedded_domain_certificates() {
     for index in 0..6 {
@@ -89,7 +90,7 @@ fn all_actual_authored_sources_have_complete_embedded_domain_certificates() {
             certificate.patch_domains()[witness.patch_index].source_patch,
             PatchKey::FloorFan { quarter: 0 }
         );
-        let t = s.floor_angle_deg.to_radians().tan();
+        let t = s.floor_angle_deg.to_radians().portable_tan();
         let independent = std::f64::consts::PI / 64. * (t + 1. / t);
         assert!(witness.positive_gradient_dot[0] > 0.);
         assert!(

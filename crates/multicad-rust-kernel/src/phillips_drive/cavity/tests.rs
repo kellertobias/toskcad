@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 
 pub(super) fn cavity(index: usize) -> Cavity {
     let (spec, domain) = crate::phillips_drive::test_fixture(index);
@@ -8,16 +9,16 @@ pub(super) fn oracle(s: Spec, depth: f64) -> f64 {
     let a = s.outer_flank_angle_deg.to_radians();
     let c = s.floor_angle_deg.to_radians();
     let r = s.mouth_radius_mm;
-    let join = r * (1. - a.sin());
-    let flank = (s.mouth_diameter_mm - s.g_diameter_mm) / (2. * a.tan());
-    let tip = flank + s.g_diameter_mm / 2. * c.tan();
+    let join = r * (1. - a.portable_sin());
+    let flank = (s.mouth_diameter_mm - s.g_diameter_mm) / (2. * a.portable_tan());
+    let tip = flank + s.g_diameter_mm / 2. * c.portable_tan();
     if depth <= join {
-        s.mouth_diameter_mm / 2. + r * (1. - a.sin()) / a.cos()
+        s.mouth_diameter_mm / 2. + r * (1. - a.portable_sin()) / a.portable_cos()
             - (r * r - (depth - r).powi(2)).max(0.).sqrt()
     } else if depth <= flank {
-        s.mouth_diameter_mm / 2. - depth * a.tan()
+        s.mouth_diameter_mm / 2. - depth * a.portable_tan()
     } else {
-        ((tip - depth) / c.tan()).max(0.)
+        ((tip - depth) / c.portable_tan()).max(0.)
     }
 }
 #[test]

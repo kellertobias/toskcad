@@ -25,7 +25,7 @@ fn subtract(a: Point, b: Point) -> Point {
 }
 
 fn norm([x, y, z]: Point) -> f64 {
-    x.hypot(y).hypot(z)
+    x.portable_hypot(y).portable_hypot(z)
 }
 
 impl Solid {

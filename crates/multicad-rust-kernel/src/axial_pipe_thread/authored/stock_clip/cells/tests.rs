@@ -85,7 +85,7 @@ fn actual_both_pipe_sizes_and_scales_keep_closed_source_quality_stock_and_volume
                 assert_eq!(candidate.connectivity().vertex_links as usize, count);
                 assert_eq!(t, 2 * count - 4); // one closed genus-zero indexed shell
                 assert!(candidate.source_distance_mm() <= deflection);
-                assert!(candidate.normal_chord() <= 2. * (angle / 2.).sin());
+                assert!(candidate.normal_chord() <= 2. * (angle / 2.).portable_sin());
                 assert!(
                     candidate.work_used() <= 512_000_000
                         && candidate.retained_budget_bytes() <= 64 * 1024 * 1024
@@ -599,7 +599,7 @@ fn real_npt_allowance_edits_certify_whole_alternate_fans_and_same_owned_arrays()
             .mesh_candidate(q, 512_000_000, 64 * 1024 * 1024, None)
             .unwrap();
         assert!(c.source_distance_mm() <= q.deflection);
-        assert!(c.normal_chord() <= 2. * (q.angle / 2.).sin());
+        assert!(c.normal_chord() <= 2. * (q.angle / 2.).portable_sin());
         assert!(c.connectivity().edge_pairs > 0 && c.connectivity().vertex_links > 0);
         assert_eq!(*plan.source().source(), source);
         // Real public work frontier: prerequisite, literal vertices and the

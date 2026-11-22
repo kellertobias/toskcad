@@ -2,6 +2,7 @@
 use super::paths::{Lift, ProfilePath, dot3};
 use super::prism::{Band, Prism};
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{normal_sweep, spur_gear::Edge};
 use std::f64::consts::{PI, TAU};
 
@@ -52,7 +53,7 @@ fn cylinder(origin: P3, axes: [P3; 3], axis: [f64; 2]) -> Prism {
 }
 
 fn polar(angle: f64) -> P2 {
-    [RADIUS * angle.cos(), RADIUS * angle.sin()]
+    [RADIUS * angle.portable_cos(), RADIUS * angle.portable_sin()]
 }
 
 /// An arc of the rim from `from` sweeping by `sweep`, as a planar arc edge.
@@ -117,13 +118,14 @@ fn conics(vectors: &[ProjectedVector], role: VectorRole) -> Vec<Conic> {
 /// Whether a paper point lies strictly inside the trim of a published arc.
 fn within((center, u, v, major, minor, [start, end]): Conic, p: P2) -> bool {
     let d = [p[0] - center[0], p[1] - center[1]];
-    let angle = ((d[0] * v[0] + d[1] * v[1]) / minor).atan2((d[0] * u[0] + d[1] * u[1]) / major);
+    let angle =
+        ((d[0] * v[0] + d[1] * v[1]) / minor).portable_atan2((d[0] * u[0] + d[1] * u[1]) / major);
     let travel = (angle - start).rem_euclid(TAU);
     travel > 1e-9 && travel < end - start - 1e-9
 }
 
 fn at((center, u, v, major, minor, _): Conic, angle: f64) -> P2 {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     [
         center[0] + major * cos * u[0] + minor * sin * v[0],
         center[1] + major * cos * u[1] + minor * sin * v[1],
@@ -137,7 +139,7 @@ fn assert_once(arcs: &[Conic], center: P2, major: f64, minor: f64, sweep: f64, l
         .iter()
         .copied()
         .filter(|c| {
-            (c.0[0] - center[0]).hypot(c.0[1] - center[1]) < 1e-9
+            (c.0[0] - center[0]).portable_hypot(c.0[1] - center[1]) < 1e-9
                 && (c.3 - major).abs() < 1e-9
                 && (c.4 - minor).abs() < 1e-9
         })
@@ -187,9 +189,9 @@ fn one_circle_in_several_parametrisations_publishes_once() {
 #[test]
 fn one_ellipse_from_two_members_publishes_once() {
     let tilt = 0.6_f64;
-    let (s, c) = tilt.sin_cos();
+    let (s, c) = tilt.portable_sin_cos();
     let axes = [[1., 0., 0.], [0., c, s], [0., -s, c]];
-    let (st, ct) = 0.7_f64.sin_cos();
+    let (st, ct) = 0.7_f64.portable_sin_cos();
     let turned = [
         std::array::from_fn(|i| ct * axes[0][i] + st * axes[1][i]),
         std::array::from_fn(|i| -st * axes[0][i] + ct * axes[1][i]),
@@ -239,7 +241,7 @@ fn thread_material_along_lines_agrees_with_source_containment() {
                     major_radius_mm: 3.,
                     pitch_mm: 1.,
                     length_mm: 6.6,
-                    depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+                    depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().portable_tan()) - root,
                     crest_width_mm: 0.125,
                     lower_flank_deg: 30.,
                     upper_flank_deg: 30.,
@@ -258,14 +260,14 @@ fn thread_material_along_lines_agrees_with_source_containment() {
         );
         let p = 1.27;
         let a = 27.5_f64.to_radians();
-        let r = p * a.cos() / (12. * (1. - a.sin()));
+        let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
         solids.push(
             Solid::rust_rounded_thread(
                 Spec {
                     major_radius_mm: 3.175,
                     pitch_mm: p,
                     length_mm: 3.7 * p,
-                    depth_mm: p / (3. * a.tan()),
+                    depth_mm: p / (3. * a.portable_tan()),
                     crest_radius_mm: r,
                     root_radius_mm: r,
                     flank_angle_deg: 27.5,
@@ -302,8 +304,8 @@ fn thread_material_along_lines_agrees_with_source_containment() {
             let d = d.map(|v: f64| v / length.sqrt());
             for offset in [0., 1.3, 2.4, 2.9] {
                 let start = world([
-                    offset * (k as f64 * 0.7).cos(),
-                    offset * (k as f64 * 0.7).sin(),
+                    offset * (k as f64 * 0.7).portable_cos(),
+                    offset * (k as f64 * 0.7).portable_sin(),
                     2.,
                 ]);
                 lines.push((
@@ -362,14 +364,14 @@ fn rounded_thread_outlines_satisfy_the_contour_condition() {
     use multicad_rust_kernel::rounded_thread::Spec;
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     for left_hand in [false, true] {
         let solid = Solid::rust_rounded_thread(
             Spec {
                 major_radius_mm: 3.175,
                 pitch_mm: p,
                 length_mm: 3.7 * p,
-                depth_mm: p / (3. * a.tan()),
+                depth_mm: p / (3. * a.portable_tan()),
                 crest_radius_mm: r,
                 root_radius_mm: r,
                 flank_angle_deg: 27.5,
@@ -408,9 +410,9 @@ fn rounded_thread_outlines_satisfy_the_contour_condition() {
                     let w: [f64; 3] = std::array::from_fn(|i| {
                         frame.origin[i] + (0..3).map(|j| view.axes[j][i] * q[j]).sum::<f64>()
                     });
-                    let theta = w[1].atan2(w[0]);
+                    let theta = w[1].portable_atan2(w[0]);
                     let radius = thread.radius(theta, w[2]);
-                    assert!((w[0].hypot(w[1]) - radius).abs() < 1e-9, "{w:?}");
+                    assert!((w[0].portable_hypot(w[1]) - radius).abs() < 1e-9, "{w:?}");
                     let normal = thread.normal(theta, w[2]);
                     let dot: f64 = (0..3).map(|i| normal[i] * toward[i]).sum();
                     assert!(dot.abs() < 1e-7, "{w:?}: {dot}");
@@ -434,13 +436,13 @@ fn thread_visibility_agrees_with_source_containment_marching() {
     let policy = GeometryPolicy::default();
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     let rounded = Solid::rust_rounded_thread(
         Spec {
             major_radius_mm: 3.175,
             pitch_mm: p,
             length_mm: 3.7 * p,
-            depth_mm: p / (3. * a.tan()),
+            depth_mm: p / (3. * a.portable_tan()),
             crest_radius_mm: r,
             root_radius_mm: r,
             flank_angle_deg: 27.5,
@@ -458,7 +460,7 @@ fn thread_visibility_agrees_with_source_containment_marching() {
             major_radius_mm: 3.,
             pitch_mm: 1.,
             length_mm: 6.6,
-            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().portable_tan()) - root,
             crest_width_mm: 0.125,
             lower_flank_deg: 30.,
             upper_flank_deg: 30.,
@@ -528,7 +530,8 @@ fn thread_visibility_agrees_with_source_containment_marching() {
                         let along = (((point[0] - a0) * dx + (point[1] - a1) * dy)
                             / (dx * dx + dy * dy).max(1e-300))
                         .clamp(0., 1.);
-                        (point[0] - a0 - along * dx).hypot(point[1] - a1 - along * dy) < 0.02
+                        (point[0] - a0 - along * dx).portable_hypot(point[1] - a1 - along * dy)
+                            < 0.02
                     })
                 })
             };
@@ -589,13 +592,13 @@ fn thread_sections_lie_on_the_source_boundary() {
     let policy = GeometryPolicy::default();
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     let rounded = Solid::rust_rounded_thread(
         Spec {
             major_radius_mm: 3.175,
             pitch_mm: p,
             length_mm: 3.7 * p,
-            depth_mm: p / (3. * a.tan()),
+            depth_mm: p / (3. * a.portable_tan()),
             crest_radius_mm: r,
             root_radius_mm: r,
             flank_angle_deg: 27.5,
@@ -613,7 +616,7 @@ fn thread_sections_lie_on_the_source_boundary() {
             major_radius_mm: 3.,
             pitch_mm: 1.,
             length_mm: 6.6,
-            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().portable_tan()) - root,
             crest_width_mm: 0.125,
             lower_flank_deg: 30.,
             upper_flank_deg: 30.,
@@ -698,8 +701,8 @@ fn thread_sections_lie_on_the_source_boundary() {
                         frame.origin[i] + view.axes[0][i] * q[0] + view.axes[1][i] * q[1]
                     });
                     let [x, y, z] = w;
-                    let radius = x.hypot(y);
-                    let theta = y.atan2(x);
+                    let radius = x.portable_hypot(y);
+                    let theta = y.portable_atan2(x);
                     let on = |value: f64| value.abs() < 1e-6;
                     let ok = if label.ends_with("screw") {
                         let solid = if label == "socket screw" {
@@ -714,8 +717,8 @@ fn thread_sections_lie_on_the_source_boundary() {
                         let dot =
                             |a: [f64; 3]| a.iter().zip(offset).map(|(p, q)| p * q).sum::<f64>();
                         let [x, y, z] = [dot(placed.u), dot(placed.v), dot(normal)];
-                        let radius = x.hypot(y);
-                        let theta = y.atan2(x);
+                        let radius = x.portable_hypot(y);
+                        let theta = y.portable_atan2(x);
                         let thread = source.thread();
                         let length = thread.spec().length_mm;
                         let (top, seat) = (source.head_top_z(), source.head_seat_z());
@@ -931,7 +934,7 @@ fn two_start(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
             major_radius_mm: 3.,
             pitch_mm: 0.5,
             length_mm: 6.6,
-            depth_mm: (0.5 - 0.0625) / (2. * 30_f64.to_radians().tan()) - root,
+            depth_mm: (0.5 - 0.0625) / (2. * 30_f64.to_radians().portable_tan()) - root,
             crest_width_mm: 0.0625,
             lower_flank_deg: 30.,
             upper_flank_deg: 30.,
@@ -953,13 +956,13 @@ fn two_start(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
 fn rounded_bore(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     crate::Solid::rust_rounded_thread_bore(
         multicad_rust_kernel::rounded_thread::Spec {
             major_radius_mm: 3.175,
             pitch_mm: p,
             length_mm: 3.7 * p,
-            depth_mm: p / (3. * a.tan()),
+            depth_mm: p / (3. * a.portable_tan()),
             crest_radius_mm: r,
             root_radius_mm: r,
             flank_angle_deg: 27.5,
@@ -1060,7 +1063,7 @@ fn contains(solid: &crate::Solid, w: P3) -> bool {
             let local = [frame.u, frame.v, frame.normal()].map(|axis| dot3(axis, offset));
             let stock = data.material.stock().circle().radius().as_f64();
             let length = data.material.cavity().full_length_mm();
-            local[0].hypot(local[1]) < stock
+            local[0].portable_hypot(local[1]) < stock
                 && local[2] > 0.
                 && local[2] < length
                 && !data.material.cavity().contains_void(local, 0.)
@@ -1082,13 +1085,13 @@ fn thread_occluding_contours_agree_with_a_depth_map_oracle() {
     let bore = rounded_bore(true, PlaneFrame::default());
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     let rounded = crate::Solid::rust_rounded_thread(
         multicad_rust_kernel::rounded_thread::Spec {
             major_radius_mm: 3.175,
             pitch_mm: p,
             length_mm: 3.7 * p,
-            depth_mm: p / (3. * a.tan()),
+            depth_mm: p / (3. * a.portable_tan()),
             crest_radius_mm: r,
             root_radius_mm: r,
             flank_angle_deg: 27.5,
@@ -1178,7 +1181,7 @@ fn thread_occluding_contours_agree_with_a_depth_map_oracle() {
                             let along = (((x - a0) * dx + (y - a1) * dy)
                                 / (dx * dx + dy * dy).max(1e-300))
                             .clamp(0., 1.);
-                            (x - a0 - along * dx).hypot(y - a1 - along * dy) < 2.5 * pixel
+                            (x - a0 - along * dx).portable_hypot(y - a1 - along * dy) < 2.5 * pixel
                         })
                     })
             };
@@ -1222,7 +1225,7 @@ fn chamfered(left_hand: bool, terminal: bool, frame: PlaneFrame) -> crate::Solid
             major_radius_mm: 3.,
             pitch_mm: 1.,
             length_mm: 6.6,
-            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().portable_tan()) - root,
             crest_width_mm: 0.125,
             lower_flank_deg: 30.,
             upper_flank_deg: 30.,
@@ -1253,7 +1256,7 @@ fn screw(socket: bool, left_hand: bool, frame: PlaneFrame) -> crate::Solid {
             major_radius_mm: 3.,
             pitch_mm: 1.,
             length_mm: 6.6,
-            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().portable_tan()) - root,
             crest_width_mm: 0.125,
             lower_flank_deg: 30.,
             upper_flank_deg: 30.,
@@ -1313,7 +1316,7 @@ fn thread_near_axis_side_cuts_close_with_the_grid_area() {
     ] {
         for offset in [1e-6_f64, 1e-4, 1e-3, 1e-2] {
             for angle in [0., 1., 2.6] {
-                let (sin, cos) = f64::sin_cos(angle);
+                let (sin, cos) = f64::portable_sin_cos(angle);
                 let frame = PlaneFrame {
                     origin: [-offset * sin, offset * cos, center],
                     u: [cos, sin, 0.],
@@ -1386,13 +1389,13 @@ fn rounded(left_hand: bool, frame: PlaneFrame) -> crate::Solid {
     use multicad_rust_kernel::rounded_thread::Spec;
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     crate::Solid::rust_rounded_thread(
         Spec {
             major_radius_mm: 3.175,
             pitch_mm: p,
             length_mm: 3.7 * p,
-            depth_mm: p / (3. * a.tan()),
+            depth_mm: p / (3. * a.portable_tan()),
             crest_radius_mm: r,
             root_radius_mm: r,
             flank_angle_deg: 27.5,

@@ -7,6 +7,7 @@ use multicad_core::{
     project_file::{self, ProjectFile},
     symbols::{self, SymbolAuthorRequest, SymbolKind},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
@@ -63,17 +64,23 @@ fn declared_cones_and_both_custom_root_branches_have_independent_spherical_and_b
         assert!(geometry.rotary().is_none() && geometry.rack().is_none());
         let r = geometry.bevel().unwrap();
         branches.push(r.root_branch);
-        let delta = (teeth / mate).atan();
+        let delta = (teeth / mate).portable_atan();
         let distance = (teeth * teeth + mate * mate).sqrt() / 2.;
         near(r.pitch_cone_angle_rad, delta);
         near(r.outer_cone_distance_mm, distance);
         near(r.inner_cone_distance_mm, distance - 3.);
         near(
             r.base_cone_angle_rad,
-            (delta.sin() * 20_f64.to_radians().cos()).asin(),
+            (delta.portable_sin() * 20_f64.to_radians().portable_cos()).portable_asin(),
         );
-        near(r.tip_cone_angle_rad, delta + (1. / distance).atan());
-        near(r.root_cone_angle_rad, delta - (1.25 / distance).atan());
+        near(
+            r.tip_cone_angle_rad,
+            delta + (1. / distance).portable_atan(),
+        );
+        near(
+            r.root_cone_angle_rad,
+            delta - (1.25 / distance).portable_atan(),
+        );
         near(r.nominal_tooth_thickness_mm, PI / 2.);
         near(r.physical_tooth_thickness_mm, PI / 2. - 0.05);
         for (radius, axial, station) in [
@@ -82,10 +89,16 @@ fn declared_cones_and_both_custom_root_branches_have_independent_spherical_and_b
             (r.toe_root_radius_mm, r.toe_root_axial_mm, distance - 3.),
             (r.toe_tip_radius_mm, r.toe_tip_axial_mm, distance - 3.),
         ] {
-            near(radius * delta.sin() + axial * delta.cos(), station);
+            near(
+                radius * delta.portable_sin() + axial * delta.portable_cos(),
+                station,
+            );
         }
-        near(r.heel_tip_radius_mm, teeth / 2. + delta.cos());
-        near(r.heel_root_radius_mm, teeth / 2. - 1.25 * delta.cos());
+        near(r.heel_tip_radius_mm, teeth / 2. + delta.portable_cos());
+        near(
+            r.heel_root_radius_mm,
+            teeth / 2. - 1.25 * delta.portable_cos(),
+        );
         for direction in [
             r.root_center_direction,
             r.flank_tangent_direction,
@@ -95,19 +108,22 @@ fn declared_cones_and_both_custom_root_branches_have_independent_spherical_and_b
         }
         near(
             dot(r.root_center_direction, r.flank_tangent_direction),
-            r.root_rounding_angle_rad.cos(),
+            r.root_rounding_angle_rad.portable_cos(),
         );
         near(
             dot(r.root_center_direction, r.root_tangent_direction),
-            r.root_rounding_angle_rad.cos(),
+            r.root_rounding_angle_rad.portable_cos(),
         );
-        near(r.root_tangent_direction[2].acos(), r.root_cone_angle_rad);
         near(
-            r.root_center_direction[2].acos(),
+            r.root_tangent_direction[2].portable_acos(),
+            r.root_cone_angle_rad,
+        );
+        near(
+            r.root_center_direction[2].portable_acos(),
             r.root_cone_angle_rad + r.root_rounding_angle_rad,
         );
         near(r.root_fillet_radius_mm, 0.2);
-        near(r.root_rounding_angle_rad.sin() * distance, 0.2);
+        near(r.root_rounding_angle_rad.portable_sin() * distance, 0.2);
         assert!(r.toe_root_radius_mm - r.bore_radius_mm >= r.minimum_wall_mm);
         assert!(r.flank_start_gamma_rad < delta);
     }

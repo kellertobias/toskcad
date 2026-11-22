@@ -3,6 +3,7 @@
 //! sections evaluate the box planes and the tool cylinder directly.
 use super::paths::{Lift, ProfilePath, Segment, add, dot3, scaled};
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{normal_sweep, oblique_bore::Support, spur_gear::Edge};
 use std::f64::consts::{PI, TAU};
 
@@ -35,16 +36,16 @@ fn sub(a: P3, b: P3) -> P3 {
 /// paper image turns back when the arc is seen edge-on.
 fn arcs(lift: Lift, [from, to]: [f64; 2]) -> Vec<Arc<dyn Path>> {
     let [x, y] = [[lift.x[0], lift.x[1]], [lift.y[0], lift.y[1]]];
-    let scale = (x[0].hypot(x[1])).max(y[0].hypot(y[1]));
+    let scale = (x[0].portable_hypot(x[1])).max(y[0].portable_hypot(y[1]));
     let straight = (x[0] * y[1] - x[1] * y[0]).abs() <= 1e-12 * scale * scale;
     let mut stops = vec![from];
     if straight {
-        let d = if x[0].hypot(x[1]) >= y[0].hypot(y[1]) {
+        let d = if x[0].portable_hypot(x[1]) >= y[0].portable_hypot(y[1]) {
             x
         } else {
             y
         };
-        let turn = (y[0] * d[0] + y[1] * d[1]).atan2(x[0] * d[0] + x[1] * d[1]);
+        let turn = (y[0] * d[0] + y[1] * d[1]).portable_atan2(x[0] * d[0] + x[1] * d[1]);
         let [lo, hi] = [from.min(to), from.max(to)];
         let mut k = ((lo - turn) / PI).ceil();
         while turn + k * PI < hi {
@@ -209,7 +210,7 @@ impl Member for Bore {
         // to the sight, over the part of each generator inside the stock.
         let w = self.tool[2];
         let side = [w[1], -w[0], 0.];
-        let length = side[0].hypot(side[1]);
+        let length = side[0].portable_hypot(side[1]);
         if length > 1e-9 {
             for sign in [-1., 1.] {
                 let start = add(self.base, scaled(side, sign * self.radius / length));
@@ -354,10 +355,11 @@ impl Member for Bore {
         // The wall between its caps and inside the stock.
         if w[2].abs() <= 1e-12 {
             let [p, q] = [self.radius * e1[2], self.radius * e2[2]];
-            let reach = (depth - self.base[2]) / p.hypot(q);
+            let reach = (depth - self.base[2]) / p.portable_hypot(q);
             if reach.abs() < 1. {
                 for sign in [-1., 1.] {
-                    let (sin, cos) = (q.atan2(p) + sign * reach.acos()).sin_cos();
+                    let (sin, cos) =
+                        (q.portable_atan2(p) + sign * reach.portable_acos()).portable_sin_cos();
                     let start = add(
                         self.base,
                         add(scaled(e1, self.radius * cos), scaled(e2, self.radius * sin)),
@@ -382,7 +384,7 @@ impl Member for Bore {
             y: scaled(sub(e2, scaled(w, e2[2] / w[2])), self.radius),
         };
         let at = |angle: f64| {
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = angle.portable_sin_cos();
             add(lift.origin, add(scaled(lift.x, cos), scaled(lift.y, sin)))
         };
         // Each limit is `a + b cos + c sin <= 0` along the wall curve.
@@ -402,10 +404,12 @@ impl Member for Bore {
         }
         let mut stops = vec![0., TAU];
         for [a, b, c] in &limits {
-            let reach = -a / b.hypot(*c);
+            let reach = -a / b.portable_hypot(*c);
             if reach.abs() < 1. {
                 for sign in [-1., 1.] {
-                    stops.push((c.atan2(*b) + sign * reach.acos()).rem_euclid(TAU));
+                    stops.push(
+                        (c.portable_atan2(*b) + sign * reach.portable_acos()).rem_euclid(TAU),
+                    );
                 }
             }
         }
@@ -413,7 +417,7 @@ impl Member for Bore {
         let mut kept: Vec<[f64; 2]> = Vec::new();
         for pair in stops.windows(2) {
             let mid = 0.5 * (pair[0] + pair[1]);
-            let (sin, cos) = mid.sin_cos();
+            let (sin, cos) = mid.portable_sin_cos();
             if pair[1] - pair[0] > 1e-12
                 && limits.iter().all(|[a, b, c]| a + b * cos + c * sin < 0.)
             {

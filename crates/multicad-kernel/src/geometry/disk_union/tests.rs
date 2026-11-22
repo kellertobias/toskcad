@@ -27,8 +27,8 @@ fn rod(center: [f64; 2], radius: f64, z: f64, height: f64) -> Solid {
 
 /// Area common to two disks whose centres are `d` apart.
 fn lens(r1: f64, r2: f64, d: f64) -> f64 {
-    let a = r1 * r1 * ((d * d + r1 * r1 - r2 * r2) / (2. * d * r1)).acos();
-    let b = r2 * r2 * ((d * d + r2 * r2 - r1 * r1) / (2. * d * r2)).acos();
+    let a = r1 * r1 * ((d * d + r1 * r1 - r2 * r2) / (2. * d * r1)).portable_acos();
+    let b = r2 * r2 * ((d * d + r2 * r2 - r1 * r1) / (2. * d * r2)).portable_acos();
     let k = ((-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2)).sqrt();
     a + b - 0.5 * k
 }
@@ -45,7 +45,7 @@ fn join(a: &Solid, b: &Solid) -> Solid {
 fn a_hub_takes_its_lobes_one_at_a_time_as_one_exact_profile() {
     let mut knob = rod([12., 30.], 10., 20., 9.);
     for n in 0..8 {
-        let (sin, cos) = (n as f64 * FRAC_PI_4).sin_cos();
+        let (sin, cos) = (n as f64 * FRAC_PI_4).portable_sin_cos();
         let lobe = rod([12. + 9. * cos, 30. + 9. * sin], 2., 20., 9.);
         knob = if n % 2 == 0 {
             join(&knob, &lobe)
@@ -69,7 +69,7 @@ fn a_hub_takes_its_lobes_one_at_a_time_as_one_exact_profile() {
 fn a_ring_of_disks_encloses_a_hole() {
     let mut ring = rod([3., 0.], 2., 0., 5.);
     for n in 1..6 {
-        let (sin, cos) = (n as f64 * PI / 3.).sin_cos();
+        let (sin, cos) = (n as f64 * PI / 3.).portable_sin_cos();
         ring = join(&ring, &rod([3. * cos, 3. * sin], 2., 0., 5.));
     }
     // Neighbours overlap in a lens; every other pair is apart.

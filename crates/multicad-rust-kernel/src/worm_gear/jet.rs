@@ -1,4 +1,5 @@
 //! First-order forward derivatives for the generating-envelope formulas.
+use multicad_precision::PortableMath as _;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 pub(crate) trait Real:
@@ -25,11 +26,11 @@ impl Real for f64 {
     }
 
     fn asin(self) -> Self {
-        f64::asin(self)
+        f64::portable_asin(self)
     }
 
     fn sin_cos(self) -> (Self, Self) {
-        f64::sin_cos(self)
+        f64::portable_sin_cos(self)
     }
 }
 
@@ -117,13 +118,13 @@ impl Real for Jet {
 
     fn asin(self) -> Self {
         self.chain(
-            self.value.asin(),
+            self.value.portable_asin(),
             1. / ((1. - self.value) * (1. + self.value)).sqrt(),
         )
     }
 
     fn sin_cos(self) -> (Self, Self) {
-        let (s, c) = self.value.sin_cos();
+        let (s, c) = self.value.portable_sin_cos();
         (self.chain(s, c), self.chain(c, -s))
     }
 }
@@ -143,12 +144,12 @@ mod tests {
         let inner = a * b - b / a + 3.;
         let da = (b + b / (a * a)) / (2. * inner.sqrt()) + b / (1. - (a * b).powi(2)).sqrt();
         let db = (a - 1. / a) / (2. * inner.sqrt()) + a / (1. - (a * b).powi(2)).sqrt();
-        assert!((f.value - (inner.sqrt() + (a * b).asin())).abs() < 1e-14);
+        assert!((f.value - (inner.sqrt() + (a * b).portable_asin())).abs() < 1e-14);
         assert!((f.d[0] - da).abs() < 1e-12 && (f.d[1] - db).abs() < 1e-12);
-        let dg = (2. * a * b).cos();
+        let dg = (2. * a * b).portable_cos();
         assert!((g.d[0] - (b * dg + 1.)).abs() < 1e-12 && (g.d[1] - a * dg).abs() < 1e-12);
         assert_eq!(<f64 as Real>::constant(2.).sqrt(), 2_f64.sqrt());
-        assert_eq!(Real::asin(0.5_f64), 0.5_f64.asin());
-        assert_eq!(Real::sin_cos(0.5_f64), 0.5_f64.sin_cos());
+        assert_eq!(Real::asin(0.5_f64), 0.5_f64.portable_asin());
+        assert_eq!(Real::sin_cos(0.5_f64), 0.5_f64.portable_sin_cos());
     }
 }

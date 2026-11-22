@@ -126,7 +126,7 @@ pub fn certify_seated(
     let theta =
         ((z - t.spec().crest_width_mm / 4.) / t.helical_rate()).rem_euclid(std::f64::consts::TAU);
     let r = s.bore_radius_mm.midpoint(t.spec().major_radius_mm);
-    let center = [r * theta.cos(), r * theta.sin(), z];
+    let center = [r * theta.portable_cos(), r * theta.portable_sin(), z];
     let mut half = ((t.spec().major_radius_mm - s.bore_radius_mm) / 32.)
         .min(t.spec().crest_width_mm / 32.)
         .min(t.spec().length_mm / 32.)

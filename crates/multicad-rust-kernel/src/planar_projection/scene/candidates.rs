@@ -148,7 +148,9 @@ impl RimCandidate {
 impl SpatialRimCandidate {
     pub(super) fn spatial(self) -> Result<Rim, ProjectionError> {
         let ellipse = self.ellipse;
-        if (ellipse.minor.hypot(self.depth_sine) - ellipse.major).abs() > 1e-9 * ellipse.major {
+        if (ellipse.minor.portable_hypot(self.depth_sine) - ellipse.major).abs()
+            > 1e-9 * ellipse.major
+        {
             return Err(ProjectionError::Invalid);
         }
         SpatialEllipseCandidate {
@@ -243,7 +245,7 @@ pub(super) fn apply_openings(
             .get(face_index)
             .ok_or(ProjectionError::Invalid)?;
         if face.normal[2] <= 0.
-            || face.normal[0].hypot(face.normal[1]) > 32. * f64::EPSILON
+            || face.normal[0].portable_hypot(face.normal[1]) > 32. * f64::EPSILON
             || !bounded(centers.into_iter().flatten())
             || !radius(r)
         {
@@ -276,7 +278,7 @@ pub(super) fn apply_openings(
             CircularOpeningEnd::OppositeFace(rear) => {
                 let face = stock.faces.get(rear).ok_or(ProjectionError::Invalid)?;
                 if face.normal[2] >= 0.
-                    || face.normal[0].hypot(face.normal[1]) > 32. * f64::EPSILON
+                    || face.normal[0].portable_hypot(face.normal[1]) > 32. * f64::EPSILON
                     || face.point[2] >= near
                 {
                     return Err(ProjectionError::Invalid);

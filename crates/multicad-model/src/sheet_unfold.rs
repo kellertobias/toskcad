@@ -14,6 +14,7 @@ use multicad_core::{
     references::ReferenceFrame,
 };
 use multicad_kernel::CurvedEdge2d;
+use multicad_precision::PortableMath as _;
 
 /// One bend line of a developed pattern.
 #[derive(Clone, Debug, PartialEq)]
@@ -233,7 +234,7 @@ impl Model {
                 let [z0, z1] = b.record.zone_mm;
                 let da = (a0 - f.width).max(-a1).max(0.);
                 let dz = (z0 - o1).max(o0 - z1).max(0.);
-                let distance = da.hypot(dz);
+                let distance = da.portable_hypot(dz);
                 let limit = reach(b.record.inside_radius_mm);
                 if distance < limit {
                     let on = match face {
@@ -355,8 +356,8 @@ impl Model {
     }
 }
 fn planar_arc(a: [f64; 2], b: [f64; 2], center: [f64; 2], clockwise: bool) -> PlanarEdge {
-    let start = (a[1] - center[1]).atan2(a[0] - center[0]);
-    let end = (b[1] - center[1]).atan2(b[0] - center[0]);
+    let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
+    let end = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
     let tau = std::f64::consts::TAU;
     let sweep_rad = if clockwise {
         -(start - end).rem_euclid(tau)

@@ -1,5 +1,6 @@
 use super::*;
 use crate::{authored_flat_thread::SourceOptions, helical_thread::Spec as ThreadSpec};
+use multicad_precision::PortableMath as _;
 use std::cell::Cell;
 pub(super) fn fixture(left: bool, nb: bool) -> Spec {
     // Actual default_custom_connection_hanger_bolt dimensions and historical
@@ -66,7 +67,7 @@ fn independent_metric_volume(t: Thread) -> f64 {
                 (root.center_radius * root.center_radius + root.radius * root.radius) * x
                     - x.powi(3) / 3.
                     - root.center_radius
-                        * (x * h + root.radius * root.radius * (x / root.radius).asin())
+                        * (x * h + root.radius * root.radius * (x / root.radius).portable_asin())
             };
             primitive(c) - primitive(a)
         } else {
@@ -182,7 +183,7 @@ fn whole_boxes_respect_real_threads_plain_shoulder_joins_tips_and_original_metri
             let radius = h.metric().radius(theta, local);
             for (offset, expected) in [(-0.005, Inside), (0.005, Outside)] {
                 let r = radius + offset;
-                let (x, y) = (r * theta.cos(), r * theta.sin());
+                let (x, y) = (r * theta.portable_cos(), r * theta.portable_sin());
                 assert_eq!(h.classify_box([[x, x], [y, y], [z, z]], None), Ok(expected));
             }
         }
@@ -322,8 +323,14 @@ fn directed_box_transfers_keep_quadrants_and_plain_and_metric_boundary_ambiguity
         assert_eq!(
             h.classify_box(
                 [
-                    [(r - 0.01) * 0.2_f64.cos(), (r + 0.01) * 0.2_f64.cos()],
-                    [(r - 0.01) * 0.2_f64.sin(), (r + 0.01) * 0.2_f64.sin()],
+                    [
+                        (r - 0.01) * 0.2_f64.portable_cos(),
+                        (r + 0.01) * 0.2_f64.portable_cos()
+                    ],
+                    [
+                        (r - 0.01) * 0.2_f64.portable_sin(),
+                        (r + 0.01) * 0.2_f64.portable_sin()
+                    ],
                     [z, z]
                 ],
                 None
@@ -331,8 +338,8 @@ fn directed_box_transfers_keep_quadrants_and_plain_and_metric_boundary_ambiguity
             Ok(UnresolvedBoundary)
         );
         for [x, y] in [[-1_f64, 0.2], [-1., -0.2], [0., 1.], [0., -1.]] {
-            let theta = y.atan2(x);
-            let norm = x.hypot(y);
+            let theta = y.portable_atan2(x);
+            let norm = x.portable_hypot(y);
             let z = 1.23;
             let rate =
                 (if left { -1. } else { 1. }) * h.wood().spec().pitch_mm / std::f64::consts::TAU;

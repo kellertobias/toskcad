@@ -104,7 +104,8 @@ impl<'a> Patch<'a> {
                 1.
             } else if self.band == 2 {
                 w.charge(8)?;
-                0.5 + ((i as f64 / n as f64 - 0.5) * (2. * std::f64::consts::PI / 3.)).sin()
+                0.5 + ((i as f64 / n as f64 - 0.5) * (2. * std::f64::consts::PI / 3.))
+                    .portable_sin()
                     / 3_f64.sqrt()
             } else {
                 i as f64 / n as f64

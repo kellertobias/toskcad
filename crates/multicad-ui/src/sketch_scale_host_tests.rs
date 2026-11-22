@@ -223,7 +223,11 @@ fn canvas_tool_first_shift_targets_uniform_option_copy_is_atomic_and_reopens_exa
     );
     // Adding a target retains the first target's editable pivot controls.
     let start = h.point([15., 15., 15.]);
-    h.drag(start, start + Vec2::new((2f32.ln()) * 100., 0.), true);
+    h.drag(
+        start,
+        start + Vec2::new((2f32.portable_ln()) * 100., 0.),
+        true,
+    );
     h.finish(revision);
     assert_eq!(h.editor.camera, camera);
     assert_eq!(h.editor.tree_selection.len(), 2);

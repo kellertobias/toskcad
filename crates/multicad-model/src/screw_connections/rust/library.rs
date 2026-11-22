@@ -157,8 +157,11 @@ pub(super) fn qualify(
                 ));
             }
             let expected = placed_frame(&actual.part, actual.pose);
-            let distance =
-                |a: [f64; 3], b: [f64; 3]| (a[0] - b[0]).hypot(a[1] - b[1]).hypot(a[2] - b[2]);
+            let distance = |a: [f64; 3], b: [f64; 3]| {
+                (a[0] - b[0])
+                    .portable_hypot(a[1] - b[1])
+                    .portable_hypot(a[2] - b[2])
+            };
             let residual = distance(frame.origin, expected.origin_mm)
                 + nut.across_flats_mm() / 3_f64.sqrt()
                     * (distance(frame.u, expected.u) + distance(frame.v, expected.v))

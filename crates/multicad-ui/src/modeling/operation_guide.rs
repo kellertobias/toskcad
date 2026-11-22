@@ -3,6 +3,7 @@
 //! positions handles only and never becomes manufacturing geometry.
 use super::gizmo::math::{Point, add, cross, dot, mul, sub};
 use multicad_core::{document::EntityId, sketch::Frame};
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GuideLine {
@@ -60,8 +61,8 @@ impl RevolveRing {
     ) -> Option<Self> {
         let frame = guide.frame;
         let axis = unit(add(
-            mul(frame.u, bearing_rad.cos()),
-            mul(frame.v, bearing_rad.sin()),
+            mul(frame.u, bearing_rad.portable_cos()),
+            mul(frame.v, bearing_rad.portable_sin()),
         ))?;
         let on_axis = frame.point(origin);
         let anchor = frame.point(guide.anchor);
@@ -83,8 +84,8 @@ impl RevolveRing {
         add(
             self.center,
             add(
-                mul(self.radius, t.cos()),
-                mul(cross(self.axis, self.radius), t.sin()),
+                mul(self.radius, t.portable_cos()),
+                mul(cross(self.axis, self.radius), t.portable_sin()),
             ),
         )
     }
@@ -96,7 +97,7 @@ impl RevolveRing {
         if dot(p, p) < 1e-12 {
             return None;
         }
-        Some(dot(self.axis, cross(self.radius, p)).atan2(dot(self.radius, p)))
+        Some(dot(self.axis, cross(self.radius, p)).portable_atan2(dot(self.radius, p)))
     }
 }
 

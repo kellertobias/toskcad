@@ -151,7 +151,7 @@ impl AnalyticFace {
                         let ends = [local(a)?, local(b)?];
                         if major == minor {
                             let [x, y] = sub(ends[0], center);
-                            let start = y.atan2(x);
+                            let start = y.portable_atan2(x);
                             let sweep = arc.sweep_rad() * dot(ellipse.normal(), normal).signum();
                             arc_pieces(center, major * normal[2], start, sweep, ends, &mut trims);
                         } else {
@@ -171,7 +171,7 @@ impl AnalyticFace {
                 let next = trims[(i + 1) % count].ends()[0];
                 let end = trims[i].ends()[1];
                 let [x, y] = sub(next, end);
-                if x.hypot(y) > tolerance * normal[2] {
+                if x.portable_hypot(y) > tolerance * normal[2] {
                     return Err(ProjectionError::Invalid);
                 }
                 trims[i].ends_mut()[1] = next;
@@ -259,7 +259,7 @@ impl AnalyticFace {
         {
             return Err(ProjectionError::Invalid);
         }
-        let projected = axis[0].hypot(axis[1]);
+        let projected = axis[0].portable_hypot(axis[1]);
         if projected <= ANGULAR {
             return Ok(None);
         }
@@ -276,7 +276,7 @@ impl AnalyticFace {
             projected,
         ];
         let mut radial_ends = [cap.start_rad(), cap.start_rad() + cap.sweep_rad()].map(|angle| {
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = angle.portable_sin_cos();
             let u = ellipse.major_axis();
             let v = ellipse.minor_axis();
             let radial = std::array::from_fn(|i| cos.mul_add(u[i], sin * v[i]));
@@ -323,7 +323,7 @@ impl AnalyticFace {
                 start
                     .into_iter()
                     .zip(points)
-                    .all(|([x, y], [u, v])| (x - u).hypot(y - v) <= tolerance)
+                    .all(|([x, y], [u, v])| (x - u).portable_hypot(y - v) <= tolerance)
             };
             let middle = radial(ellipse.point_at(end.start_rad() + end.sweep_rad() * 0.5));
             let middle = middle.map(|value| value / radius);
@@ -339,7 +339,7 @@ impl AnalyticFace {
         };
         let (a, lower) = clip(trims[0], 0.)?;
         let (b, upper) = clip(trims[1], height)?;
-        let swing = radius * (upper[1] - lower[1]).hypot(upper[2] - lower[2]);
+        let swing = radius * (upper[1] - lower[1]).portable_hypot(upper[2] - lower[2]);
         if trims[1].is_some() && height - swing <= tolerance {
             return Err(ProjectionError::Invalid);
         }
@@ -454,7 +454,7 @@ fn bounded(point: Point) -> bool {
 }
 
 fn length([x, y, z]: Point) -> f64 {
-    x.hypot(y).hypot(z)
+    x.portable_hypot(y).portable_hypot(z)
 }
 
 fn unit(vector: Point) -> Point {
@@ -509,7 +509,7 @@ fn arc_pieces(
         let next = if travel == sweep.abs() {
             b
         } else {
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = angle.portable_sin_cos();
             [
                 radius.mul_add(cos, center[0]),
                 radius.mul_add(sin, center[1]),
@@ -520,7 +520,7 @@ fn arc_pieces(
             ends: [a, next],
             center,
             radius,
-            side: middle.cos().signum(),
+            side: middle.portable_cos().signum(),
         });
         a = next;
         previous = travel;
@@ -547,9 +547,9 @@ fn ellipse_pieces(
     // ellipse's horizontal root is possible.
     let det = cross2(a, b);
     let inverse = [[b[1] / det, -b[0] / det], [-a[1] / det, a[0] / det]];
-    let height = a[1].hypot(b[1]);
-    let phase = b[1].atan2(a[1]);
-    let (sin, cos) = phase.sin_cos();
+    let height = a[1].portable_hypot(b[1]);
+    let phase = b[1].portable_atan2(a[1]);
+    let (sin, cos) = phase.portable_sin_cos();
     let horizontal = [
         a[0].mul_add(cos, b[0] * sin),
         (-a[0]).mul_add(sin, b[0] * cos),
@@ -561,11 +561,11 @@ fn ellipse_pieces(
         let next = if travel == sweep.abs() {
             last
         } else {
-            let (sin, cos) = (start + sweep.signum() * travel).sin_cos();
+            let (sin, cos) = (start + sweep.signum() * travel).portable_sin_cos();
             std::array::from_fn(|i| a[i].mul_add(cos, b[i].mul_add(sin, center[i])))
         };
         let midpoint = start + sweep.signum() * previous.midpoint(travel);
-        let side = (midpoint - phase).sin().signum();
+        let side = (midpoint - phase).portable_sin().signum();
         output.push(Boundary::Ellipse {
             ends: [first, next],
             trim: EllipseTrim {
@@ -620,7 +620,7 @@ impl Boundary {
             Self::Line(_) => {
                 let edge = sub(b, a);
                 let delta = sub(point, a);
-                let length = edge[0].hypot(edge[1]);
+                let length = edge[0].portable_hypot(edge[1]);
                 let cross = cross2(edge, delta);
                 let along = dot(edge, delta);
                 let margin = roundoff * length;
@@ -704,7 +704,7 @@ impl Path {
         let [u, v] = [self.b, self.c];
         self.harmonic
             && delta[2] < -gap
-            && delta[0].hypot(delta[1]) <= roundoff
+            && delta[0].portable_hypot(delta[1]) <= roundoff
             && u[2].abs().max(v[2].abs()) <= roundoff
             && (length(u) - radius).abs() <= roundoff
             && (length(v) - radius).abs() <= roundoff
@@ -742,7 +742,7 @@ impl Trace {
     fn range(self, span: Span) -> Span {
         let [constant, cosine, sine] = self.coefficients;
         if self.harmonic {
-            let amplitude = cosine.hypot(sine);
+            let amplitude = cosine.portable_hypot(sine);
             [constant - amplitude, constant + amplitude]
         } else {
             let [a, b] = span.map(|t| self.at(t));

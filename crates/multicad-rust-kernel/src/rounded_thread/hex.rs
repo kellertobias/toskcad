@@ -2,6 +2,7 @@
 //! regular one of `headed_screw::hex_vertices`, with its first corner at 30°.
 use super::{Error, Thread};
 use crate::headed_screw::{hex_area, hex_radius, hex_vertices};
+use multicad_precision::PortableMath as _;
 
 const MAX_DIMENSION_MM: f64 = 1e7;
 
@@ -105,8 +106,8 @@ impl HexStock {
             return false;
         }
         let [lo, hi] = self.hex_interval_mm();
-        let radius = x.hypot(y);
-        let theta = y.atan2(x);
+        let radius = x.portable_hypot(y);
+        let theta = y.portable_atan2(x);
         let in_hex = z >= lo - tolerance
             && z <= hi + tolerance
             && radius <= self.outer_radius(theta) + tolerance;
@@ -130,7 +131,7 @@ mod tests {
         let p = 25.4 / 10.;
         let a = 15_f64.to_radians();
         let r = 0.238507 * p;
-        let depth = p / (2. * a.tan()) - 2. * r * (1. / a.sin() - 1.);
+        let depth = p / (2. * a.portable_tan()) - 2. * r * (1. / a.portable_sin() - 1.);
         Thread::new(Spec {
             major_radius_mm: 6.,
             pitch_mm: p,

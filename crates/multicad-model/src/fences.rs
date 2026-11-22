@@ -12,6 +12,7 @@ use multicad_core::{
 use multicad_kernel::{
     BooleanOperation, Bounds, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, Solid,
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 
 struct Run {
@@ -335,7 +336,8 @@ impl Section {
         let rectangle_circle = |rectangle: &Self, size: [f64; 2], diameter, offset| {
             let [u, v] = rectangle.axes();
             let outside = |axis, extent: f64| (dot(offset, axis).abs() - extent).max(0.);
-            outside(u, size[0] / 2.).hypot(outside(v, size[1] / 2.)) + guard < diameter / 2.
+            outside(u, size[0] / 2.).portable_hypot(outside(v, size[1] / 2.)) + guard
+                < diameter / 2.
         };
         match (self.footprint, other.footprint) {
             (Footprint::Rectangle(a), Footprint::Rectangle(b)) => {
@@ -349,7 +351,7 @@ impl Section {
                 })
             }
             (Footprint::Circle(a), Footprint::Circle(b)) => {
-                offset[0].hypot(offset[1]) + guard < (a + b) / 2.
+                offset[0].portable_hypot(offset[1]) + guard < (a + b) / 2.
             }
             (Footprint::Rectangle(a), Footprint::Circle(b)) => rectangle_circle(self, a, b, offset),
             (Footprint::Circle(a), Footprint::Rectangle(b)) => {

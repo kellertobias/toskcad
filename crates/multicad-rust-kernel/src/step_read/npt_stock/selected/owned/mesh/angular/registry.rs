@@ -304,7 +304,7 @@ impl Registry {
                         let key = tensor_vertex(source, t, a, b);
                         let vertex = self.endpoint(source, key, budget)?;
                         let p = self.vertices[vertex as usize].local;
-                        rays[i] = ray_angle(p[1].atan2(p[0])).to_bits();
+                        rays[i] = ray_angle(p[1].portable_atan2(p[0])).to_bits();
                     }
                     for segment in root_sides(source, t, [u, v]) {
                         if !self.extras.contains_key(&segment) {
@@ -365,13 +365,15 @@ impl Registry {
         directions.dedup();
         let mut previous = 0.;
         let first = float_curve(source, controls, 0.);
-        let mut angle = first[1].atan2(first[0]);
+        let mut angle = first[1].portable_atan2(first[0]);
         for part in 1..=32 {
             budget.step(directions.len() * 16 + 1024)?;
             let next = part as f64 / 32.;
             let point = float_curve(source, controls, next);
-            let raw = point[1].atan2(point[0]);
-            let delta = (raw - angle).sin().atan2((raw - angle).cos());
+            let raw = point[1].portable_atan2(point[0]);
+            let delta = (raw - angle)
+                .portable_sin()
+                .portable_atan2((raw - angle).portable_cos());
             let end = angle + delta;
             for &bits in &directions {
                 let theta = f64::from_bits(bits);
@@ -380,7 +382,7 @@ impl Registry {
                 if lo > hi {
                     continue;
                 }
-                let direction = [theta.cos(), theta.sin()];
+                let direction = [theta.portable_cos(), theta.portable_sin()];
                 let f = |t| {
                     let p = float_curve(source, controls, t);
                     direction[0] * p[1] - direction[1] * p[0]
@@ -473,7 +475,7 @@ impl Registry {
             };
             let ray = ray.or_else(|| {
                 let p = self.vertices[vertex as usize].local;
-                let actual = ray_angle(p[1].atan2(p[0]));
+                let actual = ray_angle(p[1].portable_atan2(p[0]));
                 let uniform = ray_angle((actual / step).round() * step);
                 if (actual - uniform).abs() < 1e-11 {
                     return Some(uniform.to_bits());

@@ -1,6 +1,7 @@
 use super::*;
 use crate::modeling::{body_choices, native_fixture};
 use multicad_core::{document::Document, model};
+use multicad_precision::PortableMath as _;
 use std::{
     collections::BTreeSet,
     time::{Duration, Instant},
@@ -823,7 +824,7 @@ fn painted_bsw_bsf_and_bspp_presets_keep_physical_units_fit_rounding_and_native_
         let a = 27.5_f64.to_radians();
         assert!(
             (resolved.profile.rounding_radius_mm.unwrap()
-                - preset.pitch_mm * a.cos() / (12. * (1. - a.sin())))
+                - preset.pitch_mm * a.portable_cos() / (12. * (1. - a.portable_sin())))
             .abs()
                 < 1e-12
         );

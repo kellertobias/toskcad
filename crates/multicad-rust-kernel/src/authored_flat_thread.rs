@@ -6,6 +6,7 @@
 //! with a derived per-band surface correspondence and never source authority.
 use crate::helical_thread::{Spec, Thread, ThreadError};
 use crate::tapered_thread::interval::I;
+use multicad_precision::PortableMath as _;
 mod domain;
 #[cfg(test)]
 mod domain_tests;
@@ -123,9 +124,9 @@ impl AuthoredThread {
         // These are authored finite shared expressions from the canonical
         // dimensions, not a recipe inferred from a retained Thread object.
         let half = spec.crest_width_mm * 0.5;
-        let upper = half + spec.depth_mm * spec.upper_flank_deg.to_radians().tan();
+        let upper = half + spec.depth_mm * spec.upper_flank_deg.to_radians().portable_tan();
         let crest = spec.pitch_mm - half;
-        let lower = crest - spec.depth_mm * spec.lower_flank_deg.to_radians().tan();
+        let lower = crest - spec.depth_mm * spec.lower_flank_deg.to_radians().portable_tan();
         let phases = [0., half, upper, lower, crest, spec.pitch_mm];
         let minor = spec.major_radius_mm - spec.depth_mm;
         let radii = [
@@ -237,7 +238,7 @@ impl AuthoredThread {
         let qn = qbase + f64::from(start) * self.spec.pitch_mm;
         let theta = (if self.spec.left_hand { -1. } else { 1. }) * std::f64::consts::TAU * (z - qn)
             / (self.spec.pitch_mm * f64::from(self.spec.starts));
-        let (s, c) = theta.sin_cos();
+        let (s, c) = theta.portable_sin_cos();
         let point_mm = [rn * c, rn * s, z];
         let error = point_mm
             .into_iter()

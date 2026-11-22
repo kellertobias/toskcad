@@ -2,6 +2,7 @@
 
 use super::{Error, Point, add, scale};
 use crate::revolution::{Sum, cross, distance_to_segment, dot, length, sub};
+use multicad_precision::PortableMath as _;
 
 const MAX_SPANS: usize = 127;
 const MAX_DEPTH: usize = 32;
@@ -203,7 +204,7 @@ impl Cubic {
         limit: usize,
     ) -> Result<Vec<Point>, crate::display::MeshError> {
         let mut points = vec![self.endpoints()[0]];
-        let cone = angle.tan();
+        let cone = angle.portable_tan();
         for span in self.bezier_spans() {
             flatten(span, deflection, cone, 0, limit, &mut points)?;
         }

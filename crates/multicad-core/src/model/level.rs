@@ -14,6 +14,7 @@ use crate::{
     document::{Definition, Document, DocumentError, Entity, EntityData, EntityId, Link, Mutation},
     parameters::{EvaluatedParameters, Unit},
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -443,7 +444,7 @@ pub fn rectangle_corners(
     depth: f64,
     rotation_deg: f64,
 ) -> [[f64; 2]; 4] {
-    let (s, c) = rotation_deg.to_radians().sin_cos();
+    let (s, c) = rotation_deg.to_radians().portable_sin_cos();
     let at = |u: f64, v: f64| [center[0] + c * u - s * v, center[1] + s * u + c * v];
     let (u, v) = (width / 2., depth / 2.);
     [at(-u, -v), at(u, -v), at(u, v), at(-u, v)]
@@ -549,7 +550,7 @@ fn distance_to_segment(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     } else {
         (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2).clamp(0., 1.)
     };
-    (p[0] - a[0] - t * dx).hypot(p[1] - a[1] - t * dy)
+    (p[0] - a[0] - t * dx).portable_hypot(p[1] - a[1] - t * dy)
 }
 /// Even-odd point in polygon; points on the boundary may go either way.
 fn point_in_polygon(p: [f64; 2], polygon: &[[f64; 2]]) -> bool {
@@ -600,7 +601,7 @@ pub fn convex_overlap(a: &[[f64; 2]], b: &[[f64; 2]]) -> bool {
         for i in 0..n {
             let (p, q) = (polygon[i], polygon[(i + 1) % n]);
             let axis = [p[1] - q[1], q[0] - p[0]];
-            let l = axis[0].hypot(axis[1]);
+            let l = axis[0].portable_hypot(axis[1]);
             if l < 1e-12 {
                 continue;
             }
@@ -714,7 +715,7 @@ pub fn resolve_stair(
     }
     let start = [mm(&stair.start[0])?, mm(&stair.start[1])?];
     let riser = rise / stair.risers as f64;
-    let (s, c) = stair.direction_deg.to_radians().sin_cos();
+    let (s, c) = stair.direction_deg.to_radians().portable_sin_cos();
     let d1 = [c, s];
     let left = |d: [f64; 2]| [-d[1], d[0]];
     let at = |p: [f64; 2], d: [f64; 2], k: f64| [p[0] + d[0] * k, p[1] + d[1] * k];

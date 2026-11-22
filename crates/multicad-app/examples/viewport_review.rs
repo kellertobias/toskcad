@@ -1,5 +1,6 @@
 //! Explicit native viewport acceptance harness. This uses corpus definitions,
 //! not the production solid-modeling feature provider or modeling commands.
+use multicad_precision::PortableMath as _;
 #[path = "viewport_review/corpus.rs"]
 mod corpus;
 #[path = "../src/files.rs"]
@@ -79,7 +80,7 @@ impl NativeApplication for Review {
         if ready && self.frames < 240 {
             let camera = &mut self.app.current_mut().sketch.camera;
             camera.yaw += 0.012;
-            camera.pitch = 0.55 + (self.frames as f32 * 0.02).sin() * 0.12;
+            camera.pitch = 0.55 + (self.frames as f32 * 0.02).portable_sin() * 0.12;
             if self.frames > 30
                 && let Some(previous) = self.previous
             {

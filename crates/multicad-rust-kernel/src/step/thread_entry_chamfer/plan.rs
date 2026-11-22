@@ -48,7 +48,7 @@ fn cone_angle(body: &Chamfer, tolerance: f64) -> Result<f64, Error> {
     let r = body.source_thread().spec().major_radius_mm;
     let r0 = body.entry_radius_mm();
     let c = body.entry_length_mm();
-    let angle = ((r - r0) / c).atan();
+    let angle = ((r - r0) / c).portable_atan();
     if !(angle > 0. && angle < std::f64::consts::FRAC_PI_2) {
         return Err(Error::Unsupported);
     }

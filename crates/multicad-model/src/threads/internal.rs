@@ -93,8 +93,8 @@ pub(super) fn build(
     };
     let distance = |a: [f64; 3], b: [f64; 3]| {
         (a[0] - b[0])
-            .hypot(a[1] - b[1])
-            .hypot(a[2] - b[2])
+            .portable_hypot(a[1] - b[1])
+            .portable_hypot(a[2] - b[2])
             .next_up()
     };
     let mut residual = distance(requested.origin, actual.origin);

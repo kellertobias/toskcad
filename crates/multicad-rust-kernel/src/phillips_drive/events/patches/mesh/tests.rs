@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 #[test]
 fn metric_source_mesh_has_shared_closed_indices_and_actual_facet_bounds() {
     for fixture in 0..=5 {
@@ -35,7 +36,7 @@ fn metric_source_mesh_has_shared_closed_indices_and_actual_facet_bounds() {
         );
         assert!(result.connectivity().signed_volume_mm3 > 0.);
         assert!(result.source_distance_mm() <= 0.02);
-        assert!(result.normal_chord() <= 2. * (0.5_f64 / 2.).sin());
+        assert!(result.normal_chord() <= 2. * (0.5_f64 / 2.).portable_sin());
         let source_volume = source.volume_bounds_mm3(0.001, 100_000).unwrap();
         assert!(
             (result.connectivity().signed_volume_mm3 - source_volume.volume_mm3[0]).abs()
@@ -204,7 +205,7 @@ fn default_h0_quality_refines_the_real_torus_normal_direction() {
         })
         .unwrap();
     assert!(mesh.source_distance_mm() <= 0.1);
-    assert!(mesh.normal_chord() <= 2. * (0.3_f64 / 2.).sin());
+    assert!(mesh.normal_chord() <= 2. * (0.3_f64 / 2.).portable_sin());
     assert_eq!(
         atlas
             .boundary_mesh(Tessellation {
@@ -270,7 +271,7 @@ fn real_folded_contact_grid_recovers_by_refinement_without_geometry_or_winding_r
         .unwrap();
     assert!(candidate.connectivity().signed_volume_mm3 > 0.);
     assert!(candidate.source_distance_mm() <= options.deflection);
-    assert!(candidate.normal_chord() <= 2. * (options.angle / 2.).sin());
+    assert!(candidate.normal_chord() <= 2. * (options.angle / 2.).portable_sin());
 }
 
 #[test]
@@ -297,7 +298,7 @@ fn thumbnail_contact_diagonal_earns_the_original_source_quality() {
         mesh.mesh().indices.len() / 3
     );
     assert!(mesh.source_distance_mm() <= options.deflection);
-    assert!(mesh.normal_chord() <= 2. * (options.angle / 2.).sin());
+    assert!(mesh.normal_chord() <= 2. * (options.angle / 2.).portable_sin());
     assert!(mesh.connectivity().signed_volume_mm3 > 0.);
     let index = atlas
         .patches
@@ -328,7 +329,7 @@ fn thumbnail_contact_diagonal_earns_the_original_source_quality() {
         )
         .unwrap()
     });
-    let allowed = 2. * (options.angle / 2.).sin();
+    let allowed = 2. * (options.angle / 2.).portable_sin();
     assert!(original.into_iter().any(|score| score > allowed));
     let selected = choose_facets(
         keys,

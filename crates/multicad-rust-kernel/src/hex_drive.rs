@@ -1,5 +1,6 @@
 //! Literal finite flat-hex drive contours. A size label never replaces corners.
 use crate::{headed_screw, helical_thread::ThreadError, tapered_thread::interval::I};
+use multicad_precision::PortableMath as _;
 type Point = [f64; 2];
 fn cross(a: Point, b: Point) -> f64 {
     a[0] * b[1] - a[1] * b[0]
@@ -53,8 +54,8 @@ impl HexDrive {
             let c = corners[(i + 2) % 6];
             let edge = difference(b, a);
             let next = difference(c, b);
-            if (a[0].hypot(a[1]) - radius).abs() > budget
-                || (edge[0].hypot(edge[1]) - radius).abs() > budget
+            if (a[0].portable_hypot(a[1]) - radius).abs() > budget
+                || (edge[0].portable_hypot(edge[1]) - radius).abs() > budget
                 || cross(a, b) <= minimum
                 || cross(edge, next) <= minimum
             {
@@ -64,7 +65,7 @@ impl HexDrive {
                 center[axis] += a[axis] / 6.;
             }
         }
-        if center[0].hypot(center[1]) > budget {
+        if center[0].portable_hypot(center[1]) > budget {
             return Err(ThreadError::Invalid);
         }
         let mut corners = corners;
@@ -102,7 +103,7 @@ impl HexDrive {
         } else {
             let [a, b] = self.edge_mm(side);
             let d = difference(b, a);
-            d[0].hypot(d[1])
+            d[0].portable_hypot(d[1])
         }
     }
     pub fn area_mm2(&self) -> f64 {
@@ -154,7 +155,7 @@ impl HexDrive {
         if !angle.is_finite() {
             return None;
         }
-        let d = [angle.cos(), angle.sin()];
+        let d = [angle.portable_cos(), angle.portable_sin()];
         let mut best = (f64::INFINITY, 0);
         for i in 0..6 {
             let [a, b] = self.edge_mm(i);
@@ -179,7 +180,11 @@ impl HexDrive {
             self.side_at_angle(angle)
                 .expect("validated drive contains the axis"),
         );
-        -cross(a, b) / cross(difference(b, a), [angle.cos(), angle.sin()])
+        -cross(a, b)
+            / cross(
+                difference(b, a),
+                [angle.portable_cos(), angle.portable_sin()],
+            )
     }
 }
 

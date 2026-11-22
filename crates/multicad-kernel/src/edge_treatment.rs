@@ -7,6 +7,7 @@ use multicad_core::{
         AnalyticGeometry, GeometryIntent, Origin, TopologyKey, TopologyKind, TopologySnapshot,
     },
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -93,7 +94,7 @@ impl Solid {
         }
         if self.uses_rust_geometry() {
             let distance = if mode == 3 {
-                first * second.tan()
+                first * second.portable_tan()
             } else {
                 second
             };

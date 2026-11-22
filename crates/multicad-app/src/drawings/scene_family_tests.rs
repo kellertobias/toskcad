@@ -23,6 +23,7 @@ use multicad_core::{
     references::ReferenceFrame,
 };
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 use std::time::{Duration, Instant};
 
 fn actor() -> Actor {
@@ -340,7 +341,7 @@ fn fixture() -> Fixture {
     );
     // Normal module 2, 24 teeth, 15 degree helix: transverse pitch radius
     // 24 / cos 15°, tip one module beyond it.
-    let tip = 24. / 15_f64.to_radians().cos() + 2.;
+    let tip = 24. / 15_f64.to_radians().portable_cos() + 2.;
     for (name, request) in [
         ("helical gear", &helical),
         ("herringbone gear", &herringbone),
@@ -950,7 +951,7 @@ fn scene_families_draw_through_the_worker_edits_cancellation_reopen_and_exports(
             .map(|v| {
                 v.preview_mm
                     .windows(2)
-                    .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+                    .map(|w| (w[1][0] - w[0][0]).portable_hypot(w[1][1] - w[0][1]))
                     .sum::<f64>()
             })
             .sum::<f64>()
@@ -1427,7 +1428,7 @@ fn exports(mut session: Session, f: &Fixture) {
     // Closed-form content at 1:1: the helical gear's tip extents, its 8 mm
     // bore as hidden and section walls and as a circle in the axial view,
     // and the hatched sections.
-    let tip = 24. / 15_f64.to_radians().cos() + 2.;
+    let tip = 24. / 15_f64.to_radians().portable_cos() + 2.;
     let tolerance = 0.01 + 2e-3;
     let by_name = |name: &str| sheet.views.iter().find(|v| v.name == name).unwrap();
     for (format, segments, _) in &files {
@@ -1470,9 +1471,9 @@ fn exports(mut session: Session, f: &Fixture) {
             .iter()
             .filter(|s| s.layer == file_layer(format, "visible"))
             .filter(|s| {
-                [s.a, s.b]
-                    .iter()
-                    .all(|p| ((p[0] - center[0]).hypot(p[1] - center[1]) - 4.).abs() <= tolerance)
+                [s.a, s.b].iter().all(|p| {
+                    ((p[0] - center[0]).portable_hypot(p[1] - center[1]) - 4.).abs() <= tolerance
+                })
             })
             .count();
         assert!(ring > 16, "{format} bore circle: {ring} segments");

@@ -4,6 +4,7 @@ use multicad_kernel::{
     BooleanOperation, GeometryErrorKind, GeometryPolicy, PlaneFrame, Profile, ProfileEdge,
     RigidTransform, Solid, source_identity,
 };
+use multicad_precision::PortableMath as _;
 use serde_json::{Value, json};
 use std::{error::Error, f64::consts::PI, time::Instant};
 
@@ -103,7 +104,7 @@ fn round_panel(height: f64, radius: f64, quarter_turn: bool) -> Result<Value, Bo
                 ..
             } => Some((
                 *center,
-                (a[0] - center[0]).hypot(a[1] - center[1]),
+                (a[0] - center[0]).portable_hypot(a[1] - center[1]),
                 sweep_rad.abs(),
             )),
             PlanarEdge::Line { .. } => None,

@@ -9,6 +9,7 @@ use multicad_core::{
 };
 use multicad_kernel::GeometryPolicy;
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -114,7 +115,8 @@ fn canonical_hexalobular_heads_create_edit_export_and_reopen_without_native_geom
         assert!(actual.recess().flat_hex_geometry().is_none());
         let curved = actual.recess().hexalobular_geometry().unwrap();
         assert!(
-            (curved.cone().tip_depth_mm - (0.25 + 1. / 70_f64.to_radians().tan())).abs() < 1e-14
+            (curved.cone().tip_depth_mm - (0.25 + 1. / 70_f64.to_radians().portable_tan())).abs()
+                < 1e-14
         );
         if fit == ThreadFit::Metric6gExternal {
             assert!(actual.thread().spec().major_radius_mm < 1.5);

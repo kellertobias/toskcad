@@ -14,6 +14,7 @@ use multicad_kernel::{
     rust_kernel::bevel_gear::clearance::ResultKind,
 };
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn actor() -> Actor {
@@ -127,7 +128,7 @@ fn rust_bevel_pairs_match_native_members_and_certify_saved_edited_motion() {
         // Rotate the wheel about the pinion pair frame's u axis, which is
         // the wheel axis for a 90° shaft angle, around the shared apex.
         let [x, y, z] = [0., 1., 0.];
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         let rotation = [
             [
                 c + x * x * (1. - c),

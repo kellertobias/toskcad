@@ -1,11 +1,12 @@
 use multicad_core::model::{HexalobularArc, HexalobularContour};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 fn sweep(arc: &HexalobularArc) -> (f64, f64) {
-    let start = (arc.start[1] - arc.center[1]).atan2(arc.start[0] - arc.center[0]);
-    let end = (arc.end[1] - arc.center[1]).atan2(arc.end[0] - arc.center[0]);
+    let start = (arc.start[1] - arc.center[1]).portable_atan2(arc.start[0] - arc.center[0]);
+    let end = (arc.end[1] - arc.center[1]).portable_atan2(arc.end[0] - arc.center[0]);
     let delta = if arc.convex {
         (end - start).rem_euclid(TAU)
     } else {
@@ -19,7 +20,9 @@ fn descriptor_area(arcs: &[HexalobularArc]) -> f64 {
             let (t, d) = sweep(arc);
             let r = arc.radius;
             let [x, y] = arc.center;
-            (r * r * d + r * x * ((t + d).sin() - t.sin()) - r * y * ((t + d).cos() - t.cos())) / 2.
+            (r * r * d + r * x * ((t + d).portable_sin() - t.portable_sin())
+                - r * y * ((t + d).portable_cos() - t.portable_cos()))
+                / 2.
         })
         .sum()
 }
@@ -63,7 +66,8 @@ fn nine_basic_dimension_rows_form_twelve_tangent_circular_arcs() {
             let u = tangent(next, next.start);
             assert!(distance(t, u) < 3e-14, "tangents differ at {i}");
             assert!(
-                (arc.mid[0].hypot(arc.mid[1]) - if arc.convex { a / 2. } else { b / 2. }).abs()
+                (arc.mid[0].portable_hypot(arc.mid[1]) - if arc.convex { a / 2. } else { b / 2. })
+                    .abs()
                     < a * 1e-14
             );
             let (start, delta) = sweep(arc);
@@ -71,12 +75,12 @@ fn nine_basic_dimension_rows_form_twelve_tangent_circular_arcs() {
             for j in 0..=256 {
                 let t = start + delta * j as f64 / 256.;
                 let p = [
-                    arc.center[0] + arc.radius * t.cos(),
-                    arc.center[1] + arc.radius * t.sin(),
+                    arc.center[0] + arc.radius * t.portable_cos(),
+                    arc.center[1] + arc.radius * t.portable_sin(),
                 ];
-                let rho = p[0].hypot(p[1]);
+                let rho = p[0].portable_hypot(p[1]);
                 assert!(rho >= b / 2. - a * 2e-14 && rho <= a / 2. + a * 2e-14);
-                let angle = p[1].atan2(p[0]);
+                let angle = p[1].portable_atan2(p[0]);
                 if let Some(previous) = last {
                     assert!((angle - previous).rem_euclid(TAU) < 0.1);
                 }
@@ -88,7 +92,7 @@ fn nine_basic_dimension_rows_form_twelve_tangent_circular_arcs() {
         let re = a * 0.1;
         let c = a / 2. - re;
         let small = b / 2.;
-        let cos = (PI / 6.).cos();
+        let cos = (PI / 6.).portable_cos();
         let residual =
             |ri: f64| (c * c + (small + ri).powi(2) - 2. * c * (small + ri) * cos).sqrt() - re - ri;
         let mut lo = 0.;
@@ -105,13 +109,13 @@ fn nine_basic_dimension_rows_form_twelve_tangent_circular_arcs() {
         let ri = (lo + hi) / 2.;
         assert!((ri - contour.inner_valley_radius_mm).abs() < a * 3e-14);
         let d = small + ri;
-        let split = contour.arcs[0].end[1].atan2(contour.arcs[0].end[0]);
+        let split = contour.arcs[0].end[1].portable_atan2(contour.arcs[0].end[0]);
         let polar = |t: f64, outer: bool| {
             if outer {
-                c * t.cos() + (re * re - c * c * t.sin().powi(2)).sqrt()
+                c * t.portable_cos() + (re * re - c * c * t.portable_sin().powi(2)).sqrt()
             } else {
                 let t = t - PI / 6.;
-                d * t.cos() - (ri * ri - d * d * t.sin().powi(2)).sqrt()
+                d * t.portable_cos() - (ri * ri - d * d * t.portable_sin().powi(2)).sqrt()
             }
         };
         let integrate = |start: f64, end: f64, outer: bool| {

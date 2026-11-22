@@ -1,5 +1,6 @@
 //! Analytic references to finite geometry in a sketch frame.
 
+use multicad_precision::PortableMath as _;
 pub mod conic;
 pub mod rational;
 
@@ -72,7 +73,7 @@ pub fn edge(ends: [[f64; 3]; 2], method: Method, tolerance: f64) -> Result<Outco
     let [a, b] = ends;
     let [[u0, v0, d0], [u1, v1, d1]] = ends;
     let [du, dv, depth_delta] = std::array::from_fn(|i| b[i] - a[i]);
-    let length = du.hypot(dv).hypot(depth_delta);
+    let length = du.portable_hypot(dv).portable_hypot(depth_delta);
     if length <= tolerance {
         return Err(Error::Invalid);
     }
@@ -82,7 +83,7 @@ pub fn edge(ends: [[f64; 3]; 2], method: Method, tolerance: f64) -> Result<Outco
             if method == Method::Coplanar && on_plane != [true; 2] {
                 return Err(Error::OffPlane);
             }
-            let geometry = if du.hypot(dv) <= tolerance {
+            let geometry = if du.portable_hypot(dv) <= tolerance {
                 Geometry::Point([u0, v0])
             } else {
                 Geometry::Line([[u0, v0], [u1, v1]])

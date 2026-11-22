@@ -8,6 +8,7 @@ use multicad_kernel::{
     PlaneFrame, Solid,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder, step_read},
 };
+use multicad_precision::PortableMath as _;
 
 #[test]
 fn reversed_annular_extrusion_keeps_both_analytic_sketch_rims_and_the_authored_cap_basis() {
@@ -185,7 +186,7 @@ fn subtracting_a_coaxial_cylinder_preserves_the_authored_cap_basis_and_both_sour
 fn annulus_step_exchanges_real_circular_stock_in_both_directions() {
     let feature = EntityId::new();
     let policy = GeometryPolicy::default();
-    let (sin, cos) = 0.37_f64.sin_cos();
+    let (sin, cos) = 0.37_f64.portable_sin_cos();
     let frame = PlaneFrame {
         origin: [5., -9., 21.],
         u: [cos, sin, 0.],

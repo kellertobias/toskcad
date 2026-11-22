@@ -1,6 +1,7 @@
 //! Exact evaluation of one transverse profile edge and its derivatives.
 use super::super::paths::{dot2, round};
 use super::super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{normal_sweep, spur_gear::Edge};
 
 #[derive(Clone, Copy, Debug)]
@@ -44,12 +45,12 @@ pub(super) fn turn([x, y]: P2) -> P2 {
 }
 
 pub(super) fn rotate([x, y]: P2, angle: f64) -> P2 {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     [x * cos - y * sin, x * sin + y * cos]
 }
 
 fn polar(angle: f64) -> P2 {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     [cos, sin]
 }
 
@@ -82,7 +83,7 @@ impl Flank {
                 }
             }
         };
-        let length = |p: P2| p[0].hypot(p[1]);
+        let length = |p: P2| p[0].portable_hypot(p[1]);
         let (radius, size) = match shape {
             Shape::Line { a, b } => {
                 let d = [b[0] - a[0], b[1] - a[1]];
@@ -110,7 +111,7 @@ impl Flank {
                 visit(start);
                 visit(start + sweep);
                 if offset > 0. {
-                    let toward = center[1].atan2(center[0]);
+                    let toward = center[1].portable_atan2(center[0]);
                     for extreme in [toward, toward + std::f64::consts::PI] {
                         let travel =
                             ((extreme - start) * sweep.signum()).rem_euclid(std::f64::consts::TAU);
@@ -137,12 +138,12 @@ impl Flank {
                 let t = a.abs().max(b.abs());
                 let w = span.abs();
                 (
-                    [base * a.hypot(1.), base * b.hypot(1.)],
+                    [base * a.portable_hypot(1.), base * b.portable_hypot(1.)],
                     [
-                        base * t.hypot(1.),
+                        base * t.portable_hypot(1.),
                         base * t * w,
-                        base * t.hypot(1.) * w * w,
-                        base * t.hypot(2.) * w * w * w,
+                        base * t.portable_hypot(1.) * w * w,
+                        base * t.portable_hypot(2.) * w * w * w,
                     ],
                 )
             }
@@ -159,7 +160,10 @@ impl Flank {
         let reach = 0.5 * size[1];
         let distance = length(middle);
         if reach < distance {
-            flank.azimuth = [middle[1].atan2(middle[0]), (reach / distance).asin()];
+            flank.azimuth = [
+                middle[1].portable_atan2(middle[0]),
+                (reach / distance).portable_asin(),
+            ];
         }
         flank
     }
@@ -199,7 +203,7 @@ impl Flank {
                 y,
             } => {
                 let t = start + s * span;
-                let (sin, cos) = t.sin_cos();
+                let (sin, cos) = t.portable_sin_cos();
                 let map = |[p, q]: P2, scale: f64| {
                     [scale * (p * x[0] + q * y[0]), scale * (p * x[1] + q * y[1])]
                 };
@@ -227,7 +231,7 @@ impl Flank {
             Shape::Involute {
                 start, span, x, y, ..
             } => {
-                let (sin, cos) = (start + s * span).sin_cos();
+                let (sin, cos) = (start + s * span).portable_sin_cos();
                 let sign = span.signum();
                 [
                     sign * (cos * x[0] + sin * y[0]),
@@ -236,7 +240,7 @@ impl Flank {
             }
             _ => {
                 let d = self.at(s)[1];
-                let l = d[0].hypot(d[1]);
+                let l = d[0].portable_hypot(d[1]);
                 [d[0] / l, d[1] / l]
             }
         }
@@ -257,12 +261,12 @@ impl Flank {
                 sweep,
                 ..
             } => {
-                let angle = (point[1] - center[1]).atan2(point[0] - center[0]);
+                let angle = (point[1] - center[1]).portable_atan2(point[0] - center[0]);
                 let travel = ((angle - start) * sweep.signum()).rem_euclid(std::f64::consts::TAU);
                 travel <= sweep.abs() + 1e-9 || std::f64::consts::TAU - travel <= 1e-9
             }
             Shape::Involute { .. } => {
-                let radius = point[0].hypot(point[1]);
+                let radius = point[0].portable_hypot(point[1]);
                 radius >= self.radius[0] * (1. - 1e-9) && radius <= self.radius[1] * (1. + 1e-9)
             }
         }
@@ -280,7 +284,7 @@ impl Flank {
     /// shapes whose normal turns uniformly with the fraction.
     pub(super) fn normal_turn(&self) -> Option<[f64; 2]> {
         let [x, y] = self.tangent(0.);
-        let start = (-x).atan2(y);
+        let start = (-x).portable_atan2(y);
         match self.shape {
             Shape::Line { .. } => None,
             Shape::Arc { sweep, .. } => Some([start, sweep]),

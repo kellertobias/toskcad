@@ -293,7 +293,7 @@ mod tests {
                     let v = -h + 2. * h * t;
                     let section = wheel.section(v);
                     let [x, y] = wheel.piece_point(&section, PIECES[piece], u);
-                    let error = (p[0] - x).hypot(p[1] - y).hypot(p[2] - v);
+                    let error = (p[0] - x).portable_hypot(p[1] - y).portable_hypot(p[2] - v);
                     assert!(error <= fit.bound_mm, "{piece} {u} {v} {error}");
                 }
             }

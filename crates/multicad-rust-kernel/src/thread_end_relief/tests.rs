@@ -268,7 +268,7 @@ fn imported_finite_prefix_uses_actual_short_domain_without_inventing_end_intent(
     for i in 0..8192 {
         let angle = std::f64::consts::TAU * i as f64 / 8192.;
         for z in [0., body.material_length_mm()] {
-            dense = dense.max(source.radius(angle, z) * angle.sin());
+            dense = dense.max(source.radius(angle, z) * angle.portable_sin());
         }
     }
     let support = body.support([0., 1., 0.]);

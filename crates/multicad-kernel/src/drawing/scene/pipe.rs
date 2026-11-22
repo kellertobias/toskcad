@@ -26,6 +26,7 @@ use super::helix::{
 use super::paths::{Lift, Segment, add, dot3, scaled};
 use super::profile::merge;
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::axial_pipe_thread::authored::{AuthoredSection, AuthoredThread};
 use multicad_rust_kernel::{normal_sweep, spur_gear::Edge};
 use std::f64::consts::{PI, TAU};
@@ -70,7 +71,7 @@ impl Law {
     }
 
     fn surface(&self, r: f64, theta: f64, z: f64) -> P3 {
-        let (sin, cos) = theta.sin_cos();
+        let (sin, cos) = theta.portable_sin_cos();
         self.view([r * cos, r * sin, z])
     }
 
@@ -222,14 +223,14 @@ struct Sight {
 impl Sight {
     fn new(view: P3) -> Self {
         Self {
-            rho: view[0].hypot(view[1]),
-            alpha: view[1].atan2(view[0]),
+            rho: view[0].portable_hypot(view[1]),
+            alpha: view[1].portable_atan2(view[0]),
             vz: view[2],
         }
     }
 
     fn terms(&self, theta: f64) -> [f64; 2] {
-        let (sin, cos) = (theta - self.alpha).sin_cos();
+        let (sin, cos) = (theta - self.alpha).portable_sin_cos();
         [self.rho * cos, self.rho * sin]
     }
 }
@@ -270,7 +271,7 @@ impl Contour {
                 ..
             } => {
                 let beta = arc_root(law, center, radius, sign, window, sight, theta)?;
-                Some(center[0] + radius * beta.sin())
+                Some(center[0] + radius * beta.portable_sin())
             }
         }
     }
@@ -413,7 +414,7 @@ fn arc_terms(law: &Law, c1: f64, sign: f64, sight: &Sight, theta: f64) -> [f64; 
 }
 
 fn arc_value(radius: f64, sign: f64, [e, f, p, vz]: [f64; 4], beta: f64) -> f64 {
-    let (sin, cos) = beta.sin_cos();
+    let (sin, cos) = beta.portable_sin_cos();
     e * cos + f * sin + sign * radius * cos * (p * cos + sign * vz * sin)
 }
 
@@ -435,14 +436,14 @@ fn arc_root(
 ) -> Option<f64> {
     let terms = arc_terms(law, center[1], sign, sight, theta);
     let [e, f, p, vz] = terms;
-    let norm = e.hypot(f);
-    let epsilon = radius * p.hypot(vz) / norm;
+    let norm = e.portable_hypot(f);
+    let epsilon = radius * p.portable_hypot(vz) / norm;
     if epsilon.is_nan() || epsilon >= WINDOW {
         return None;
     }
-    let half = (2. * epsilon).asin();
+    let half = (2. * epsilon).portable_asin();
     // The window center, as the representative nearest the arc's angles.
-    let mut middle = f.atan2(e) + window * PI / 2.;
+    let mut middle = f.portable_atan2(e) + window * PI / 2.;
     middle -= TAU * (middle / TAU).round();
     let [mut lo, mut hi] = [middle - half, middle + half];
     let [mut flo, fhi] = [lo, hi].map(|beta| arc_value(radius, sign, terms, beta));
@@ -502,7 +503,7 @@ impl Sweep {
     fn profile(&self, p: P3) -> impl Fn(f64) -> P2 + '_ {
         move |theta| {
             let s = self.law.rate * theta;
-            [p[2] - s, p[0].hypot(p[1]) - self.law.taper * s]
+            [p[2] - s, p[0].portable_hypot(p[1]) - self.law.taper * s]
         }
     }
 }
@@ -606,7 +607,7 @@ fn chain(thread: &AuthoredThread) -> Result<(Vec<Span>, Vec<bool>), GeometryErro
         }
         AuthoredSection::BsptRounded { depth_mm: d } => {
             let a = 27.5_f64.to_radians();
-            let (sin, cos) = a.sin_cos();
+            let (sin, cos) = a.portable_sin_cos();
             let m = cos / sin;
             let normal = (1. + tau * tau).sqrt();
             let triangle = p * (m * m - tau * tau) / (2. * m);
@@ -784,10 +785,11 @@ impl Pipe {
             let ends = [0., law.length].map(|z| (z - s[2]) / d[2]);
             [ends[0].min(ends[1]), ends[0].max(ends[1])]
         };
-        let rho = d[0].hypot(d[1]);
+        let rho = d[0].portable_hypot(d[1]);
         let within = |radius: f64| -> Option<[f64; 2]> {
             if rho <= 1e-15 {
-                return (s[0].hypot(s[1]) < radius).then_some([f64::NEG_INFINITY, f64::INFINITY]);
+                return (s[0].portable_hypot(s[1]) < radius)
+                    .then_some([f64::NEG_INFINITY, f64::INFINITY]);
             }
             let a = rho * rho;
             let b = s[0] * d[0] + s[1] * d[1];
@@ -808,7 +810,7 @@ impl Pipe {
         }
         let g = |t: f64| {
             let p = add(s, scaled(d, t));
-            law.radius(p[1].atan2(p[0]), p[2]) - p[0].hypot(p[1])
+            law.radius(p[1].portable_atan2(p[0]), p[2]) - p[0].portable_hypot(p[1])
         };
         let mut stretches = vec![span];
         let mut output = Vec::new();
@@ -843,18 +845,18 @@ impl Pipe {
     fn crossings(&self, s: P3, d: P3, [a, b]: [f64; 2]) -> Result<Vec<f64>, GeometryError> {
         let law = &self.law;
         let k = law.rate;
-        let rho = d[0].hypot(d[1]);
+        let rho = d[0].portable_hypot(d[1]);
         if rho <= 1e-15 {
             return Ok(self.axial_crossings(s, d, [a, b]));
         }
         let g = |t: f64| {
             let p = add(s, scaled(d, t));
-            law.radius(p[1].atan2(p[0]), p[2]) - p[0].hypot(p[1])
+            law.radius(p[1].portable_atan2(p[0]), p[2]) - p[0].portable_hypot(p[1])
         };
         let slope = |t: f64| {
             let p = add(s, scaled(d, t));
             let r2 = p[0] * p[0] + p[1] * p[1];
-            let phi = p[2] - k * p[1].atan2(p[0]);
+            let phi = p[2] - k * p[1].portable_atan2(p[0]);
             let (index, base) = law.locate(phi);
             let a = law.a(phi)[1];
             let dphi = d[2] - k * (p[0] * d[1] - p[1] * d[0]) / r2;
@@ -919,8 +921,8 @@ impl Pipe {
     /// span, the levels where the chain reaches the line's radius.
     fn axial_crossings(&self, s: P3, d: P3, [a, b]: [f64; 2]) -> Vec<f64> {
         let law = &self.law;
-        let r = s[0].hypot(s[1]);
-        let theta = s[1].atan2(s[0]);
+        let r = s[0].portable_hypot(s[1]);
+        let theta = s[1].portable_atan2(s[0]);
         let [p, q] = [s[2] + a * d[2], s[2] + b * d[2]];
         let [lo, hi] = [p.min(q), p.max(q)];
         let shift = law.rate * theta;
@@ -993,8 +995,8 @@ impl Pipe {
         let k = law.rate;
         let view = law.vector([0., 0., 1.]);
         let mut stops = vec![a, b];
-        if view[0].hypot(view[1]) > 1e-12 {
-            let fold = view[1].atan2(view[0]) + PI / 2.;
+        if view[0].portable_hypot(view[1]) > 1e-12 {
+            let fold = view[1].portable_atan2(view[0]) + PI / 2.;
             let mut j = ((a / k - fold) / PI).ceil();
             while k * (fold + j * PI) < b {
                 stops.push(k * (fold + j * PI));
@@ -1146,7 +1148,7 @@ impl Pipe {
                     let ratio = w * sight.vz / sight.rho;
                     if ratio.abs() <= 1. {
                         for sign in [-1., 1.] {
-                            let theta = sight.alpha + sign * ratio.acos();
+                            let theta = sight.alpha + sign * ratio.portable_acos();
                             let first = ((range[0] - theta) / TAU).floor() as i64;
                             let last = ((range[1] - theta) / TAU).ceil() as i64;
                             for j in first..=last {
@@ -1167,7 +1169,7 @@ impl Pipe {
                     self.certify_windows(center, radius, sign, &sight, range)?;
                     let lipschitz = self.arc_lipschitz(center, radius, &sight, range);
                     for end in arc {
-                        let beta = ((end - center[0]) / radius).clamp(-1., 1.).asin();
+                        let beta = ((end - center[0]) / radius).clamp(-1., 1.).portable_asin();
                         let e = |theta: f64| {
                             arc_value(
                                 radius,
@@ -1244,8 +1246,8 @@ impl Pipe {
         let [a, b] = span.range();
         let k = law.rate;
         for sign in [-1., 1.] {
-            let theta = sight.alpha + sign * ratio.acos();
-            let (sin, cos) = theta.sin_cos();
+            let theta = sight.alpha + sign * ratio.portable_acos();
+            let (sin, cos) = theta.portable_sin_cos();
             let first = ((-b / k - theta) / TAU).floor() as i64 - 1;
             let last = (((law.length - a) / k - theta) / TAU).ceil() as i64 + 1;
             for j in first..=last {
@@ -1318,7 +1320,7 @@ impl Pipe {
     /// end points.
     fn cap_chord(&self, n: P3, c: f64, level: f64) -> Result<Vec<[P3; 2]>, GeometryError> {
         let law = &self.law;
-        let nxy = n[0].hypot(n[1]);
+        let nxy = n[0].portable_hypot(n[1]);
         if nxy <= 1e-12 {
             return Ok(Vec::new());
         }
@@ -1327,9 +1329,9 @@ impl Pipe {
         let s = [n[0] * offset, n[1] * offset, level];
         let g = |t: f64| {
             let p = add(s, scaled(d, t));
-            law.radius(p[1].atan2(p[0]), level) - p[0].hypot(p[1])
+            law.radius(p[1].portable_atan2(p[0]), level) - p[0].portable_hypot(p[1])
         };
-        let foot = s[0].hypot(s[1]);
+        let foot = s[0].portable_hypot(s[1]);
         if foot >= law.maximum {
             return Ok(Vec::new());
         }
@@ -1363,7 +1365,7 @@ impl Pipe {
     fn section_loop(&self, n: P3, c: f64) -> Result<Loop, GeometryError> {
         let law = &self.law;
         let k = law.rate;
-        let nxy = n[0].hypot(n[1]);
+        let nxy = n[0].portable_hypot(n[1]);
         let mut output: Loop = Vec::new();
         if nxy <= 1e-12 {
             // Across the axis: the cap curve at that level.
@@ -1377,7 +1379,7 @@ impl Pipe {
         if n[2].abs() <= 1e-12 && c.abs() <= 4. * self.tolerance {
             // Containing the axis: both meridian chains and the cap lines.
             let h = [-n[1] / nxy, n[0] / nxy, 0.];
-            let theta = h[1].atan2(h[0]);
+            let theta = h[1].portable_atan2(h[0]);
             for (side, angle) in [(1., theta), (-1., theta + PI)] {
                 for m in law.copies() {
                     let shift = k * angle + m as f64 * law.pitch;
@@ -1439,10 +1441,10 @@ impl Pipe {
         // the most grazing angle (near the axis a profile point moves by the
         // angle's error times the radius squared over the offset), so the
         // angle is measured from the chart centre at full precision.
-        let base = n[0].atan2(-n[1]);
+        let base = n[0].portable_atan2(-n[1]);
         let [low, high] = [*law.copies().start() - 1, *law.copies().end() + 1];
         for base in [base, base + PI] {
-            let (sin, cos) = base.sin_cos();
+            let (sin, cos) = base.portable_sin_cos();
             let n = [n[0] * cos + n[1] * sin, n[1] * cos - n[0] * sin, n[2]];
             let shift = k * base;
             let chart = [-PI / 2., PI / 2.];
@@ -1472,7 +1474,7 @@ impl Pipe {
                             let f = |theta: f64| {
                                 let [alpha, beta, gamma] = Sweep::line(law, (n, c), theta);
                                 alpha * center[1] + beta * center[0] - gamma
-                                    + side * radius * alpha.hypot(beta)
+                                    + side * radius * alpha.portable_hypot(beta)
                             };
                             let lip = lu + radius * nxy + 1e-12;
                             isolate(&f, chart, lip, &mut touches)?;
@@ -1504,7 +1506,7 @@ impl Pipe {
                             // cap, at an end of that cap's exact chord.
                             let mut stops = vec![0., 1.];
                             for point in &chord_ends {
-                                let theta = point[1].atan2(point[0]) - base;
+                                let theta = point[1].portable_atan2(point[0]) - base;
                                 let theta = theta - TAU * (theta / TAU).round();
                                 let profile = branch.profile(*point);
                                 let Some(t) = branch.branch.parameter(theta, &profile) else {

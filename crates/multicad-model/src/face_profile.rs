@@ -14,6 +14,7 @@ use multicad_core::{
     references::{self, Origin, Resolution, TopologyKey, TopologySnapshot},
 };
 use multicad_kernel::{CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, Solid};
+use multicad_precision::PortableMath as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
@@ -30,7 +31,7 @@ fn curved(edge: &PlanarEdge) -> CurvedEdge2d {
             sweep_rad,
         } if a == b && sweep_rad.abs() == std::f64::consts::TAU => CurvedEdge2d::Circle {
             center,
-            radius_mm: (a[0] - center[0]).hypot(a[1] - center[1]),
+            radius_mm: (a[0] - center[0]).portable_hypot(a[1] - center[1]),
         },
         PlanarEdge::Arc {
             a,
@@ -242,7 +243,7 @@ mod tests {
         let radius = 10_000_000.;
         let sweep = std::f64::consts::TAU - 5e-10;
         let a = [radius, 0.];
-        let b = [radius * sweep.cos(), radius * sweep.sin()];
+        let b = [radius * sweep.portable_cos(), radius * sweep.portable_sin()];
         let converted = curved(&PlanarEdge::Arc {
             a,
             b,

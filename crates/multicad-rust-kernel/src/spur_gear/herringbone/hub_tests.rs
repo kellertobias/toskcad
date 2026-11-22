@@ -1,5 +1,6 @@
 use super::*;
 use crate::spur_gear::herringbone::tests::fixture;
+use multicad_precision::PortableMath as _;
 
 fn near(actual: f64, expected: f64) {
     assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
@@ -115,8 +116,8 @@ fn coaxial_extensions_keep_tooth_ordinals_full_bores_and_analytic_support() {
                     }
                     for direction in [[1_f64, 0.3, 20.], [-0.2, 1., -20.], [1., 0., 0.]] {
                         let [dx, dy, dz] = direction;
-                        let cylinder =
-                            dx.hypot(dy) * hub.radius_mm + (dz * span[0]).max(dz * span[1]);
+                        let cylinder = dx.portable_hypot(dy) * hub.radius_mm
+                            + (dz * span[0]).max(dz * span[1]);
                         near(
                             gear.support(direction),
                             plain.support(direction).max(cylinder),

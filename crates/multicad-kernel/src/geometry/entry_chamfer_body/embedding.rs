@@ -588,7 +588,7 @@ mod tests {
         let mut p = vec![[1e6, -2e6, 3e6]];
         for i in 0..5 {
             let t = std::f64::consts::TAU * i as f64 / 5.;
-            p.push([1e6 + t.cos(), -2e6 + t.sin(), 3e6]);
+            p.push([1e6 + t.portable_cos(), -2e6 + t.portable_sin(), 3e6]);
         }
         let cycle = |order: &[u32]| {
             order

@@ -15,6 +15,7 @@ use crate::{
     display::{DisplayMesh, Footprint, MeshError, Tessellation},
     revolution::{Sum, length},
 };
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RingSpec {
@@ -52,12 +53,12 @@ impl Width {
     fn at(self, radius: f64) -> f64 {
         if radius <= self.foot_mm {
             let t = ((radius - self.base_mm) * (radius + self.base_mm)).sqrt() / self.base_mm;
-            return self.half_base_rad + t - t.atan();
+            return self.half_base_rad + t - t.portable_atan();
         }
         let cos = (radius * radius + self.center_mm * self.center_mm
             - self.fillet_mm * self.fillet_mm)
             / (2. * radius * self.center_mm);
-        self.pitch_rad - (cos.clamp(-1., 1.).acos() - self.center_rad)
+        self.pitch_rad - (cos.clamp(-1., 1.).portable_acos() - self.center_rad)
     }
 }
 
@@ -117,7 +118,7 @@ impl Ring {
         }
         let pitch_rad = PI / f64::from(teeth);
         let start = ((tip - base) * (tip + base)).sqrt() / base;
-        let tip_half = half_base + start - start.atan();
+        let tip_half = half_base + start - start.portable_atan();
         if tip_half * tip < minimum_mm || tip_half >= pitch_rad {
             return Err(Error::InvalidDimensions);
         }
@@ -133,8 +134,8 @@ impl Ring {
         let center = add(foot, polar(fillet, end - space_half + FRAC_PI_2));
         let center_mm = length(center);
         let root_point = scale(center, root / center_mm);
-        let root_half = -root_point[1].atan2(root_point[0]);
-        let space_tip = space_half - (start - start.atan());
+        let root_half = -root_point[1].portable_atan2(root_point[0]);
+        let space_tip = space_half - (start - start.portable_atan());
         if length(foot) >= root
             || root_half <= tolerance_mm / root
             || root_half >= pitch_rad
@@ -186,7 +187,7 @@ impl Ring {
                 pitch_rad,
                 foot_mm: length(foot),
                 center_mm,
-                center_rad: center[1].atan2(center[0]),
+                center_rad: center[1].portable_atan2(center[0]),
                 fillet_mm: fillet,
                 tip_half_rad: tip_half,
                 root_half_rad: root_half,
@@ -257,7 +258,7 @@ impl Ring {
             return f64::NAN;
         }
         let [x, y, z] = direction;
-        self.outer_radius_mm * x.hypot(y) + (z * self.height_mm).max(0.)
+        self.outer_radius_mm * x.portable_hypot(y) + (z * self.height_mm).max(0.)
     }
 
     pub fn bounds(&self) -> [[f64; 3]; 2] {
@@ -272,9 +273,9 @@ impl Ring {
             return Containment::Outside;
         }
         let w = self.width;
-        let r = x.hypot(y);
+        let r = x.portable_hypot(y);
         let step = TAU / f64::from(self.teeth);
-        let angle = y.atan2(x);
+        let angle = y.portable_atan2(x);
         let offset = (angle - (angle / step).round() * step).abs();
         let in_root_space = offset >= w.pitch_rad - w.root_half_rad;
         let on_tip = offset <= w.tip_half_rad;
@@ -309,7 +310,11 @@ impl Ring {
         // Positive above either cap; otherwise minus the nearest cap distance.
         let below = (-z).max(z - self.height_mm);
         let distance = if below > 0. {
-            if inside { below } else { below.hypot(near) }
+            if inside {
+                below
+            } else {
+                below.portable_hypot(near)
+            }
         } else if inside {
             near.min(-below)
         } else {

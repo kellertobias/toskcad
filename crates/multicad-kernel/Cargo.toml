@@ -11,6 +11,7 @@ publish.workspace = true
 default = []
 
 [dependencies]
+multicad-precision.workspace = true
 multicad-core.workspace = true
 multicad-rust-kernel.workspace = true
 

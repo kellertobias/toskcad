@@ -33,7 +33,7 @@ fn parallel(a: [f64; 3], b: [f64; 3]) -> Option<f64> {
 }
 
 fn distance(a: Point2, b: Point2) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 
 /// Distance from the chart origin to the closed segment `a`-`b`.

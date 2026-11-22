@@ -1,16 +1,17 @@
 use super::*;
 use crate::rounded_thread::Spec;
+use multicad_precision::PortableMath as _;
 use num_rational::BigRational;
 
 fn cutter(left_hand: bool) -> Thread {
     let pitch = 1.27;
     let a = 27.5_f64.to_radians();
-    let rounding = pitch * a.cos() / (12. * (1. - a.sin()));
+    let rounding = pitch * a.portable_cos() / (12. * (1. - a.portable_sin()));
     Thread::new(Spec {
         major_radius_mm: 3.175,
         pitch_mm: pitch,
         length_mm: 3. * pitch,
-        depth_mm: pitch / (3. * a.tan()),
+        depth_mm: pitch / (3. * a.portable_tan()),
         crest_radius_mm: rounding,
         root_radius_mm: rounding,
         flank_angle_deg: 27.5,

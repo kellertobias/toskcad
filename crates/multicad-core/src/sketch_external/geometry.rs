@@ -8,6 +8,7 @@ use crate::{
     references::{AnalyticGeometry, ReferenceAddress, ReferenceReport, Resolution},
     sketch::{Frame, dot},
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeSet;
 pub const PLANE_TOLERANCE_MM: f64 = 1e-7;
 #[derive(Clone, Debug, PartialEq)]
@@ -95,7 +96,9 @@ pub fn project(
             let at = |angle: f64| {
                 frame.coordinates(std::array::from_fn(|i| {
                     source.origin_mm[i]
-                        + radius_mm * (source.u[i] * angle.cos() + source.v[i] * angle.sin())
+                        + radius_mm
+                            * (source.u[i] * angle.portable_cos()
+                                + source.v[i] * angle.portable_sin())
                 }))
             };
             Ok(LocalGeometry::Arc {

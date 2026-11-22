@@ -1,5 +1,6 @@
 //! A finite circular entry seat over the unchanged original straight thread.
 use crate::helical_thread::{Thread, ThreadError};
+use multicad_precision::PortableMath as _;
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -66,10 +67,10 @@ impl Counterbore {
             self.radius
         } else {
             self.thread.radius(
-                y.atan2(x),
+                y.portable_atan2(x),
                 z.clamp(self.depth, self.thread.spec().length_mm),
             )
         };
-        x.hypot(y) <= radius + tolerance
+        x.portable_hypot(y) <= radius + tolerance
     }
 }

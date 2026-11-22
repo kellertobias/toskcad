@@ -1,4 +1,5 @@
 //! STEP AP214 output for extruded solids with analytic lines and circles.
+use multicad_precision::PortableMath as _;
 pub mod orthogonal_seats;
 
 use crate::{
@@ -632,7 +633,7 @@ fn cross([a, b, c]: Point, [d, e, f]: Point) -> Point {
 
 fn direction(from: Point, to: Point) -> Result<Point, StepError> {
     let delta: Point = std::array::from_fn(|i| to[i] - from[i]);
-    let length = delta[0].hypot(delta[1]).hypot(delta[2]);
+    let length = delta[0].portable_hypot(delta[1]).portable_hypot(delta[2]);
     if length == 0. || !length.is_finite() {
         return Err(StepError::InvalidGeometry);
     }
@@ -1072,12 +1073,12 @@ fn circular_arc_edge(
     radius: f64,
     sweep: f64,
 ) -> Result<(Entity, Entity), StepError> {
-    let (sin, cos) = sweep.abs().sin_cos();
+    let (sin, cos) = sweep.abs().portable_sin_cos();
     let side = cross(normal, reference);
     let end = std::array::from_fn(|i| cos * reference[i] + sin * side[i]);
     let error = |point: Point, radial: Point| {
         let [x, y, z] = std::array::from_fn(|i| point[i] - center[i] - radius * radial[i]);
-        x.hypot(y).hypot(z)
+        x.portable_hypot(y).portable_hypot(z)
     };
     if from.point == to.point || error(from.point, reference) > 1e-7 || error(to.point, end) > 1e-7
     {
@@ -1200,7 +1201,7 @@ fn round_wall(
                 to.radius,
             )
         };
-        let semi_angle = rise.abs().atan2(height);
+        let semi_angle = rise.abs().portable_atan2(height);
         file.entity(format_args!(
             "CONICAL_SURFACE('',{axis},{radius:.16E},{semi_angle:.16E})"
         ))

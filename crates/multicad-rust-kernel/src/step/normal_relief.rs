@@ -134,8 +134,8 @@ fn encode_shell(
                 let seam = std::array::from_fn(|i| center[i] + radius_mm * placement.u[i]);
                 if center == seam
                     || (ends[0].point[0] - seam[0])
-                        .hypot(ends[0].point[1] - seam[1])
-                        .hypot(ends[0].point[2] - seam[2])
+                        .portable_hypot(ends[0].point[1] - seam[1])
+                        .portable_hypot(ends[0].point[2] - seam[2])
                         > relief.tolerance_mm() / 8.
                     || edge.vertices[0] != edge.vertices[1]
                 {

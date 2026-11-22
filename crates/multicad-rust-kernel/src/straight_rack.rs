@@ -1,6 +1,7 @@
 //! Exact straight rack outlines with tangent circular transitions at each root.
 
 use crate::normal_sweep::{self, Edge, Sweep};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::FRAC_PI_2;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -36,8 +37,8 @@ struct Tooth {
 
 impl Tooth {
     fn new(spec: Spec, minimum_mm: f64) -> Result<Self, Error> {
-        let (sin, cos) = spec.pressure_angle_rad.sin_cos();
-        let slope = spec.pressure_angle_rad.tan();
+        let (sin, cos) = spec.pressure_angle_rad.portable_sin_cos();
+        let slope = spec.pressure_angle_rad.portable_tan();
         let circle_y = -spec.dedendum_mm + spec.root_fillet_radius_mm;
         let circle_x =
             spec.pitch_thickness_mm / 2. + spec.root_fillet_radius_mm / cos - circle_y * slope;

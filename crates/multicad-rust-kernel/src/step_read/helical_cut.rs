@@ -268,10 +268,10 @@ fn verify(
     )?;
     let (floor_circle, tube) = decode::circle(shell, floor_circle)?;
     let [x, y, start] = local(frame, floor_circle.origin);
-    let phase = y.atan2(x);
+    let phase = y.portable_atan2(x);
     let lift = ((phase_lifted - phase) / TAU).round() * TAU;
     near(phase + lift, phase_lifted, angle_tolerance)?;
-    let vertical = radius / radius.hypot(rise);
+    let vertical = radius / radius.portable_hypot(rise);
     let minimum_path = height - start + vertical * tube;
     let path = minimum_path + (tolerance * 32.).max(guard * 32.);
     let spec = Spec {
@@ -394,13 +394,13 @@ fn align_domain(knots: &mut [f64], expected: [f64; 2], tolerance: f64) -> Result
 impl Verification {
     fn sweep_speed(self) -> f64 {
         let spec = self.cut.spec();
-        (spec.stock_radius_mm + spec.tube_radius_mm).hypot(spec.pitch_mm / TAU)
+        (spec.stock_radius_mm + spec.tube_radius_mm).portable_hypot(spec.pitch_mm / TAU)
     }
 
     fn top_speed(self) -> f64 {
         let spec = self.cut.spec();
         let rise = spec.pitch_mm / TAU;
-        let vertical = spec.stock_radius_mm / spec.stock_radius_mm.hypot(rise);
+        let vertical = spec.stock_radius_mm / spec.stock_radius_mm.portable_hypot(rise);
         spec.tube_radius_mm + self.sweep_speed() * vertical * spec.tube_radius_mm / rise
     }
 
@@ -484,7 +484,7 @@ impl Verification {
             shell,
             edge,
             uv.endpoints.map(|[u, z]| {
-                let (sin, cos) = u.sin_cos();
+                let (sin, cos) = u.portable_sin_cos();
                 [radius * cos, radius * sin, z]
             }),
         )
@@ -596,7 +596,7 @@ impl Verification {
                 [0., 0., 1.],
                 self.angle,
             )?;
-            let radial = |angle: f64| [angle.cos(), angle.sin(), 0.];
+            let radial = |angle: f64| [angle.portable_cos(), angle.portable_sin(), 0.];
             near_point(
                 local_direction(self.frame, circle.u),
                 radial(domain[0]),
@@ -702,10 +702,14 @@ impl Verification {
                     sine_hermite_pole(b, -width, DEGREE - index)
                 };
                 let expected_z = (-amplitude).mul_add(sin, spec.start_height_mm);
-                discrepancy = discrepancy.max((radius * (u - expected_u)).hypot(z - expected_z));
+                discrepancy =
+                    discrepancy.max((radius * (u - expected_u)).portable_hypot(z - expected_z));
             }
             let remainder = amplitude * width.powi(12) / (479_001_600. * 4096.);
-            require(discrepancy + remainder + radius.hypot(amplitude) * chart_drift < self.model)?;
+            require(
+                discrepancy + remainder + radius.portable_hypot(amplitude) * chart_drift
+                    < self.model,
+            )?;
         }
         Ok(())
     }
@@ -749,7 +753,7 @@ impl Verification {
 }
 
 fn sine_hermite_pole(angle: f64, width: f64, index: usize) -> f64 {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     let derivatives = [sin, cos, -sin, -cos];
     let mut coefficient = 1.;
     let mut pole = sin;

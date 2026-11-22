@@ -309,7 +309,7 @@ fn close_vertices_alone_do_not_certify_skinny_body_support_directions() {
     .unwrap();
     let relief = Relief::new(base, vec![motif], Kind::Raised, TOL, 1e-6).unwrap();
     let angle = 1e-9_f64;
-    let frame = [[0.; 3], X, [0., angle.cos(), angle.sin()]];
+    let frame = [[0.; 3], X, [0., angle.portable_cos(), angle.portable_sin()]];
     let actual = ImportSolid {
         origin_mm: [0.; 3],
         u: X,

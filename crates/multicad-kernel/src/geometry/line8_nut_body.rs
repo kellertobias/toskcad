@@ -494,7 +494,7 @@ impl Line8NutBody {
                 let b = self.source.stock().base()[0][(face as usize + 1) % 8];
                 let dy = b[0] - a[0];
                 let dz = b[1] - a[1];
-                let length = dy.hypot(dz);
+                let length = dy.portable_hypot(dz);
                 (
                     [0., a[0], a[1]],
                     [1., 0., 0.],

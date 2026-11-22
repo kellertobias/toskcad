@@ -4,6 +4,7 @@ use crate::{
     project_file::ContentHash,
     references::{AnalyticGeometry, TopologyKey},
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,17 +135,20 @@ pub fn analytic_metrics(
             dot(direction(a, b), direction(c, d))
                 .abs()
                 .clamp(0., 1.)
-                .acos(),
+                .portable_acos(),
         ),
-        (Some(Plane { frame: a }), Some(Plane { frame: b })) => {
-            Some(dot(a.normal(), b.normal()).abs().clamp(0., 1.).acos())
-        }
+        (Some(Plane { frame: a }), Some(Plane { frame: b })) => Some(
+            dot(a.normal(), b.normal())
+                .abs()
+                .clamp(0., 1.)
+                .portable_acos(),
+        ),
         (Some(Line { a_mm: a, b_mm: b }), Some(Plane { frame }))
         | (Some(Plane { frame }), Some(Line { a_mm: a, b_mm: b })) => Some(
             dot(direction(a, b), frame.normal())
                 .abs()
                 .clamp(0., 1.)
-                .asin(),
+                .portable_asin(),
         ),
         _ => None,
     }

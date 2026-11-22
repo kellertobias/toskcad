@@ -208,7 +208,7 @@ impl Conic {
         let right = x.value_sign()? != Ordering::Less;
         let normalized_y = dv.approximation()? / support.radii_squared[1].as_f64().sqrt();
         let normalized_x = x.approximation()?.abs() / support.radii_squared[0].as_f64().sqrt();
-        let base = normalized_y.atan2(normalized_x);
+        let base = normalized_y.portable_atan2(normalized_x);
         let angle = if right { base } else { PI - base };
         // For increasing ellipse parameter the tangent is proportional to
         // (-q_v, q_u), so its fixed component follows the root sign.

@@ -25,7 +25,7 @@ impl StadiumRing {
                 let [cx, cy] = centers[usize::from(i == 1)];
                 let [x, y] = [corner[0] - cx, corner[1] - cy];
                 for j in 1..arc_count {
-                    let (sin, cos) = (PI * j as f64 / arc_count as f64).sin_cos();
+                    let (sin, cos) = (PI * j as f64 / arc_count as f64).portable_sin_cos();
                     points.push([cx + x * cos - y * sin, cy + x * sin + y * cos]);
                     sides.push(i as u32);
                 }

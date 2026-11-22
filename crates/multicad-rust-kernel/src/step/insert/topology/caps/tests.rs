@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 #[test]
 fn actual_literal_cap_rims_are_coplanar_and_strict_one_turn_jordan_curves() {
     for kind in 0..4 {
@@ -26,7 +27,7 @@ fn actual_literal_cap_rims_are_coplanar_and_strict_one_turn_jordan_curves() {
 fn winding_one_does_not_certify_a_backtracking_literal_rim() {
     let mut w = Work::new(16_000_000, None).unwrap();
     let mut points = [0., 1., 0.5, 2., 4.]
-        .map(|t: f64| [t.cos(), t.sin(), 0.])
+        .map(|t: f64| [t.portable_cos(), t.portable_sin(), 0.])
         .to_vec();
     points.push(points[0]);
     let mut winding = 0;

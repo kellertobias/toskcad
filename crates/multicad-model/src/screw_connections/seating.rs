@@ -1,6 +1,7 @@
 //! Native material witnesses on both sides of an explicitly derived bearing surface.
 use super::*;
 use multicad_kernel::{CurvedEdge2d, CurvedProfile, RevolutionAxis};
+use multicad_precision::PortableMath as _;
 pub(super) struct Inputs<'a> {
     pub document: &'a Document,
     pub revision: u64,
@@ -275,10 +276,10 @@ fn conical(
         .minimum_feature_mm
         .max(16. * input.model.policy.linear_tolerance_mm);
     let theta = included_angle_deg.to_radians() / 2.;
-    let slope = theta.tan();
+    let slope = theta.portable_tan();
     let mouth = diameter / 2.;
     let bore = receiver.settings.diameter_mm / 2.;
-    let lo = (shank + neck_radius_mm * (1. - theta.cos())).max(bore) + 4. * eps;
+    let lo = (shank + neck_radius_mm * (1. - theta.portable_cos())).max(bore) + 4. * eps;
     let hi = radius_mm
         .min(shank + (height_mm - edge_chamfer_mm) * slope)
         .min(mouth)

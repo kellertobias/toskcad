@@ -249,10 +249,11 @@ mod tests {
                     .find(|(a, b)| a[2] == b[2])
                     .unwrap();
                 let center = [edge.0[0].midpoint(edge.1[0]), edge.0[1].midpoint(edge.1[1])];
-                let chord_error = radius_mm - center[0].hypot(center[1]);
+                let chord_error = radius_mm - center[0].portable_hypot(center[1]);
                 let normal_error = 2.
-                    * ((edge.0[0] - edge.1[0]).hypot(edge.0[1] - edge.1[1]) / (2. * radius_mm))
-                        .asin();
+                    * ((edge.0[0] - edge.1[0]).portable_hypot(edge.0[1] - edge.1[1])
+                        / (2. * radius_mm))
+                        .portable_asin();
                 assert!(chord_error <= options().deflection);
                 assert!(normal_error <= options().angle);
             }

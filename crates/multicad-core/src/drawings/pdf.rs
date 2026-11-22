@@ -5,6 +5,7 @@
 use super::DrawingEvaluation;
 use super::render::{PageRender, render_page};
 use crate::document::{Document, EntityId};
+use multicad_precision::PortableMath as _;
 use std::fmt::Write;
 
 /// PDF points per millimeter.
@@ -91,8 +92,8 @@ fn content(page: &PageRender) -> Vec<u8> {
         let at = |t: f64| {
             let a = arc.start_rad + sweep * t;
             [
-                arc.center[0] + arc.radius_mm * a.cos(),
-                arc.center[1] + arc.radius_mm * a.sin(),
+                arc.center[0] + arc.radius_mm * a.portable_cos(),
+                arc.center[1] + arc.radius_mm * a.portable_sin(),
             ]
         };
         let mut path = format!("{} w [] 0 d {} m", n(arc.width_mm * PT_PER_MM), p(at(0.)));
@@ -120,7 +121,7 @@ fn content(page: &PageRender) -> Vec<u8> {
     }
     for text in &page.texts {
         // Clockwise on paper is clockwise on the page: negate for y up.
-        let (s, c) = (-text.angle_deg).to_radians().sin_cos();
+        let (s, c) = (-text.angle_deg).to_radians().portable_sin_cos();
         let mut op = format!(
             "BT /F1 {} Tf {} {} {} {} {} Tm ",
             n(text.height_mm * PT_PER_MM),

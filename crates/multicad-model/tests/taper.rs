@@ -11,6 +11,7 @@ use multicad_core::{
     sketch_regions,
 };
 use multicad_model::{Compiler, Model, ShapeSnapshot};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
@@ -89,7 +90,7 @@ impl Fixture {
     }
     fn parameters(delta: f64) -> ExtrudeParameters {
         ExtrudeParameters {
-            taper: angle((delta / 10.).atan().to_degrees()),
+            taper: angle((delta / 10.).portable_atan().to_degrees()),
             ..Default::default()
         }
     }
@@ -120,7 +121,7 @@ fn radii_at(shape: &ShapeSnapshot, center: [f64; 3]) -> (f64, f64) {
             e.points_mm.len() > 2 && e.points_mm.iter().all(|p| (p[2] - center[2]).abs() < 1e-6)
         })
         .flat_map(|e| &e.points_mm)
-        .map(|p| (p[0] - center[0]).hypot(p[1] - center[1]))
+        .map(|p| (p[0] - center[0]).portable_hypot(p[1] - center[1]))
         .collect();
     assert!(!radii.is_empty(), "Expected native circular cap edges");
     (
@@ -205,7 +206,7 @@ fn tilted_reverse_taper_keeps_normal_start_offset_independent_of_sweep_length() 
             let mut f = Fixture::new(|s| circle(s, 3.));
             let p = ExtrudeParameters {
                 direction: Direction {
-                    elevation: angle(0.8_f64.asin().to_degrees()),
+                    elevation: angle(0.8_f64.portable_asin().to_degrees()),
                     azimuth: angle(0.),
                     reverse,
                 },
@@ -297,7 +298,7 @@ fn symmetric_and_independent_ends_both_draft_from_original_start_section() {
             .collect();
         assert!(!waist.is_empty());
         for p in waist.iter().flat_map(|e| &e.points_mm) {
-            near(p[0].hypot(p[1]), 3.);
+            near(p[0].portable_hypot(p[1]), 3.);
         }
         assert!(
             !faces
@@ -456,7 +457,7 @@ fn curved_oblique_taper_keeps_identity_through_edits_undo_redo_and_cold_reopen()
     });
     let tilted = |delta: f64| ExtrudeParameters {
         direction: Direction {
-            elevation: angle(0.8_f64.asin().to_degrees()),
+            elevation: angle(0.8_f64.portable_asin().to_degrees()),
             azimuth: angle(0.),
             reverse: false,
         },

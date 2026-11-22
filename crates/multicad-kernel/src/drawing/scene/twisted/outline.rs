@@ -6,6 +6,7 @@ use super::flank::rotate;
 use super::solve::{Search, isolate};
 use super::trace::trace;
 use super::{Gear, Helix, Level, Patch, Region, Traced};
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{normal_sweep, spur_gear::Edge};
 use std::f64::consts::{FRAC_PI_2, TAU};
 
@@ -67,7 +68,7 @@ fn rulings(
         origin + turn.min(0.) + sweep.min(0.),
         origin + turn.max(0.) + sweep.max(0.),
     ];
-    for omega in [ratio.acos(), -ratio.acos()] {
+    for omega in [ratio.portable_acos(), -ratio.portable_acos()] {
         let mut k = ((lo - omega) / TAU).ceil();
         while omega + k * TAU <= hi {
             // origin + turn s + sweep zeta = omega + k TAU
@@ -102,7 +103,7 @@ fn cusps(path: &Traced, budget: &mut usize) -> Result<Vec<f64>, GeometryError> {
     let height = patch.band.z[1] - patch.band.z[0];
     // Traced flanks are lines and arcs: |c'| is the constant c1.
     let speed = patch.flank.at(0.5)[1];
-    let speed = speed[0].hypot(speed[1]);
+    let speed = speed[0].portable_hypot(speed[1]);
     let normal = 1. + twist * c0;
     let turning = (c2 / speed + twist * (c1 + c0 * c2 / speed)).max(height * twist);
     let tangent = 2. * g1 * s1;
@@ -169,7 +170,7 @@ fn uncovered(gear: &Gear, radius: f64) -> Vec<Edge> {
     }
     covered.sort_by(|a, b| a[0].total_cmp(&b[0]));
     let point = |angle: f64| {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         [radius * cos, radius * sin]
     };
     let mut output = Vec::new();
@@ -396,7 +397,7 @@ pub(super) fn candidates(gear: &Gear) -> Result<Vec<Candidate>, GeometryError> {
     if !axial {
         for (radius, z) in cylinders {
             for side in [FRAC_PI_2, -FRAC_PI_2] {
-                let (sin, cos) = (gear.azimuth + side).sin_cos();
+                let (sin, cos) = (gear.azimuth + side).portable_sin_cos();
                 let at = |z: f64| gear.frame.place([radius * cos, radius * sin, z]);
                 output.push(Candidate {
                     kind: Kind::Outline,

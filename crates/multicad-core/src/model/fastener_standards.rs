@@ -1,6 +1,7 @@
 //! Bounded receiving-hole recommendations, separate from purchased hardware.
 //! Source identity and interpretation: library/sources/fastener-connections/.
 //! These nominal defaults do not certify a fit, material, strength or toolpath.
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 
 pub const METRIC_RECEIVING_SOURCE: &str = "norelem-technical-screws-nuts-undated";
@@ -68,7 +69,7 @@ impl MetricReceivingRecommendation {
     /// The rounded approximate T1 in the source is retained for attribution.
     pub fn medium_countersink_depth_mm(self) -> f64 {
         (self.medium_countersink.diameter_mm - self.medium_clearance_diameter_mm)
-            / (2. * (self.medium_countersink.included_angle_deg.to_radians() / 2.).tan())
+            / (2. * (self.medium_countersink.included_angle_deg.to_radians() / 2.).portable_tan())
     }
 }
 
@@ -122,7 +123,8 @@ mod tests {
             // Reconstruct the source's nominal D2 from the actual conical depth.
             let depth = r.medium_countersink_depth_mm();
             let diameter = r.medium_clearance_diameter_mm
-                + 2. * depth * (r.medium_countersink.included_angle_deg.to_radians() / 2.).tan();
+                + 2. * depth
+                    * (r.medium_countersink.included_angle_deg.to_radians() / 2.).portable_tan();
             assert!((diameter - r.medium_countersink.diameter_mm).abs() < 1e-12);
             assert!(
                 (depth - r.medium_countersink.approximate_reference_depth_mm).abs() <= 0.05 + 1e-12

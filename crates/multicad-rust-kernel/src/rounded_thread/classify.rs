@@ -6,6 +6,7 @@
 //! thread surface or an end cap stays unresolved.
 use super::{Thread, ThroughBore};
 use crate::helical_thread::BoxClassification;
+use multicad_precision::PortableMath as _;
 
 impl Thread {
     /// Classify the closed local box `[[x0, x1], [y0, y1], [z0, z1]]` given in
@@ -39,17 +40,17 @@ impl Thread {
             }
         };
         let far = |lo: f64, hi: f64| lo.abs().max(hi.abs());
-        let rho_lo = near(x0, x1).hypot(near(y0, y1)) * (1. - 4. * f64::EPSILON);
-        let rho_hi = far(x0, x1).hypot(far(y0, y1)) * (1. + 4. * f64::EPSILON);
+        let rho_lo = near(x0, x1).portable_hypot(near(y0, y1)) * (1. - 4. * f64::EPSILON);
+        let rho_hi = far(x0, x1).portable_hypot(far(y0, y1)) * (1. + 4. * f64::EPSILON);
         if rho_lo > spec.major_radius_mm + rounding {
             return Outside;
         }
         // The phase range: an angular enclosure of the box about its centre.
         let center = [0.5 * (x0 + x1), 0.5 * (y0 + y1)];
-        let reach = 0.5 * (x1 - x0).hypot(y1 - y0);
-        let rho_center = center[0].hypot(center[1]);
+        let reach = 0.5 * (x1 - x0).portable_hypot(y1 - y0);
+        let rho_center = center[0].portable_hypot(center[1]);
         let [low, high] = if rho_center > 2. * reach && reach.is_finite() {
-            let theta = center[1].atan2(center[0]);
+            let theta = center[1].portable_atan2(center[0]);
             // A point within `reach` of the centre deviates in angle by at
             // most asin(reach / rho) <= reach / (rho - reach).
             let angular = reach / (rho_center - reach) + 16. * f64::EPSILON;
@@ -113,8 +114,8 @@ impl ThroughBore {
             }
         };
         let far = |lo: f64, hi: f64| lo.abs().max(hi.abs());
-        let rho_lo = near(x0, x1).hypot(near(y0, y1)) * (1. - 4. * f64::EPSILON);
-        let rho_hi = far(x0, x1).hypot(far(y0, y1)) * (1. + 4. * f64::EPSILON);
+        let rho_lo = near(x0, x1).portable_hypot(near(y0, y1)) * (1. - 4. * f64::EPSILON);
+        let rho_hi = far(x0, x1).portable_hypot(far(y0, y1)) * (1. + 4. * f64::EPSILON);
         let radius = self.radius_mm();
         if rho_lo > radius + rounding || z1 < -rounding || z0 > length + rounding {
             Outside
@@ -142,7 +143,7 @@ mod tests {
             major_radius_mm: 5.,
             pitch_mm: 1.,
             length_mm: 4.,
-            depth_mm: 1. / (2. * angle.tan()) - 0.274 * (1. / angle.sin() - 1.),
+            depth_mm: 1. / (2. * angle.portable_tan()) - 0.274 * (1. / angle.portable_sin() - 1.),
             crest_radius_mm: 0.137,
             root_radius_mm: 0.137,
             flank_angle_deg: 27.5,
@@ -174,7 +175,7 @@ mod tests {
             let crest = rate * theta + 2.; // phase 0 at the crest centre
             let root_phase = crest + 0.5;
             let r = 4.95;
-            let point = |z: f64| [r * theta.cos(), r * theta.sin(), z];
+            let point = |z: f64| [r * theta.portable_cos(), r * theta.portable_sin(), z];
             assert_eq!(t.classify_box(cube(point(crest), 1e-4)), Inside);
             assert_eq!(t.classify_box(cube(point(root_phase), 1e-4)), Outside);
         }
@@ -187,7 +188,7 @@ mod tests {
         let theta = 0.3_f64;
         let point = |r: f64, phase: f64| {
             let z = rate * theta + 2. + phase;
-            [r * theta.cos(), r * theta.sin(), z]
+            [r * theta.portable_cos(), r * theta.portable_sin(), z]
         };
         // Stock wall material, the empty core, beyond the wall and the caps.
         assert_eq!(bore.classify_box(cube(point(6.5, 0.), 0.05)), Inside);

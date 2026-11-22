@@ -13,6 +13,7 @@ use multicad_model::{
     Compiler,
     export::{Exporter, mesh},
 };
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -190,7 +191,7 @@ fn named_buttress_native_pairs_preserve_load_flank_phase_root_and_flat_cutter_fo
                             + direction
                                 * (b.crest_width_mm / 2.
                                     + (resolved.major_radius_mm - radius)
-                                        * angle.to_radians().tan());
+                                        * angle.to_radians().portable_tan());
                         for (offset, inside_positive_profile) in
                             [(-direction * 0.001, true), (direction * 0.001, false)]
                         {
@@ -213,8 +214,10 @@ fn named_buttress_native_pairs_preserve_load_flank_phase_root_and_flat_cutter_fo
                 }
                 if let Some(circle) = &b.root_circle {
                     for angle in [-0.5_f64, 0.5] {
-                        let z = 8. + circle.center_axial_mm + circle.radius_mm * angle.sin();
-                        let boundary = circle.center_radius_mm - circle.radius_mm * angle.cos();
+                        let z =
+                            8. + circle.center_axial_mm + circle.radius_mm * angle.portable_sin();
+                        let boundary =
+                            circle.center_radius_mm - circle.radius_mm * angle.portable_cos();
                         assert!(material(shape, [boundary - 0.001, 0., z]) > 0.999);
                         assert!(material(shape, [boundary + 0.001, 0., z]) < 1e-5);
                     }
@@ -226,9 +229,9 @@ fn named_buttress_native_pairs_preserve_load_flank_phase_root_and_flat_cutter_fo
                     );
                     let lower = 4.
                         - b.crest_width_mm / 2.
-                        - b.depth_mm * b.lower_flank_deg.to_radians().tan();
-                    let upper =
-                        b.crest_width_mm / 2. + b.depth_mm * b.upper_flank_deg.to_radians().tan();
+                        - b.depth_mm * b.lower_flank_deg.to_radians().portable_tan();
+                    let upper = b.crest_width_mm / 2.
+                        + b.depth_mm * b.upper_flank_deg.to_radians().portable_tan();
                     let z = 8. + b.crest_phase_axial_mm + (lower + upper) / 2.;
                     let radius = resolved.major_radius_mm - b.depth_mm;
                     assert!(material(shape, [radius - 0.001, 0., z]) < 1e-5);
@@ -314,8 +317,10 @@ fn named_buttress_native_pairs_preserve_load_flank_phase_root_and_flat_cutter_fo
                 if external {
                     let circle = r.buttress.unwrap().root_circle.unwrap();
                     for angle in [-0.5_f64, 0.5] {
-                        let z = 8. + circle.center_axial_mm + circle.radius_mm * angle.sin();
-                        let boundary = circle.center_radius_mm - circle.radius_mm * angle.cos();
+                        let z =
+                            8. + circle.center_axial_mm + circle.radius_mm * angle.portable_sin();
+                        let boundary =
+                            circle.center_radius_mm - circle.radius_mm * angle.portable_cos();
                         assert!(mesh_material(&raw, [boundary - 0.01, 0., z]));
                         assert!(!mesh_material(&raw, [boundary + 0.01, 0., z]));
                     }

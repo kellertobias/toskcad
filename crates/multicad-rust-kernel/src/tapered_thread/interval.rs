@@ -1,4 +1,5 @@
 //! Directed enclosures used by the retained Custom transport proof.
+use multicad_precision::PortableMath as _;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct I {
@@ -62,8 +63,8 @@ impl I {
     pub fn atan(self) -> Self {
         let margin = 8. * f64::EPSILON;
         Self::new(
-            (self.lo.atan() - margin).next_down(),
-            (self.hi.atan() + margin).next_up(),
+            (self.lo.portable_atan() - margin).next_down(),
+            (self.hi.portable_atan() + margin).next_up(),
         )
     }
     pub fn sin(self) -> Self {
@@ -77,7 +78,13 @@ impl I {
         if self.hi - self.lo >= TAU {
             return Self::new(-1., 1.);
         }
-        let eval = |x: f64| if cosine { x.cos() } else { x.sin() };
+        let eval = |x: f64| {
+            if cosine {
+                x.portable_cos()
+            } else {
+                x.portable_sin()
+            }
+        };
         let margin = 8. * f64::EPSILON;
         let mut lo = (eval(self.lo).min(eval(self.hi)) - margin)
             .next_down()

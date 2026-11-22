@@ -261,7 +261,7 @@ fn centers_are_defined_only_for_circles_arcs_rectangles_and_regular_polygons() {
     let hexagon: Vec<[f64; 2]> = (0..6)
         .map(|k| {
             let a = k as f64 * TAU / 6.;
-            [100. + 10. * a.cos(), 10. * a.sin()]
+            [100. + 10. * a.portable_cos(), 10. * a.portable_sin()]
         })
         .collect();
     b.polygon(&hexagon);
@@ -315,7 +315,7 @@ fn arcs_snap_only_within_their_sweep() {
     let s = std::f64::consts::FRAC_1_SQRT_2 * 10.;
     let target = resolve(&g, &[], &query([s + 0.5, s + 0.5]), None).unwrap();
     assert_eq!(target.kind, TargetKind::OnCurve);
-    assert!(((target.position[0]).hypot(target.position[1]) - 10.).abs() < 1e-9);
+    assert!(((target.position[0]).portable_hypot(target.position[1]) - 10.).abs() < 1e-9);
     assert!(resolve(&g, &[], &query([-s - 0.5, -s - 0.5]), None).is_none());
 }
 
@@ -482,8 +482,8 @@ fn circles_and_arcs_offer_radial_feet_and_tangent_points_from_the_line_start() {
     assert_eq!(far.key, TargetKey::Perpendicular(circle, 1));
     // Tangent from (30,0): the radius to the tangent point is perpendicular
     // to the drawn line.
-    let angle = (10f64 / 30.).acos();
-    let tangent = [10. * angle.cos(), 10. * angle.sin()];
+    let angle = (10f64 / 30.).portable_acos();
+    let tangent = [10. * angle.portable_cos(), 10. * angle.portable_sin()];
     let target = resolve(&g, &[], &from_query(tangent, -2., 2., from), None).unwrap();
     assert_eq!(target.kind, TargetKind::Tangent);
     assert!(dot(target.position, sub(target.position, from)).abs() < 1e-9);

@@ -3,6 +3,7 @@ use crate::{
     normal_sweep::{CapError, Edge, Sweep},
     revolution::Sum,
 };
+use multicad_precision::PortableMath as _;
 
 mod boundary;
 mod mesh;
@@ -184,8 +185,8 @@ impl Relief {
                 boundary_error = boundary_error.max(arithmetic);
             }
             if let Edge::Arc { center, a, b, .. } = edge {
-                let radius = (a[0] - center[0]).hypot(a[1] - center[1]);
-                let other = (b[0] - center[0]).hypot(b[1] - center[1]);
+                let radius = (a[0] - center[0]).portable_hypot(a[1] - center[1]);
+                let other = (b[0] - center[0]).portable_hypot(b[1] - center[1]);
                 let scale = center
                     .iter()
                     .chain(a)

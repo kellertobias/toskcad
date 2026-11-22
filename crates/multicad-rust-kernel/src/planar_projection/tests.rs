@@ -31,7 +31,7 @@ pub(crate) fn prism(rings: &[&[Point2]], low: f64, high: f64) -> Body {
             let a = first + i * 3;
             let b = first + (i + 1) % ring.len() * 3;
             let [dx, dy] = sub(q, p);
-            let length = dx.hypot(dy);
+            let length = dx.portable_hypot(dy);
             faces.push(Face {
                 point: at(p, low),
                 normal: [dy / length, -dx / length, 0.],

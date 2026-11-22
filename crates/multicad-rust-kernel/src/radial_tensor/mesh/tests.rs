@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::cell::Cell;
 pub(super) fn cam() -> RadialBoundary {
     BoundaryOwnership::new(crate::radial_tensor::tests::cam::wedge(&[1, 2]), 1e-7, None)
@@ -439,8 +440,11 @@ fn candidate(ring: usize, turns: usize) -> DisplayMesh {
     for end in 0..2 {
         for i in 0..ring {
             let a = std::f64::consts::TAU * turns as f64 * i as f64 / ring as f64;
-            mesh.vertices
-                .extend([5. * a.cos(), 5. * a.sin(), 4. * end as f64]);
+            mesh.vertices.extend([
+                5. * a.portable_cos(),
+                5. * a.portable_sin(),
+                4. * end as f64,
+            ]);
         }
     }
     mesh.vertices.extend([0., 0., -0.01, 0., 0., 4.01]);
@@ -1189,7 +1193,7 @@ fn authored_pipe_preflight_preserves_npt_bytes_and_qualifies_bspt_with_fixed_lim
                 radial_taper: 1. / 32.,
                 section: if rounded {
                     AuthoredSection::BsptRounded {
-                        depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
+                        depth_mm: p / (3. * 27.5_f64.to_radians().portable_tan()),
                     }
                 } else {
                     AuthoredSection::NptFlat {

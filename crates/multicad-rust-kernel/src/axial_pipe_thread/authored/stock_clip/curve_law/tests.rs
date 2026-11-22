@@ -38,7 +38,7 @@ fn all_twenty_original_edges_keep_symbolic_event_and_high_order_source_law() {
             let c = jet.coefficients_mm();
             let radius = endpoints[0][0] + dr * t;
             let theta = omega * (endpoints[0][2] - endpoints[0][1] + (dz - dq) * t);
-            let unit = [theta.cos(), theta.sin()];
+            let unit = [theta.portable_cos(), theta.portable_sin()];
             // Independent closed complex-exponential derivative formula,
             // including the affine-radius Leibniz term, through order12.
             let mut previous = [1., 0.];

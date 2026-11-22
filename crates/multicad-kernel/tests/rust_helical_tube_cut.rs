@@ -6,6 +6,7 @@ use multicad_kernel::{
     GeometryErrorKind, GeometryPolicy, HelicalTube, MeshOptions, PlaneFrame, RigidTransform, Solid,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder, prism::Location},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn stock() -> (EntityId, Solid) {
@@ -72,7 +73,11 @@ fn helical_seam_cut_builds_watertight_named_geometry_and_preserves_stock_caps() 
         assert!(mesh.mesh.face_indices.contains(&face));
     }
     let phase: f64 = 0.25;
-    let p = [7.7 * phase.cos(), 7.7 * phase.sin(), 16.2 + phase / PI];
+    let p = [
+        7.7 * phase.portable_cos(),
+        7.7 * phase.portable_sin(),
+        16.2 + phase / PI,
+    ];
     assert_eq!(
         cut.rust_helical_tube_material(p).unwrap(),
         Location::Exterior
@@ -171,8 +176,8 @@ fn step_readback_preserves_cut_material_and_rejects_the_wrong_phase() {
     let phase: f64 = 0.25;
     let z = 16.2 + phase / PI;
     let point = |angle: f64| {
-        let x = 7.7 * angle.cos();
-        let y = 7.7 * angle.sin();
+        let x = 7.7 * angle.portable_cos();
+        let y = 7.7 * angle.portable_sin();
         [17. + 0.6 * x + 0.8 * z, 4. + y, -0.8 * x + 0.6 * z]
     };
     assert_eq!(

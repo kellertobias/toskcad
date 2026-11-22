@@ -279,7 +279,7 @@ impl HerringboneBody {
     }
 
     pub(crate) fn section(&self, frame: PlaneFrame, z: f64, outward: f64) -> ReferenceFrame {
-        let (sin, cos) = self.geometry.phase_at(z).sin_cos();
+        let (sin, cos) = self.geometry.phase_at(z).portable_sin_cos();
         ReferenceFrame {
             origin_mm: position(frame, [0., 0., z]),
             u: std::array::from_fn(|i| cos * frame.u[i] + sin * frame.v[i]),
@@ -328,8 +328,12 @@ impl HerringboneBody {
                     angles,
                     radius_mm,
                 } => {
-                    let [a, b] =
-                        angles.map(|angle| [radius_mm * angle.cos(), radius_mm * angle.sin()]);
+                    let [a, b] = angles.map(|angle| {
+                        [
+                            radius_mm * angle.portable_cos(),
+                            radius_mm * angle.portable_sin(),
+                        ]
+                    });
                     Some(spur_gear_body::rim(
                         Edge::Planar(normal_sweep::Edge::Arc {
                             center: [0.; 2],
@@ -437,7 +441,7 @@ impl HerringboneBody {
             return None;
         };
         let sweep = self.geometry.phase_at(self.geometry.band_length_mm()).abs();
-        let max_span = (8. * options.deflection / x.hypot(y))
+        let max_span = (8. * options.deflection / x.portable_hypot(y))
             .sqrt()
             .min(options.angle);
         let count = (sweep / max_span).ceil().max(1.);

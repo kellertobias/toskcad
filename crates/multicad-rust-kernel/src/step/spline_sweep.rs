@@ -57,7 +57,7 @@ fn check_placement(sweep: &Sweep, placement: &Placement, tolerance: f64) -> Resu
         .map(|(edge, next)| {
             let [x, y] = edge.point(1.);
             let [a, b] = next.point(0.);
-            (x - a).hypot(y - b)
+            (x - a).portable_hypot(y - b)
         })
         .fold(0., f64::max);
     let error = 16. * f64::EPSILON * (origin + extent) + 4. * frame_error * extent + joins;

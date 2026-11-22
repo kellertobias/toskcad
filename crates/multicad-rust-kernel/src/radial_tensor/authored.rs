@@ -1,6 +1,7 @@
 //! Direct exact source graph construction; no exchange serialization/inference.
 use super::*;
 use crate::tapered_thread::Thread;
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone)]
 pub struct AuthoredBoundary {
@@ -167,8 +168,8 @@ fn graph(
                     .map(|axis| axis.into_iter().zip(d).map(|(a, b)| a * b).sum::<f64>())
             };
             let [a, b] = endpoints.map(|v| local(graph.0.vertices[v[end]]));
-            let from = a[1].atan2(a[0]);
-            let to = b[1].atan2(b[0]);
+            let from = a[1].portable_atan2(a[0]);
+            let to = b[1].portable_atan2(b[0]);
             let sweep = if spec.left_hand {
                 (to - from).rem_euclid(std::f64::consts::TAU)
             } else {
@@ -176,8 +177,8 @@ fn graph(
             };
             let middle_angle = from + sweep * 0.5;
             let middle = graph.vertex(prepared.point([
-                radius * middle_angle.cos(),
-                radius * middle_angle.sin(),
+                radius * middle_angle.portable_cos(),
+                radius * middle_angle.portable_sin(),
                 z,
             ]));
             let axis = Axis {
@@ -226,7 +227,7 @@ fn graph(
             reference: prepared.reference(),
         },
         radius_mm: (r[0] + r[1]) * 0.5,
-        semi_angle_rad: slope.abs().atan(),
+        semi_angle_rad: slope.abs().portable_atan(),
     });
     for start in 0..starts {
         for band in 0..3 {

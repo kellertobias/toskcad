@@ -13,6 +13,7 @@ use multicad_core::{
     model::{self, MachiningFace, MachiningFaceFrame, PanelEdgeName},
     parameters::EvaluatedParameters,
 };
+use multicad_precision::PortableMath as _;
 
 /// The faces of a rectangular panel in hit-test order.
 pub(super) const FACES: [MachiningFace; 6] = [
@@ -353,7 +354,7 @@ pub(super) fn circle(
     let points: Vec<[f64; 2]> = (0..24)
         .map(|k| {
             let t = k as f64 / 24. * std::f64::consts::TAU;
-            [at[0] + r * t.cos(), at[1] + r * t.sin()]
+            [at[0] + r * t.portable_cos(), at[1] + r * t.portable_sin()]
         })
         .collect();
     polygon(view, frame, &points, color);

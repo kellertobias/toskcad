@@ -18,6 +18,7 @@ use multicad_core::{
 };
 use multicad_kernel::{MeshOptions, SolidPairRelation};
 use multicad_model::{AidInspection, Compiler, GeometryBackend, Model, export::Exporter};
+use multicad_precision::PortableMath as _;
 use std::path::Path;
 
 fn actor() -> Actor {
@@ -558,7 +559,7 @@ fn rust_aids_report_missing_footprint_and_measure_curved_tab_contact() {
     let report = rust.snapshot().fdm_aids.as_ref().unwrap();
     let tab = inspection(report, "Tab on cylinder");
     assert_eq!(tab.target.relation, SolidPairRelation::Overlapping);
-    let expected = (3. * 55_f64.sqrt() + 64. * (3_f64 / 8.).asin() - 36.) * 0.4;
+    let expected = (3. * 55_f64.sqrt() + 64. * (3_f64 / 8.).portable_asin() - 36.) * 0.4;
     near(tab.target.common_volume_mm3, expected);
     assert!(tab.contact_issues.is_empty());
     let contact = tab.exact_contact.unwrap();

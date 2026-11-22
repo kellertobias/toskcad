@@ -10,6 +10,7 @@ use crate::{
     constraint_sketch::{Curve, CurveKind, SplineBasis, source::Source},
     document::EntityId,
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -206,7 +207,7 @@ impl Welder {
             for dy in -1..=1 {
                 if let Some(found) = self.grid.get(&(kx + dx, ky + dy)).and_then(|cell| {
                     cell.iter()
-                        .find(|(q, _)| (q[0] - p[0]).hypot(q[1] - p[1]) <= self.tolerance)
+                        .find(|(q, _)| (q[0] - p[0]).portable_hypot(q[1] - p[1]) <= self.tolerance)
                 }) {
                     return found.1;
                 }

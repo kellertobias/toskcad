@@ -366,6 +366,6 @@ impl RoundedThreadBody {
     fn point(&self, phase: f64, z: f64) -> Point {
         let angle = (z - phase) / self.geometry.helical_rate();
         let r = self.geometry.radius_at_phase(phase);
-        [r * angle.cos(), r * angle.sin(), z]
+        [r * angle.portable_cos(), r * angle.portable_sin(), z]
     }
 }

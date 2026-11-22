@@ -63,7 +63,7 @@ impl Chart {
             Edge::Planar(edge @ PlanarEdge::Arc { center, .. }) => {
                 let sweep = edge.signed_sweep_rad().ok_or(StepError::InvalidGeometry)?;
                 let spans = (sweep.abs() / std::f64::consts::FRAC_PI_2).ceil() as u32;
-                let weight = (sweep / (2. * f64::from(spans))).cos();
+                let weight = (sweep / (2. * f64::from(spans))).portable_cos();
                 let mut poles = vec![ends[0]];
                 let mut weights = vec![1.];
                 let knots = (0..=spans)
@@ -105,7 +105,7 @@ impl Chart {
         let last = chart.poles.len() - 1;
         for (index, expected) in [0, last].into_iter().zip(ends) {
             let [x, y] = std::array::from_fn(|i| chart.poles[index][i] - expected[i]);
-            if x.hypot(y) > tolerance / 16. {
+            if x.portable_hypot(y) > tolerance / 16. {
                 return Err(StepError::Limit);
             }
             chart.poles[index] = expected;
@@ -205,7 +205,7 @@ pub(super) fn axial_rotation(
             };
             [p, point(0.2, 0.), point(0.4, 0.05)]
         };
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let [a, b, c] = control_half([1., 0.], angle);
         let [f, e, d] = control_half([cos, sin], -angle);
         let poles = vec![a, b, c, d, e, f];
@@ -271,7 +271,7 @@ pub(crate) fn prepare(
     let middle = gear.band_length_mm();
     let [lo, hi] = gear.bounds();
     let extent = |i: usize| lo[i].abs().max(hi[i].abs());
-    let radius = extent(0).hypot(extent(1));
+    let radius = extent(0).portable_hypot(extent(1));
     let scale = origin.into_iter().map(f64::abs).fold(0., f64::max) + radius + extent(2) + 1.;
     if 128. * f64::EPSILON * scale > tolerance / 4. {
         return Err(StepError::Limit);

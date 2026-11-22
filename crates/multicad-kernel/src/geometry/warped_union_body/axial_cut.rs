@@ -287,13 +287,13 @@ fn fits(rim: &[Point], round: Round, boss_radius: f64, tolerance: f64) -> bool {
     let determinant = |[a, b]: [f64; 2], [c, d]: [f64; 2]| a * d - b * c;
     points
         .iter()
-        .all(|&[x, y]| x.hypot(y) < boss_radius - tolerance)
+        .all(|&[x, y]| x.portable_hypot(y) < boss_radius - tolerance)
         && points
             .iter()
             .zip(points.iter().cycle().skip(1))
             .all(|(&a, &b)| {
                 let edge = [b[0] - a[0], b[1] - a[1]];
-                let length = edge[0].hypot(edge[1]);
+                let length = edge[0].portable_hypot(edge[1]);
                 length > tolerance
                     && determinant(a, b) > (round.radius + tolerance) * length
                     && points.iter().all(|p| {

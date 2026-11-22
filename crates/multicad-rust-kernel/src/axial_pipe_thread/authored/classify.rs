@@ -20,13 +20,13 @@ fn angle_range(x: [f64; 2], y: [f64; 2]) -> Option<[f64; 2]> {
     if x[0] <= 0. && x[1] >= 0. && y[0] <= 0. && y[1] >= 0. {
         return None;
     }
-    let center = (0.5 * (y[0] + y[1])).atan2(0.5 * (x[0] + x[1]));
+    let center = (0.5 * (y[0] + y[1])).portable_atan2(0.5 * (x[0] + x[1]));
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
     for px in x {
         for py in y {
             // Wrap each corner around the centre direction: a convex box
             // that avoids the origin subtends less than a half turn.
-            let mut d = py.atan2(px) - center;
+            let mut d = py.portable_atan2(px) - center;
             if d > PI {
                 d -= 2. * PI;
             } else if d < -PI {

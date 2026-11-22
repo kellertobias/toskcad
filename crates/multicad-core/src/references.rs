@@ -5,6 +5,7 @@ use crate::{
     commands::{Actor, CommandError, ErrorCode, Prepared, Request, Session},
     document::{Document, EntityData, EntityId, Link, Mutation},
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 mod analytic;
@@ -156,7 +157,7 @@ impl ReferenceFrame {
                 + self.v[i] * attachment.offset_mm[1]
                 + n[i] * attachment.offset_mm[2]
         });
-        let (s, c) = attachment.angle_rad.sin_cos();
+        let (s, c) = attachment.angle_rad.portable_sin_cos();
         Self {
             origin_mm,
             u: std::array::from_fn(|i| self.u[i] * c + self.v[i] * s),

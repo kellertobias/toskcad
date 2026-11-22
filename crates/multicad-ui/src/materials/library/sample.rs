@@ -5,6 +5,7 @@ use multicad_core::{
     document::Document,
     model::{ProfileSection, SectionEdge, SectionLoop},
 };
+use multicad_precision::PortableMath as _;
 
 const SAMPLE_BG: Color32 = Color32::from_rgb(19, 24, 33);
 
@@ -216,7 +217,7 @@ fn hatch_sample(painter: &egui::Painter, rect: Rect, hatch: &HatchStyle) {
     if hatch.pattern == HatchPattern::Solid {
         painter.rect_filled(rect, 2., stroke.color);
     } else if hatch.pattern != HatchPattern::None {
-        let (sin, cos) = hatch.angle_deg.to_radians().sin_cos();
+        let (sin, cos) = hatch.angle_deg.to_radians().portable_sin_cos();
         let direction = egui::vec2(cos as f32, -sin as f32);
         let normal = egui::vec2(-direction.y, direction.x);
         let spacing = (hatch.spacing_mm as f32 * 3.).max(3.);
@@ -414,13 +415,16 @@ fn section_sample(painter: &egui::Painter, rect: Rect, profile: &ProfileSection)
                             a,
                             b,
                         } => {
-                            let start = (a[1] - cy).atan2(a[0] - cx);
-                            let end = (b[1] - cy).atan2(b[0] - cx);
+                            let start = (a[1] - cy).portable_atan2(a[0] - cx);
+                            let end = (b[1] - cy).portable_atan2(b[0] - cx);
                             let sweep = (end - start).rem_euclid(std::f64::consts::TAU);
-                            let radius = (a[0] - cx).hypot(a[1] - cy);
+                            let radius = (a[0] - cx).portable_hypot(a[1] - cy);
                             let points = (0..=12).map(|i| {
                                 let angle = start + sweep * f64::from(i) / 12.;
-                                project([cx + radius * angle.cos(), cy + radius * angle.sin()])
+                                project([
+                                    cx + radius * angle.portable_cos(),
+                                    cy + radius * angle.portable_sin(),
+                                ])
                             });
                             painter.add(egui::Shape::line(points.collect(), stroke));
                         }

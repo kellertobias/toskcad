@@ -180,7 +180,11 @@ pub fn certify_inset_insert(
     let phase = outer.bands()[0].phase_mm[1] / 2.;
     let theta = ((ip(z) - ip(phase)) * outer.angular_gain()).midpoint();
     let radius = stock.pilot.radius_mm.midpoint(outer.maximum_radius_mm());
-    let center = [radius * theta.cos(), radius * theta.sin(), z];
+    let center = [
+        radius * theta.portable_cos(),
+        radius * theta.portable_sin(),
+        z,
+    ];
     let mut half = ((outer.maximum_radius_mm() - stock.pilot.radius_mm) / 32.)
         .min(phase / 32.)
         .min(length / 32.)

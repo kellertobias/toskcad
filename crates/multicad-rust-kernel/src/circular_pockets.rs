@@ -4,6 +4,7 @@ use crate::{
     Rational,
     polygon::{MAX_VERTICES, PolygonPrism},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -58,7 +59,7 @@ fn relative(a: Point, b: Point) -> Point {
 }
 
 fn norm([x, y]: Point) -> f64 {
-    x.hypot(y)
+    x.portable_hypot(y)
 }
 
 fn segment_distance(a: Point, b: Point) -> f64 {

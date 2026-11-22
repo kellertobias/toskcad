@@ -4,6 +4,7 @@
 //! Its transported horizontal heading therefore changes along a conical spine.
 //! NPT's axial-flat and BSPT's meridian laws are deliberately outside this API.
 use crate::helical_thread::{Spec, Thread as StraightThread, ThreadError};
+use multicad_precision::PortableMath as _;
 mod bivariate;
 pub(crate) mod interval;
 mod law;
@@ -126,7 +127,8 @@ impl Thread {
                 return Err(Error::Invalid);
             }
         }
-        let slopes = [spec.lower_flank_deg, spec.upper_flank_deg].map(|a| a.to_radians().tan());
+        let slopes =
+            [spec.lower_flank_deg, spec.upper_flank_deg].map(|a| a.to_radians().portable_tan());
         let feet = [
             -spec.crest_width_mm / 2. - (spec.depth_mm + overlap) * slopes[0],
             spec.crest_width_mm / 2. + (spec.depth_mm + overlap) * slopes[1],

@@ -12,6 +12,7 @@ use multicad_core::{
 };
 use multicad_kernel::PlaneFrame;
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
 }
@@ -185,7 +186,14 @@ fn combined_cylindrical_internal_treatments_preserve_actual_source_stock_and_mat
                 let r = cavity.radius_mm(theta, z);
                 for (d, inside) in [(-0.001, true), (0.001, false)] {
                     assert_eq!(
-                        cavity.contains_void([(r + d) * theta.cos(), (r + d) * theta.sin(), z], 0.),
+                        cavity.contains_void(
+                            [
+                                (r + d) * theta.portable_cos(),
+                                (r + d) * theta.portable_sin(),
+                                z
+                            ],
+                            0.
+                        ),
                         inside
                     );
                 }

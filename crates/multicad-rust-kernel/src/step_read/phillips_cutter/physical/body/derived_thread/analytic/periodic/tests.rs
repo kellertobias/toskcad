@@ -152,7 +152,7 @@ fn independent_axis_point_and_one_sided_radial_derivative_match_shared_nodes() {
 #[test]
 fn legal_nearly_vanishing_radial_band_can_honestly_refuse_interval_ordering() {
     use crate::helical_thread::{Spec, Thread};
-    let mut depth = (1. - 0.1) / (2. * 30_f64.to_radians().tan());
+    let mut depth = (1. - 0.1) / (2. * 30_f64.to_radians().portable_tan());
     let mut refused = false;
     for _ in 0..16 {
         depth = depth.next_down();

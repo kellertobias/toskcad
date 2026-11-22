@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 use num_rational::BigRational as Q;
 #[test]
 fn actual_retained_npt_native_occurrences_earn_whole_source_quality_and_literal_embedding() {
@@ -80,7 +81,8 @@ fn actual_retained_npt_native_occurrences_earn_whole_source_quality_and_literal_
         assert!(std::sync::Arc::ptr_eq(&result.source().0, &source.0));
         assert_eq!(result.placement().transforms().len(), 2);
         assert!(
-            result.position_error_mm() <= 0.1 && result.normal_chord() <= 2. * (0.3f64 / 2.).sin()
+            result.position_error_mm() <= 0.1
+                && result.normal_chord() <= 2. * (0.3f64 / 2.).portable_sin()
         );
         assert_eq!(
             crate::manufacturing::certify(result.mesh()).unwrap(),

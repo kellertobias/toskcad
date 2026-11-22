@@ -10,6 +10,7 @@ use multicad_core::{
         TopologyKind, TopologySnapshot,
     },
 };
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     Circle, Rational,
     chamfered_bores::{BoreLayer, BoreStack},
@@ -412,7 +413,7 @@ impl PlacedPolygon {
         let a = self.point(a, 0.);
         let b = self.point(b, 0.);
         let edge: [f64; 3] = std::array::from_fn(|i| b[i] - a[i]);
-        let length = edge[0].hypot(edge[1]).hypot(edge[2]);
+        let length = edge[0].portable_hypot(edge[1]).portable_hypot(edge[2]);
         (
             frame(a, edge.map(|x| x / length), self.frame.normal()),
             length,
@@ -519,7 +520,7 @@ impl PlacedPolygon {
                     let [a, b] = [pair[0], pair[1]];
                     let dz = b.z_mm - a.z_mm;
                     let [r, s] = [a.radius_mm, b.radius_mm];
-                    let slant = (s - r).hypot(dz);
+                    let slant = (s - r).portable_hypot(dz);
                     let z = a.z_mm + dz * (r + 2. * s) / (3. * (r + s));
                     let [x, y] = stack.center_mm;
                     let face = Face {

@@ -7,6 +7,7 @@ use multicad_core::{
     document::EntityId,
     references::{AnalyticGeometry, AnchoredFrame, Origin, TopologyKey, TopologyKind},
 };
+use multicad_precision::PortableMath as _;
 use std::{
     collections::{BTreeMap, BTreeSet},
     f64::consts::PI,
@@ -90,8 +91,8 @@ impl ZaWorm {
                 "ZA worm threaded length must be 16–32 axial modules",
             ));
         }
-        let slope = 20_f64.to_radians().tan() * 1.01_f64.sqrt();
-        let angle = slope.atan().to_degrees();
+        let slope = 20_f64.to_radians().portable_tan() * 1.01_f64.sqrt();
+        let angle = slope.portable_atan().to_degrees();
         HelicalThread {
             major_radius_mm: 6. * m,
             pitch_mm: PI * m,
@@ -293,7 +294,7 @@ impl Solid {
         // worm roles first; the proper rigid transform carries face history.
         source.name_za_faces(feature, None, spec.bore_radius_mm > 0.)?;
         let phase = PI - PI * spec.threaded_length_mm / (PI * spec.axial_module_mm);
-        let (sin, cos) = phase.sin_cos();
+        let (sin, cos) = phase.portable_sin_cos();
         source.transformed(RigidTransform {
             rotation: [[cos, -sin, 0.], [sin, cos, 0.], [0., 0., 1.]],
             translation_mm: [0., 0., -spec.threaded_length_mm / 2.],

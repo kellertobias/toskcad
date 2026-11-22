@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Debug)]
 pub struct Slab {
@@ -174,7 +175,7 @@ fn clip(
         cap.iter().copied().fold([0.; 3], add),
         1. / cap.len() as f64,
     );
-    let angle = |point: Point| (point[1] - center[1]).atan2(point[0] - center[0]);
+    let angle = |point: Point| (point[1] - center[1]).portable_atan2(point[0] - center[0]);
     cap.sort_by(|&a, &b| angle(a).total_cmp(&angle(b)));
     if keep_above {
         cap.reverse();

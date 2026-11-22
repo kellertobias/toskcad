@@ -313,7 +313,7 @@ impl AuthoredBoss {
         let axis = subtract(self.ends[1], self.ends[0]);
         let length = norm(axis);
         let radius: Point = std::array::from_fn(|i| {
-            self.radius * (axis[(i + 1) % 3] / length).hypot(axis[(i + 2) % 3] / length)
+            self.radius * (axis[(i + 1) % 3] / length).portable_hypot(axis[(i + 2) % 3] / length)
         });
         let [a, b] = self.ends;
         Bounds {
@@ -374,7 +374,7 @@ fn subtract(a: Point, b: Point) -> Point {
 }
 
 fn norm([x, y, z]: Point) -> f64 {
-    x.hypot(y).hypot(z)
+    x.portable_hypot(y).portable_hypot(z)
 }
 
 fn rings(face: &warped_union::Face) -> impl Iterator<Item = &[warped_union::OrientedEdge]> {

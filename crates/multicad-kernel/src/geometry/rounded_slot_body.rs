@@ -35,7 +35,7 @@ pub(super) fn rim_edge(profile: &Stadium, edge: usize, frame: ReferenceFrame) ->
                 ..frame
             },
             radius_mm: profile.radius_mm(),
-            start_rad: (corners[edge][1] - v).atan2(corners[edge][0] - u),
+            start_rad: (corners[edge][1] - v).portable_atan2(corners[edge][0] - u),
             sweep_rad: PI,
         }
     }

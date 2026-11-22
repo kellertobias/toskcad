@@ -22,7 +22,7 @@ pub(super) fn encode(
     if !tolerance.is_finite() || tolerance <= 0. {
         return Err(StepError::InvalidGeometry);
     }
-    let norm = |[x, y, z]: Point| x.hypot(y).hypot(z);
+    let norm = |[x, y, z]: Point| x.portable_hypot(y).portable_hypot(z);
     let unit = |v: Point| {
         let n = norm(v);
         v.map(|x| x / n)

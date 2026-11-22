@@ -11,9 +11,10 @@ use multicad_core::{
     references::ReferenceReport,
     sketch_point::{POSITION_TOLERANCE_MM, PointPositionRequest},
 };
+use multicad_precision::PortableMath as _;
 
 fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 fn invalid(point: EntityId, message: impl Into<String>) -> EditError {
     EditError::Input(InputError {

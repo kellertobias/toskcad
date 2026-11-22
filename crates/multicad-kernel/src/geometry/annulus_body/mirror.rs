@@ -92,7 +92,9 @@ impl CircularReflection {
         .into_iter()
         .any(|(expected, actual)| {
             let residual = std::array::from_fn::<_, 3, _>(|i| actual[i] - expected[i]);
-            let distance = residual[0].hypot(residual[1]).hypot(residual[2]);
+            let distance = residual[0]
+                .portable_hypot(residual[1])
+                .portable_hypot(residual[2]);
             !distance.is_finite() || distance > policy.linear_tolerance_mm
         }) {
             return Err(error(

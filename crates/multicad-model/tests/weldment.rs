@@ -21,6 +21,7 @@ use multicad_core::{
 };
 use multicad_kernel::{GeometryPolicy, MeshOptions, Solid};
 use multicad_model::{Compiler, GeometryBackend, MemberRecord, Model};
+use multicad_precision::PortableMath as _;
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -744,7 +745,10 @@ fn paired_miter_follows_the_meeting_angle_and_records_both_end_angles() {
     let (ra, rb) = (record(&list, "Rail 1"), record(&list, "Rail 2"));
     near(ra.ends[1].angle_deg, 22.5);
     near(rb.ends[0].angle_deg, 22.5);
-    near(ra.length_mm, 800. + 20. * 22.5_f64.to_radians().tan());
+    near(
+        ra.length_mm,
+        800. + 20. * 22.5_f64.to_radians().portable_tan(),
+    );
     rel(ra.volume_mm3, SHS_AREA * 800.);
     rel(rb.volume_mm3, SHS_AREA * 500. * 2_f64.sqrt());
 
@@ -754,7 +758,7 @@ fn paired_miter_follows_the_meeting_angle_and_records_both_end_angles() {
     let p = model::prepare_connection_edit(&f.s, f.s.revision(), actor(), miter, &gapped).unwrap();
     checked(&mut f.s, p);
     let list = compile(&f.s).member_cut_list(f.s.document()).unwrap();
-    let shift = 1. / 22.5_f64.to_radians().cos();
+    let shift = 1. / 22.5_f64.to_radians().portable_cos();
     rel(
         record(&list, "Rail 1").volume_mm3,
         SHS_AREA * (800. - shift),
@@ -1303,7 +1307,10 @@ fn rust_straight_copes_keep_clearance_hollow_material_and_reopen() {
 fn copes_fit_the_actual_receiving_member_with_clearance() {
     let mut f = fixture();
     let r: f64 = 33.7 / 2.;
-    let (c, s) = (60_f64.to_radians().cos(), 60_f64.to_radians().sin());
+    let (c, s) = (
+        60_f64.to_radians().portable_cos(),
+        60_f64.to_radians().portable_sin(),
+    );
     let main = MemberRequest::new("Main", points(f.chs, [0., 0., 0.], [600., 0., 0.]));
     let branch = MemberRequest::new("Branch", points(f.chs, [300., 0., 0.], [300., 0., 400.]));
     let angled = MemberRequest::new(
@@ -1673,6 +1680,7 @@ mod workbench {
         parameters::{self, Unit},
     };
     use multicad_model::WeldRecord;
+    use multicad_precision::PortableMath as _;
     use std::collections::BTreeMap;
 
     type P = [f64; 3];
@@ -1855,7 +1863,7 @@ mod workbench {
                         kind: Some(connection.kind),
                         connection: Some(*id),
                         partner: Some(connection.members[1 - index]),
-                        angle_deg: cosine.min(1.).acos().to_degrees(),
+                        angle_deg: cosine.min(1.).portable_acos().to_degrees(),
                     };
                 }
                 // The solid's vertices are the section box edges cut by the

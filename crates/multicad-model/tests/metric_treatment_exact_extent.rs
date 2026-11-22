@@ -13,6 +13,7 @@ use multicad_kernel::{
     rust_kernel::authored_internal_treatment as source,
 };
 use multicad_model::Compiler;
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
 }
@@ -148,9 +149,10 @@ fn canonical_metric_receiving_end_is_shared_by_both_hands_and_survives_clear_edi
                     for (delta, void) in [(-0.001, true), (0.001, false)] {
                         let radial = radius + delta;
                         assert_eq!(
-                            data.material
-                                .cavity()
-                                .contains_void([radial * phi.cos(), radial * phi.sin(), z], 0.),
+                            data.material.cavity().contains_void(
+                                [radial * phi.portable_cos(), radial * phi.portable_sin(), z],
+                                0.
+                            ),
                             void
                         );
                     }
@@ -177,8 +179,12 @@ fn canonical_metric_receiving_end_is_shared_by_both_hands_and_survives_clear_edi
                     for (delta, inside) in [(-0.001, true), (0.001, false)] {
                         let radius = radius + delta;
                         assert_eq!(
-                            a.rust_thread_contains([radius * phi.cos(), radius * phi.sin(), z])
-                                .unwrap(),
+                            a.rust_thread_contains([
+                                radius * phi.portable_cos(),
+                                radius * phi.portable_sin(),
+                                z
+                            ])
+                            .unwrap(),
                             inside
                         );
                     }

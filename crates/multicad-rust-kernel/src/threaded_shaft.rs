@@ -3,6 +3,7 @@
 //! The descriptor keeps the actual thread prefix and the untouched cylindrical
 //! tail. It never replaces the authored tool interval with a longer thread.
 use crate::helical_thread::{Thread, ThreadError};
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shaft {
@@ -75,7 +76,7 @@ impl Shaft {
     pub fn support(&self, direction: [f64; 3]) -> f64 {
         let [x, y, z] = direction;
         self.thread.support(direction).max(
-            self.radius_mm * x.hypot(y)
+            self.radius_mm * x.portable_hypot(y)
                 + (z * self.thread.spec().length_mm).max(z * self.stock_length_mm),
         )
     }
@@ -86,7 +87,7 @@ impl Shaft {
             && (self.thread.contains(point, tolerance)
                 || (z >= self.thread.spec().length_mm - tolerance
                     && z <= self.stock_length_mm + tolerance
-                    && x.hypot(y) <= self.radius_mm + tolerance))
+                    && x.portable_hypot(y) <= self.radius_mm + tolerance))
     }
 }
 

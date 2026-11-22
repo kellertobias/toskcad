@@ -9,6 +9,7 @@ use multicad_core::{
     sketch::Datum,
     sketch_point::PointPositionRequest,
 };
+use multicad_precision::PortableMath as _;
 use multicad_solver::{EditError, evaluate_document_sketch, prepare_point_position};
 use std::collections::BTreeMap;
 fn actor() -> Actor {
@@ -39,7 +40,10 @@ fn dim(value: f64) -> Dimension {
     }
 }
 fn near(a: [f64; 2], b: [f64; 2]) {
-    assert!((a[0] - b[0]).hypot(a[1] - b[1]) < 1e-7, "{a:?} != {b:?}");
+    assert!(
+        (a[0] - b[0]).portable_hypot(a[1] - b[1]) < 1e-7,
+        "{a:?} != {b:?}"
+    );
 }
 #[test]
 fn free_line_point_preview_has_no_temporary_fix_and_regenerates_after_apply_undo_reopen() {

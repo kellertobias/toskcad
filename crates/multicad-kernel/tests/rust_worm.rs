@@ -3,6 +3,7 @@ use multicad_kernel::{
     GeneratedZaWormWheel, GeometryPolicy, MeshOptions, PlaneFrame, RigidTransform, Solid, ZaWorm,
     rust_kernel::Rational,
 };
+use multicad_precision::PortableMath as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn roles(solid: &Solid, feature: EntityId) -> BTreeSet<String> {
@@ -334,7 +335,7 @@ fn preview_distance(
                     let w = [p[0] - a[0], p[1] - a[1]];
                     let t = ((w[0] * d[0] + w[1] * d[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-300))
                         .clamp(0., 1.);
-                    (w[0] - t * d[0]).hypot(w[1] - t * d[1])
+                    (w[0] - t * d[0]).portable_hypot(w[1] - t * d[1])
                 })
                 .fold(f64::INFINITY, f64::min)
         })
@@ -377,7 +378,7 @@ impl Chords {
                 let w = [p[0] - a[0], p[1] - a[1]];
                 let t = ((w[0] * d[0] + w[1] * d[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-300))
                     .clamp(0., 1.);
-                best = best.min((w[0] - t * d[0]).hypot(w[1] - t * d[1]));
+                best = best.min((w[0] - t * d[0]).portable_hypot(w[1] - t * d[1]));
             }
         }
         if best <= self.cell {
@@ -449,8 +450,11 @@ fn rust_worm_drawings_follow_exact_axial_visibility_and_sections() {
     let thread = |angle: f64| at(angle, 20.);
     for edge in projected.iter().filter(|e| e.role == VectorRole::Visible) {
         if let VectorCurve::Line { a, .. } = edge.curve {
-            let angle = a[1].atan2(a[0]);
-            assert!((a[0].hypot(a[1]) - thread(angle)).abs() < 1e-9, "{a:?}");
+            let angle = a[1].portable_atan2(a[0]);
+            assert!(
+                (a[0].portable_hypot(a[1]) - thread(angle)).abs() < 1e-9,
+                "{a:?}"
+            );
         }
     }
     // Looking from the other end swaps which cap is visible.
@@ -584,7 +588,7 @@ fn rust_worm_drawings_follow_exact_axial_visibility_and_sections() {
                     } else {
                         angle + std::f64::consts::PI
                     };
-                    sign * at(angle, z + 10.) * angle.cos()
+                    sign * at(angle, z + 10.) * angle.portable_cos()
                 })
                 .fold(f64::NEG_INFINITY, f64::max)
         };
@@ -703,8 +707,8 @@ fn rust_worm_drawings_follow_exact_axial_visibility_and_sections() {
     let crest = 6.;
     let band = 0.01;
     let any = |_: [f64; 2]| true;
-    let outside = |p: [f64; 2]| p[0].hypot(p[1]) > crest + band;
-    let within = |p: [f64; 2]| p[0].hypot(p[1]) < crest - band;
+    let outside = |p: [f64; 2]| p[0].portable_hypot(p[1]) > crest + band;
+    let within = |p: [f64; 2]| p[0].portable_hypot(p[1]) < crest - band;
     let mut checks = Vec::new();
     for (index, role) in roles.into_iter().enumerate() {
         let alone: Vec<_> = projected
@@ -746,7 +750,7 @@ fn rust_worm_drawings_follow_exact_axial_visibility_and_sections() {
             edges
                 .iter()
                 .flat_map(|edge| edge.preview_mm.iter())
-                .all(|p| p[0].hypot(p[1]) >= crest - band),
+                .all(|p| p[0].portable_hypot(p[1]) >= crest - band),
             "{label}"
         );
     }

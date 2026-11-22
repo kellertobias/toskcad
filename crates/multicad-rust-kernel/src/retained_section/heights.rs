@@ -1,4 +1,5 @@
 use super::{Point, Span, numeric};
+use multicad_precision::PortableMath as _;
 
 /// Depth of one profile edge as a function of the drawing V coordinate.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -91,7 +92,7 @@ impl Height {
                 },
             ) => {
                 let [dv, dd] = difference(b, a);
-                let distance = dv.hypot(dd);
+                let distance = dv.portable_hypot(dd);
                 if distance == 0. || distance > ar + br || distance < (ar - br).abs() {
                     return;
                 }

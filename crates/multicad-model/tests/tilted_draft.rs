@@ -14,6 +14,7 @@ use multicad_core::{
     },
 };
 use multicad_model::{Compiler, GeometryBackend, Model};
+use multicad_precision::PortableMath as _;
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -231,7 +232,8 @@ fn tilted_draft_saved_parameters_attachments_occurrences_and_history_rebuild() {
                 .unwrap();
         }
         let saved = reopen(&session);
-        let expected = 20. * height * (width - degrees.to_radians().tan() * (height / 2. - level));
+        let expected =
+            20. * height * (width - degrees.to_radians().portable_tan() * (height / 2. - level));
         for backend in [GeometryBackend::Rust, GeometryBackend::OpenCascade] {
             if backend == GeometryBackend::OpenCascade && !false {
                 continue;
@@ -263,7 +265,7 @@ fn tilted_draft_saved_parameters_attachments_occurrences_and_history_rebuild() {
             else {
                 panic!("missing tilted Draft datum")
             };
-            let slope = degrees.to_radians().tan();
+            let slope = degrees.to_radians().portable_tan();
             let norm = (1. + slope * slope).sqrt();
             for (a, b) in frame.normal().into_iter().zip([
                 (0.8 + 0.6 * slope) / norm,
@@ -318,7 +320,7 @@ fn tilted_draft_saved_parameters_attachments_occurrences_and_history_rebuild() {
             .unwrap()
             .volume_mm3()
             .unwrap(),
-        6000. - 1000. * 5_f64.to_radians().tan(),
+        6000. - 1000. * 5_f64.to_radians().portable_tan(),
     );
     session.redo(session.revision(), actor()).unwrap();
     assert_eq!(session.document(), &edited);

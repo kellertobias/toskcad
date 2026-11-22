@@ -130,7 +130,7 @@ pub(in crate::geometry) fn coaxial_chart(
             .fold(height.max(high).max(-low).max(1.), f64::max);
         let roundoff = 1024. * f64::EPSILON * world_scale;
         let [dx, dy] = project(rise);
-        let uncertainty_mm = dx.hypot(dy) * height.max(high).max(-low) + roundoff;
+        let uncertainty_mm = dx.portable_hypot(dy) * height.max(high).max(-low) + roundoff;
         if uncertainty_mm > policy.linear_tolerance_mm {
             return Err(unsupported(
                 "cannot enclose this axial placement within policy",

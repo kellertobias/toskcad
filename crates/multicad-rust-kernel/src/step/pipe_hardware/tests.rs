@@ -5,6 +5,7 @@ use crate::{
     radial_tensor::{Curve, Surface},
     step_read::pipe_hardware as reader,
 };
+use multicad_precision::PortableMath as _;
 #[test]
 fn actual_engineering_head_file_retains_non_power_of_two_domains_after_arena_drop() {
     let source = engineering();
@@ -78,14 +79,18 @@ fn actual_engineering_head_file_retains_non_power_of_two_domains_after_arena_dro
     };
     let theta = 0.37f64;
     let raw = [
-        theta.cos() * angle.sin(),
-        theta.sin() * angle.sin(),
-        angle.cos(),
+        theta.portable_cos() * angle.portable_sin(),
+        theta.portable_sin() * angle.portable_sin(),
+        angle.portable_cos(),
     ];
     let pull = cone
         .reference_derivative_bounds(raw.map(|x| [x.next_down(), x.next_up()]), 1)
         .unwrap();
-    let expected = [theta.cos() * angle.tan(), theta.sin() * angle.tan(), 1.];
+    let expected = [
+        theta.portable_cos() * angle.portable_tan(),
+        theta.portable_sin() * angle.portable_tan(),
+        1.,
+    ];
     for k in 0..3 {
         assert!(pull[k][0] <= expected[k] && expected[k] <= pull[k][1]);
     }

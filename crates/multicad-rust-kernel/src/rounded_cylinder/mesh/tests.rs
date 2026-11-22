@@ -27,7 +27,7 @@ fn samples(geometry: &RoundedCylinder, options: Tessellation) -> f64 {
             a[0] * b[1] - a[1] * b[0],
         ];
         let length = normal.into_iter().map(|x| x * x).sum::<f64>().sqrt();
-        let rho = centroid[0].hypot(centroid[1]);
+        let rho = centroid[0].portable_hypot(centroid[1]);
         let (distance, analytic) = match geometry.surface(role).unwrap() {
             Surface::Plane { z_mm, normal_z, .. } => {
                 ((centroid[2] - z_mm).abs(), [0., 0., normal_z])
@@ -44,7 +44,7 @@ fn samples(geometry: &RoundedCylinder, options: Tessellation) -> f64 {
             } => {
                 let radial = rho - a;
                 let axial = centroid[2] - z;
-                let norm = radial.hypot(axial);
+                let norm = radial.portable_hypot(axial);
                 (
                     (norm - f).abs(),
                     [
@@ -66,9 +66,9 @@ fn samples(geometry: &RoundedCylinder, options: Tessellation) -> f64 {
             .sum::<f64>()
             / length;
         assert!(
-            cosine >= options.angle.cos() - 1e-12,
+            cosine >= options.angle.portable_cos() - 1e-12,
             "normal angle {}",
-            cosine.acos()
+            cosine.portable_acos()
         );
         for point in vertices {
             assert!(geometry.contains(

@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 
 impl Union {
     pub(crate) fn verify_boundary(rings: &[Vec<Point>], tolerance: f64) -> Result<Self, Error> {
@@ -103,7 +104,7 @@ fn voids_inside(
                     let numerator = dot(a, cross(b, c));
                     let denominator =
                         la * lb * lc + dot(a, b) * lc + dot(a, c) * lb + dot(b, c) * la;
-                    angle += 2. * numerator.atan2(denominator);
+                    angle += 2. * numerator.portable_atan2(denominator);
                 }
             }
         }

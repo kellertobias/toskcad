@@ -203,7 +203,7 @@ pub(super) fn cylinder_axial_gap(
 fn turn(center: Point, a: Point, b: Point) -> f64 {
     let [ax, ay] = [a[0] - center[0], a[1] - center[1]];
     let [bx, by] = [b[0] - center[0], b[1] - center[1]];
-    (ax * by - ay * bx).atan2(ax * bx + ay * by)
+    (ax * by - ay * bx).portable_atan2(ax * bx + ay * by)
 }
 
 /// Total angle swept by one oriented section edge, or `None` if the arc
@@ -305,7 +305,7 @@ fn point_segment(p: Planar, a: Planar, b: Planar) -> f64 {
     };
     let q = [a[0] + t * d[0], a[1] + t * d[1]];
     let r = sub2(p, q);
-    r[0].hypot(r[1])
+    r[0].portable_hypot(r[1])
 }
 
 fn inside_convex(p: Planar, polygon: &[Planar]) -> bool {
@@ -450,7 +450,7 @@ pub(super) fn loop_clearance(
                         sub2(polyline[i], p),
                         sub2(polyline[(i + 1) % polyline.len()], p),
                     ];
-                    cross2(a, b).atan2(dot2(a, b))
+                    cross2(a, b).portable_atan2(dot2(a, b))
                 })
                 .sum();
             let winding = (total / TAU).round();

@@ -8,6 +8,7 @@ use multicad_kernel::{
     GeometryPolicy, PlaneFrame, ProjectedVector, RigidTransform, Solid, project_drawing,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder, polygon::PolygonPrism},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 
 type Point = [f64; 2];
@@ -36,7 +37,7 @@ fn on_curve(point: Point, curve: &VectorCurve) -> bool {
     match curve {
         VectorCurve::Line { a, b } => {
             let [dx, dy] = sub(*b, *a);
-            let length = dx.hypot(dy);
+            let length = dx.portable_hypot(dy);
             let delta = sub(point, *a);
             let along = dot(delta, [dx / length, dy / length]);
             (-tolerance..=length + tolerance).contains(&along)
@@ -53,8 +54,8 @@ fn on_curve(point: Point, curve: &VectorCurve) -> bool {
         } => {
             let delta = sub(point, *center);
             let [x, y] = [dot(delta, *u) / major_mm, dot(delta, *v) / minor_mm];
-            let angle = y.atan2(x);
-            (x.hypot(y) - 1.).abs() * major_mm < tolerance
+            let angle = y.portable_atan2(x);
+            (x.portable_hypot(y) - 1.).abs() * major_mm < tolerance
                 && (-2..=2).any(|k| {
                     (start_rad - tolerance..=end_rad + tolerance)
                         .contains(&(angle + f64::from(k) * TAU))
@@ -204,7 +205,7 @@ fn detail_bounds_each_output_and_budget_failures_do_not_publish_partial_curves()
     );
     assert!(detail.iter().flat_map(|v| &v.preview_mm).all(|point| {
         let [x, y] = sub(*point, [4., 2.]);
-        x.hypot(y) <= 2.5 + 1e-9
+        x.portable_hypot(y) <= 2.5 + 1e-9
     }));
     let native_detail = project(&native, options);
     assert_layer_coverage(&detail, &native_detail);

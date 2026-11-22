@@ -47,7 +47,7 @@ pub(crate) fn contacts(
                             let key = p.map(|value| if value == 0. { 0 } else { value.to_bits() });
                             if shared.insert(key) {
                                 if result.iter().any(|old| {
-                                    (old[0] - p[0]).hypot(old[1] - p[1])
+                                    (old[0] - p[0]).portable_hypot(old[1] - p[1])
                                         <= policy.linear_tolerance_mm * 2.
                                 }) {
                                     return Err(uncertain());
@@ -65,7 +65,7 @@ pub(crate) fn contacts(
                     contact::transverse(x.clone(), y.clone(), origin, policy, &mut budget)?
                 {
                     if result.iter().any(|old| {
-                        (old[0] - point[0]).hypot(old[1] - point[1])
+                        (old[0] - point[0]).portable_hypot(old[1] - point[1])
                             <= policy.linear_tolerance_mm * 2.
                     }) {
                         return Err(uncertain());

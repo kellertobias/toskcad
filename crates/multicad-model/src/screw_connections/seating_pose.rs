@@ -6,6 +6,7 @@
 //! publishing occurrence geometry, references, or display.
 use super::*;
 use multicad_kernel::{GeometryPolicy, rust_kernel::conical_screw_seat};
+use multicad_precision::PortableMath as _;
 
 pub(crate) struct Inputs<'a> {
     pub document: &'a Document,
@@ -145,7 +146,7 @@ pub(crate) fn refine(input: Inputs<'_>, nominal: RigidPose) -> Result<RigidPose,
     // theta=(z-q)/rate: translating by delta and rotating by delta/rate
     // leaves the global thread phase unchanged.
     let roll = delta / screw.thread().helical_rate();
-    let (sin, sin_half) = (roll.sin(), (roll / 2.).sin());
+    let (sin, sin_half) = (roll.portable_sin(), (roll / 2.).portable_sin());
     let one_minus_cos = 2. * sin_half * sin_half;
     let rotate = |v: [f64; 3]| {
         let first = cross(normal, v);
@@ -379,7 +380,7 @@ mod tests {
                 u: frame.u,
                 v: frame.v,
             });
-            let phi = |f: ReferenceFrame| dot(f.u, axis.v).atan2(dot(f.u, axis.u));
+            let phi = |f: ReferenceFrame| dot(f.u, axis.v).portable_atan2(dot(f.u, axis.u));
             let delta = station(axis, new.origin_mm).0 - station(axis, old.origin_mm).0;
             assert!(delta < 0. && delta.abs() < GeometryPolicy::default().linear_tolerance_mm);
             let phase = phi(new) - phi(old) - delta / screw.thread().helical_rate();

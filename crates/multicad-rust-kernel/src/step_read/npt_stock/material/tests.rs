@@ -1,5 +1,6 @@
 use super::*;
 use crate::step_read::owned_insert::DocumentOptions;
+use multicad_precision::PortableMath as _;
 #[test]
 fn actual_decimal_tensor_charts_and_cap_rims_earn_local_projection_without_source_metadata() {
     for quarter in [false, true] {
@@ -186,7 +187,8 @@ fn basis(n: usize, x: f64) -> Vec<f64> {
 fn quadrature(n: usize) -> Vec<(f64, f64)> {
     (0..n)
         .map(|i| {
-            let mut x = (std::f64::consts::PI * (i as f64 + 0.75) / (n as f64 + 0.5)).cos();
+            let mut x =
+                (std::f64::consts::PI * (i as f64 + 0.75) / (n as f64 + 0.5)).portable_cos();
             let mut derivative = 0.;
             for _ in 0..64 {
                 let (mut a, mut b) = (1., x);

@@ -42,7 +42,7 @@ impl Wheel {
         let span = self.span();
         let rim = |a: f64, b: f64| {
             let t = a + (b - a) * u;
-            [blank * t.cos(), blank * t.sin()]
+            [blank * t.portable_cos(), blank * t.portable_sin()]
         };
         match p {
             0 => rim(-span, section.exit[0]),
@@ -163,8 +163,8 @@ impl Wheel {
             let angle =
                 self.sector_angle(sector) - self.span() + 2. * self.span() * i as f64 / n as f64;
             [
-                radius * angle.cos(),
-                radius * angle.sin(),
+                radius * angle.portable_cos(),
+                radius * angle.portable_sin(),
                 self.end_v(end) * m,
             ]
         };

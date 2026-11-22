@@ -55,7 +55,7 @@ impl Sphere {
             &mut work.crossings,
             span,
             |t| {
-                let radial = x.at(t).hypot(y.at(t));
+                let radial = x.at(t).portable_hypot(y.at(t));
                 if radial >= self.radius - roundoff {
                     return false;
                 }

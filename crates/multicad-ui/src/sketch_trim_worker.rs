@@ -9,6 +9,7 @@ use multicad_core::{
     sketch_regions::ExactCurve,
     sketch_trim::{Contact, ExtendSpline, TrimPolicy, TrimRequest},
 };
+use multicad_precision::PortableMath as _;
 use multicad_solver::TrimEdit;
 use std::sync::{
     Arc,
@@ -95,8 +96,8 @@ fn evaluate(job: &Job, cancelled: &dyn Fn() -> bool) -> Result<Outcome, String> 
             return Err("Exact pick projection exceeded its bounded contact budget".into());
         }
         for hit in &hits {
-            let distance =
-                (hit.point_mm[0] - input.pick_mm[0]).hypot(hit.point_mm[1] - input.pick_mm[1]);
+            let distance = (hit.point_mm[0] - input.pick_mm[0])
+                .portable_hypot(hit.point_mm[1] - input.pick_mm[1]);
             if !hit.parameter.is_finite()
                 || !(0. ..=1.).contains(&hit.parameter)
                 || hit
@@ -107,7 +108,7 @@ fn evaluate(job: &Job, cancelled: &dyn Fn() -> bool) -> Result<Outcome, String> 
                 || !hit.distance_mm.is_finite()
                 || hit.distance_mm < 0.
                 || (distance - hit.distance_mm).abs() > job.policy.tolerance_mm * 4.
-                || hit.tangent[0].hypot(hit.tangent[1]) <= f64::EPSILON
+                || hit.tangent[0].portable_hypot(hit.tangent[1]) <= f64::EPSILON
             {
                 return Err("Exact pick projection returned invalid geometry".into());
             }
@@ -125,7 +126,7 @@ fn evaluate(job: &Job, cancelled: &dyn Fn() -> bool) -> Result<Outcome, String> 
             h.distance_mm <= pick.maximum_distance_mm
                 && p.iter().all(|v| v.is_finite())
                 && p[2] > 0.
-                && (p[0] - raw[0]).hypot(p[1] - raw[1]) <= 8.001
+                && (p[0] - raw[0]).portable_hypot(p[1] - raw[1]) <= 8.001
         });
         hits.sort_by(|a, b| {
             a.distance_mm

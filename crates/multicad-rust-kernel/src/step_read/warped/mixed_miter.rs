@@ -69,7 +69,7 @@ pub(super) fn reconstruct(
         .map(|id| chart.local(reader.points[id]))
         .collect();
     let tolerance = reader.tolerance;
-    if path[1][0].hypot(path[1][1]) > tolerance || path[1][2] <= tolerance {
+    if path[1][0].portable_hypot(path[1][1]) > tolerance || path[1][2] <= tolerance {
         return Err(ReadError::Invalid);
     }
     path[1][..2].copy_from_slice(&[0.; 2]);

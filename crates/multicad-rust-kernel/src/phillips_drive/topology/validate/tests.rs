@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 type RawGraph = (Vec<[I; 3]>, Vec<[usize; 2]>, Vec<Vec<EdgeUse>>);
 fn graph() -> RawGraph {
     let (s, d) = super::super::super::tests::fixture(1);
@@ -118,7 +119,11 @@ fn actual_disconnected_pinched_and_genus_one_closed_graphs_are_not_the_canonical
         for v in 0..3 {
             let a = u as f64 * 2. * PI / 3.;
             let b = v as f64 * 2. * PI / 3.;
-            points.push([(3. + b.cos()) * a.cos(), (3. + b.cos()) * a.sin(), b.sin()])
+            points.push([
+                (3. + b.portable_cos()) * a.portable_cos(),
+                (3. + b.portable_cos()) * a.portable_sin(),
+                b.portable_sin(),
+            ])
         }
     }
     let mut cycles = Vec::new();

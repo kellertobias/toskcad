@@ -10,6 +10,7 @@ use multicad_core::{
         OccurrenceContext, OccurrenceSource, QueryMethod, ResultSelector,
     },
 };
+use multicad_precision::PortableMath as _;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Consumer {
     Unset,
@@ -210,7 +211,7 @@ pub(super) fn geometry_label(geometry: &ExternalGeometry) -> String {
         } => format!("Point · X {x:.4} / Y {y:.4} mm"),
         ExternalGeometry::Line { a_mm, b_mm } => format!(
             "Line · {:.4} mm",
-            (a_mm[0] - b_mm[0]).hypot(a_mm[1] - b_mm[1])
+            (a_mm[0] - b_mm[0]).portable_hypot(a_mm[1] - b_mm[1])
         ),
         ExternalGeometry::Circle { radius_mm, .. } => {
             format!("Circle · diameter {:.4} mm", radius_mm * 2.)

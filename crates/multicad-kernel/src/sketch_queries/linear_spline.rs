@@ -6,7 +6,7 @@ type Point = [f64; 2];
 const MAX_CONTACTS: usize = 512;
 
 fn near(a: Point, b: Point, tolerance: f64) -> bool {
-    (a[0] - b[0]).hypot(a[1] - b[1]) <= tolerance
+    (a[0] - b[0]).portable_hypot(a[1] - b[1]) <= tolerance
 }
 
 fn spans(curve: &ExactCurve, policy: GeometryPolicy) -> Result<Vec<ExactCurve>, QueryError> {

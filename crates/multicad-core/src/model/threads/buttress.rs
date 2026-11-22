@@ -144,14 +144,15 @@ pub(super) fn resolve_buttress(
     };
     let lower = lower_flank_deg.to_radians();
     let upper = upper_flank_deg.to_radians();
-    let sum = lower.tan() + upper.tan();
+    let sum = lower.portable_tan() + upper.portable_tan();
     let width = (0.5 - 0.375 * sum) * pitch;
     let radius = 0.12427 * pitch;
     let intersection = (pitch - width) / sum;
     let half = (lower + upper) / 2.;
     let tilt = (upper - lower) / 2.;
-    let cz = width / 2. + intersection * upper.tan() - radius * tilt.sin() / half.sin();
-    let cr = diameter / 2. - intersection + radius * tilt.cos() / half.sin();
+    let cz = width / 2. + intersection * upper.portable_tan()
+        - radius * tilt.portable_sin() / half.portable_sin();
+    let cr = diameter / 2. - intersection + radius * tilt.portable_cos() / half.portable_sin();
     let external_depth = diameter / 2. - cr + radius;
     let internal = mode == ThreadMode::CutInternal;
     // The empirical source expression uses pitch numerically in millimetres.
@@ -176,10 +177,10 @@ pub(super) fn resolve_buttress(
         radius_mm: radius,
         center_axial_mm: cz,
         center_radius_mm: cr - radial,
-        lower_tangent_axial_mm: cz - radius * upper.cos(),
-        lower_tangent_radius_mm: cr - radius * upper.sin() - radial,
-        upper_tangent_axial_mm: cz + radius * lower.cos(),
-        upper_tangent_radius_mm: cr - radius * lower.sin() - radial,
+        lower_tangent_axial_mm: cz - radius * upper.portable_cos(),
+        lower_tangent_radius_mm: cr - radius * upper.portable_sin() - radial,
+        upper_tangent_axial_mm: cz + radius * lower.portable_cos(),
+        upper_tangent_radius_mm: cr - radius * lower.portable_sin() - radial,
     });
     Ok(ResolvedButtressThread {
         intent,

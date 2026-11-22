@@ -11,6 +11,7 @@ use multicad_core::{
     constraint_sketch::{CurveKind, Sketch},
     document::EntityId,
 };
+use multicad_precision::PortableMath as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
 
@@ -235,7 +236,7 @@ fn dot(a: [f64; 2], b: [f64; 2]) -> f64 {
     a[0] * b[0] + a[1] * b[1]
 }
 fn len(a: [f64; 2]) -> f64 {
-    a[0].hypot(a[1])
+    a[0].portable_hypot(a[1])
 }
 fn mid(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
     [(a[0] + b[0]) / 2., (a[1] + b[1]) / 2.]
@@ -296,7 +297,7 @@ impl SnapGeometry {
                     {
                         let radius = len(sub(a, c));
                         if radius > 1e-12 {
-                            let angle = |p: [f64; 2]| (p[1] - c[1]).atan2(p[0] - c[0]);
+                            let angle = |p: [f64; 2]| (p[1] - c[1]).portable_atan2(p[0] - c[0]);
                             let (from, to) = if *clockwise {
                                 (angle(b), angle(a))
                             } else {
@@ -656,7 +657,7 @@ fn candidates(geometry: &SnapGeometry, references: &[Reference], q: &Query) -> V
         (l > 1e-12).then(|| {
             (
                 [center[0] + d[0] * radius / l, center[1] + d[1] * radius / l],
-                d[1].atan2(d[0]),
+                d[1].portable_atan2(d[0]),
             )
         })
     };
@@ -732,11 +733,11 @@ fn relative_targets(
         if distance <= 1e-12 {
             continue;
         }
-        let base = d[1].atan2(d[0]);
+        let base = d[1].portable_atan2(d[0]);
         let on = |angle: f64| {
             [
-                center[0] + radius * angle.cos(),
-                center[1] + radius * angle.sin(),
+                center[0] + radius * angle.portable_cos(),
+                center[1] + radius * angle.portable_sin(),
             ]
         };
         let inside = |angle: f64| arc.is_none_or(|arc| arc.contains(angle));
@@ -753,7 +754,7 @@ fn relative_targets(
             ),
         ];
         if distance > radius * (1. + 1e-9) {
-            let spread = (radius / distance).acos();
+            let spread = (radius / distance).portable_acos();
             candidates.push((
                 TargetKey::Tangent(id, 0),
                 TargetKind::Tangent,
@@ -790,7 +791,7 @@ pub fn resolve(
         let Some(screen) = (q.to_screen)(candidate.target.position) else {
             continue;
         };
-        let distance = (screen[0] - pointer[0]).hypot(screen[1] - pointer[1]);
+        let distance = (screen[0] - pointer[0]).portable_hypot(screen[1] - pointer[1]);
         if !distance.is_finite() {
             continue;
         }
@@ -908,7 +909,8 @@ impl SnapAssist {
     /// still describes the final placement.
     pub fn settle(&mut self, final_position: [f64; 2]) {
         if self.shown.as_ref().is_some_and(|t| {
-            (t.position[0] - final_position[0]).hypot(t.position[1] - final_position[1]) > 1e-9
+            (t.position[0] - final_position[0]).portable_hypot(t.position[1] - final_position[1])
+                > 1e-9
         }) {
             self.shown = None;
         }
@@ -950,7 +952,7 @@ impl SnapAssist {
                 let stable = self.dwell.as_ref().is_some_and(|d| {
                     d.key == candidate.key
                         && (d.origin_px[0] - q.pointer_px[0])
-                            .hypot(d.origin_px[1] - q.pointer_px[1])
+                            .portable_hypot(d.origin_px[1] - q.pointer_px[1])
                             <= DWELL_STABILITY_PX
                 });
                 if !stable {

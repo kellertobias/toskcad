@@ -11,6 +11,7 @@ use multicad_core::{
     project_file::{self, ProjectFile},
 };
 use multicad_model::Compiler;
+use multicad_precision::PortableMath as _;
 use std::time::{Duration, Instant};
 
 fn actor() -> Actor {
@@ -19,7 +20,10 @@ fn actor() -> Actor {
 /// Panel stock plus a 100 × 60 × 40 box rotated 30° about Z at (1000, 0, 0).
 fn fixture() -> (Session, [f64; 3]) {
     let mut session = super::super::cabinet::tests::session();
-    let (c, s) = (30_f64.to_radians().cos(), 30_f64.to_radians().sin());
+    let (c, s) = (
+        30_f64.to_radians().portable_cos(),
+        30_f64.to_radians().portable_sin(),
+    );
     let other = PrimitiveRequest::new(
         "Rotated block",
         PrimitiveParameters::Box {

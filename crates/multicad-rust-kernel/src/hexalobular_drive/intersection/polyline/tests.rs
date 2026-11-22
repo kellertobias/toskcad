@@ -37,7 +37,7 @@ fn whole_finite_circle_cone_polylines_keep_contacts_and_actual_deflection() {
                 [
                     x,
                     y,
-                    drive.cone.tip_depth_mm - drive.cone.depth_per_radius * x.hypot(y),
+                    drive.cone.tip_depth_mm - drive.cone.depth_per_radius * x.portable_hypot(y),
                 ]
             };
             assert_eq!(points[0], contact(arc.start_mm));
@@ -45,8 +45,8 @@ fn whole_finite_circle_cone_polylines_keep_contacts_and_actual_deflection() {
             for sample in 0..=1000 {
                 let t = arc.start_angle_rad + arc.sweep_rad * sample as f64 / 1000.;
                 let actual = contact([
-                    arc.center_mm[0] + arc.radius_mm * t.cos(),
-                    arc.center_mm[1] + arc.radius_mm * t.sin(),
+                    arc.center_mm[0] + arc.radius_mm * t.portable_cos(),
+                    arc.center_mm[1] + arc.radius_mm * t.portable_sin(),
                 ]);
                 let delta = points
                     .windows(2)
@@ -132,7 +132,7 @@ fn retained_binding_polylines_follow_literal_controls_instead_of_nominal_recipe(
         [
             x,
             y,
-            drive.cone.tip_depth_mm - drive.cone.depth_per_radius * x.hypot(y),
+            drive.cone.tip_depth_mm - drive.cone.depth_per_radius * x.portable_hypot(y),
         ]
     });
     let mut carriers =

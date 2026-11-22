@@ -5,6 +5,7 @@ use crate::{
     model::common::number,
     parameters::{EvaluatedParameters, Unit},
 };
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WoodBoxPanel {
@@ -62,7 +63,7 @@ pub fn resolve_wood_box(
         ));
     }
     let angle = number(&source.rotation, Unit::Degree, parameters)?.to_radians();
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     let origin = [
         number(&source.origin[0], Unit::Millimeter, parameters)?,
         number(&source.origin[1], Unit::Millimeter, parameters)?,

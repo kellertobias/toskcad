@@ -10,6 +10,7 @@ use multicad_core::{
 };
 use multicad_kernel::{RigidTransform, Solid, rust_kernel::spur_gear::clearance::ResultKind};
 use multicad_model::{Compiler, GeometryBackend, Model};
+use multicad_precision::PortableMath as _;
 use std::{
     collections::BTreeMap,
     f64::consts::{PI, TAU},
@@ -91,7 +92,7 @@ fn spun(solid: &Solid, angle: f64) -> Solid {
         .find(|face| face.index == 0)
         .unwrap();
     let (point, [x, y, z]) = start.plane.unwrap();
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     let t = 1. - c;
     let rotation = [
         [c + x * x * t, x * y * t - z * s, x * z * t + y * s],

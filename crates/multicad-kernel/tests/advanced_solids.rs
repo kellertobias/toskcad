@@ -1,5 +1,6 @@
 use multicad_core::{document::EntityId, references::*};
 use multicad_kernel::*;
+use multicad_precision::PortableMath as _;
 fn p() -> GeometryPolicy {
     GeometryPolicy::default()
 }
@@ -105,7 +106,7 @@ fn draft_rebuilds_exact_planes_and_attached_source_frames_and_rejects_bad_inputs
         .unwrap();
     near(
         result.volume_mm3().unwrap(),
-        72000. - 40. * 0.5 * 30. * 30. * angle.tan(),
+        72000. - 40. * 0.5 * 30. * 30. * angle.portable_tan(),
     );
     let snapshot = result.topology_snapshot(feature, 1).unwrap();
     let changed = snapshot
@@ -116,8 +117,8 @@ fn draft_rebuilds_exact_planes_and_attached_source_frames_and_rejects_bad_inputs
     let Some(AnalyticGeometry::Plane { frame }) = changed.geometry else {
         panic!("draft face has no current native plane")
     };
-    near(frame.normal()[0], angle.cos());
-    near(frame.normal()[2], angle.sin());
+    near(frame.normal()[0], angle.portable_cos());
+    near(frame.normal()[2], angle.portable_sin());
     for anchor in &changed.frames {
         assert_eq!(anchor.frame, frame);
     }

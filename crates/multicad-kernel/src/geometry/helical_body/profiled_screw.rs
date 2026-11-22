@@ -292,11 +292,14 @@ fn qualify_source(
         } = segment.curve
         {
             policy.length(r)?;
-            let angle = (segment.start[1] - center[1]).atan2(segment.start[0] - center[0]);
+            let angle = (segment.start[1] - center[1]).portable_atan2(segment.start[0] - center[0]);
             for (fraction, endpoint) in [(0., segment.start), (1., segment.end)] {
                 let t = angle + fraction * sweep;
-                let actual = [center[0] + r * t.cos(), center[1] + r * t.sin()];
-                let residual = (actual[0] - endpoint[0]).hypot(actual[1] - endpoint[1]);
+                let actual = [
+                    center[0] + r * t.portable_cos(),
+                    center[1] + r * t.portable_sin(),
+                ];
+                let residual = (actual[0] - endpoint[0]).portable_hypot(actual[1] - endpoint[1]);
                 if residual + reserve > policy.linear_tolerance_mm / 4. {
                     return Err(input(
                         "Head arc endpoints exceed the requested trim precision",
@@ -305,7 +308,8 @@ fn qualify_source(
             }
         } else {
             policy.length(
-                (segment.end[0] - segment.start[0]).hypot(segment.end[1] - segment.start[1]),
+                (segment.end[0] - segment.start[0])
+                    .portable_hypot(segment.end[1] - segment.start[1]),
             )?;
         }
     }
@@ -395,7 +399,7 @@ pub(in crate::geometry) fn plane(
             let (drive, _) = screw.recess().flat_hex_geometry()?;
             let [a, b] = drive.edge_mm(i as usize);
             let d = [b[0] - a[0], b[1] - a[1]];
-            let length = d[0].hypot(d[1]);
+            let length = d[0].portable_hypot(d[1]);
             Some(placed_frame(
                 frame,
                 [a[0], a[1], top],

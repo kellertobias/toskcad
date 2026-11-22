@@ -141,7 +141,7 @@ fn angle(y: I, x: I) -> BranchResult<I> {
     let mut out = I::new(f64::INFINITY, f64::NEG_INFINITY);
     for a in [y.lo, y.hi] {
         for b in [x.lo, x.hi] {
-            let raw = a.atan2(b);
+            let raw = a.portable_atan2(b);
             let mut v = I::point(raw) + I::new(-16. * f64::EPSILON, 16. * f64::EPSILON);
             if negative_x && raw < 0. {
                 v = v + tau();

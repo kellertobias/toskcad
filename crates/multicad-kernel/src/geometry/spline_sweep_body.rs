@@ -10,6 +10,7 @@ use multicad_core::{
     document::EntityId,
     references::{AnalyticGeometry, Origin, ReferenceFrame, TopologySnapshot},
 };
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     display::{MeshError, Tessellation},
     normal_sweep::Edge as AnalyticEdge,
@@ -194,7 +195,7 @@ impl SplineSweepBody {
             return None;
         };
         let [dx, dy] = [b[0] - a[0], b[1] - a[1]];
-        let length = dx.hypot(dy);
+        let length = dx.portable_hypot(dy);
         Some(ReferenceFrame {
             origin_mm: frame.point(*a),
             u: std::array::from_fn(|i| (dx * frame.u[i] + dy * frame.v[i]) / length),
@@ -475,7 +476,11 @@ impl SplineSweepBody {
             // the hull diameter, so bound it by a quarter of the tolerance.
             let diameter = poles
                 .iter()
-                .flat_map(|a| poles.iter().map(move |b| (a[0] - b[0]).hypot(a[1] - b[1])))
+                .flat_map(|a| {
+                    poles
+                        .iter()
+                        .map(move |b| (a[0] - b[0]).portable_hypot(a[1] - b[1]))
+                })
                 .fold(0., f64::max);
             let weight_tolerance = tolerance / (8. * (diameter + 1.));
             for z in [0., self.sweep.height_mm()] {

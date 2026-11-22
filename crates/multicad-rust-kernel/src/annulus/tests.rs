@@ -107,15 +107,15 @@ fn shared_rims_form_one_closed_shell_with_correct_face_winding_and_chords() {
                     assert!(outward < 0.);
                     ring.inner_radius_mm()
                 };
-                assert!((a[0].hypot(a[1]) - radius).abs() < 1e-12);
+                assert!((a[0].portable_hypot(a[1]) - radius).abs() < 1e-12);
                 let opposite = if a[..2] == b[..2] { c } else { b };
                 let chord_midpoint = [a[0].midpoint(opposite[0]), a[1].midpoint(opposite[1])];
                 assert!(
-                    radius - chord_midpoint[0].hypot(chord_midpoint[1])
+                    radius - chord_midpoint[0].portable_hypot(chord_midpoint[1])
                         <= options.deflection + 1e-12
                 );
                 let angular_step = (a[0] * opposite[0] + a[1] * opposite[1]) / radius.powi(2);
-                assert!(angular_step.acos() <= options.angle + 1e-12);
+                assert!(angular_step.portable_acos() <= options.angle + 1e-12);
             }
             _ => unreachable!(),
         }

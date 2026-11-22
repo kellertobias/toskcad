@@ -70,7 +70,7 @@ pub(super) fn stock(
             // A blind opening facing away or edge-on leaves the first hit intact.
             continue;
         }
-        if axis[0].hypot(axis[1]) > DIRECTION_TOLERANCE {
+        if axis[0].portable_hypot(axis[1]) > DIRECTION_TOLERANCE {
             let cavity = apertures::Cavity {
                 mouth: opening.center,
                 normal: opening.normal,

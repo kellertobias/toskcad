@@ -7,6 +7,7 @@ use crate::{
     revolution::length,
     spur_gear::{Point, Profile, add, internal::Ring, scale, sub},
 };
+use multicad_precision::PortableMath as _;
 use std::{collections::HashMap, f64::consts::TAU};
 
 /// Certify one fixed pose of a ring (`placements[0]`) and a pinion
@@ -33,12 +34,12 @@ pub fn certify_internal(
     // nearest to it. Winding tests certify membership in both solids.
     let reach = (ring.tip_radius_mm() + distance + tip_radius(pinion)) * 0.5;
     let [x, y] = placements[0].axes[0];
-    let phase = y.atan2(x);
+    let phase = y.portable_atan2(x);
     let pitch = TAU / f64::from(ring.teeth());
-    let nearest = ((delta[1].atan2(delta[0]) - phase) / pitch).round();
+    let nearest = ((delta[1].portable_atan2(delta[0]) - phase) / pitch).round();
     let witnesses = [-1., 0., 1.]
         .map(|offset| {
-            let (sin, cos) = (phase + (nearest + offset) * pitch).sin_cos();
+            let (sin, cos) = (phase + (nearest + offset) * pitch).portable_sin_cos();
             add(ring_center, [reach * cos, reach * sin])
         })
         .into_iter()

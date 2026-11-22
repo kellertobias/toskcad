@@ -17,6 +17,7 @@ use multicad_mcp::{
     tools::{Call, dispatch},
 };
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -289,7 +290,7 @@ fn mcp_guides_draw_edit_and_reopen_scene_engine_families() {
         x: 200.,
         half_width: Some(28.),
     });
-    let tip = 24. / 15_f64.to_radians().cos() + 2.;
+    let tip = 24. / 15_f64.to_radians().portable_cos() + 2.;
     let helical = gear(&host, "Helical", twisted("helical", 300.));
     families.push(Family {
         name: "helical gear",

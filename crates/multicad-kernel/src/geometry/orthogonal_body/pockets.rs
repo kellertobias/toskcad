@@ -699,7 +699,7 @@ fn connection_bore_axis(
         .expect("three axes");
     let a = (axis + 1) % 3;
     let b = (axis + 2) % 3;
-    let length = from.u[a].hypot(from.u[b]);
+    let length = from.u[a].portable_hypot(from.u[b]);
     if length < 0.5 || delta[axis].abs() < policy.minimum_feature_mm {
         return Err(refuse());
     }

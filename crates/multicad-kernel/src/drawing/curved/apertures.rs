@@ -198,7 +198,7 @@ impl<'a> Scene<'a> {
             }
             let near = usize::from(z < 0.);
             let mouth = position(bore.centers[near]);
-            if x.hypot(y) <= DIRECTION_TOLERANCE {
+            if x.portable_hypot(y) <= DIRECTION_TOLERANCE {
                 let offset = std::array::from_fn(|i| mouth[i] - self.frame.origin[i]);
                 let [u, v, depth] = self.axes.map(|axis| dot(axis, offset));
                 let center = [u, v];
@@ -252,7 +252,7 @@ impl<'a> Scene<'a> {
             depth: bore_depth,
             ..
         } = cavity;
-        let sine = x.hypot(y);
+        let sine = x.portable_hypot(y);
         // No ray inside the mouth crosses more than one disk diameter
         // transverse to the cylinder axis before it hits solid stock.
         let penetration = 2. * radius * cosine / sine;
@@ -345,7 +345,7 @@ impl<'a> Scene<'a> {
             }
             let [x, y] =
                 std::array::from_fn(|i| center[i] - center[i].clamp(bounds.min[i], bounds.max[i]));
-            if x.hypot(y) <= radius + self.tolerance {
+            if x.portable_hypot(y) <= radius + self.tolerance {
                 return Err(unsupported(
                     "Rust through-bore visibility is unresolved because another body overlaps the aperture",
                 ));
@@ -376,8 +376,8 @@ fn seals_mouth(solid: &Solid, mouth: Point, normal: Point, radius: f64, toleranc
     let [u, v, axis] = planar::view_axes(frame);
     let relative = std::array::from_fn(|i| mouth[i] - frame.origin[i]);
     let level = dot(relative, axis);
-    let alignment = dot(u, normal).hypot(dot(v, normal));
-    let displacement = dot(u, relative).hypot(dot(v, relative));
+    let alignment = dot(u, normal).portable_hypot(dot(v, normal));
+    let displacement = dot(u, relative).portable_hypot(dot(v, relative));
     let roundoff = (0..3)
         .map(|i| mouth[i].abs() + frame.origin[i].abs())
         .sum::<f64>()
@@ -393,7 +393,7 @@ fn seals_mouth(solid: &Solid, mouth: Point, normal: Point, radius: f64, toleranc
 fn cavity_bounds(mouth: Point, normal: Point, radius: f64, penetration: f64) -> Box3 {
     let end: Point = std::array::from_fn(|i| mouth[i] - normal[i] * penetration);
     let radial: Point =
-        std::array::from_fn(|i| radius * normal[(i + 1) % 3].hypot(normal[(i + 2) % 3]));
+        std::array::from_fn(|i| radius * normal[(i + 1) % 3].portable_hypot(normal[(i + 2) % 3]));
     Box3 {
         min: std::array::from_fn(|i| mouth[i].min(end[i]) - radial[i]),
         max: std::array::from_fn(|i| mouth[i].max(end[i]) + radial[i]),

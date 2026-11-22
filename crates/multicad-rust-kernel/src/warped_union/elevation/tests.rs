@@ -153,13 +153,13 @@ fn oblique_view_preserves_exact_projected_web_rim_and_depth() {
                 .iter()
                 .filter_map(|rim| {
                     let [cx, cy] = rim.ellipse.center;
-                    if (cx - x).hypot(cy - y) > TOL || (rim.depth - depth).abs() > TOL {
+                    if (cx - x).portable_hypot(cy - y) > TOL || (rim.depth - depth).abs() > TOL {
                         return None;
                     }
                     assert_eq!(rim.source, 17);
                     assert!((rim.ellipse.major - 1.).abs() <= TOL);
                     assert!((rim.ellipse.minor - n[2].abs()).abs() <= TOL);
-                    assert!((rim.depth_sine.abs() - n[0].hypot(n[1])).abs() <= TOL);
+                    assert!((rim.depth_sine.abs() - n[0].portable_hypot(n[1])).abs() <= TOL);
                     Some(rim.ellipse.trim[1] - rim.ellipse.trim[0])
                 })
                 .sum();
@@ -211,7 +211,7 @@ fn projected_miter_ellipse_retains_the_exact_trim_and_depth() {
             assert_eq!(candidate.ellipse.minor == 0., axes == views[0]);
             let [a, b] = candidate.ellipse.trim;
             for theta in [a, (a + b) * 0.5, b] {
-                let (sin, cos) = theta.sin_cos();
+                let (sin, cos) = theta.portable_sin_cos();
                 let [x, y] = std::array::from_fn(|i| {
                     candidate.ellipse.center[i]
                         + candidate.ellipse.major * candidate.ellipse.u[i] * cos

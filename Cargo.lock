@@ -2110,6 +2110,7 @@ dependencies = [
  "multicad-kernel",
  "multicad-mcp",
  "multicad-model",
+ "multicad-precision",
  "multicad-solver",
  "multicad-ui",
  "pollster 0.4.0",
@@ -2140,6 +2141,7 @@ name = "multicad-kernel"
 version = "0.1.0-dev"
 dependencies = [
  "multicad-core",
+ "multicad-precision",
  "multicad-rust-kernel",
  "serde_json",
  "tempfile",
@@ -2152,6 +2154,7 @@ dependencies = [
  "multicad-core",
  "multicad-kernel",
  "multicad-model",
+ "multicad-precision",
  "multicad-solver",
  "rmcp",
  "schemars",
@@ -2169,6 +2172,7 @@ dependencies = [
  "dxf",
  "multicad-core",
  "multicad-kernel",
+ "multicad-precision",
  "multicad-solver",
  "quick-xml",
  "serde",
@@ -2179,6 +2183,9 @@ dependencies = [
 [[package]]
 name = "multicad-precision"
 version = "0.1.0-dev"
+dependencies = [
+ "libm",
+]
 
 [[package]]
 name = "multicad-rust-kernel"
@@ -2196,6 +2203,7 @@ name = "multicad-solver"
 version = "0.1.0-dev"
 dependencies = [
  "multicad-core",
+ "multicad-precision",
  "serde_json",
  "sketch-solver",
 ]
@@ -2210,6 +2218,7 @@ dependencies = [
  "multicad-core",
  "multicad-kernel",
  "multicad-model",
+ "multicad-precision",
  "multicad-solver",
  "naga",
  "png",

@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 fn work() -> Work<'static> {
     Work {
         remaining: 100_000,
@@ -29,7 +30,7 @@ fn polar_curve_proof_refines_positive_derivatives_without_accepting_axis_crossin
         .collect::<Vec<_>>();
     assert!(positive_curve(&p, &mut work()).unwrap().is_none());
     let angle = positive_spline(&p, 1, &mut work()).unwrap();
-    let expected = (1_f64 / 3. - 0.5 + 0.26).atan();
+    let expected = (1_f64 / 3. - 0.5 + 0.26).portable_atan();
     assert!(angle.lo <= expected && angle.hi >= expected);
     let mut reversed = p.clone();
     reversed.reverse();

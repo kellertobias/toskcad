@@ -1,4 +1,5 @@
 //! Real pinned mechanical Library roles remain associative connection sources.
+use multicad_precision::PortableMath as _;
 #[path = "support/custom_screw_connections.rs"]
 mod custom_fixture;
 #[path = "../../multicad-mcp/tests/support/screw_connection.rs"]
@@ -318,7 +319,7 @@ fn assert_native(native: &Model, request: &ScrewConnectionRequest, washer: f64) 
     let nut_solid = native.leaf_solid(&nut.path).unwrap();
     let [(external, a), (internal, b)] = screw_solid.rust_screw_nut_threads(nut_solid).unwrap();
     let dot = |a: [f64; 3], b: [f64; 3]| a.into_iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
-    let alpha = dot(b.u, a.v).atan2(dot(b.u, a.u));
+    let alpha = dot(b.u, a.v).portable_atan2(dot(b.u, a.u));
     let station = dot(
         std::array::from_fn(|i| b.origin[i] - a.origin[i]),
         a.normal(),
@@ -803,8 +804,8 @@ fn pinned_hardware_cannot_waive_actual_bearing_pose_or_current_identity() {
             let a: f64 = 0.01;
             driver.local_mount.rotation = [
                 [1., 0., 0.],
-                [0., a.cos(), -a.sin()],
-                [0., a.sin(), a.cos()],
+                [0., a.portable_cos(), -a.portable_sin()],
+                [0., a.portable_sin(), a.portable_cos()],
             ];
         }
         let mut entity = before.get(row.driver).unwrap().clone();

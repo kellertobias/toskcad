@@ -394,7 +394,7 @@ fn actual_circular_cover_and_complex_retained_section_do_not_use_family_labels()
     assert!(!proof.used_exterior_cell);
     let points = (0..300)
         .map(|i| {
-            let (s, c) = (std::f64::consts::TAU * i as f64 / 300.).sin_cos();
+            let (s, c) = (std::f64::consts::TAU * i as f64 / 300.).portable_sin_cos();
             [20. * c, 20. * s]
         })
         .collect::<Vec<_>>();

@@ -5,6 +5,7 @@ use crate::{
     egui::{self, Context, Event, Modifiers, PointerButton, Pos2, Rect},
     modeling::{GizmoBasis, PlacementViewport, TransformSnap},
 };
+use multicad_precision::PortableMath as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 struct GateBackend {
@@ -382,8 +383,8 @@ fn rotation_and_custom_plane_drags_compile_exact_native_geometry() {
     let (mut c, _) = begin(&s, &scene, BTreeSet::from([a.body]), false);
     let radius = 82. / 4. * 0.74;
     let t = std::f64::consts::FRAC_PI_4;
-    let start = h.point([radius * t.cos(), radius * t.sin(), 0.]);
-    let end = h.point([-radius * t.sin(), radius * t.cos(), 0.]);
+    let start = h.point([radius * t.portable_cos(), radius * t.portable_sin(), 0.]);
+    let end = h.point([-radius * t.portable_sin(), radius * t.portable_cos(), 0.]);
     h.start(&mut c, &mut s, start, Modifiers::NONE);
     h.frame(
         &mut c,
@@ -877,7 +878,11 @@ fn coalesced_rotation_samples_preserve_winding_and_commit_once() {
     let radius = 82. / 4. * 0.74;
     let point = |angle: f64| {
         let angle = angle.to_radians();
-        h.point([radius * angle.cos(), radius * angle.sin(), 0.])
+        h.point([
+            radius * angle.portable_cos(),
+            radius * angle.portable_sin(),
+            0.,
+        ])
     };
     let start = point(45.);
     let end = point(495.);

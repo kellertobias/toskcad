@@ -2,6 +2,7 @@
 //! A passing stencil always falls through to complete source certificates.
 //! Uniform V refinement chooses a grid; it asserts no source periodicity.
 use super::*;
+use multicad_precision::PortableMath as _;
 #[cfg(test)]
 mod tests;
 impl Prepared<'_> {
@@ -373,7 +374,7 @@ impl Prepared<'_> {
             if !cnorm.is_finite() || !dot.is_finite() {
                 continue;
             }
-            let angle = cnorm.atan2(dot);
+            let angle = cnorm.portable_atan2(dot);
             if angle.is_finite() && angle > self.options.angle * 1.000001 {
                 reject = true;
             }

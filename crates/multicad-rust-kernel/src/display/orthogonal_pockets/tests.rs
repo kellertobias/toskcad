@@ -632,7 +632,7 @@ fn buried_thread_in_an_existing_bore_closes_collars_steps_and_helical_wall() {
         // Inscribed bore polygons leave exactly this much extra material.
         let deficit = |radius: f64, length: f64| {
             let count = detailed.arc_segments(radius, TAU).unwrap() as f64;
-            length * radius * radius * (PI - 0.5 * count * (TAU / count).sin())
+            length * radius * radius * (PI - 0.5 * count * (TAU / count).portable_sin())
         };
         let expected = volume_with_through_bores_mm3(&stock, &[], &bores)
             - (thread.volume_mm3() - PI * radius * radius * 3.5)
@@ -682,7 +682,7 @@ fn buried_thread_in_an_existing_bore_closes_collars_steps_and_helical_wall() {
     let proof = certify(&mesh).unwrap();
     let polygon = |radius: f64, length: f64| {
         let count = detailed.arc_segments(radius, TAU).unwrap() as f64;
-        0.5 * count * (TAU / count).sin() * radius * radius * length
+        0.5 * count * (TAU / count).portable_sin() * radius * radius * length
     };
     let expected =
         stock.volume_mm3() - polygon(radius, 10. - 3.5) - polygon(crest, 3.5) - polygon(1.5, 20.);

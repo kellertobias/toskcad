@@ -13,6 +13,7 @@ use multicad_model::{
     Compiler,
     export::{Exporter, mesh},
 };
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -153,7 +154,8 @@ fn named_round_native_pairs_preserve_unequal_cutter_circles_flanks_and_actual_ex
                             &q.actual_cutter_crest_circle
                         };
                         for fraction in [-0.65, 0.65] {
-                            let dz = fraction * circle.radius_mm * 15_f64.to_radians().cos();
+                            let dz =
+                                fraction * circle.radius_mm * 15_f64.to_radians().portable_cos();
                             let rr = (circle.radius_mm.powi(2) - dz * dz).sqrt();
                             let boundary = circle.center_radius_mm + if valley { -rr } else { rr };
                             let z = 2. * r.pitch_mm + circle.center_axial_mm + dz;
@@ -177,11 +179,12 @@ fn named_round_native_pairs_preserve_unequal_cutter_circles_flanks_and_actual_ex
                         }
                     }
                     let a = 15_f64.to_radians();
-                    let k = (1. - a.sin()) / a.cos();
+                    let k = (1. - a.portable_sin()) / a.portable_cos();
                     for drop in [0.22 * r.pitch_mm, 0.28 * r.pitch_mm] {
                         for direction in [-1., 1.] {
                             let z = 2. * r.pitch_mm
-                                + direction * (drop * a.tan() + q.cutter_crest_radius_mm * k);
+                                + direction
+                                    * (drop * a.portable_tan() + q.cutter_crest_radius_mm * k);
                             for (dz, inside_profile) in
                                 [(-direction * 0.001, true), (direction * 0.001, false)]
                             {
@@ -286,7 +289,8 @@ fn named_round_native_pairs_preserve_unequal_cutter_circles_flanks_and_actual_ex
                             &q.actual_cutter_crest_circle
                         };
                         for fraction in [-0.65, 0.65] {
-                            let dz = fraction * circle.radius_mm * 15_f64.to_radians().cos();
+                            let dz =
+                                fraction * circle.radius_mm * 15_f64.to_radians().portable_cos();
                             let rr = (circle.radius_mm.powi(2) - dz * dz).sqrt();
                             let boundary = circle.center_radius_mm + if valley { -rr } else { rr };
                             let z = 2. * r.pitch_mm + circle.center_axial_mm + dz;
@@ -295,8 +299,8 @@ fn named_round_native_pairs_preserve_unequal_cutter_circles_flanks_and_actual_ex
                                     let hand = if r.hand == ThreadHand::Right { 1. } else { -1. };
                                     let radial = boundary + dr;
                                     let point = [
-                                        radial * phi.cos(),
-                                        radial * phi.sin(),
+                                        radial * phi.portable_cos(),
+                                        radial * phi.portable_sin(),
                                         z + hand * phi * r.pitch_mm / std::f64::consts::TAU,
                                     ];
                                     assert_eq!(

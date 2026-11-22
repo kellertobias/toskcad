@@ -23,7 +23,7 @@ impl Thread {
             return Ok([0.; 2]);
         }
         let [x, y, z] = direction.map(|x| x / scale);
-        let radial = x.hypot(y);
+        let radial = x.portable_hypot(y);
         let s = self.spec;
         if direction[0] == 0. && direction[1] == 0. {
             return finish(
@@ -45,7 +45,7 @@ impl Thread {
             );
         }
         let rate = self.helical_rate();
-        let angle = y.atan2(x);
+        let angle = y.portable_atan2(x);
         let a = self.breaks[1];
         let (slope, crest_curvature) = self.profile_limits();
         let curvature =
@@ -70,7 +70,7 @@ impl Thread {
                 return Err(Error::Limit);
             }
             let theta = angle + delta;
-            let projection = radial * delta.cos();
+            let projection = radial * delta.portable_cos();
             let mut best = (z * s.length_mm).max(0.);
             for depth in [0., s.length_mm] {
                 best = best.max(projection * self.radius(theta, depth) + z * depth)
@@ -93,7 +93,7 @@ impl Thread {
             }
             // For fixed angle, only the concave crest circle can maximize in
             // the interior of a phase band. Roots are convex, flanks affine.
-            let critical = s.crest_radius_mm * z / projection.hypot(z);
+            let critical = s.crest_radius_mm * z / projection.portable_hypot(z);
             if critical.abs() <= a {
                 candidate(critical)
             }

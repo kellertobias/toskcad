@@ -6,6 +6,7 @@ use crate::{
     document::{DocumentError, EntityId},
     inspection::GeometryReference,
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 
 pub const ANNOTATION_CAPABILITY: &str = "drawings.annotations.1";
@@ -408,7 +409,7 @@ impl SheetTransform {
         }
     }
     pub fn apply(&self, p: [f64; 2]) -> [f64; 2] {
-        let (s, c) = self.rotate_deg.to_radians().sin_cos();
+        let (s, c) = self.rotate_deg.to_radians().portable_sin_cos();
         let d = [p[0] - self.about_mm[0], p[1] - self.about_mm[1]];
         [
             self.about_mm[0] + c * d[0] - s * d[1] + self.translate_mm[0],
@@ -501,7 +502,7 @@ fn scale(a: [f64; 2], s: f64) -> [f64; 2] {
     [a[0] * s, a[1] * s]
 }
 fn length(a: [f64; 2]) -> f64 {
-    a[0].hypot(a[1])
+    a[0].portable_hypot(a[1])
 }
 fn unit(a: [f64; 2]) -> [f64; 2] {
     let l = length(a);
@@ -567,7 +568,7 @@ pub fn linear_dimension(
     };
     let along = unit(sub(db, da));
     let mid = scale(add(da, db), 0.5);
-    let angle = along[1].atan2(along[0]).to_degrees();
+    let angle = along[1].portable_atan2(along[0]).to_degrees();
     let angle = if angle > 90. || angle <= -90. {
         angle - 180. * angle.signum()
     } else {
@@ -667,7 +668,7 @@ pub fn angle_dimension(
         unit(sub(far(a0, a1), center)),
         unit(sub(far(b0, b1), center)),
     );
-    let (sa, sb) = (ua[1].atan2(ua[0]), ub[1].atan2(ub[0]));
+    let (sa, sb) = (ua[1].portable_atan2(ua[0]), ub[1].portable_atan2(ub[0]));
     let mut end = sb;
     while end < sa {
         end += std::f64::consts::TAU;
@@ -678,18 +679,26 @@ pub fn angle_dimension(
         (sa, end)
     };
     let mid = (start + end) / 2.;
-    let point = |angle: f64| add(center, [radius * angle.cos(), radius * angle.sin()]);
+    let point = |angle: f64| {
+        add(
+            center,
+            [radius * angle.portable_cos(), radius * angle.portable_sin()],
+        )
+    };
     AnnotationGraphic {
         lines: vec![[center, point(start)], [center, point(end)]],
         arrows: vec![
-            (point(start), [start.sin(), -start.cos()]),
-            (point(end), [-end.sin(), end.cos()]),
+            (point(start), [start.portable_sin(), -start.portable_cos()]),
+            (point(end), [-end.portable_sin(), end.portable_cos()]),
         ],
         arcs: vec![(center, radius, start, end)],
         text: wrap(format!("{}°", number(angle_deg, precision)), reference),
         text_mm: add(
             center,
-            [(radius + 2.) * mid.cos(), (radius + 2.) * mid.sin()],
+            [
+                (radius + 2.) * mid.portable_cos(),
+                (radius + 2.) * mid.portable_sin(),
+            ],
         ),
         text_angle_deg: 0.,
         labels: vec![],
@@ -716,7 +725,7 @@ pub fn draft_dimension(
         add(b, scale(normal, offset_mm)),
     );
     let value = length(sub(b, a)) / ratio;
-    let angle = along[1].atan2(along[0]).to_degrees();
+    let angle = along[1].portable_atan2(along[0]).to_degrees();
     let angle = if angle > 90. || angle <= -90. {
         angle - 180. * angle.signum()
     } else {
@@ -926,7 +935,7 @@ pub fn sheet_graphic(annotation: &Annotation) -> AnnotationGraphic {
 /// Parallel lines at `angle_deg` and `spacing_mm`, clipped to a polygon by
 /// even-odd crossings.
 pub fn hatch_lines(boundary: &[[f64; 2]], angle_deg: f64, spacing_mm: f64) -> Vec<[[f64; 2]; 2]> {
-    let (s, c) = angle_deg.to_radians().sin_cos();
+    let (s, c) = angle_deg.to_radians().portable_sin_cos();
     let (along, across) = ([c, s], [-s, c]);
     let dot = |p: [f64; 2], d: [f64; 2]| p[0] * d[0] + p[1] * d[1];
     let offsets: Vec<f64> = boundary.iter().map(|p| dot(*p, across)).collect();

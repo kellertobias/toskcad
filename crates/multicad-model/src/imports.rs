@@ -15,6 +15,7 @@ use multicad_kernel::{
     BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, RigidTransform,
     Solid,
 };
+use multicad_precision::PortableMath as _;
 use std::{
     io::Read,
     path::{Path, PathBuf},
@@ -394,7 +395,7 @@ fn extrude_kicad_profile(
 }
 
 fn rotate_z(deg: f64) -> [[f64; 3]; 3] {
-    let (s, c) = deg.to_radians().sin_cos();
+    let (s, c) = deg.to_radians().portable_sin_cos();
     [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]]
 }
 fn multiply(a: [[f64; 3]; 3], b: [[f64; 3]; 3]) -> [[f64; 3]; 3] {

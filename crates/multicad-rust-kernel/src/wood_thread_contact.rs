@@ -9,6 +9,7 @@ use crate::{
     orthogonal_pockets::{self, OrthogonalPocket},
     tapered_thread::interval::I,
 };
+use multicad_precision::PortableMath as _;
 use num_rational::BigRational as Q;
 use num_traits::{Signed, ToPrimitive, Zero};
 
@@ -542,7 +543,7 @@ pub fn certify(
     let phase = t.spec().crest_width_mm / 4.;
     let theta = ((z - phase) / t.helical_rate()).rem_euclid(std::f64::consts::TAU);
     let r = stock.pilot.radius_mm.midpoint(t.spec().major_radius_mm);
-    let center = [r * theta.cos(), r * theta.sin(), z];
+    let center = [r * theta.portable_cos(), r * theta.portable_sin(), z];
     let mut half = ((t.spec().major_radius_mm - stock.pilot.radius_mm) / 32.)
         .min(t.spec().crest_width_mm / 32.)
         .min(t.spec().length_mm / 32.)
@@ -964,7 +965,7 @@ mod tests {
         };
         assert!(run(&base, p, &screw, f, req).is_ok());
         let mut rounded = screw.thread().spec();
-        rounded.depth_mm = (2. - 0.4) / (2. * 30_f64.to_radians().tan()) - 0.1;
+        rounded.depth_mm = (2. - 0.4) / (2. * 30_f64.to_radians().portable_tan()) - 0.1;
         rounded.root_radius_mm = Some(0.1);
         let rounded = Screw::new(Thread::new(rounded).unwrap(), screw.spec()).unwrap();
         assert!(run(&base, p, &rounded, f, req).is_err());

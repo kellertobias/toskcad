@@ -24,7 +24,8 @@ fn circles(edges: &[RoundSegment], id: usize, center: Point2) -> Vec<(bool, Span
         .filter_map(|s| match s.edge.curve {
             Curve::Ellipse(ellipse)
                 if s.source == id
-                    && sub(ellipse.center, center)[0].hypot(sub(ellipse.center, center)[1])
+                    && sub(ellipse.center, center)[0]
+                        .portable_hypot(sub(ellipse.center, center)[1])
                         < 1e-8 =>
             {
                 Some((s.edge.hidden, ellipse.trim))
@@ -84,7 +85,7 @@ fn round_rim_is_visible_through_a_planar_opening_and_crops_to_detail() {
         },
     )
     .unwrap();
-    let angle = (7_f64 / 8.).acos();
+    let angle = (7_f64 / 8.).portable_acos();
     intervals(
         &circles(&edges, 0, [0.; 2]),
         &[(false, [PI - angle, PI + angle])],
@@ -97,7 +98,7 @@ fn oblique_rim_changes_visibility_where_its_depth_crosses_the_plane() {
     let plate = rect([-9., -9., 9., 9.], -5., 1.);
     let (_, edges) = project_scene(&[plate], &[round], options()).unwrap();
     let cuts = circles(&edges, 0, [1.8, 0.]);
-    let a = ((1.4 + options().tolerance) / 3.).asin();
+    let a = ((1.4 + options().tolerance) / 3.).portable_asin();
     intervals(
         &cuts,
         &[
@@ -117,7 +118,7 @@ fn a_plane_whose_bounds_extend_forward_can_still_be_behind_the_entire_rim() {
     for face in &mut plate.faces {
         face.point[2] += face.point[0];
         let [x, y, z] = face.normal;
-        let length = (x - z).hypot(y).hypot(z);
+        let length = (x - z).portable_hypot(y).portable_hypot(z);
         face.normal = [(x - z) / length, y / length, z / length];
     }
     let round = RoundOccluder::new([0., 0., 9.], [0., 0., 1.], 2., 1., None).unwrap();
@@ -148,7 +149,7 @@ fn overlapping_rounds_clip_at_exact_conic_events_and_preserve_a_bore() {
         .unwrap()
         .1
     };
-    let a = (7_f64 / 9.).acos();
+    let a = (7_f64 / 9.).portable_acos();
     intervals(
         &circles(&scene(front), 0, [0.; 2]),
         &[(false, [a, TAU - a])],
@@ -158,7 +159,7 @@ fn overlapping_rounds_clip_at_exact_conic_events_and_preserve_a_bore() {
         intervals(&circles(&scene(front), 0, [0.; 2]), &[(false, [0., TAU])]);
     }
     let side = RoundOccluder::new([-5., 0., 3.], [1., 0., 0.], 1., 10., None).unwrap();
-    let a = (1_f64 / 3.).asin();
+    let a = (1_f64 / 3.).portable_asin();
     intervals(
         &circles(&scene(side), 0, [0.; 2]),
         &[(false, [a, PI - a]), (false, [PI + a, TAU - a])],
@@ -482,7 +483,7 @@ fn external_edges_use_blockers_without_publishing_their_own_edges() {
     )
     .unwrap();
     assert!(lines.is_empty() && generated.is_empty());
-    let a = (7_f64 / 9.).acos();
+    let a = (7_f64 / 9.).portable_acos();
     intervals(&circles(&supplied, 17, [0.; 2]), &[(false, [a, TAU - a])]);
 }
 
@@ -532,7 +533,7 @@ fn exact_cavity_removes_the_mouth_disk_but_its_floor_still_occludes() {
         intervals(&circles(&supplied, source, [0.; 2]), &[(false, [0., TAU])]);
     }
     intervals(&circles(&supplied, 21, [0.; 2]), &[(true, [0., TAU])]);
-    let cut = (-0.25_f64).acos();
+    let cut = (-0.25_f64).portable_acos();
     intervals(
         &circles(&supplied, 24, [1., 0.]),
         &[
@@ -661,7 +662,7 @@ fn validates_supplied_curves_and_clips_a_line_to_the_detail_window() {
         },
     )
     .unwrap();
-    let angle = (7_f64 / 8.).acos();
+    let angle = (7_f64 / 8.).portable_acos();
     intervals(
         &circles(&clipped, 17, [0.; 2]),
         &[(false, [PI - angle, PI + angle])],
@@ -852,7 +853,7 @@ fn stadium_profile_clips_rims_at_side_lines_and_cap_conics() {
         options(),
     )
     .unwrap();
-    let angle = (2_f64 / 3.).asin();
+    let angle = (2_f64 / 3.).portable_asin();
     intervals(
         &circles(&curves, 20, [0.; 2]),
         &[
@@ -1021,7 +1022,7 @@ fn only_a_published_nearer_end_on_solid_claims_a_coincident_supplied_rim() {
         ..rim
     };
     let (_, _, supplied) = scene(&[shifted], &[ahead], &[], false);
-    let cap_angle = (-0.001 / (2. * radius)).acos();
+    let cap_angle = (-0.001 / (2. * radius)).portable_acos();
     intervals(
         &circles(&supplied, 40, shifted.center),
         &[(false, [0., cap_angle]), (false, [TAU - cap_angle, TAU])],
@@ -1160,7 +1161,9 @@ fn trimmed_rim_bounds_enclose_tiny_and_edge_on_curves_with_depth() {
         for i in 0..=100 {
             let at = trim[0] + (trim[1] - trim[0]) * f64::from(i) / 100.;
             let point = std::array::from_fn::<_, 3, _>(|axis| {
-                basis[0][axis] + basis[1][axis] * at.cos() + basis[2][axis] * at.sin()
+                basis[0][axis]
+                    + basis[1][axis] * at.portable_cos()
+                    + basis[2][axis] * at.portable_sin()
             });
             assert!(
                 point
@@ -1220,7 +1223,7 @@ fn sphere_blocks_lines_and_arcs_at_exact_changes_of_depth() {
         .unwrap();
     close(hidden[0][0], -4.);
     close(hidden[1][0], 4.);
-    let angle = 0.25_f64.acos();
+    let angle = 0.25_f64.portable_acos();
     intervals(
         &circles(&result, 7, [3., 0.]),
         &[
@@ -1349,7 +1352,7 @@ fn axial_torus_preserves_its_bore_and_resolves_depth_on_lines_and_rims() {
             close(actual, expected);
         }
     }
-    let projected_angle = |r: f64| ((r * r - 36. - 6.25) / 30.).acos();
+    let projected_angle = |r: f64| ((r * r - 36. - 6.25) / 30.).portable_acos();
     let a = projected_angle(6. + radial);
     let b = projected_angle(6. - radial);
     intervals(
@@ -1646,14 +1649,14 @@ fn an_oblique_cap_splits_the_inner_silhouette_at_the_other_lobes_depth() {
     let s = (1. - c * c).sqrt();
     let t = -0.5;
     let z = 5. * s * t;
-    let normal = c.hypot(s * t);
+    let normal = c.portable_hypot(s * t);
     let half = (20. * c * (1. / normal - 5. * c)).sqrt();
     let cap = -z - half;
     let crossings = AnalyticFace::oblique_torus_cap_crossings([5., 1.], [s, c], cap);
     assert!(crossings.iter().any(|root| (root - t).abs() < 1e-9));
     assert!(crossings.iter().all(|&t| {
         let z = 5. * s * t;
-        let normal = c.hypot(s * t);
+        let normal = c.portable_hypot(s * t);
         (((cap + z).powi(2) + 100. * c * c) * normal - 20. * c).abs() < 1e-8
     }));
     assert!(AnalyticFace::oblique_torus_cap_crossings([5., 1.], [s, c], 30.).is_empty());

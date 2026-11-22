@@ -1,5 +1,6 @@
 use super::tests::{argument_change, file, record_change};
 use super::*;
+use multicad_precision::PortableMath as _;
 fn refused(text: &str, label: &str) {
     let p = parse(text, Options::default(), None)
         .unwrap_or_else(|e| panic!("{label} structural {e:?}"));
@@ -404,7 +405,7 @@ fn actual_literal_double_angular_cover_is_not_a_single_occupied_body() {
             continue;
         }
         let [x, y] = [c[0].value(), c[1].value()];
-        let r = x.hypot(y);
+        let r = x.portable_hypot(y);
         if r == 0. {
             continue;
         }

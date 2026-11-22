@@ -5,6 +5,7 @@
 //! a wall, cap or profile edge stays explicitly unresolved.
 use super::{Sweep, inside};
 use crate::helical_thread::BoxClassification;
+use multicad_precision::PortableMath as _;
 
 impl Sweep {
     /// Classify the closed local box `[[x0, x1], [y0, y1], [z0, z1]]` given in
@@ -30,7 +31,7 @@ impl Sweep {
         }
         let center = [0.5 * (x0 + x1), 0.5 * (y0 + y1)];
         // A disc around the centre that encloses the whole rectangle.
-        let reach = 0.5 * (x1 - x0).hypot(y1 - y0) * (1. + 4. * f64::EPSILON) + margin;
+        let reach = 0.5 * (x1 - x0).portable_hypot(y1 - y0) * (1. + 4. * f64::EPSILON) + margin;
         if self.rings.iter().flatten().any(|edge| {
             edge.distance(center).partial_cmp(&reach) != Some(std::cmp::Ordering::Greater)
         }) {

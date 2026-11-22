@@ -13,6 +13,7 @@ use multicad_core::{
     project_file::ContentHash,
     sketch::{self, Datum, Frame, Geometry, Sketch},
 };
+use multicad_precision::PortableMath as _;
 use std::{cell::OnceCell, collections::VecDeque};
 #[cfg(test)]
 #[path = "sketch_advanced_context_tests.rs"]
@@ -2265,8 +2266,8 @@ impl SketchEditor {
     }
     fn orient_to(&mut self, frame: Frame) {
         self.architecture.set_enabled(false, &mut self.camera);
-        self.camera.yaw = frame.n[0].atan2(frame.n[1]) as f32;
-        self.camera.pitch = frame.n[2].clamp(-1., 1.).asin() as f32;
+        self.camera.yaw = frame.n[0].portable_atan2(frame.n[1]) as f32;
+        self.camera.pitch = frame.n[2].clamp(-1., 1.).portable_asin() as f32;
         self.camera.target = frame.origin.map(|v| v as f32);
     }
     fn refresh_contexts(&mut self, doc: &Document, revision: u64) {
@@ -2981,7 +2982,7 @@ impl SketchEditor {
             },
             DrawTool::Circle => DrawInput::Circle {
                 center: point(a),
-                radius_mm: (b[0] - a[0]).hypot(b[1] - a[1]),
+                radius_mm: (b[0] - a[0]).portable_hypot(b[1] - a[1]),
             },
             DrawTool::Arc => return Err("An arc needs a center, start and end point".into()),
             DrawTool::Spline => {
@@ -3119,7 +3120,7 @@ impl SketchEditor {
                 }),
             Coordinates::Custom(d) => {
                 let mut frame = d.frame();
-                let (s, c) = self.custom_angle_deg.to_radians().sin_cos();
+                let (s, c) = self.custom_angle_deg.to_radians().portable_sin_cos();
                 let (u, v) = (frame.u, frame.v);
                 frame.u = std::array::from_fn(|i| u[i] * c + v[i] * s);
                 frame.v = std::array::from_fn(|i| v[i] * c - u[i] * s);
@@ -3659,7 +3660,7 @@ impl SketchEditor {
                                             Geometry::Line { a, b, .. } => {
                                                 format!(
                                                     "Line · {:.2} mm",
-                                                    (b[0] - a[0]).hypot(b[1] - a[1])
+                                                    (b[0] - a[0]).portable_hypot(b[1] - a[1])
                                                 )
                                             }
                                             Geometry::Rectangle { a, b, .. } => format!(
@@ -3673,7 +3674,7 @@ impl SketchEditor {
                                             Geometry::BSpline {poles,basis,..}=>format!("Spline · degree {} · {} poles",basis.degree,poles.len()),
                                             Geometry::Arc { center, a, .. } => format!(
                                                 "Arc · R {:.2} mm",
-                                                (a[0] - center[0]).hypot(a[1] - center[1])
+                                                (a[0] - center[0]).portable_hypot(a[1] - center[1])
                                             ),
                                         };
                                         let response = ui.selectable_label(self.element == Some(g.id()) || self.constraints.selected(g.id()) || self.operations.curve_selection().contains(&g.id()), label);
@@ -5306,9 +5307,9 @@ impl SketchEditor {
             if tool == DrawTool::Arc
                 && let (Some(center), Some((start, _))) = (self.first, self.arc_start)
             {
-                let radius = (start[0] - center[0]).hypot(start[1] - center[1]);
+                let radius = (start[0] - center[0]).portable_hypot(start[1] - center[1]);
                 let direction = [p[0] - center[0], p[1] - center[1]];
-                let length = direction[0].hypot(direction[1]);
+                let length = direction[0].portable_hypot(direction[1]);
                 if length > 1e-9 {
                     if (length - radius).abs() > 1e-7 {
                         anchor = None;
@@ -5386,7 +5387,7 @@ impl SketchEditor {
                         DrawTool::Circle => Geometry::Circle {
                             id: self.draw_preview_id,
                             center: a,
-                            radius_mm: (p[0] - a[0]).hypot(p[1] - a[1]),
+                            radius_mm: (p[0] - a[0]).portable_hypot(p[1] - a[1]),
                         },
                         DrawTool::Spline => unreachable!("Spline uses the control-pole gesture"),
                         DrawTool::RectangleCenter
@@ -5412,7 +5413,7 @@ impl SketchEditor {
                                 Geometry::Circle {
                                     id: self.draw_preview_id,
                                     center: a,
-                                    radius_mm: (p[0] - a[0]).hypot(p[1] - a[1]),
+                                    radius_mm: (p[0] - a[0]).portable_hypot(p[1] - a[1]),
                                 }
                             }
                         }
@@ -5430,7 +5431,7 @@ impl SketchEditor {
                 } else if clicked {
                     if let Some(a) = self.first {
                         if tool == DrawTool::Arc && self.arc_start.is_none() {
-                            if (p[0] - a[0]).hypot(p[1] - a[1]) >= 1e-7 {
+                            if (p[0] - a[0]).portable_hypot(p[1] - a[1]) >= 1e-7 {
                                 self.arc_start = Some((p, anchor));
                                 self.set_tool_status();
                             }
@@ -5448,7 +5449,7 @@ impl SketchEditor {
                                 DrawTool::Rectangle => DrawInput::Rectangle { a: start, b: end },
                                 DrawTool::Circle => DrawInput::Circle {
                                     center: start,
-                                    radius_mm: (p[0] - a[0]).hypot(p[1] - a[1]),
+                                    radius_mm: (p[0] - a[0]).portable_hypot(p[1] - a[1]),
                                 },
                                 DrawTool::Spline => {
                                     unreachable!("Spline uses the control-pole gesture")
@@ -5534,7 +5535,7 @@ impl SketchEditor {
                     DrawTool::Circle => Geometry::Circle {
                         id: self.draw_preview_id,
                         center: a,
-                        radius_mm: (point[0] - a[0]).hypot(point[1] - a[1]),
+                        radius_mm: (point[0] - a[0]).portable_hypot(point[1] - a[1]),
                     },
                     _ => Geometry::Line {
                         id: self.draw_preview_id,
@@ -8287,9 +8288,11 @@ mod tests {
         let a = point(start);
         let b = point(end);
         assert!(!clockwise);
-        assert!(((a[0] - c[0]).hypot(a[1] - c[1]) - 10.).abs() < 1e-5);
-        assert!(((b[0] - c[0]).hypot(b[1] - c[1]) - 10.).abs() < 1e-5);
-        assert!(((b[1] - c[1]).atan2(b[0] - c[0]) - 20_f64.atan2(5.)).abs() < 1e-5);
+        assert!(((a[0] - c[0]).portable_hypot(a[1] - c[1]) - 10.).abs() < 1e-5);
+        assert!(((b[0] - c[0]).portable_hypot(b[1] - c[1]) - 10.).abs() < 1e-5);
+        assert!(
+            ((b[1] - c[1]).portable_atan2(b[0] - c[0]) - 20_f64.portable_atan2(5.)).abs() < 1e-5
+        );
         session
             .undo(session.revision(), Actor::local(Channel::Ui))
             .unwrap();

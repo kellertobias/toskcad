@@ -2,12 +2,12 @@ use super::*;
 fn whitworth() -> Spec {
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     Spec {
         major_radius_mm: 3.175,
         pitch_mm: p,
         length_mm: 3.7 * p,
-        depth_mm: p / (3. * a.tan()),
+        depth_mm: p / (3. * a.portable_tan()),
         crest_radius_mm: r,
         root_radius_mm: r,
         flank_angle_deg: 27.5,
@@ -18,9 +18,9 @@ fn whitworth() -> Spec {
 fn rd(internal: bool) -> Spec {
     let p = 3.175;
     let a = 15_f64.to_radians();
-    let r = p * (a.cos() - a.sin()) / (4. * (1. - a.sin()));
+    let r = p * (a.portable_cos() - a.portable_sin()) / (4. * (1. - a.portable_sin()));
     let delta = if internal {
-        0.05 * p * a.sin() / (1. - a.sin())
+        0.05 * p * a.portable_sin() / (1. - a.portable_sin())
     } else {
         0.
     };
@@ -111,9 +111,20 @@ fn circles_flanks_and_analytic_moments_retain_both_literal_radii() {
         let z = spec.pitch_mm * 0.17;
         for theta in [0., 0.3, 2., 5.] {
             let r = thread.radius(theta, z);
-            let p = [(r - 1e-5) * theta.cos(), (r - 1e-5) * theta.sin(), z];
+            let p = [
+                (r - 1e-5) * theta.portable_cos(),
+                (r - 1e-5) * theta.portable_sin(),
+                z,
+            ];
             assert!(thread.contains(p, 0.));
-            assert!(!thread.contains([(r + 1e-5) * theta.cos(), (r + 1e-5) * theta.sin(), z], 0.));
+            assert!(!thread.contains(
+                [
+                    (r + 1e-5) * theta.portable_cos(),
+                    (r + 1e-5) * theta.portable_sin(),
+                    z
+                ],
+                0.
+            ));
             let normal = thread.normal(theta, z);
             near(normal.into_iter().map(|v| v * v).sum(), 1., 1e-14);
         }
@@ -149,8 +160,8 @@ fn support_encloses_actual_material_for_both_hands_and_fractional_caps() {
                         let a = TAU * j as f64 / 720.;
                         let r = t.radius(a, z);
                         dense = dense.max(
-                            direction[0] * r * a.cos()
-                                + direction[1] * r * a.sin()
+                            direction[0] * r * a.portable_cos()
+                                + direction[1] * r * a.portable_sin()
                                 + direction[2] * z,
                         );
                     }
@@ -229,25 +240,25 @@ fn validation_precision_and_support_budget_fail_without_changing_the_profile() {
 fn unresolved_tangencies_and_scaled_support_refuse_without_nonfinite_bounds() {
     let a = 30_f64.to_radians();
     let p = 1.;
-    let rc = p / (4. * a.cos());
+    let rc = p / (4. * a.portable_cos());
     let mut s = whitworth();
     s.pitch_mm = p;
     s.flank_angle_deg = 30.;
     s.crest_radius_mm = rc;
     s.root_radius_mm = rc;
-    s.depth_mm = p / (2. * a.tan()) - 2. * rc * (1. / a.sin() - 1.);
+    s.depth_mm = p / (2. * a.portable_tan()) - 2. * rc * (1. / a.portable_sin() - 1.);
     assert_eq!(Thread::new(s), Err(Error::Unresolved));
     let mut near = s;
     near.crest_radius_mm *= 1. - 1e-12;
     near.root_radius_mm *= 1. - 1e-12;
-    near.depth_mm =
-        p / (2. * a.tan()) - (near.crest_radius_mm + near.root_radius_mm) * (1. / a.sin() - 1.);
+    near.depth_mm = p / (2. * a.portable_tan())
+        - (near.crest_radius_mm + near.root_radius_mm) * (1. / a.portable_sin() - 1.);
     assert_eq!(Thread::new(near), Err(Error::Unresolved));
     let mut tiny = s;
     tiny.crest_radius_mm = 1e-18;
     tiny.root_radius_mm = 0.1;
-    tiny.depth_mm =
-        p / (2. * a.tan()) - (tiny.crest_radius_mm + tiny.root_radius_mm) * (1. / a.sin() - 1.);
+    tiny.depth_mm = p / (2. * a.portable_tan())
+        - (tiny.crest_radius_mm + tiny.root_radius_mm) * (1. / a.portable_sin() - 1.);
     assert_eq!(Thread::new(tiny), Err(Error::Unresolved));
     let t = Thread::new(whitworth()).unwrap();
     assert_eq!(
@@ -334,13 +345,14 @@ fn reconstructed_period_endpoints_never_escape_the_actual_crest_circle() {
     for degrees in [1_f64, 15., 27.5] {
         let a = degrees.to_radians();
         let crest = 8.5e-16;
-        let root = 0.49 / a.cos();
+        let root = 0.49 / a.portable_cos();
         let pitch = 1.;
         let s = Spec {
             major_radius_mm: 3.,
             pitch_mm: pitch,
             length_mm: 2.,
-            depth_mm: pitch / (2. * a.tan()) - (crest + root) * (1. / a.sin() - 1.),
+            depth_mm: pitch / (2. * a.portable_tan())
+                - (crest + root) * (1. / a.portable_sin() - 1.),
             crest_radius_mm: crest,
             root_radius_mm: root,
             flank_angle_deg: degrees,
@@ -359,10 +371,10 @@ fn reconstructed_period_endpoints_never_escape_the_actual_crest_circle() {
 #[test]
 fn symbolic_peak_and_center_receipt_survive_large_circle_center_cancellation() {
     let a = 80_f64.to_radians();
-    let total = 0.8 / (2. * a.cos());
+    let total = 0.8 / (2. * a.portable_cos());
     let rc = 0.99 * total;
     let rr = total - rc;
-    let depth = 1. / (2. * a.tan()) - total * (1. / a.sin() - 1.);
+    let depth = 1. / (2. * a.portable_tan()) - total * (1. / a.portable_sin() - 1.);
     let mut radius = depth * (1. + 1e-5);
     let mut nonzero = false;
     let mut uncharged_center_overshoot = false;

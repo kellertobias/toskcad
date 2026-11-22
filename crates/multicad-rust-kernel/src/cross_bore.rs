@@ -28,6 +28,7 @@ use crate::display::{
 };
 use crate::revolution::Revolution;
 use crate::revolution_mesh;
+use multicad_precision::PortableMath as _;
 use num_rational::BigRational;
 use spade::Point2;
 use std::{
@@ -209,11 +210,11 @@ struct Strip {
 impl Strip {
     /// Error of an `n`-node trapezoid sum of a function bounded by `bound`.
     fn error(&self, n: usize, bound: f64) -> f64 {
-        4. * PI * bound / (self.width * n as f64).exp_m1()
+        4. * PI * bound / (self.width * n as f64).portable_exp_m1()
     }
 
     fn nodes(&self, bound: f64, target: f64) -> Option<usize> {
-        let needed = ((4. * PI * bound / target).ln_1p() / self.width).ceil();
+        let needed = ((4. * PI * bound / target).portable_ln_1p() / self.width).ceil();
         (needed.is_finite() && needed <= MAXIMUM_NODES as f64)
             .then(|| (needed as usize).max(16).next_multiple_of(4))
     }
@@ -239,7 +240,7 @@ impl CrossBore {
 
     /// `x'` range of removed material over the tool angle, as `[low, high]`.
     fn reach(&self, angle: f64) -> [f64; 2] {
-        let w = self.half_chord(self.offset + self.rho * angle.cos());
+        let w = self.half_chord(self.offset + self.rho * angle.portable_cos());
         [
             match self.ends[0] {
                 End::Through => -w,
@@ -341,7 +342,7 @@ impl CrossBore {
     /// the tool angle measured from `y'` toward `z`.
     pub fn rim_point(&self, side: usize, angle: f64) -> V {
         let x = self.reach(angle)[side];
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         self.chart([x, self.offset + self.rho * cos, self.level + self.rho * sin])
     }
 
@@ -367,7 +368,7 @@ impl CrossBore {
         let [x, y, z] = self.local(point);
         let inner = self.rho - tolerance;
         let deep = inner > 0.
-            && (y - self.offset).hypot(z - self.level) < inner
+            && (y - self.offset).portable_hypot(z - self.level) < inner
             && x > self.stations[0] + tolerance
             && x < self.stations[1] - tolerance;
         !deep
@@ -414,7 +415,8 @@ impl CrossBore {
             for &id in triangle {
                 let id = id as usize;
                 let [x, y, z] = [0, 1, 2].map(|i| base.vertices[3 * id + i]);
-                let station = ((y.atan2(x) / step).round() as i64).rem_euclid(segments as i64);
+                let station =
+                    ((y.portable_atan2(x) / step).round() as i64).rem_euclid(segments as i64);
                 let rim = usize::from(z == self.span[1]);
                 if z != self.span[rim] {
                     return Err(MeshError::UnresolvedBoundary);
@@ -454,7 +456,7 @@ impl CrossBore {
         for k in 0..n {
             let next = (k + 1) % n;
             let middle = TAU * (k as f64 + 0.5) / n as f64;
-            let (sin, cos) = middle.sin_cos();
+            let (sin, cos) = middle.portable_sin_cos();
             let normal = mix(mix([0.; 3], -cos, y_axis), -sin, z_axis);
             let [l0, l1, h0, h1] = [lines[0][k], lines[0][next], lines[1][k], lines[1][next]];
             emit(&mut mesh, [l0, l1, h1], tool_face, normal);
@@ -468,7 +470,7 @@ impl CrossBore {
             let ring: Vec<[usize; 2]> = (0..n).map(|k| [k, (k + 1) % n]).collect();
             let points = angles
                 .iter()
-                .map(|angle| Point2::new(angle.cos(), angle.sin()))
+                .map(|angle| Point2::new(angle.portable_cos(), angle.portable_sin()))
                 .collect();
             for triangle in triangulate_region(points, &ring, 0)?.triangles {
                 emit(&mut mesh, triangle.map(|k| line[k]), next_face, normal);
@@ -496,7 +498,7 @@ impl CrossBore {
         let step = TAU / segments as f64;
         let angle_of = |id: usize| {
             let [x, y] = [mesh.vertices[3 * id], mesh.vertices[3 * id + 1]];
-            y.atan2(x).rem_euclid(TAU)
+            y.portable_atan2(x).rem_euclid(TAU)
         };
         // Unroll from the rim station farthest from every hole sample.
         let samples: Vec<f64> = (0..2)
@@ -598,11 +600,11 @@ impl CrossBore {
                 if z - self.span[0] < 0.5 * r * step || self.span[1] - z < 0.5 * r * step {
                     continue;
                 }
-                let (sin, cos) = angle.sin_cos();
+                let (sin, cos) = angle.portable_sin_cos();
                 let [x, y, _] = self.local([r * cos, r * sin, z]);
                 let side = usize::from(x > 0.);
                 if self.ends[side] == End::Through
-                    && (y - self.offset).hypot(z - self.level) < clearance
+                    && (y - self.offset).portable_hypot(z - self.level) < clearance
                 {
                     continue;
                 }
@@ -675,7 +677,7 @@ pub fn subtract(
     let walls = stepped_walls(shaft).ok_or(Error::Unsupported)?;
     let finite = |v: f64| v.is_finite() && v.abs() <= MAXIMUM_MM;
     let [ax, ay, az] = tool.axis;
-    let norm = ax.hypot(ay);
+    let norm = ax.portable_hypot(ay);
     if !tool.base_mm.into_iter().all(finite)
         || az != 0.
         || !(1. - 1e-12..=1. + 1e-12).contains(&norm)
@@ -883,8 +885,8 @@ fn integrate(bore: &mut CrossBore, check: impl Fn() -> Result<(), Error>) -> Res
     if q.is_nan() || q <= 1. {
         return Err(Error::Unresolved);
     }
-    let width = q.acosh() / 2.;
-    let stretch = width.cosh();
+    let width = q.portable_acosh() / 2.;
+    let stretch = width.portable_cosh();
     let reach = e.abs() + rho * stretch;
     let strip = Strip {
         width,
@@ -921,7 +923,7 @@ fn integrate(bore: &mut CrossBore, check: impl Fn() -> Result<(), Error>) -> Res
         if k % 4096 == 0 {
             check()?;
         }
-        let (sin, cos) = (h * k as f64).sin_cos();
+        let (sin, cos) = (h * k as f64).portable_sin_cos();
         let y = e + rho * cos;
         let w = ((r - y) * (r + y)).sqrt();
         let terms = [

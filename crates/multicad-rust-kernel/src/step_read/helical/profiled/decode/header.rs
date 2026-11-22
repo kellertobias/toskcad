@@ -137,8 +137,8 @@ pub(super) fn meridian(
                     let support = shell.placement(axis)?;
                     let local = frame.local(support.origin);
                     let center = [major, local[2]];
-                    let a = (previous.z - center[1]).atan2(previous.radius - center[0]);
-                    let b = (end.z - center[1]).atan2(end.radius - center[0]);
+                    let a = (previous.z - center[1]).portable_atan2(previous.radius - center[0]);
+                    let b = (end.z - center[1]).portable_atan2(end.radius - center[0]);
                     let sweep = if role == Role::Crown {
                         (b - a).rem_euclid(TAU)
                     } else {

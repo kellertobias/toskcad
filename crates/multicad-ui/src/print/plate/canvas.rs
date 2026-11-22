@@ -14,6 +14,7 @@ use multicad_core::{
     exchange::PrintKey,
     model::{OccurrencePath, RigidPose},
 };
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeMap, sync::Arc};
 
 type Bounds = [[f64; 3]; 2];
@@ -175,7 +176,7 @@ impl View {
             let scroll = ui.input(|input| input.smooth_scroll_delta.y);
             if scroll != 0. && scroll.is_finite() {
                 let old = self.zoom.unwrap_or(1.);
-                let next = (old * (scroll * 0.006).exp()).clamp(0.1, 30.);
+                let next = (old * (scroll * 0.006).portable_exp()).clamp(0.1, 30.);
                 let anchor = pointer - rect.center();
                 self.pan = anchor + (self.pan - anchor) * (next / old);
                 self.zoom = Some(next);
@@ -565,7 +566,7 @@ fn rotation_handle(footprint: Rect) -> Pos2 {
 }
 fn bearing(pointer: Pos2, center: Pos2) -> f32 {
     let offset = pointer - center;
-    (-offset.y).atan2(offset.x).to_degrees()
+    (-offset.y).portable_atan2(offset.x).to_degrees()
 }
 fn paint_bed(painter: &egui::Painter, rect: Rect, camera: Camera, bed: [f64; 2]) {
     painter.rect_filled(rect, 4., crate::theme::SURFACE);
@@ -574,7 +575,7 @@ fn paint_bed(painter: &egui::Painter, rect: Rect, camera: Camera, bed: [f64; 2])
     let grid = painter.with_clip_rect(bed_rect.intersect(rect));
     let stroke = Stroke::new(0.7, GRID);
     let wanted = f64::from(30. / camera.scale);
-    let step = 10_f64.powf(wanted.log10().ceil()).max(1.);
+    let step = 10_f64.portable_powf(wanted.portable_log10().ceil()).max(1.);
     for axis in 0..2 {
         let count = (bed[axis] / step).min(100.) as usize;
         for index in 1..=count {

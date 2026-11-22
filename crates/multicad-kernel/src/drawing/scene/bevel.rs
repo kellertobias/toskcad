@@ -17,6 +17,7 @@
 //! with certified derivative bounds; no mesh or polygon stands in.
 use super::paths::{Lift, ProfilePath, Segment, add, dot3, scaled};
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     bevel_gear::{Bevel, Containment, End, Piece},
     normal_sweep,
@@ -42,8 +43,8 @@ fn sub(a: P3, b: P3) -> P3 {
 }
 
 fn polar(gamma: f64, phi: f64) -> P3 {
-    let (sg, cg) = gamma.sin_cos();
-    let (sp, cp) = phi.sin_cos();
+    let (sg, cg) = gamma.portable_sin_cos();
+    let (sp, cp) = phi.portable_sin_cos();
     [sg * cp, sg * sp, cg]
 }
 
@@ -116,7 +117,7 @@ impl Core {
             .iter()
             .map(|&piece| bevel.sample(piece, 0.).direction)
             .collect();
-        let base_cos = spec.base_cone_angle_rad.cos();
+        let base_cos = spec.base_cone_angle_rad.portable_cos();
         let shapes = pieces
             .iter()
             .map(|&piece| {
@@ -130,7 +131,8 @@ impl Core {
                         1.
                     };
                     let speed = norm(bevel.sample(piece, tip_end).derivative);
-                    let rise = (1. - (spec.tip_cone_angle_rad.cos() / base_cos).powi(2)).sqrt();
+                    let rise =
+                        (1. - (spec.tip_cone_angle_rad.portable_cos() / base_cos).powi(2)).sqrt();
                     let turn = speed / (base_cos * rise);
                     Shape {
                         speed,
@@ -146,7 +148,7 @@ impl Core {
                     let [a, b] = [0., 0.5].map(|s| bevel.sample(piece, s));
                     let speed = norm(a.derivative);
                     let normal = cross(a.derivative, b.derivative);
-                    let turn = 2. * norm(normal).atan2(dot3(a.derivative, b.derivative));
+                    let turn = 2. * norm(normal).portable_atan2(dot3(a.derivative, b.derivative));
                     let mut axis = scaled(normal, 1. / norm(normal));
                     if dot3(axis, a.direction) < 0. {
                         axis = scaled(axis, -1.);
@@ -176,14 +178,14 @@ impl Core {
             teeth: spec.teeth,
             joints,
             shapes,
-            pitch: [pitch.sin(), pitch.cos()],
+            pitch: [pitch.portable_sin(), pitch.portable_cos()],
             root: spec.root_cone_angle_rad,
             tip: spec.tip_cone_angle_rad,
             ends: End::BOTH.map(|end| bevel.end_distance_mm(end)),
             bore: bevel.bore_radius_mm(),
             foot: bevel.half_width(spec.root_cone_angle_rad),
             crest: bevel.sample(Piece::Tip, 1.).phi,
-            scale: spec.outer_cone_distance_mm / (spec.tip_cone_angle_rad - pitch).cos(),
+            scale: spec.outer_cone_distance_mm / (spec.tip_cone_angle_rad - pitch).portable_cos(),
             bounds,
             pieces,
             bevel,
@@ -216,7 +218,7 @@ impl Core {
 
     /// Rotate a sector-0 vector into a sector.
     fn turn(&self, sector: u32, p: P3) -> P3 {
-        let (s, c) = (self.spacing() * f64::from(sector)).sin_cos();
+        let (s, c) = (self.spacing() * f64::from(sector)).portable_sin_cos();
         [c * p[0] - s * p[1], s * p[0] + c * p[1], p[2]]
     }
 
@@ -246,13 +248,14 @@ impl Core {
 
     /// Distance from the apex to a back cone along a unit direction.
     fn reach(&self, end: End, u: P3) -> f64 {
-        self.ends[end_index(end)] / (self.pitch[0] * u[0].hypot(u[1]) + self.pitch[1] * u[2])
+        self.ends[end_index(end)]
+            / (self.pitch[0] * u[0].portable_hypot(u[1]) + self.pitch[1] * u[2])
     }
 
     /// Point of a cap edge and its parameter derivative.
     fn rim(&self, end: End, sector: u32, piece: usize, s: f64) -> (P3, P3) {
         let (u, du) = self.direction(sector, piece, s);
-        let radial = u[0].hypot(u[1]);
+        let radial = u[0].portable_hypot(u[1]);
         let cosine = self.pitch[0] * radial + self.pitch[1] * u[2];
         let rate = self.pitch[0] * (u[0] * du[0] + u[1] * du[1]) / radial + self.pitch[1] * du[2];
         let r = self.ends[end_index(end)] / cosine;
@@ -269,9 +272,9 @@ impl Core {
     /// `|γ''| <= (C + S²) / sin γ`; then
     /// `p'' = (r''γ'² + r'γ'')u + 2r'γ'u' + r u''` with `sin γ >= sin root`.
     fn rim_bound(&self, end: End, piece: usize) -> f64 {
-        let delta = self.pitch[0].atan2(self.pitch[1]);
+        let delta = self.pitch[0].portable_atan2(self.pitch[1]);
         let m = (delta - self.root).abs().max((self.tip - delta).abs());
-        let (sm, cm) = m.sin_cos();
+        let (sm, cm) = m.portable_sin_cos();
         let k = self.ends[end_index(end)];
         let r0 = k / cm;
         let r1 = k * sm / (cm * cm);
@@ -279,7 +282,7 @@ impl Core {
         let Shape {
             speed, curvature, ..
         } = self.shapes[piece];
-        let gamma2 = (curvature + speed * speed) / self.root.sin();
+        let gamma2 = (curvature + speed * speed) / self.root.portable_sin();
         r2 * speed * speed + r1 * gamma2 + 2. * r1 * speed * speed + r0 * curvature
     }
 
@@ -315,8 +318,8 @@ impl Core {
     fn bottom(&self, end: End, phi: f64) -> P3 {
         match self.bore {
             Some(bore) => [
-                bore * phi.cos(),
-                bore * phi.sin(),
+                bore * phi.portable_cos(),
+                bore * phi.portable_sin(),
                 self.bevel.back_cone_height_mm(end, bore),
             ],
             None => [0., 0., self.bevel.back_cone_apex_mm(end)],
@@ -339,9 +342,9 @@ impl Core {
                 .filter(|(_, p)| meridian(**p))
             {
                 let [a, b] = [0., 1.].map(|s| self.direction(sector, piece, s).0);
-                let length = a[0].hypot(a[1]);
+                let length = a[0].portable_hypot(a[1]);
                 let radial = [a[0] / length, a[1] / length, 0.];
-                let [ga, gb] = [a, b].map(|u| u[2].clamp(-1., 1.).acos());
+                let [ga, gb] = [a, b].map(|u| u[2].clamp(-1., 1.).portable_acos());
                 output.push((sector, piece, radial, [ga.min(gb), ga.max(gb)]));
             }
         }
@@ -354,7 +357,7 @@ impl Core {
     fn on_face(planes: &[(u32, usize, P3, [f64; 2])], local: P3) -> bool {
         planes.iter().any(|&(_, _, radial, [lo, hi])| {
             let length = norm(local);
-            let gamma = (local[2] / length).clamp(-1., 1.).acos();
+            let gamma = (local[2] / length).clamp(-1., 1.).portable_acos();
             dot3(local, radial) > 0. && lo <= gamma && gamma <= hi
         })
     }
@@ -414,16 +417,16 @@ fn unit_circle() -> Edge {
 /// turns so that no path closes on itself.
 fn arcs(lift: Lift, [from, to]: [f64; 2]) -> Vec<Arc<dyn Path>> {
     let [x, y] = [[lift.x[0], lift.x[1]], [lift.y[0], lift.y[1]]];
-    let scale = (x[0].hypot(x[1])).max(y[0].hypot(y[1]));
+    let scale = (x[0].portable_hypot(x[1])).max(y[0].portable_hypot(y[1]));
     let straight = (x[0] * y[1] - x[1] * y[0]).abs() <= 1e-12 * scale * scale;
     let mut stops = vec![from];
     let first = if straight {
-        let d = if x[0].hypot(x[1]) >= y[0].hypot(y[1]) {
+        let d = if x[0].portable_hypot(x[1]) >= y[0].portable_hypot(y[1]) {
             x
         } else {
             y
         };
-        (y[0] * d[0] + y[1] * d[1]).atan2(x[0] * d[0] + x[1] * d[1])
+        (y[0] * d[0] + y[1] * d[1]).portable_atan2(x[0] * d[0] + x[1] * d[1])
     } else {
         from
     };
@@ -495,7 +498,7 @@ impl Gear {
         if radius <= level.abs() || radius <= 1e-12 {
             return Vec::new();
         }
-        let half = (level / radius).acos();
+        let half = (level / radius).portable_acos();
         vec![heading - half, heading + half]
     }
 }
@@ -515,10 +518,10 @@ impl Member for Gear {
         // A circle about the axis through the back-cone point at polar γ.
         let ring = |end: End, gamma: f64, range: [f64; 2]| {
             let r = core.reach(end, polar(gamma, 0.));
-            let radius = r * gamma.sin();
+            let radius = r * gamma.portable_sin();
             arcs(
                 Lift {
-                    origin: core.to_view([0., 0., r * gamma.cos()]),
+                    origin: core.to_view([0., 0., r * gamma.portable_cos()]),
                     x: core.vector([radius, 0., 0.]),
                     y: core.vector([0., radius, 0.]),
                 },
@@ -532,8 +535,8 @@ impl Member for Gear {
             )
         };
         let d = core.sight;
-        let heading = d[1].atan2(d[0]);
-        let across = d[0].hypot(d[1]);
+        let heading = d[1].portable_atan2(d[0]);
+        let across = d[0].portable_hypot(d[1]);
         for sector in 0..core.teeth {
             let center = core.spacing() * f64::from(sector);
             for end in End::BOTH {
@@ -601,7 +604,7 @@ impl Member for Gear {
         // Outline generators of the root and tip cones: the normal
         // (cos γ cos φ, cos γ sin φ, −sin γ) is perpendicular to the sight.
         for (gamma, tip) in [(core.root, false), (core.tip, true)] {
-            for phi in Self::azimuths(across, heading, gamma.tan() * d[2]) {
+            for phi in Self::azimuths(across, heading, gamma.portable_tan() * d[2]) {
                 let offset = core.tooth(phi).1.abs();
                 if (tip && offset <= core.crest) || (!tip && offset >= core.foot) {
                     push(Kind::Outline, ruling(polar(gamma, phi)));
@@ -696,7 +699,7 @@ impl Core {
         let mut stops = Vec::new();
         // Root and tip cones: p_z² = cos²γ |p|².
         for gamma in [core.root, core.tip] {
-            let c = gamma.cos().powi(2);
+            let c = gamma.portable_cos().powi(2);
             roots::quadratic(
                 d[2] * d[2] - c,
                 start[2] * d[2] - c * dot3(start, d),
@@ -736,7 +739,7 @@ impl Core {
             .collect();
         for &(_, _, _, gammas) in &planes {
             for gamma in gammas {
-                let c = gamma.cos().powi(2);
+                let c = gamma.portable_cos().powi(2);
                 roots::quadratic(
                     d[2] * d[2] - c,
                     start[2] * d[2] - c * dot3(start, d),
@@ -754,10 +757,10 @@ impl Core {
             let middle = 0.5 * (core.root + core.tip);
             // Every flank direction of a tooth lies within this angle of
             // its center direction at the middle polar angle.
-            let cap = 0.5 * (core.tip - core.root) + core.foot * core.tip.sin() + 1e-9;
+            let cap = 0.5 * (core.tip - core.root) + core.foot * core.tip.portable_sin() + 1e-9;
             for sector in 0..core.teeth {
                 let center = polar(middle, core.spacing() * f64::from(sector));
-                if cap < 0.5 * PI && dot3(moment, center).abs() > cap.sin() {
+                if cap < 0.5 * PI && dot3(moment, center).abs() > cap.portable_sin() {
                     continue;
                 }
                 for (index, _) in core

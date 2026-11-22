@@ -1,5 +1,6 @@
 use multicad_core::{document::EntityId, manufacturing::PlanarEdge, references::TopologyKind};
 use multicad_kernel::{GeometryPolicy, PlaneFrame, Solid, StraightRack};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI};
 
 fn specimen(teeth: u32, module: f64) -> StraightRack {
@@ -26,12 +27,12 @@ fn analytical_volume(s: StraightRack) -> f64 {
     // Corner addition = tangent quadrilateral area minus circular sector area.
     let alpha = s.pressure_angle_rad;
     let corner = s.root_fillet_radius_mm.powi(2)
-        * (1. / alpha.cos() - alpha.tan() - (FRAC_PI_2 - alpha) / 2.);
+        * (1. / alpha.portable_cos() - alpha.portable_tan() - (FRAC_PI_2 - alpha) / 2.);
     f64::from(s.teeth)
         * s.face_width_mm
         * (s.pitch_mm * s.backing_thickness_mm
             + (s.addendum_mm + s.dedendum_mm)
-                * (s.pitch_thickness_mm + (s.dedendum_mm - s.addendum_mm) * alpha.tan())
+                * (s.pitch_thickness_mm + (s.dedendum_mm - s.addendum_mm) * alpha.portable_tan())
             + 2. * corner)
 }
 fn verify(solid: &Solid, s: StraightRack) {
@@ -93,7 +94,7 @@ fn verify(solid: &Solid, s: StraightRack) {
     assert_eq!(flanks.len(), 2 * s.teeth as usize);
     for &(a, b) in &flanks {
         close(
-            ((b[0] - a[0]) / (b[1] - a[1])).abs().atan(),
+            ((b[0] - a[0]) / (b[1] - a[1])).abs().portable_atan(),
             s.pressure_angle_rad,
             tolerance,
         );
@@ -109,7 +110,7 @@ fn verify(solid: &Solid, s: StraightRack) {
         measured.sort_by(f64::total_cmp);
         for tooth in 0..s.teeth as usize {
             let center = (tooth as f64 + 0.5 - f64::from(s.teeth) / 2.) * s.pitch_mm;
-            let half_width = s.pitch_thickness_mm / 2. - y * s.pressure_angle_rad.tan();
+            let half_width = s.pitch_thickness_mm / 2. - y * s.pressure_angle_rad.portable_tan();
             close(measured[2 * tooth], center - half_width, tolerance);
             close(measured[2 * tooth + 1], center + half_width, tolerance);
         }
@@ -133,7 +134,7 @@ fn verify(solid: &Solid, s: StraightRack) {
             for point in [a, b] {
                 let radius = [point[0] - center[0], point[1] - center[1]];
                 close(
-                    radius[0].hypot(radius[1]),
+                    radius[0].portable_hypot(radius[1]),
                     s.root_fillet_radius_mm,
                     tolerance,
                 );
@@ -141,9 +142,9 @@ fn verify(solid: &Solid, s: StraightRack) {
                     .iter()
                     .find_map(|e| match *e {
                         PlanarEdge::Line { a, b }
-                            if [a, b]
-                                .iter()
-                                .any(|q| (q[0] - point[0]).hypot(q[1] - point[1]) < tolerance) =>
+                            if [a, b].iter().any(|q| {
+                                (q[0] - point[0]).portable_hypot(q[1] - point[1]) < tolerance
+                            }) =>
                         {
                             Some((a, b))
                         }
@@ -153,7 +154,7 @@ fn verify(solid: &Solid, s: StraightRack) {
                 let direction = [v[0] - u[0], v[1] - u[1]];
                 close(
                     (radius[0] * direction[0] + radius[1] * direction[1])
-                        / direction[0].hypot(direction[1]),
+                        / direction[0].portable_hypot(direction[1]),
                     0.,
                     tolerance,
                 );

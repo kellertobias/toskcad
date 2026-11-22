@@ -7,6 +7,7 @@ use multicad_core::{
 };
 use multicad_kernel::{BooleanOperation, GeometryPolicy, RigidTransform, Solid};
 use multicad_model::{Compiler, EvaluationCache};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
@@ -50,8 +51,8 @@ fn request(teeth: f64, ring_first: bool) -> GearPairRequest {
 fn placed(s: &Solid, phase: f64, x: f64) -> Solid {
     s.transformed(RigidTransform {
         rotation: [
-            [phase.cos(), -phase.sin(), 0.],
-            [phase.sin(), phase.cos(), 0.],
+            [phase.portable_cos(), -phase.portable_sin(), 0.],
+            [phase.portable_sin(), phase.portable_cos(), 0.],
             [0., 0., 1.],
         ],
         translation_mm: [x, 0., 0.],

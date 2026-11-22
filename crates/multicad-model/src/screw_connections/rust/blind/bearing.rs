@@ -45,7 +45,11 @@ pub(super) fn prove(
         v: frame.v,
     };
     let expected = placed_frame(&screw.part, screw.pose);
-    let distance = |a: [f64; 3], b: [f64; 3]| (a[0] - b[0]).hypot(a[1] - b[1]).hypot(a[2] - b[2]);
+    let distance = |a: [f64; 3], b: [f64; 3]| {
+        (a[0] - b[0])
+            .portable_hypot(a[1] - b[1])
+            .portable_hypot(a[2] - b[2])
+    };
     let extent = spec.head.height_mm() + spec.shank_length_mm + actual.thread().spec().length_mm;
     let residual = distance(head_frame.origin_mm, expected.origin_mm)
         + maximum_radius

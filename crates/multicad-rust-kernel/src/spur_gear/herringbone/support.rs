@@ -1,9 +1,10 @@
 use super::*;
 use crate::revolution::{dot, length};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::FRAC_PI_2;
 
 fn angle([x, y]: Point) -> f64 {
-    y.atan2(x)
+    y.portable_atan2(x)
 }
 
 /// At most one equivalent phase lies in any admitted interval.
@@ -15,7 +16,7 @@ fn in_interval(angle: f64, from: f64, to: f64) -> Option<f64> {
 }
 
 fn roots(sine: f64) -> impl Iterator<Item = f64> {
-    let first = sine.asin();
+    let first = sine.portable_asin();
     [first, PI - first].into_iter().filter(|a| a.is_finite())
 }
 
@@ -108,7 +109,7 @@ fn tangent_roots(edge: Edge, target: f64) -> impl Iterator<Item = f64> {
             let start = angle(super::super::sub(a, center));
             let sweep = arc.signed_sweep_rad().expect("circular arc");
             let ratio = target / (length(center) * sweep.signum());
-            let first = ratio.asin();
+            let first = ratio.portable_asin();
             [first, PI - first].map(|root| {
                 in_interval(angle(center) - root, start, start + sweep)
                     .map_or(f64::NAN, |a| ((a - start) / sweep).clamp(0., 1.))

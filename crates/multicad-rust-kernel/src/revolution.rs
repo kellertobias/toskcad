@@ -1,6 +1,7 @@
 //! Analytic material swept from a straight-edged, one-sided meridian.
 
 use crate::polygon::MAX_VERTICES;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 
 type Point = [f64; 2];
@@ -147,10 +148,10 @@ impl Revolution {
             return 0.;
         }
         let [x, y, z] = direction.map(|value| value / scale);
-        let radial = if self.is_full() || self.angular_position(y.atan2(x)) {
-            x.hypot(y)
+        let radial = if self.is_full() || self.angular_position(y.portable_atan2(x)) {
+            x.portable_hypot(y)
         } else {
-            let (sin, cos) = self.angle_rad.sin_cos();
+            let (sin, cos) = self.angle_rad.portable_sin_cos();
             x.max(x.mul_add(cos, y * sin))
         };
         // Radius is nonnegative, so each section point has the same best
@@ -166,14 +167,14 @@ impl Revolution {
         if !tolerance.is_finite() || tolerance < 0. || ![x, y, z].into_iter().all(f64::is_finite) {
             return false;
         }
-        let radius = x.hypot(y);
+        let radius = x.portable_hypot(y);
         if !radius.is_finite() {
             return false;
         }
-        let angle = y.atan2(x);
+        let angle = y.portable_atan2(x);
         if !self.is_full() && radius > tolerance && !self.angular_position(angle) {
             let close_to_end = |end: f64| {
-                let (sin, cos) = (angle - end).sin_cos();
+                let (sin, cos) = (angle - end).portable_sin_cos();
                 cos >= 0. && radius * sin.abs() <= tolerance
             };
             if !close_to_end(0.) && !close_to_end(self.angle_rad) {
@@ -214,7 +215,7 @@ pub(crate) fn cross([a, b]: Point, [c, d]: Point) -> f64 {
 }
 
 pub(crate) fn length([x, y]: Point) -> f64 {
-    x.hypot(y)
+    x.portable_hypot(y)
 }
 
 fn orientation([a, b]: Segment, point: Point) -> f64 {

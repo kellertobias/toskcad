@@ -3,6 +3,7 @@
 //! The helical law is retained on the literal prefix `0 <= z <= L-width`;
 //! the terminal material is a plain neck of radius `root-radial_depth`.
 use crate::helical_thread::{AxialPrefix, Thread, ThreadError};
+use multicad_precision::PortableMath as _;
 
 pub(crate) fn minimum_radius(tool: Thread) -> f64 {
     // Rounded-root parameters, rather than the separately tolerance-checked
@@ -107,7 +108,7 @@ impl Relief {
     pub fn support(&self, d: [f64; 3]) -> f64 {
         let [x, y, z] = d;
         self.material_thread().support(d).max(
-            self.neck_radius_mm * x.hypot(y)
+            self.neck_radius_mm * x.portable_hypot(y)
                 + (z * self.material_length_mm()).max(z * self.full_length_mm()),
         )
     }
@@ -118,7 +119,7 @@ impl Relief {
             && (self.material_thread().contains(p, tolerance)
                 || (z >= self.material_length_mm() - tolerance
                     && z <= self.full_length_mm() + tolerance
-                    && x.hypot(y) <= self.neck_radius_mm + tolerance))
+                    && x.portable_hypot(y) <= self.neck_radius_mm + tolerance))
     }
 }
 #[cfg(test)]

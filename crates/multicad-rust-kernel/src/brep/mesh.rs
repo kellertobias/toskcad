@@ -12,6 +12,7 @@ use super::{
     norm, scale, turn,
 };
 use crate::display::DisplayMesh;
+use multicad_precision::PortableMath as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -175,8 +176,8 @@ impl Refiner<'_> {
             // than one across half of it, which would starve the longer
             // span of splits.
             let (start, end) = (cell.along(i, 0.), cell.along(i, 1.));
-            let extent =
-                ((end[0] - start[0]) * self.metric[0]).hypot((end[1] - start[1]) * self.metric[1]);
+            let extent = ((end[0] - start[0]) * self.metric[0])
+                .portable_hypot((end[1] - start[1]) * self.metric[1]);
             lengths.insert((a, b), extent);
             // The chord against the surface along it; three stations see
             // a side that crosses the surface at its middle.

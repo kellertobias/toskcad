@@ -15,6 +15,7 @@ use crate::{
     parameters::{EvaluatedParameters, Unit},
     references::ReferenceFrame,
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -206,7 +207,7 @@ pub fn resolve_guide_view(
         GuideKind::Section { start, end, depth } => {
             let a = [mm(&start[0], parameters)?, mm(&start[1], parameters)?];
             let b = [mm(&end[0], parameters)?, mm(&end[1], parameters)?];
-            let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+            let length = (b[0] - a[0]).portable_hypot(b[1] - a[1]);
             if length <= 1e-3 {
                 return Err(invalid("A section line needs two distinct points"));
             }
@@ -243,7 +244,7 @@ pub fn resolve_guide_view(
             })
         }
         GuideKind::Elevation { direction_deg } => {
-            let (s, c) = direction_deg.to_radians().sin_cos();
+            let (s, c) = direction_deg.to_radians().portable_sin_cos();
             // The view is seen from the positive normal, which points back
             // toward the viewer; u = Z × normal keeps v pointing up.
             Ok(ResolvedGuideView {

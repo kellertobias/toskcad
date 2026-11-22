@@ -1,5 +1,6 @@
 use super::{CurveProjection2d, failure};
 use crate::{BSpline2d, GeometryError, GeometryErrorKind, GeometryPolicy};
+use multicad_precision::PortableMath as _;
 
 struct Span {
     length: f64,
@@ -13,7 +14,7 @@ struct Candidate {
 }
 
 fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 
 fn along(point: [f64; 2], origin: [f64; 2], tangent: [f64; 2]) -> f64 {
@@ -48,7 +49,7 @@ pub(super) fn project(
                 };
             }
             let scaled = delta.map(|component| component / scale);
-            let norm = scaled[0].hypot(scaled[1]);
+            let norm = scaled[0].portable_hypot(scaled[1]);
             Span {
                 length: scale * norm,
                 tangent: scaled.map(|component| component / norm),

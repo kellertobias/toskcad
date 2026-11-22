@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+multicad-precision.workspace = true
 multicad-core.workspace = true
 sketch-solver = "=0.1.0"
 

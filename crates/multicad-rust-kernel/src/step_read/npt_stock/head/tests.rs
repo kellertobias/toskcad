@@ -1,5 +1,6 @@
 use super::*;
 use crate::step_read::owned_insert::DocumentOptions;
+use multicad_precision::PortableMath as _;
 fn upper(parsed: &Parsed<'_, '_>) -> u32 {
     parsed
         .faces
@@ -169,8 +170,8 @@ fn actual_clipped_head_refuses_wrong_rim_star_intersection_gap_and_bad_supports(
     let mut bad = input.clone();
     let angles = [0_f64, 130., 260., 30., 160., 290.].map(f64::to_radians);
     for (i, p) in bad.vertices.iter_mut().enumerate() {
-        p[0] = 20. * angles[i % 6].cos();
-        p[1] = 20. * angles[i % 6].sin();
+        p[0] = 20. * angles[i % 6].portable_cos();
+        p[1] = 20. * angles[i % 6].portable_sin();
     }
     for i in 0..6 {
         let j = (i + 1) % 6;

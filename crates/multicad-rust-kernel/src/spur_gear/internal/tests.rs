@@ -16,11 +16,11 @@ fn spec(teeth: u32, thinning: f64) -> RingSpec {
     RingSpec {
         teeth,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * a.cos(),
+        base_radius_mm: pitch * a.portable_cos(),
         tip_radius_mm: pitch - 1.,
         root_radius_mm: pitch + 1.25,
         root_fillet_radius_mm: 0.2,
-        half_base_angle_rad: (PI / 2. - thinning) / (2. * pitch) - a.tan() + a,
+        half_base_angle_rad: (PI / 2. - thinning) / (2. * pitch) - a.portable_tan() + a,
         face_width_mm: 2.,
         outer_radius_mm: pitch + 4.,
     }
@@ -38,8 +38,8 @@ fn close(actual: f64, expected: f64, tolerance: f64) {
 }
 
 fn angle_offset([x, y]: Point, phase: f64) -> f64 {
-    let angle = y.atan2(x) - phase;
-    angle.sin().atan2(angle.cos())
+    let angle = y.portable_atan2(x) - phase;
+    angle.portable_sin().portable_atan2(angle.portable_cos())
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn cavity_matches_native_roles_joins_and_independent_area() {
                 .iter()
                 .find(|entry| entry.role == role)
                 .map(|entry| entry.edge.point(0.5))
-                .map(|p| p[0].hypot(p[1]))
+                .map(|p| p[0].portable_hypot(p[1]))
                 .unwrap()
         };
         close(radius(ToothRole::Tip), spec.tip_radius_mm, 1e-12);
@@ -172,7 +172,10 @@ fn exact_classification_matches_the_native_probes() {
     let ring = ring(spec).unwrap();
     let pitch = TAU / 48.;
     let at = |r: f64, angle: f64, z: f64| {
-        ring.classify([r * angle.cos(), r * angle.sin(), z], TOLERANCE)
+        ring.classify(
+            [r * angle.portable_cos(), r * angle.portable_sin(), z],
+            TOLERANCE,
+        )
     };
     for tooth in [0., 5., 47.] {
         let a = tooth * pitch;
@@ -200,10 +203,11 @@ fn exact_classification_matches_the_native_probes() {
         spec.pitch_radius_mm,
         spec.root_radius_mm - 0.5,
     ] {
-        let alpha = (spec.base_radius_mm / r).acos();
-        let half =
-            (PI / 2. - 0.05) / (2. * spec.pitch_radius_mm) + alpha.tan() - alpha - reference.tan()
-                + reference;
+        let alpha = (spec.base_radius_mm / r).portable_acos();
+        let half = (PI / 2. - 0.05) / (2. * spec.pitch_radius_mm) + alpha.portable_tan()
+            - alpha
+            - reference.portable_tan()
+            + reference;
         for sign in [-1., 1.] {
             assert_eq!(at(r, sign * (half - 1e-6), 1.), Containment::Inside);
             assert_eq!(at(r, sign * (half + 1e-6), 1.), Containment::Outside);
@@ -292,7 +296,7 @@ fn mesh_is_a_certified_closed_annulus_with_native_face_order() {
             if face as usize == faces - 1 {
                 for &v in triangle {
                     let p = &mesh.vertices[v as usize * 3..v as usize * 3 + 2];
-                    close(p[0].hypot(p[1]), ring.outer_radius_mm(), 1e-12);
+                    close(p[0].portable_hypot(p[1]), ring.outer_radius_mm(), 1e-12);
                 }
             }
         }
@@ -338,7 +342,7 @@ fn refuses_the_native_internal_ring_envelope() {
     }
     let start = {
         let t = ((nominal.tip_radius_mm / nominal.base_radius_mm).powi(2) - 1.).sqrt();
-        t - t.atan()
+        t - t.portable_atan()
     };
     for invalid in [
         RingSpec {

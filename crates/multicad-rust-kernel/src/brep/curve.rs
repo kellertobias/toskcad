@@ -3,6 +3,7 @@ use super::surface::Frame;
 use super::{
     Error, NurbsCurve, Point, Result, add, distance, dot, ensure, nearest, norm, scale, sub, turn,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 /// Panel width along the parameter of an open conic.
@@ -85,7 +86,7 @@ impl Curve {
                 frame,
                 semiaxes: [a, b],
             } => {
-                let (sinh, cosh) = (t.sinh(), t.cosh());
+                let (sinh, cosh) = (t.portable_sinh(), t.portable_cosh());
                 (
                     add(
                         frame.origin,
@@ -117,15 +118,17 @@ impl Curve {
             }
             Self::Circle { frame, .. } => {
                 let local = frame.local(point);
-                local[1].atan2(local[0]).rem_euclid(TAU)
+                local[1].portable_atan2(local[0]).rem_euclid(TAU)
             }
             Self::Ellipse { frame, semiaxes } => {
                 let local = frame.local(point);
                 (local[1] / semiaxes[1])
-                    .atan2(local[0] / semiaxes[0])
+                    .portable_atan2(local[0] / semiaxes[0])
                     .rem_euclid(TAU)
             }
-            Self::Hyperbola { frame, semiaxes } => (frame.local(point)[1] / semiaxes[1]).asinh(),
+            Self::Hyperbola { frame, semiaxes } => {
+                (frame.local(point)[1] / semiaxes[1]).portable_asinh()
+            }
             Self::Parabola { frame, focal } => frame.local(point)[1] / (2. * focal),
             Self::Nurbs { curve, .. } => {
                 let [a, b] = curve.range();
@@ -286,7 +289,7 @@ impl Curve {
 }
 
 fn ellipse(frame: &Frame, [a, b]: [f64; 2], t: f64) -> (Point, Point) {
-    let (sin, cos) = t.sin_cos();
+    let (sin, cos) = t.portable_sin_cos();
     (
         add(
             frame.origin,

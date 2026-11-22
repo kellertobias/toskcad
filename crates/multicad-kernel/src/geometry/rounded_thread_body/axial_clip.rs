@@ -103,7 +103,7 @@ impl Solid {
             if keeps_end { length } else { end },
         );
         let angle = start / body.geometry.helical_rate();
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let normal = frame.normal();
         let trimmed = PlaneFrame {
             origin: std::array::from_fn(|i| frame.origin[i] + normal[i] * start),
@@ -145,7 +145,7 @@ mod tests {
             major_radius_mm: 5.,
             pitch_mm: 1.,
             length_mm: 4.,
-            depth_mm: 1. / (2. * angle.tan()) - 0.274 * (1. / angle.sin() - 1.),
+            depth_mm: 1. / (2. * angle.portable_tan()) - 0.274 * (1. / angle.portable_sin() - 1.),
             crest_radius_mm: 0.137,
             root_radius_mm: 0.137,
             flank_angle_deg: 27.5,
@@ -196,7 +196,11 @@ mod tests {
                     z[0].max(0.) + 0.05 + (k as f64 / 64.) * (z[1].min(4.) - z[0].max(0.) - 0.1);
                 let r = full.radius(theta, zz);
                 for (offset, inside) in [(-1e-3, true), (1e-3, false)] {
-                    let point = [(r + offset) * theta.cos(), (r + offset) * theta.sin(), zz];
+                    let point = [
+                        (r + offset) * theta.portable_cos(),
+                        (r + offset) * theta.portable_sin(),
+                        zz,
+                    ];
                     assert_eq!(
                         trimmed.contains(trimmed_frame, point),
                         inside,

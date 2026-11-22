@@ -6,6 +6,7 @@ use crate::{
     normal_sweep::{CertifiedPiercing, Edge as ProfileEdge, PiercedSweep, Piercing, Sweep},
     trim_curve::{Ellipse, EllipseArc},
 };
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeMap, f64::consts::FRAC_PI_2};
 
 mod sweep_shell;
@@ -815,7 +816,7 @@ fn curve(
         return Ok(Curve::Line);
     };
     let [u, v] = [a[0] - center[0], a[1] - center[1]];
-    let radius = u.hypot(v);
+    let radius = u.portable_hypot(v);
     let ellipse = Ellipse::new(
         frame.point(center, level),
         cross(frame.u, frame.v),
@@ -828,7 +829,7 @@ fn curve(
     // endpoints could shift the radius or phase at large coordinates.
     EllipseArc::new(
         ellipse,
-        sweep.mul_add(fraction[0], v.atan2(u)),
+        sweep.mul_add(fraction[0], v.portable_atan2(u)),
         sweep * (fraction[1] - fraction[0]),
     )
     .map(Curve::Ellipse)
@@ -1265,7 +1266,7 @@ mod tests {
             .enumerate()
         {
             let [dx, dy]: [f64; 2] = std::array::from_fn(|i| b[i] - a[i]);
-            let length = dx.hypot(dy);
+            let length = dx.portable_hypot(dy);
             let [u, v] = [dx / length, dy / length];
             let place = |[s, q]: [f64; 2]| [a[0] + u * s + v * q, a[1] + v * s - u * q];
             let inset = flange % 2 == 1 || inset_long_sides;

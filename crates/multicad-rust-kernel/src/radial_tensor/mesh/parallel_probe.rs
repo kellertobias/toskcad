@@ -1,5 +1,6 @@
 //! Private stage measurements. Production builds contain no probe hooks.
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::{
     cell::{Cell, RefCell},
     time::{Duration, Instant},
@@ -64,7 +65,7 @@ fn fixture_length(length: f64, minimum_feature: f64) -> RadialBoundary {
             length_mm: length,
             radial_taper: 1. / 32.,
             section: AuthoredSection::BsptRounded {
-                depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
+                depth_mm: p / (3. * 27.5_f64.to_radians().portable_tan()),
             },
             crest_radius_limit_mm: None,
         },

@@ -279,7 +279,7 @@ fn straight_vector_and_manufacturing_profiles_keep_their_own_geometry_budget() {
     let points: Vec<_> = (0..70)
         .map(|i| {
             let t = TAU * i as f64 / 70.;
-            [10. * t.cos(), 10. * t.sin()]
+            [10. * t.portable_cos(), 10. * t.portable_sin()]
         })
         .collect();
     let source = CurvedProfile {
@@ -308,7 +308,10 @@ fn straight_vector_and_manufacturing_profiles_keep_their_own_geometry_budget() {
     )
     .unwrap();
     assert_backend(&public);
-    near(public.volume_mm3().unwrap(), 70. * 100. * (TAU / 70.).sin());
+    near(
+        public.volume_mm3().unwrap(),
+        70. * 100. * (TAU / 70.).portable_sin(),
+    );
 
     physical(&public);
 }

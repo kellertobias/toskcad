@@ -8,6 +8,7 @@ use multicad_kernel::{
     MeshOptions, RigidTransform, Solid,
     rust_kernel::{spur_gear::clearance::ResultKind, step_read},
 };
+use multicad_precision::PortableMath as _;
 
 use std::f64::consts::{PI, TAU};
 
@@ -38,11 +39,11 @@ fn ring(case: Case) -> InvoluteGear {
         hub: None,
         teeth: case.teeth,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * a.cos(),
+        base_radius_mm: pitch * a.portable_cos(),
         tip_radius_mm: pitch - m,
         root_radius_mm: pitch + 1.25 * m,
         root_fillet_radius_mm: case.fillet,
-        half_base_angle_rad: (PI * m / 2. - case.thinning) / (2. * pitch) - a.tan() + a,
+        half_base_angle_rad: (PI * m / 2. - case.thinning) / (2. * pitch) - a.portable_tan() + a,
         face_width_mm: case.width,
         bore_radius_mm: 0.,
         twist_rad_per_mm: 0.,
@@ -60,11 +61,11 @@ fn pinion(case: Case, bore: f64) -> InvoluteGear {
         hub: None,
         teeth: 24,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * a.cos(),
+        base_radius_mm: pitch * a.portable_cos(),
         tip_radius_mm: pitch + m,
         root_radius_mm: pitch - 1.25 * m,
         root_fillet_radius_mm: case.fillet,
-        half_base_angle_rad: (PI * m / 2. - case.thinning) / (2. * pitch) + a.tan() - a,
+        half_base_angle_rad: (PI * m / 2. - case.thinning) / (2. * pitch) + a.portable_tan() - a,
         face_width_mm: case.width,
         bore_radius_mm: bore,
         twist_rad_per_mm: 0.,
@@ -76,7 +77,7 @@ fn pinion(case: Case, bore: f64) -> InvoluteGear {
 fn tilt() -> [[f64; 3]; 3] {
     let n = 14_f64.sqrt();
     let [x, y, z] = [1. / n, 2. / n, 3. / n];
-    let (s, c) = 0.7_f64.sin_cos();
+    let (s, c) = 0.7_f64.portable_sin_cos();
     let t = 1. - c;
     [
         [t * x * x + c, t * x * y - s * z, t * x * z + s * y],
@@ -90,7 +91,7 @@ const OFFSET: [f64; 3] = [12.5, -40., 7.25];
 /// Place a gear in the tilted pair frame: spin by `phase` about its own
 /// axis and translate `x` along the pair frame's first axis.
 fn pose(phase: f64, x: f64, tilted: bool) -> RigidTransform {
-    let (s, c) = phase.sin_cos();
+    let (s, c) = phase.portable_sin_cos();
     let spin = [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]];
     let (tilt, offset) = if tilted {
         (tilt(), OFFSET)
@@ -143,8 +144,8 @@ fn rust_ring_names_queries_meshes_and_draws_the_native_tooth_roles() {
                 .iter()
                 .find(|f| f.index == element.key.ordinal)
                 .unwrap();
-            let angle = face.center_mm[1].atan2(face.center_mm[0]) - phase;
-            let offset = angle.sin().atan2(angle.cos());
+            let angle = face.center_mm[1].portable_atan2(face.center_mm[0]) - phase;
+            let offset = angle.portable_sin().portable_atan2(angle.portable_cos());
             match side {
                 "tip" => assert!(offset.abs() < 1e-9),
                 "root" => assert!((offset - PI / 48.).abs() < 1e-9),
@@ -326,7 +327,7 @@ fn rust_ring_refuses_the_native_envelope_with_explicit_errors() {
     // Flanks crossing before the outward root leave no separated space.
     let start = {
         let t = ((valid.tip_radius_mm / valid.base_radius_mm).powi(2) - 1.).sqrt();
-        t - t.atan()
+        t - t.portable_atan()
     };
     let crossing = refused(InvoluteGear {
         half_base_angle_rad: PI / 48. - start - 1e-3,

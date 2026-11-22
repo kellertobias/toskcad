@@ -6,6 +6,7 @@ use crate::{
     polygon::{MAX_VERTICES, PolygonPrism},
     prism::Prism,
 };
+use multicad_precision::PortableMath as _;
 use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation, handles::FixedVertexHandle};
 use std::{
     f64::consts::{FRAC_PI_2, PI, TAU},
@@ -70,7 +71,11 @@ impl Tessellation {
     }
 
     pub(crate) fn maximum_arc_angle(self, radius: f64) -> f64 {
-        let sagitta_angle = 4. * (self.deflection / (2. * radius)).sqrt().min(1.).asin();
+        let sagitta_angle = 4.
+            * (self.deflection / (2. * radius))
+                .sqrt()
+                .min(1.)
+                .portable_asin();
         self.angle.min(sagitta_angle)
     }
 
@@ -148,7 +153,7 @@ impl Footprint {
         let sweep = if hole { -TAU } else { TAU };
         self.ring(
             (0..count).map(|i| {
-                let (sin, cos) = (sweep * i as f64 / count as f64).sin_cos();
+                let (sin, cos) = (sweep * i as f64 / count as f64).portable_sin_cos();
                 ([x + radius * cos, y + radius * sin], face)
             }),
             options,
@@ -274,7 +279,7 @@ fn prism_once(prism: &Prism, options: Tessellation) -> Result<DisplayMesh, MeshE
         let segments = options.arc_segments(radius, PI)?;
         exterior.extend((1..segments).map(|i| {
             let angle = -FRAC_PI_2 + PI * i as f64 / segments as f64;
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = angle.portable_sin_cos();
             ([length + radius * cos, radius + radius * sin], 3)
         }));
     }

@@ -11,6 +11,7 @@ use multicad_core::{
     sketch::{self, CreationPlane, Datum, PlaneOptions},
     sketch_regions,
 };
+use multicad_precision::PortableMath as _;
 
 const OVERLAP: f64 = 0.05;
 pub(super) const BIG_DEPTH: f64 = 224.;
@@ -573,7 +574,10 @@ fn big_drawer(case: &mut CaseBuilder, row: usize) -> Result<EntityId, Error> {
             let radius = 7.4 / 3_f64.sqrt();
             let hex = std::array::from_fn::<_, 6, _>(|i| {
                 let theta = i as f64 * std::f64::consts::FRAC_PI_3;
-                [y + radius * theta.cos(), center_z + radius * theta.sin()]
+                [
+                    y + radius * theta.portable_cos(),
+                    center_z + radius * theta.portable_sin(),
+                ]
             });
             cuts.push(prism(
                 case,

@@ -53,7 +53,7 @@ pub(in crate::drawing) fn project_view(
         if near <= max + tolerance && (truncated || windowed) {
             section = Some(depth);
         }
-        if !windowed && n[0].hypot(n[1]) <= 64. * f64::EPSILON {
+        if !windowed && n[0].portable_hypot(n[1]) <= 64. * f64::EPSILON {
             let height = body.drawing_height() * n[2];
             stations = if height > 0. {
                 [far / height, near / height]

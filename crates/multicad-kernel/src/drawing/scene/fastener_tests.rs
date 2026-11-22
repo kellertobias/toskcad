@@ -5,6 +5,7 @@ use super::paths::dot3;
 use super::*;
 use crate::{DrawingHatch, DrawingSolid, HelicalThread, Solid};
 use multicad_core::{document::EntityId, drawings::VectorCurve, materials::HatchPattern};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 fn iso(length_mm: f64, left_hand: bool, starts: u32, pitch: f64) -> HelicalThread {
@@ -28,7 +29,7 @@ fn plain(left_hand: bool, starts: u32, frame: PlaneFrame) -> Solid {
     let root = pitch / (4. * 3_f64.sqrt());
     Solid::rust_helical_thread(
         HelicalThread {
-            depth_mm: (pitch - pitch / 8.) / (2. * 30_f64.to_radians().tan()) - root,
+            depth_mm: (pitch - pitch / 8.) / (2. * 30_f64.to_radians().portable_tan()) - root,
             ..iso(6.6, left_hand, starts, pitch)
         },
         Some(root),
@@ -116,7 +117,7 @@ fn local(frame: PlaneFrame, w: P3) -> P3 {
 fn hex_value(across_flats: f64, [x, y]: [f64; 2]) -> f64 {
     (0..6)
         .map(|k| {
-            let (s, c) = (f64::from(k) * PI / 3.).sin_cos();
+            let (s, c) = (f64::from(k) * PI / 3.).portable_sin_cos();
             x * c + y * s
         })
         .fold(f64::NEG_INFINITY, f64::max)
@@ -131,7 +132,7 @@ fn on_boundary(solid: &Solid, w: P3) -> bool {
     let within = |z: f64, a: f64, b: f64| z > a - 1e-9 && z < b + 1e-9;
     if let Some((thread, frame)) = solid.rust_helical_thread_data() {
         let [x, y, z] = local(frame, w);
-        let (r, theta) = (x.hypot(y), y.atan2(x));
+        let (r, theta) = (x.portable_hypot(y), y.portable_atan2(x));
         let length = thread.spec().length_mm;
         let bound = thread.radius(theta, z.clamp(0., length));
         return (on(r - bound) && within(z, 0., length))
@@ -139,7 +140,7 @@ fn on_boundary(solid: &Solid, w: P3) -> bool {
     }
     if let Some(data) = solid.rust_internal_thread_data() {
         let [x, y, z] = local(data.frame, w);
-        let (r, theta) = (x.hypot(y), y.atan2(x));
+        let (r, theta) = (x.portable_hypot(y), y.portable_atan2(x));
         let length = data.thread.spec().length_mm;
         let (stock, top) = (data.stock_radius_mm, data.stock_length_mm);
         let floor = top > length;
@@ -152,7 +153,7 @@ fn on_boundary(solid: &Solid, w: P3) -> bool {
     }
     let (nut, frame) = solid.rust_hex_nut_geometry().unwrap();
     let [x, y, z] = local(frame, w);
-    let (r, theta) = (x.hypot(y), y.atan2(x));
+    let (r, theta) = (x.portable_hypot(y), y.portable_atan2(x));
     let length = nut.thread().spec().length_mm;
     let bound = nut.thread().radius(theta, z.clamp(0., length));
     let flat = hex_value(nut.across_flats_mm(), [x, y]);
@@ -219,8 +220,8 @@ fn fastener_material_along_lines_agrees_with_source_containment() {
             let d = d.map(|v: f64| v / length);
             for offset in [0., 1.3, 2.4, 2.9, 4.2] {
                 let start = world([
-                    offset * (k as f64 * 0.7).cos(),
-                    offset * (k as f64 * 0.7).sin(),
+                    offset * (k as f64 * 0.7).portable_cos(),
+                    offset * (k as f64 * 0.7).portable_sin(),
                     1.7,
                 ]);
                 lines.push((
@@ -303,14 +304,15 @@ fn fastener_outlines_satisfy_the_contour_condition() {
                     });
                     // Top-entry fixtures use a flipped thread frame.
                     let [x, y, z] = local(frame_of(&solid), w);
-                    let (r, theta) = (x.hypot(y), y.atan2(x));
+                    let (r, theta) = (x.portable_hypot(y), y.portable_atan2(x));
                     if let Some(data) = solid.rust_internal_thread_data()
                         && (r - data.stock_radius_mm).abs() < 1e-9
                     {
                         // The stock cylinder's silhouette generator.
                         let f = frame_of(&solid);
-                        let radial: P3 =
-                            std::array::from_fn(|i| f.u[i] * theta.cos() + f.v[i] * theta.sin());
+                        let radial: P3 = std::array::from_fn(|i| {
+                            f.u[i] * theta.portable_cos() + f.v[i] * theta.portable_sin()
+                        });
                         assert!(
                             z > -1e-9 && z < data.stock_length_mm + 1e-9,
                             "{label} {w:?}"
@@ -322,7 +324,7 @@ fn fastener_outlines_satisfy_the_contour_condition() {
                     assert!(z > -1e-9 && z < length + 1e-9, "{label} {w:?}");
                     assert!((r - thread.radius(theta, z)).abs() < 1e-9, "{label} {w:?}");
                     let phase = z.rem_euclid(thread.spec().pitch_mm) - k * theta.rem_euclid(TAU);
-                    let (c, sn) = (theta.cos(), theta.sin());
+                    let (c, sn) = (theta.portable_cos(), theta.portable_sin());
                     let f = frame_of(&solid);
                     let axes = [f.u, f.v, f.normal()];
                     // At a profile break (an outline ending on a crest or
@@ -398,7 +400,8 @@ fn fastener_visibility_agrees_with_source_containment_marching() {
                         let along = (((point[0] - a0) * dx + (point[1] - a1) * dy)
                             / (dx * dx + dy * dy).max(1e-300))
                         .clamp(0., 1.);
-                        (point[0] - a0 - along * dx).hypot(point[1] - a1 - along * dy) < 0.02
+                        (point[0] - a0 - along * dx).portable_hypot(point[1] - a1 - along * dy)
+                            < 0.02
                     })
                 })
             };
@@ -560,7 +563,7 @@ fn fastener_near_axis_side_cuts_close_with_the_grid_area() {
     for (label, solid, centers) in fixtures(PlaneFrame::default()) {
         for offset in [1e-6_f64, 1e-4, 1e-3, 1e-2] {
             for angle in [0., 1., 2.6] {
-                let (sin, cos) = f64::sin_cos(angle);
+                let (sin, cos) = f64::portable_sin_cos(angle);
                 let frame = PlaneFrame {
                     origin: [-offset * sin, offset * cos, centers[0]],
                     u: [cos, sin, 0.],
@@ -678,7 +681,7 @@ fn fastener_occluding_contours_agree_with_a_depth_map_oracle() {
                             let along = (((x - a0) * dx + (y - a1) * dy)
                                 / (dx * dx + dy * dy).max(1e-300))
                             .clamp(0., 1.);
-                            (x - a0 - along * dx).hypot(y - a1 - along * dy) < 2.5 * pixel
+                            (x - a0 - along * dx).portable_hypot(y - a1 - along * dy) < 2.5 * pixel
                         })
                     })
             };

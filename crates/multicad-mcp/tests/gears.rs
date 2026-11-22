@@ -7,6 +7,7 @@ use multicad_mcp::{
     Headless, Workspace,
     tools::{Call, dispatch},
 };
+use multicad_precision::PortableMath as _;
 use serde_json::{Value, json};
 use std::sync::{Arc, atomic::AtomicBool};
 fn call(cancelled: bool) -> Call {
@@ -58,7 +59,7 @@ fn coverage_source_edit_and_native_geometry_share_one_attributable_transaction()
     let inspected = run(&h, "inspect_gear", json!({"gear":feature}));
     assert_eq!(
         inspected["resolved"]["pitch_diameter_mm"].as_f64().unwrap(),
-        48. / 15_f64.to_radians().cos()
+        48. / 15_f64.to_radians().portable_cos()
     );
     let evaluated = run(&h, "evaluate_model", json!({}));
     assert!(evaluated.to_string().contains(&feature.to_string()));

@@ -232,8 +232,8 @@ fn actual_profiled_and_phillips_native_sources_preserve_their_complete_prefixes(
             e_width_mm: 0.435,
         },
     };
-    let tip = (s.mouth_diameter_mm - s.g_diameter_mm) / (2. * 26.5_f64.to_radians().tan())
-        + s.g_diameter_mm / 2. * 28_f64.to_radians().tan();
+    let tip = (s.mouth_diameter_mm - s.g_diameter_mm) / (2. * 26.5_f64.to_radians().portable_tan())
+        + s.g_diameter_mm / 2. * 28_f64.to_radians().portable_tan();
     let domain = phillips_drive::Domain {
         corner_start_depth_mm: -6.4,
         corner_end_depth_mm: tip + 3.2,
@@ -283,8 +283,8 @@ pub(in crate::geometry::wood_contact) fn periodic_screw(
     };
     let profile =
         Profile::new_for_thread_union(head, thread.spec().major_radius_mm, plain).unwrap();
-    let tip =
-        (3. - 1.27) / (2. * 26.5_f64.to_radians().tan()) + 1.27 / 2. * 28_f64.to_radians().tan();
+    let tip = (3. - 1.27) / (2. * 26.5_f64.to_radians().portable_tan())
+        + 1.27 / 2. * 28_f64.to_radians().portable_tan();
     let cutter = Cutter::new(
         Spec {
             mouth_diameter_mm: 3.,

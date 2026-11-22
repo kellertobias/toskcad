@@ -1,4 +1,5 @@
 //! A retained finite solid without any authored thread recipe.
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     radial_tensor::{
         Axis, BoundaryInput, BoundaryOwnership, Curve, Edge, Face, Location, RadialBoundary,
@@ -299,7 +300,7 @@ fn independent_ridges_retain_distinct_longitudinal_knot_grids() {
 
 #[test]
 fn retained_source_mass_and_surface_properties_match_independent_extruded_cam_integrals() {
-    let alpha = (4_f64 / 3.).atan();
+    let alpha = (4_f64 / 3.).portable_atan();
     let pi = std::f64::consts::PI;
     for grids in [&[1][..], &[1, 2][..]] {
         let count = grids.len() as f64;
@@ -484,7 +485,8 @@ fn actual_retained_cam_mesh_has_closed_shared_source_faces_and_convergent_volume
         let body = certify(wedge(grids));
         let original = body.input().clone();
         let exact = 4.
-            * (25. * std::f64::consts::PI + grids.len() as f64 * (30. - 25. * (4_f64 / 3.).atan()));
+            * (25. * std::f64::consts::PI
+                + grids.len() as f64 * (30. - 25. * (4_f64 / 3.).portable_atan()));
         let mut errors = Vec::new();
         for deflection in [0.05, 0.01] {
             let now = std::time::Instant::now();
@@ -562,7 +564,8 @@ fn actual_retained_mesh_normals_and_material_survive_far_proper_pose() {
             )
             .unwrap();
         let volume = manufacturing::certify(&mesh).unwrap().signed_volume_mm3;
-        let expected = 4. * (25. * std::f64::consts::PI + 2. * (30. - 25. * (4_f64 / 3.).atan()));
+        let expected =
+            4. * (25. * std::f64::consts::PI + 2. * (30. - 25. * (4_f64 / 3.).portable_atan()));
         assert!((volume - expected).abs() < 2.);
         for (indices, &face) in mesh
             .indices
@@ -577,7 +580,9 @@ fn actual_retained_mesh_normals_and_material_survive_far_proper_pose() {
             let actual = unit(cross(subtract(p[1], p[0]), subtract(p[2], p[0])));
             let face = &local.faces[face as usize];
             match &local.surfaces[face.surface] {
-                Surface::Plane(a) => assert!(dot(actual, rotate(a.normal)) > 0.25_f64.cos()),
+                Surface::Plane(a) => {
+                    assert!(dot(actual, rotate(a.normal)) > 0.25_f64.portable_cos())
+                }
                 Surface::Tensor(t) => {
                     let n = 9 * t.spans()[1] + 1;
                     let poles = t.poles();
@@ -585,13 +590,13 @@ fn actual_retained_mesh_normals_and_material_survive_far_proper_pose() {
                         subtract(poles[poles.len() - n], poles[0]),
                         subtract(poles[n - 1], poles[0]),
                     ));
-                    assert!(dot(actual, rotate(normal)) > 0.25_f64.cos());
+                    assert!(dot(actual, rotate(normal)) > 0.25_f64.portable_cos());
                 }
                 Surface::Cone { .. } => {
                     for vertex in p {
                         let d = subtract(vertex, origin);
                         let xy = [dot(d, axes[0]), dot(d, axes[1]), 0.];
-                        assert!(dot(actual, rotate(unit(xy))) > 0.25_f64.cos());
+                        assert!(dot(actual, rotate(unit(xy))) > 0.25_f64.portable_cos());
                     }
                 }
             }

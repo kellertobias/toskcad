@@ -3,6 +3,7 @@
 //! a finite straight tangent span without fitting or extrapolating old spans.
 use crate::elementary_curves::ElementaryCurve;
 use crate::{BSpline2d, CurvedEdge2d, GeometryError, GeometryErrorKind, GeometryPolicy, ffi};
+use multicad_precision::PortableMath as _;
 
 mod bernstein_projection;
 mod linear_projection;
@@ -107,8 +108,8 @@ impl CurvedEdge2d {
                         .iter()
                         .chain(&value.tangent)
                         .any(|x| !x.is_finite())
-                    || (value.tangent[0].hypot(value.tangent[1]) - 1.).abs() > 1e-9
-                    || ((point[0] - value.point[0]).hypot(point[1] - value.point[1])
+                    || (value.tangent[0].portable_hypot(value.tangent[1]) - 1.).abs() > 1e-9
+                    || ((point[0] - value.point[0]).portable_hypot(point[1] - value.point[1])
                         - value.distance_mm)
                         .abs()
                         > policy.linear_tolerance_mm * 4.
@@ -187,7 +188,7 @@ impl BSpline2d {
         for (before, after) in [(from, domain[0]), (to, domain[1])] {
             let a = self.evaluate(before, policy)?.point;
             let b = result.evaluate(after, policy)?.point;
-            if (a[0] - b[0]).hypot(a[1] - b[1]) > policy.linear_tolerance_mm {
+            if (a[0] - b[0]).portable_hypot(a[1] - b[1]) > policy.linear_tolerance_mm {
                 return Err(failure(
                     GeometryErrorKind::InvalidResult,
                     "Spline segmentation changed a requested endpoint beyond modeling tolerance",
@@ -218,7 +219,7 @@ impl BSpline2d {
         let last = *self.knots.last().expect("validated knots");
         let endpoint = if at_start { first } else { last };
         let jet = self.evaluate(endpoint, policy)?;
-        let speed = jet.derivative[0].hypot(jet.derivative[1]);
+        let speed = jet.derivative[0].portable_hypot(jet.derivative[1]);
         if !speed.is_finite() || speed <= 0. {
             return Err(failure(
                 GeometryErrorKind::Input,
@@ -280,7 +281,7 @@ impl BSpline2d {
         }
         result.validate(policy)?;
         let actual = result.evaluate(extended, policy)?.point;
-        if (actual[0] - end[0]).hypot(actual[1] - end[1]) > policy.linear_tolerance_mm {
+        if (actual[0] - end[0]).portable_hypot(actual[1] - end[1]) > policy.linear_tolerance_mm {
             return Err(failure(
                 GeometryErrorKind::InvalidResult,
                 "Constructed tangent span does not reach its bounded endpoint",

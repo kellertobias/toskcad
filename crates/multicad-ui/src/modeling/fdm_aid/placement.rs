@@ -14,6 +14,7 @@ use multicad_core::{
     document::{Document, EntityId},
     model::{AidKind, ResolvedAid},
 };
+use multicad_precision::PortableMath as _;
 
 /// What the next viewer click sets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,7 +169,7 @@ impl FdmAidPanel {
         let message = match (self.kind, role) {
             (AidKind::Tab, PickRole::Contact) => {
                 let n = surface.normal;
-                let h = n[0].hypot(n[1]);
+                let h = n[0].portable_hypot(n[1]);
                 if h < 0.25 {
                     return Err(
                         "Pick a side face: a tab grows outward from the part outline".into(),
@@ -178,7 +179,7 @@ impl FdmAidPanel {
                 set(&mut self.origin[0], p[0]);
                 set(&mut self.origin[1], p[1]);
                 set(&mut self.origin[2], z);
-                set_angle(&mut self.angle, n[1].atan2(n[0]).to_degrees());
+                set_angle(&mut self.angle, n[1].portable_atan2(n[0]).to_degrees());
                 self.target = Some(part);
                 self.picking = None;
                 format!("Tab contact picked {how}, at the part's base; outward along the face")
@@ -204,7 +205,7 @@ impl FdmAidPanel {
             }
             (AidKind::Support, PickRole::Contact) => {
                 let (a, l, w) = self.footprint(document);
-                let (c, s) = (a.cos(), a.sin());
+                let (c, s) = (a.portable_cos(), a.portable_sin());
                 set(&mut self.origin[0], p[0] - c * l / 2. + s * w / 2.);
                 set(&mut self.origin[1], p[1] - s * l / 2. - c * w / 2.);
                 self.target = Some(part);
@@ -223,10 +224,10 @@ impl FdmAidPanel {
             .handle_origin(document)
             .ok_or("Place the contact first")?;
         let (dx, dy) = (point[0] - from[0], point[1] - from[1]);
-        if dx.hypot(dy) < 1e-6 {
+        if dx.portable_hypot(dy) < 1e-6 {
             return Err("Aim away from the contact point".into());
         }
-        set_angle(&mut self.angle, dy.atan2(dx).to_degrees().round());
+        set_angle(&mut self.angle, dy.portable_atan2(dx).to_degrees().round());
         self.picking = None;
         self.placed();
         Ok("Direction aimed in the build plane (whole degrees)".into())
@@ -278,7 +279,7 @@ impl FdmAidPanel {
                 base_mm,
                 ..
             } => {
-                let (c, s) = (angle_rad.cos(), angle_rad.sin());
+                let (c, s) = (angle_rad.portable_cos(), angle_rad.portable_sin());
                 Some([
                     origin[0] + c * length_mm / 2. - s * width_mm / 2.,
                     origin[1] + s * length_mm / 2. + c * width_mm / 2.,
@@ -396,7 +397,7 @@ impl FdmAidPanel {
                 lines.push(match aid {
                     ResolvedAid::Tab { length_mm, width_mm, thickness_mm, overlap_mm, .. } => format!("Reach {length_mm:.2} · overlap {overlap_mm:.2} · width {width_mm:.2} · thickness {thickness_mm:.2} mm"),
                     ResolvedAid::Bridge { start, end, width_mm, thickness_mm, .. } => {
-                        let span = (end[0]-start[0]).hypot(end[1]-start[1]).hypot(end[2]-start[2]);
+                        let span = (end[0]-start[0]).portable_hypot(end[1]-start[1]).portable_hypot(end[2]-start[2]);
                         format!("Span {span:.2} · width {width_mm:.2} · thickness {thickness_mm:.2} mm")
                     }
                     ResolvedAid::Support { length_mm, width_mm, base_mm, gap_mm, .. } => format!("Footprint {length_mm:.2} × {width_mm:.2} · base {base_mm:.2} · gap {gap_mm:.2} mm"),
@@ -438,7 +439,7 @@ impl FdmAidPanel {
         let color = if bad_contact { BAD } else { MARKER };
         if let Some(aid) = resolved {
             let rect = |o: [f64; 3], a: f64, from: f64, to: f64, w: f64| {
-                let (c, s) = (a.cos(), a.sin());
+                let (c, s) = (a.portable_cos(), a.portable_sin());
                 let at = |u: f64, v: f64| [o[0] + c * u - s * v, o[1] + s * u + c * v, o[2]];
                 [
                     at(from, -w / 2.),
@@ -465,8 +466,8 @@ impl FdmAidPanel {
                     arrow(
                         origin,
                         [
-                            origin[0] + angle_rad.cos() * reach,
-                            origin[1] + angle_rad.sin() * reach,
+                            origin[0] + angle_rad.portable_cos() * reach,
+                            origin[1] + angle_rad.portable_sin() * reach,
                             origin[2],
                         ],
                         color,
@@ -499,7 +500,7 @@ impl FdmAidPanel {
                     base_mm,
                     ..
                 } => {
-                    let (c, s) = (angle_rad.cos(), angle_rad.sin());
+                    let (c, s) = (angle_rad.portable_cos(), angle_rad.portable_sin());
                     let corner = [origin[0], origin[1], base_mm];
                     let centre = [
                         origin[0] + c * length_mm / 2. - s * width_mm / 2.,

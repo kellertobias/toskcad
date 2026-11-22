@@ -1,6 +1,7 @@
 use super::heights::{Height, difference, sort_unique};
 use super::{AxialProfile, Body, Point, Profile, Result, Span, bounded, intersect};
 use crate::planar_projection::ProjectionError;
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Copy)]
 pub(super) struct Strip {
@@ -96,7 +97,7 @@ impl<'a> Collector<'a> {
                 if dv == 0. {
                     return None;
                 }
-                let length = dv.hypot(dz);
+                let length = dv.portable_hypot(dz);
                 Some((
                     [lo[0], hi[0]],
                     Height::Line {

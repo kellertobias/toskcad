@@ -9,6 +9,7 @@ use multicad_core::{
     drawings::{self, VectorCurve, VectorRole, ViewEvaluation},
     model::{self, PrimitiveFrame, PrimitiveParameters, PrimitiveRequest, length},
 };
+use multicad_precision::PortableMath as _;
 use std::time::{Duration, Instant};
 
 struct Fixture {
@@ -391,9 +392,9 @@ fn exports(session: &Session, f: &Fixture, evaluation: &DrawingEvaluation) {
         let n = points.len() as f64;
         let center = [0, 1].map(|i| points.iter().map(|p| p[i]).sum::<f64>() / n);
         points.len() > 8
-            && points
-                .iter()
-                .all(|p| ((p[0] - center[0]).hypot(p[1] - center[1]) - 3.).abs() <= tolerance)
+            && points.iter().all(|p| {
+                ((p[0] - center[0]).portable_hypot(p[1] - center[1]) - 3.).abs() <= tolerance
+            })
     };
     assert!(page.polylines.iter().any(|line| is_bore(&line.points)));
     let directory = tempfile::tempdir().unwrap();
@@ -461,7 +462,7 @@ fn exports(session: &Session, f: &Fixture, evaluation: &DrawingEvaluation) {
     assert!(
         lines
             .iter()
-            .any(|[a, b]| ((a[0] - b[0]).hypot(a[1] - b[1]) - 20.).abs() < 1e-6),
+            .any(|[a, b]| ((a[0] - b[0]).portable_hypot(a[1] - b[1]) - 20.).abs() < 1e-6),
         "plate edge length"
     );
     // DXF keeps millimetres with paper y upward: every paper segment of

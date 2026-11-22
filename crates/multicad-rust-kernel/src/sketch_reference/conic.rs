@@ -1,5 +1,6 @@
 //! Exact finite circular and elliptic edges expressed in the consumer frame.
 use super::{Contact, Method, validate};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 const ANGLE_EPSILON: f64 = 64. * f64::EPSILON;
@@ -113,7 +114,7 @@ impl Conic {
     }
 
     fn point(self, theta: f64, radial_scale: f64) -> [f64; 2] {
-        let (s, c) = theta.sin_cos();
+        let (s, c) = theta.portable_sin_cos();
         let [a, b] = [c * self.semiaxes_mm[0], s * self.semiaxes_mm[1]];
         std::array::from_fn(|i| {
             radial_scale.mul_add(
@@ -129,7 +130,7 @@ impl Conic {
             a,
             b,
             center: self.center[2],
-            amplitude: a.hypot(b),
+            amplitude: a.portable_hypot(b),
         }
     }
 
@@ -139,7 +140,8 @@ impl Conic {
         if orientation.abs() <= 1e-12 {
             return Err(Error::Singular);
         }
-        if self.semiaxes_mm[0] == self.semiaxes_mm[1] && u[2].hypot(v[2]) <= ANGLE_EPSILON {
+        if self.semiaxes_mm[0] == self.semiaxes_mm[1] && u[2].portable_hypot(v[2]) <= ANGLE_EPSILON
+        {
             let [x, y, _] = self.center;
             let center = [x, y];
             if self.full() {
@@ -160,7 +162,7 @@ impl Conic {
         // rational quadratic span, retaining its positive projective weights.
         let count = (self.sweep_rad.abs() / FRAC_PI_2).ceil() as usize;
         let step = self.sweep_rad / count as f64;
-        let weight = (step * 0.5).cos();
+        let weight = (step * 0.5).portable_cos();
         let first = self.point(self.start_rad, 1.);
         let mut poles = Vec::with_capacity(2 * count + 1);
         let mut weights = Vec::with_capacity(poles.capacity());
@@ -194,12 +196,12 @@ struct Depth {
 
 impl Depth {
     fn at(&self, theta: f64) -> f64 {
-        let (s, c) = theta.sin_cos();
+        let (s, c) = theta.portable_sin_cos();
         self.a.mul_add(c, self.b.mul_add(s, self.center))
     }
 
     fn coplanar(&self, edge: Conic, tolerance: f64) -> bool {
-        let phase = self.b.atan2(self.a);
+        let phase = self.b.portable_atan2(self.a);
         let mut extent = self.at(edge.start_rad).abs().max(self.at(edge.end()).abs());
         for (angle, height) in [
             (phase, self.center + self.amplitude),
@@ -216,7 +218,7 @@ impl Depth {
         if self.amplitude == 0. {
             return Ok(vec![]);
         }
-        let phase = self.b.atan2(self.a);
+        let phase = self.b.portable_atan2(self.a);
         let gap = self.amplitude - self.center.abs();
         let uncertainty = ANGLE_EPSILON * self.amplitude.max(self.center.abs());
         if gap < -uncertainty {
@@ -236,7 +238,7 @@ impl Depth {
             [Some(extremum), None]
         } else {
             let opposite = (gap * (self.amplitude + self.center.abs())).sqrt();
-            let offset = opposite.atan2(-self.center);
+            let offset = opposite.portable_atan2(-self.center);
             [Some(phase - offset), Some(phase + offset)]
         };
         let mut points = Vec::with_capacity(2);
@@ -248,13 +250,14 @@ impl Depth {
             let point = edge.point(theta, 1.);
             let analytic = edge.point(angle, 1.);
             if self.at(theta).abs() > tolerance
-                || (point[0] - analytic[0]).hypot(point[1] - analytic[1]) > tolerance * 0.25
+                || (point[0] - analytic[0]).portable_hypot(point[1] - analytic[1])
+                    > tolerance * 0.25
             {
                 return Err(Error::Unresolved);
             }
-            let (s, c) = theta.sin_cos();
+            let (s, c) = theta.portable_sin_cos();
             let derivative = (-self.a).mul_add(s, self.b * c) * edge.sweep_rad.signum();
-            let speed = (edge.semiaxes_mm[0] * s).hypot(edge.semiaxes_mm[1] * c);
+            let speed = (edge.semiaxes_mm[0] * s).portable_hypot(edge.semiaxes_mm[1] * c);
             let crossing =
                 (derivative.abs() > 1e-9 * speed).then_some(if derivative < 0. { -1 } else { 1 });
             points.push((

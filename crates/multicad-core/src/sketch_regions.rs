@@ -4,6 +4,7 @@ use crate::{
     constraint_sketch::{CurveKind, source::Source},
     document::EntityId,
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, f64::consts::TAU};
 
@@ -510,7 +511,7 @@ fn cross(a: Point, b: Point) -> f64 {
     a[0] * b[1] - a[1] * b[0]
 }
 fn distance(a: Point, b: Point) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 fn along(a: Point, delta: Point, t: f64) -> Point {
     [a[0] + delta[0] * t, a[1] + delta[1] * t]
@@ -599,8 +600,8 @@ impl ExactCurve {
             clockwise,
         } = *self
         {
-            let start = (a[1] - center[1]).atan2(a[0] - center[0]);
-            let end = (b[1] - center[1]).atan2(b[0] - center[0]);
+            let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
+            let end = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
             Some((
                 start,
                 if clockwise {
@@ -674,7 +675,7 @@ impl ExactCurve {
                     return false;
                 }
                 let (start, sweep) = self.arc().expect("arc");
-                let angle = (p[1] - center[1]).atan2(p[0] - center[0]);
+                let angle = (p[1] - center[1]).portable_atan2(p[0] - center[0]);
                 let travel = if sweep > 0. {
                     (angle - start).rem_euclid(TAU)
                 } else {
@@ -710,7 +711,7 @@ impl ExactCurve {
                     return 0;
                 } // Tangency does not cross the ray.
                 let (start, sweep) = self.arc().expect("arc");
-                [y.asin(), std::f64::consts::PI - y.asin()]
+                [y.portable_asin(), std::f64::consts::PI - y.portable_asin()]
                     .into_iter()
                     .map(|angle| {
                         let travel = if sweep > 0. {
@@ -726,13 +727,13 @@ impl ExactCurve {
                             travel / sweep.abs()
                         };
                         let t = if (t - 1.).abs() < 1e-12 { 1. } else { t };
-                        let dy = angle.cos() * sweep;
+                        let dy = angle.portable_cos() * sweep;
                         let included = if dy > 0. {
                             (0. ..1.).contains(&t)
                         } else {
                             t > 0. && t <= 1.
                         };
-                        if included && center[0] + radius * angle.cos() > p[0] {
+                        if included && center[0] + radius * angle.portable_cos() > p[0] {
                             if dy > 0. { 1 } else { -1 }
                         } else {
                             0
@@ -803,8 +804,8 @@ fn intersections(a: &ExactCurve, b: &ExactCurve, tol: f64) -> Intersections {
                     for curve in [a, b] {
                         let (start, sweep) = curve.arc().expect("arc");
                         let p = [
-                            c[0] + r * (start + sweep * 0.5).cos(),
-                            c[1] + r * (start + sweep * 0.5).sin(),
+                            c[0] + r * (start + sweep * 0.5).portable_cos(),
+                            c[1] + r * (start + sweep * 0.5).portable_sin(),
                         ];
                         if a.contains(p, tol)
                             && b.contains(p, tol)

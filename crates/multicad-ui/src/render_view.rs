@@ -8,10 +8,11 @@
 //! orthographic projection shows `h / scale` millimeters vertically.
 use crate::{camera::Camera, navigation::DisplayStyle};
 use multicad_core::model::{Projection, RenderCamera, RenderDisplay};
+use multicad_precision::PortableMath as _;
 
 /// The viewport's perspective vertical field of view in degrees.
 pub fn viewport_fov_deg() -> f64 {
-    2. * 0.25f64.atan().to_degrees()
+    2. * 0.25f64.portable_atan().to_degrees()
 }
 pub fn display_of(style: DisplayStyle) -> RenderDisplay {
     match style {
@@ -36,8 +37,8 @@ pub fn capture(camera: &Camera, height_px: f32) -> Result<RenderCamera, String> 
     {
         return Err("The viewport has no size yet".into());
     }
-    let (s, c) = (camera.yaw as f64).sin_cos();
-    let (sp, cp) = (camera.pitch as f64).sin_cos();
+    let (s, c) = (camera.yaw as f64).portable_sin_cos();
+    let (sp, cp) = (camera.pitch as f64).portable_sin_cos();
     let forward = [cp * s, cp * c, sp];
     let height_mm = height_px as f64 / camera.scale as f64;
     let distance = 2. * height_mm;
@@ -72,8 +73,8 @@ pub fn restore(render: &RenderCamera, height_px: f32) -> Result<Camera, String> 
         Projection::Orthographic { height_mm } => (false, height_mm),
     };
     Ok(Camera {
-        yaw: f[0].atan2(f[1]) as f32,
-        pitch: f[2].clamp(-1., 1.).asin() as f32,
+        yaw: f[0].portable_atan2(f[1]) as f32,
+        pitch: f[2].clamp(-1., 1.).portable_asin() as f32,
         scale: (height_px as f64 / height_mm).clamp(0.02, 100.) as f32,
         target: render.target_mm.map(|c| c as f32),
         perspective,

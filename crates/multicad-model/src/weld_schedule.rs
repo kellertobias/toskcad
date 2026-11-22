@@ -11,6 +11,7 @@ use multicad_core::{
     model::{self, ConnectionKind, EndCut, ResolvedMember},
     parameters::{EvaluatedParameters, Unit},
 };
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WeldRecord {
@@ -148,7 +149,7 @@ fn cut_perimeter(member: &ResolvedMember, point: [f64; 3], normal: [f64; 3], ang
         // An ellipse with semi-axes r and r / cos(angle), by Ramanujan's
         // second approximation.
         let a = member.section.width_mm / 2.;
-        let b = a / angle.to_radians().cos();
+        let b = a / angle.to_radians().portable_cos();
         let h = ((a - b) / (a + b)).powi(2);
         return std::f64::consts::PI * (a + b) * (1. + 3. * h / (10. + (4. - 3. * h).sqrt()));
     }

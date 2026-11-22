@@ -12,6 +12,7 @@ use multicad_kernel::{
     GeometryPolicy, InvoluteGear, PlaneFrame, ProjectedVector, RigidTransform, Solid,
     project_drawing,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 const SPACING: f64 = 0.25;
@@ -26,11 +27,11 @@ fn spur(bore: f64, hub: Option<GearHub>) -> InvoluteGear {
         hub,
         teeth: 24,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * a.cos(),
+        base_radius_mm: pitch * a.portable_cos(),
         tip_radius_mm: pitch + 1.,
         root_radius_mm: pitch - 1.25,
         root_fillet_radius_mm: 0.2,
-        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.portable_tan() - a,
         face_width_mm: 4.,
         bore_radius_mm: bore,
         twist_rad_per_mm: 0.,
@@ -45,11 +46,11 @@ fn ring() -> InvoluteGear {
         hub: None,
         teeth: 48,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * a.cos(),
+        base_radius_mm: pitch * a.portable_cos(),
         tip_radius_mm: pitch - 1.,
         root_radius_mm: pitch + 1.25,
         root_fillet_radius_mm: 0.2,
-        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.tan() + a,
+        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.portable_tan() + a,
         face_width_mm: 2.,
         bore_radius_mm: 0.,
         twist_rad_per_mm: 0.,
@@ -76,7 +77,7 @@ fn hatch_spaced(spacing_mm: f64) -> Option<DrawingHatch> {
 fn placed(solid: Solid) -> (Solid, PlaneFrame) {
     let n = 14_f64.sqrt();
     let [x, y, z] = [1. / n, 2. / n, 3. / n];
-    let (s, c) = 0.7_f64.sin_cos();
+    let (s, c) = 0.7_f64.portable_sin_cos();
     let t = 1. - c;
     let rotation = [
         [t * x * x + c, t * x * y - s * z, t * x * z + s * y],
@@ -189,7 +190,7 @@ fn hatch_area(vectors: &[ProjectedVector], spacing: f64) -> f64 {
         .iter()
         .filter(|v| v.role == VectorRole::Hatch)
         .map(|v| match v.curve {
-            VectorCurve::Line { a, b } => (a[0] - b[0]).hypot(a[1] - b[1]) * spacing,
+            VectorCurve::Line { a, b } => (a[0] - b[0]).portable_hypot(a[1] - b[1]) * spacing,
             _ => panic!("hatch strokes are lines"),
         })
         .sum()
@@ -212,7 +213,7 @@ fn hatch_radii(vectors: &[ProjectedVector]) -> [f64; 2] {
             panic!("hatch strokes are lines");
         };
         for q in [0., 0.5, 1.] {
-            let r = (a[0] + (b[0] - a[0]) * q).hypot(a[1] + (b[1] - a[1]) * q);
+            let r = (a[0] + (b[0] - a[0]) * q).portable_hypot(a[1] + (b[1] - a[1]) * q);
             range = [range[0].min(r), range[1].max(r)];
         }
     }

@@ -350,7 +350,8 @@ pub(super) fn read_member(
                 )
             },
             |radius| {
-                radius * direction[0].hypot(direction[1]) + (stock_height * direction[2]).max(0.)
+                radius * direction[0].portable_hypot(direction[1])
+                    + (stock_height * direction[2]).max(0.)
             },
         )
     };
@@ -975,9 +976,10 @@ mod more_tests {
         let pitch = 1.3;
         let crest = 0.2;
         let f = 0.08;
-        let intersection = (pitch - crest) / (lower.tan() + upper.tan());
-        let depth =
-            intersection - f * (((upper - lower) / 2.).cos() / ((upper + lower) / 2.).sin() - 1.);
+        let intersection = (pitch - crest) / (lower.portable_tan() + upper.portable_tan());
+        let depth = intersection
+            - f * (((upper - lower) / 2.).portable_cos() / ((upper + lower) / 2.).portable_sin()
+                - 1.);
         for root in [None, Some(f)] {
             let source = Thread::new(Spec {
                 major_radius_mm: 4.,
@@ -1044,7 +1046,7 @@ mod more_tests {
             ));
             imports.push(imported);
         }
-        let (s, c) = 5e-11_f64.sin_cos();
+        let (s, c) = 5e-11_f64.portable_sin_cos();
         for imported in &mut imports {
             imported.u = [c, 0., -s];
         }

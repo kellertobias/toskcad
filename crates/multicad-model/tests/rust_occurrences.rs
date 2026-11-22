@@ -9,6 +9,7 @@ use multicad_core::{
     references::{self, AnalyticGeometry, GeometryIntent, Origin, Resolution, TopologyKind},
 };
 use multicad_model::{Compiler, GeometryBackend, Model};
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeSet, f64::consts::TAU, io::Cursor};
 
 type Point = [f64; 3];
@@ -176,7 +177,7 @@ fn world([x, y, z]: Point, member: usize, copy: usize, translation: Point) -> Po
     let d = std::f64::consts::FRAC_1_SQRT_2;
     let projected = (x + z) * 0.5;
     let cross = [-d * y, d * (x - z), d * y];
-    let (sin, cos) = ANGLE.to_radians().sin_cos();
+    let (sin, cos) = ANGLE.to_radians().portable_sin_cos();
     let along_axis = [projected, 0., projected];
     std::array::from_fn(|i| {
         translation[i] + PIVOT[i] + cos * [x, y, z][i] + sin * cross[i] + (1. - cos) * along_axis[i]

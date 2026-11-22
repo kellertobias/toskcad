@@ -4,6 +4,7 @@ use crate::{
     manufacturing::certify,
     revolution::length,
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeSet;
 
 const MINIMUM: f64 = 1e-5;
@@ -18,24 +19,24 @@ pub(in crate::spur_gear) fn fixture(teeth: u32) -> (Spec, f64) {
     // Recipe of the saved 24/36 continuous pair. These transverse
     // equations are also checked against a direct native STEP readback.
     let beta = 15_f64.to_radians();
-    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let transverse_module = 2. / beta.cos();
+    let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let transverse_module = 2. / beta.portable_cos();
     let pitch = f64::from(teeth) * transverse_module / 2.;
     (
         Spec {
             teeth,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * pressure.cos(),
+            base_radius_mm: pitch * pressure.portable_cos(),
             tip_radius_mm: pitch + 2.,
             root_radius_mm: pitch - 2.5,
             root_fillet_radius_mm: 0.4,
             half_base_angle_rad: (PI * transverse_module / 2. - 0.05) / (2. * pitch)
-                + pressure.tan()
+                + pressure.portable_tan()
                 - pressure,
             face_width_mm: 4.,
             bore_radius_mm: 4.,
         },
-        if teeth == 24 { 1. } else { -1. } * beta.tan() / pitch,
+        if teeth == 24 { 1. } else { -1. } * beta.portable_tan() / pitch,
     )
 }
 
@@ -62,7 +63,7 @@ fn single_hand_sweeps_keep_the_full_linear_phase_and_closed_named_shell() {
         for z in [0., 1., 2., 3., 4.] {
             assert_eq!(gear.phase_at(z), twist * z);
             let actual = gear.section_point(point, z);
-            let (sin, cos) = (twist * z).sin_cos();
+            let (sin, cos) = (twist * z).portable_sin_cos();
             close(actual[0], spec.tip_radius_mm * cos, 1e-12);
             close(actual[1], spec.tip_radius_mm * sin, 1e-12);
             assert_eq!(actual[2], z);
@@ -187,7 +188,7 @@ fn saved_pair_exact_metrics_and_manufacturing_mesh_agree_with_native_readback() 
             (0., drive)
         } else {
             (
-                60. / 15_f64.to_radians().cos(),
+                60. / 15_f64.to_radians().portable_cos(),
                 PI + PI / 36. - drive * 24. / 36.,
             )
         };

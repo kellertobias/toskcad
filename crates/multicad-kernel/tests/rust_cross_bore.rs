@@ -9,6 +9,7 @@ use multicad_kernel::{
     Solid,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn cylinder(radius: Rational, height: i64, frame: PlaneFrame) -> (Solid, EntityId) {
@@ -76,7 +77,7 @@ fn crossing(a: f64, big: f64) -> f64 {
     (0..n)
         .map(|k| {
             let t = -PI / 2. + (f64::from(k) + 0.5) * step;
-            t.cos().powi(2) * (big * big - a * a * t.sin().powi(2)).sqrt()
+            t.portable_cos().powi(2) * (big * big - a * a * t.portable_sin().powi(2)).sqrt()
         })
         .sum::<f64>()
         * step
@@ -273,7 +274,7 @@ fn drawings_see_through_the_bore_and_publish_its_rims() {
         .filter(|vector| match vector.curve {
             VectorCurve::Line { a, b } => [a, b]
                 .iter()
-                .all(|p| (p[0].hypot(p[1] - 15.) - 2.75).abs() < 1e-9),
+                .all(|p| (p[0].portable_hypot(p[1] - 15.) - 2.75).abs() < 1e-9),
             _ => false,
         })
         .count();

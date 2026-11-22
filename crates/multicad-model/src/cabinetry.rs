@@ -16,6 +16,7 @@ use multicad_kernel::{
     MAX_CABINET_PANEL_EDGES, MAX_CABINET_PANEL_HOLES, PlaneFrame, RigidTransform, RoundedSlotTool,
     Solid,
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 
 /// Face roles of a rectangular panel's edge faces, in profile edge order.
@@ -292,7 +293,7 @@ fn subtract_analytic(
 }
 
 fn slot_span(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (b[0] - a[0]).hypot(b[1] - a[1])
+    (b[0] - a[0]).portable_hypot(b[1] - a[1])
 }
 
 /// A rounded slot, counterclockwise: the end-circle centers `a` and `b`

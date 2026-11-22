@@ -524,7 +524,7 @@ impl RadialBoundaryBody {
                     let phase = |vertex: usize| {
                         let p =
                             std::array::from_fn(|k| input.vertices[vertex][k] - frame.origin_mm[k]);
-                        dot(p, frame.v).atan2(dot(p, frame.u))
+                        dot(p, frame.v).portable_atan2(dot(p, frame.u))
                     };
                     let start = phase(edge.vertices[0]);
                     let end = phase(edge.vertices[1]);

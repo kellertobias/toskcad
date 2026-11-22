@@ -3,6 +3,7 @@ use multicad_kernel::{
     GeometryError, GeometryPolicy, KnuckleHelicalThread, PlaneFrame, Solid,
     rust_kernel::rounded_thread,
 };
+use multicad_precision::PortableMath as _;
 /// Owned-kernel knuckle (DIN 405) thread: tangent crest/root circles on
 /// 15-degree flanks, whose minor radius is exactly the major less half a pitch.
 /// Exact STEP serialization of the owned solid; the Rust analogue of the
@@ -35,8 +36,8 @@ fn rust_knuckle(p: KnuckleHelicalThread, feature: EntityId) -> Result<Solid, Geo
 fn spec(internal: bool, left_hand: bool) -> KnuckleHelicalThread {
     let pitch = 3.175;
     let a = 15_f64.to_radians();
-    let r = pitch * (a.cos() - a.sin()) / (4. * (1. - a.sin()));
-    let delta = 0.05 * pitch * a.sin() / (1. - a.sin());
+    let r = pitch * (a.portable_cos() - a.portable_sin()) / (4. * (1. - a.portable_sin()));
+    let delta = 0.05 * pitch * a.portable_sin() / (1. - a.portable_sin());
     KnuckleHelicalThread {
         major_radius_mm: 10. + if internal { 0.05 * pitch } else { 0. },
         pitch_mm: pitch,
@@ -82,17 +83,17 @@ fn analytic_volume(p: KnuckleHelicalThread) -> f64 {
     let minor = major - p.pitch_mm / 2.;
     let circle = |c: f64, r: f64, z: f64, sign: f64| {
         (c * c + r * r) * z - z.powi(3) / 3.
-            + sign * c * (z * (r * r - z * z).sqrt() + r * r * (z / r).asin())
+            + sign * c * (z * (r * r - z * z).sqrt() + r * r * (z / r).portable_asin())
     };
-    let zc = rc * a.cos();
-    let zr = p.pitch_mm / 2. - rr * a.cos();
-    let k = (1. - a.sin()) / a.cos();
-    let b = 1. / a.tan();
+    let zc = rc * a.portable_cos();
+    let zr = p.pitch_mm / 2. - rr * a.portable_cos();
+    let k = (1. - a.portable_sin()) / a.portable_cos();
+    let b = 1. / a.portable_tan();
     let aa = major + rc * k * b;
     let flank = |z: f64| aa * aa * z - aa * b * z * z + b * b * z.powi(3) / 3.;
     let moment = 2.
         * (circle(major - rc, rc, zc, 1.) + flank(zr) - flank(zc)
-            + circle(minor + rr, rr, rr * a.cos(), -1.));
+            + circle(minor + rr, rr, rr * a.portable_cos(), -1.));
     std::f64::consts::PI * p.length_mm * moment / p.pitch_mm
 }
 #[test]
@@ -162,7 +163,7 @@ fn native_knuckle_circles_flanks_volume_and_step_keep_distinct_cutter_radii_for_
                         p.major_radius_mm - radius
                     };
                     for fraction in [-0.8, -0.4, 0., 0.4, 0.8] {
-                        let dz = fraction * radius * a.cos();
+                        let dz = fraction * radius * a.portable_cos();
                         let radial = (radius * radius - dz * dz).sqrt();
                         let boundary = center + if valley { -radial } else { radial };
                         let z = 1.37 * p.pitch_mm;
@@ -172,7 +173,10 @@ fn native_knuckle_circles_flanks_volume_and_step_keep_distinct_cutter_radii_for_
                             / p.pitch_mm;
                         for (dr, inside) in [(-0.001, true), (0.001, false)] {
                             let r = boundary + dr;
-                            let v = material(shape, [r * phi.cos(), r * phi.sin(), z]);
+                            let v = material(
+                                shape,
+                                [r * phi.portable_cos(), r * phi.portable_sin(), z],
+                            );
                             assert!(
                                 if inside { v > 0.999 } else { v < 1e-5 },
                                 "circle {internal}/{left}/{valley}/{fraction}/{dr}: {v}"
@@ -180,11 +184,11 @@ fn native_knuckle_circles_flanks_volume_and_step_keep_distinct_cutter_radii_for_
                         }
                     }
                 }
-                let k = (1. - a.sin()) / a.cos();
+                let k = (1. - a.portable_sin()) / a.portable_cos();
                 for drop in [0.22 * p.pitch_mm, 0.28 * p.pitch_mm] {
                     for direction in [-1., 1.] {
-                        let boundary =
-                            2. * p.pitch_mm + direction * (drop * a.tan() + p.crest_radius_mm * k);
+                        let boundary = 2. * p.pitch_mm
+                            + direction * (drop * a.portable_tan() + p.crest_radius_mm * k);
                         for (offset, inside) in
                             [(-direction * 0.001, true), (direction * 0.001, false)]
                         {
@@ -263,7 +267,7 @@ fn mesh_material_at(mesh: &multicad_kernel::Mesh, point: [f64; 3]) -> bool {
 fn small_knuckle_fixed_meridian_keeps_its_actual_crest_circle_with_radial_offset() {
     let pitch = 2.54;
     let a = 15_f64.to_radians();
-    let radius = pitch * (a.cos() - a.sin()) / (4. * (1. - a.sin()));
+    let radius = pitch * (a.portable_cos() - a.portable_sin()) / (4. * (1. - a.portable_sin()));
     let p = KnuckleHelicalThread {
         major_radius_mm: 4.995,
         pitch_mm: pitch,
@@ -273,7 +277,7 @@ fn small_knuckle_fixed_meridian_keeps_its_actual_crest_circle_with_radial_offset
         left_hand: false,
     };
     let shape = rust_knuckle(p, EntityId::new()).unwrap();
-    let dz = -0.65 * radius * a.cos();
+    let dz = -0.65 * radius * a.portable_cos();
     let boundary = p.major_radius_mm - radius + (radius * radius - dz * dz).sqrt();
     let before = step_bytes(&shape);
     // The 1 um linear deflection (chords certified within half of it) is what
@@ -301,7 +305,7 @@ fn small_knuckle_fixed_meridian_keeps_its_actual_crest_circle_with_radial_offset
         let z = 2. * pitch + dz + phi * pitch / std::f64::consts::TAU;
         for (dr, inside) in [(-0.001, true), (0.001, false)] {
             let r = boundary + dr;
-            let point = [r * phi.cos(), r * phi.sin(), z];
+            let point = [r * phi.portable_cos(), r * phi.portable_sin(), z];
             let fraction = material(&shape, point);
             assert!(
                 if inside {

@@ -194,7 +194,7 @@ impl Solid {
         let origin = position(*stock, [0., 0., if reverse { height } else { 0. }]);
         let chart = helical_body::stock_frame::Chart::new(*stock);
         let [x, y, _] = chart.vector(frame.u);
-        let norm = x.hypot(y);
+        let norm = x.portable_hypot(y);
         let [c, s] = [x / norm, y / norm];
         let sign = if reverse { -1. } else { 1. };
         let placed = PlaneFrame {

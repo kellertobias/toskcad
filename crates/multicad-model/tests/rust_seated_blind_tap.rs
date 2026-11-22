@@ -1,4 +1,5 @@
 //! Normal canonical connection compilation through a physical blind counterbore.
+use multicad_precision::PortableMath as _;
 #[path = "../../multicad-mcp/tests/support/screw_connection.rs"]
 mod fixture;
 use multicad_core::{
@@ -351,8 +352,8 @@ fn seated_blind_displaced_and_tilted_actual_washers_refuse_without_commit() {
             let angle: f64 = 0.01;
             driver.local_mount.rotation = [
                 [1., 0., 0.],
-                [0., angle.cos(), -angle.sin()],
-                [0., angle.sin(), angle.cos()],
+                [0., angle.portable_cos(), -angle.portable_sin()],
+                [0., angle.portable_sin(), angle.portable_cos()],
             ];
         }
         let mut entity = before.get(row.driver).unwrap().clone();

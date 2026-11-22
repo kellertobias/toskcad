@@ -9,6 +9,7 @@ use crate::{
     polygon::MAX_VERTICES,
     revolution::{edges, inside, sub},
 };
+use multicad_precision::PortableMath as _;
 
 mod halfspaces;
 
@@ -238,7 +239,7 @@ fn dot(a: Point, b: Point) -> f64 {
 }
 
 fn norm([x, y, z]: Point) -> f64 {
-    x.hypot(y).hypot(z)
+    x.portable_hypot(y).portable_hypot(z)
 }
 
 fn generator_distance(direction: Point, p: Uv, [a, b]: [Uv; 2]) -> f64 {

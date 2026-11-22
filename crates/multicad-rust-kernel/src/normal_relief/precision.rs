@@ -37,7 +37,7 @@ pub(crate) fn dot_error(a: Point, b: Point, target: f64) -> f64 {
 }
 pub(super) fn line_error(a: [f64; 2], b: [f64; 2]) -> Result<f64, Error> {
     let delta: [f64; 2] = std::array::from_fn(|i| b[i] - a[i]);
-    let length = delta[0].hypot(delta[1]);
+    let length = delta[0].portable_hypot(delta[1]);
     let u = [delta[0] / length, delta[1] / length, 0.];
     let normal = [-u[1], u[0], 0.];
     let mut residual = dot_error([delta[0], delta[1], 0.], normal, 0.);

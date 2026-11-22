@@ -336,7 +336,7 @@ fn an_arc_endpoint_and_a_second_interior_root_are_certified_separately() {
 }
 
 fn disk_segment(offset: f64) -> f64 {
-    4. * (offset / 2.).acos() - offset * (4. - offset * offset).sqrt()
+    4. * (offset / 2.).portable_acos() - offset * (4. - offset * offset).sqrt()
 }
 
 #[test]
@@ -515,7 +515,7 @@ fn sections_reject_unresolved_contact_ill_conditioned_cuts_and_excess_work() {
 fn oblique_section_preserves_bend_ellipses_and_the_exact_web_bore_chord() {
     let slope = 0.05;
     let x = 4.73;
-    let stretch = 1_f64.hypot(slope);
+    let stretch = 1_f64.portable_hypot(slope);
     let distance = (5. + slope * 4. - x) / stretch;
     let expected =
         (10. + 3. * std::f64::consts::FRAC_PI_4) * stretch - 2. * (1. - distance * distance).sqrt();
@@ -559,7 +559,7 @@ fn oblique_bore_arcs_terminate_on_actual_rims_even_with_no_rail_crossing() {
         (
             [5., 4., -threshold],
             [-1., -1., 1.],
-            2. * (threshold / std::f64::consts::SQRT_2).acos(),
+            2. * (threshold / std::f64::consts::SQRT_2).portable_acos(),
             2,
         ),
     ] {
@@ -584,7 +584,7 @@ fn oblique_bore_arcs_terminate_on_actual_rims_even_with_no_rail_crossing() {
             for (p, q) in ends.iter().zip(arc.endpoints()) {
                 assert!(length3(sub(*p, q)) < TOL);
                 assert!(dot(sub(*p, point), normal).abs() < TOL);
-                assert!(((p[0] - 5.).hypot(p[1] - 4.) - 1.).abs() < TOL);
+                assert!(((p[0] - 5.).portable_hypot(p[1] - 4.) - 1.).abs() < TOL);
                 assert!((-TOL..1. + TOL).contains(&p[2]));
                 roots += usize::from(p[2].abs() < TOL);
             }

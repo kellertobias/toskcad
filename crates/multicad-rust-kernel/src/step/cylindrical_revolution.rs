@@ -160,7 +160,7 @@ pub(super) fn encode(
             let apex_point = placement.point_f64([0.; 2], apex_level);
             let apex = file.point(apex_point);
             let axis_entity = file.axis(apex, axis.map(|n| toward_rim * n), reference);
-            let semi_angle = rim.radius.atan2((rim_level - apex_level).abs());
+            let semi_angle = rim.radius.portable_atan2((rim_level - apex_level).abs());
             let surface = file.entity(format_args!(
                 "CONICAL_SURFACE('',{axis_entity},0.0000000000000000E+00,{semi_angle:.16E})"
             ));

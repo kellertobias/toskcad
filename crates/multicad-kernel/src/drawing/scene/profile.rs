@@ -3,6 +3,7 @@
 //! normal turns, so that each piece meets a parallel line at most once.
 use super::paths::{dot2, edge_point, round};
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::spur_gear::Edge;
 use std::f64::consts::PI;
 
@@ -16,12 +17,12 @@ pub(in crate::drawing) fn folds(edge: Edge, normal: P2) -> Vec<f64> {
             let Some((_, _, start, sweep)) = round(planar) else {
                 return Vec::new();
             };
-            (normal[1].atan2(normal[0]), start, sweep)
+            (normal[1].portable_atan2(normal[0]), start, sweep)
         }
         Edge::Involute(curve) => {
             let [x, y] = curve.basis().map(|axis| dot2(axis, normal));
             let [a, b] = curve.interval();
-            ((-x).atan2(y), a, b - a)
+            ((-x).portable_atan2(y), a, b - a)
         }
     };
     let [lo, hi] = [start.min(start + span), start.max(start + span)];

@@ -762,7 +762,7 @@ mod tests {
                     (radius[0] - 0.02, radial::Location::Inside),
                     (radius[1] + 0.02, radial::Location::Outside),
                 ] {
-                    let xy = [r * theta.cos(), r * theta.sin()];
+                    let xy = [r * theta.portable_cos(), r * theta.portable_sin()];
                     let p = std::array::from_fn(|i| {
                         point(4.)[i] + xy[0] * [0.8, 0.6, 0.][i] + xy[1] * [-0.36, 0.48, 0.8][i]
                     });

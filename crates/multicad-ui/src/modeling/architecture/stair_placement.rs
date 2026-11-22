@@ -1,6 +1,7 @@
 //! Graphical inputs and resolver-derived plan cues; native Preview owns solids.
 use super::*;
 use multicad_core::parameters::EvaluatedParameters;
+use multicad_precision::PortableMath as _;
 
 impl ArchitecturePanel {
     pub(super) fn stair_viewport(
@@ -54,8 +55,8 @@ impl ArchitecturePanel {
         {
             if let Some(start) = self.stair_anchor {
                 let delta = [point[0] - start[0], point[1] - start[1]];
-                if delta[0].hypot(delta[1]) > 1e-6 {
-                    self.direction_deg = delta[1].atan2(delta[0]).to_degrees();
+                if delta[0].portable_hypot(delta[1]) > 1e-6 {
+                    self.direction_deg = delta[1].portable_atan2(delta[0]).to_degrees();
                     self.stair_placing = false;
                     self.stair_anchor = None;
                     changed = true;
@@ -81,8 +82,8 @@ impl ArchitecturePanel {
         {
             if let Some(start) = self.stair_anchor {
                 let delta = [point[0] - start[0], point[1] - start[1]];
-                if delta[0].hypot(delta[1]) > 1e-6 {
-                    definition.direction_deg = delta[1].atan2(delta[0]).to_degrees();
+                if delta[0].portable_hypot(delta[1]) > 1e-6 {
+                    definition.direction_deg = delta[1].portable_atan2(delta[0]).to_degrees();
                 }
             } else {
                 definition.start = point.map(length);

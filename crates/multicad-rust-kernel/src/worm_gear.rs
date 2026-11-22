@@ -9,6 +9,7 @@
 //! per sector and the optional bore. Volumes and areas integrate those exact
 //! sections.
 
+use multicad_precision::PortableMath as _;
 pub mod clearance;
 mod contact;
 pub mod interference;
@@ -118,7 +119,7 @@ pub(crate) fn norm(a: Point) -> f64 {
 }
 
 pub(crate) fn rotate_z(p: Point, angle: f64) -> Point {
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     [c * p[0] - s * p[1], s * p[0] + c * p[1], p[2]]
 }
 
@@ -138,7 +139,7 @@ pub(crate) fn chord_count(
         let a = sub(w[1], w[0]);
         let b = sub(w[2], w[1]);
         second = second.max(norm(sub(b, a)) / (h * h));
-        turning += norm(cross(a, b)).atan2(dot(a, b));
+        turning += norm(cross(a, b)).portable_atan2(dot(a, b));
     }
     // Twice the sampled second derivative bounds the chord sagitta.
     let count = (2. * second / (8. * deflection))

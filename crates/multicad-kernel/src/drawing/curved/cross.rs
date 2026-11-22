@@ -34,12 +34,15 @@ fn spatial_circle(
     let [pa, pb] = [[a[0], a[1]], [b[0], b[1]]];
     let turn = 0.5
         * (2. * (pa[0] * pb[0] + pa[1] * pb[1]))
-            .atan2(pa[0] * pa[0] + pa[1] * pa[1] - pb[0] * pb[0] - pb[1] * pb[1]);
-    let (sin, cos) = turn.sin_cos();
+            .portable_atan2(pa[0] * pa[0] + pa[1] * pa[1] - pb[0] * pb[0] - pb[1] * pb[1]);
+    let (sin, cos) = turn.portable_sin_cos();
     let major: [f64; 2] = std::array::from_fn(|i| cos * pa[i] + sin * pb[i]);
     let minor: [f64; 2] = std::array::from_fn(|i| -sin * pa[i] + cos * pb[i]);
     let [lengths, depths] = [
-        [major[0].hypot(major[1]), minor[0].hypot(minor[1])],
+        [
+            major[0].portable_hypot(major[1]),
+            minor[0].portable_hypot(minor[1]),
+        ],
         [cos * a[2] + sin * b[2], -sin * a[2] + cos * b[2]],
     ];
     let u = major.map(|c| c / lengths[0]);
@@ -151,8 +154,8 @@ pub(super) fn scene(
     let toward = screen[2];
     let local_view = [placement.u, placement.v, placement.normal()].map(|axis| dot(axis, toward));
     let view = [travel, across, [0., 0., 1.]].map(|axis| dot(axis, local_view));
-    if view[1].hypot(view[2]) > 1e-9 {
-        let angle = (-view[1]).atan2(view[2]);
+    if view[1].portable_hypot(view[2]) > 1e-9 {
+        let angle = (-view[1]).portable_atan2(view[2]);
         for angle in [angle, angle + std::f64::consts::PI] {
             let [from, to] = [0, 1].map(|side| point(world(geometry.rim_point(side, angle))));
             lines.push(LineCandidate {

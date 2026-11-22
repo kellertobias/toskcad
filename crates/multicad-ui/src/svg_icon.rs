@@ -5,6 +5,7 @@
 //! selected states. Unsupported elements or path commands are rejected instead
 //! of being drawn incorrectly.
 
+use multicad_precision::PortableMath as _;
 /// Parsed artwork: a sequence of painted elements in view-box units.
 #[derive(Clone, Debug)]
 pub struct SvgIcon {
@@ -330,7 +331,7 @@ fn transform(value: &str) -> Result<Affine, String> {
 }
 
 fn rotation(degrees: f32) -> Affine {
-    let (s, c) = degrees.to_radians().sin_cos();
+    let (s, c) = degrees.to_radians().portable_sin_cos();
     Affine([c, s, -s, c, 0., 0.])
 }
 
@@ -477,7 +478,7 @@ fn geometry<'a>(
                 ] {
                     for step in 0..=8 {
                         let a = (start + step as f32 * 90. / 8.).to_radians();
-                        points.push([cx + rx * a.cos(), cy + ry * a.sin()]);
+                        points.push([cx + rx * a.portable_cos(), cy + ry * a.portable_sin()]);
                     }
                 }
                 vec![(points, true)]
@@ -500,7 +501,7 @@ fn geometry<'a>(
             let points = (0..steps)
                 .map(|i| {
                     let a = i as f32 / steps as f32 * std::f32::consts::TAU;
-                    [cx + rx * a.cos(), cy + ry * a.sin()]
+                    [cx + rx * a.portable_cos(), cy + ry * a.portable_sin()]
                 })
                 .collect();
             vec![(points, true)]
@@ -716,7 +717,7 @@ fn flatten_arc(
         out.push(to);
         return;
     }
-    let (sin, cos) = rotation.to_radians().sin_cos();
+    let (sin, cos) = rotation.to_radians().portable_sin_cos();
     let dx = (from[0] - to[0]) / 2.;
     let dy = (from[1] - to[1]) / 2.;
     let x1 = cos * dx + sin * dy;
@@ -737,7 +738,8 @@ fn flatten_arc(
     let cy1 = -factor * ry * x1 / rx;
     let cx = cos * cx1 - sin * cy1 + (from[0] + to[0]) / 2.;
     let cy = sin * cx1 + cos * cy1 + (from[1] + to[1]) / 2.;
-    let angle = |ux: f32, uy: f32, vx: f32, vy: f32| (ux * vy - uy * vx).atan2(ux * vx + uy * vy);
+    let angle =
+        |ux: f32, uy: f32, vx: f32, vy: f32| (ux * vy - uy * vx).portable_atan2(ux * vx + uy * vy);
     let ux = (x1 - cx1) / rx;
     let uy = (y1 - cy1) / ry;
     let vx = (-x1 - cx1) / rx;
@@ -752,7 +754,7 @@ fn flatten_arc(
     let steps = ((delta.abs() * rx.max(ry) / 1.5).ceil() as usize).clamp(4, 96);
     for i in 1..=steps {
         let t = theta + delta * i as f32 / steps as f32;
-        let (s, c) = t.sin_cos();
+        let (s, c) = t.portable_sin_cos();
         out.push([
             cx + cos * rx * c - sin * ry * s,
             cy + sin * rx * c + cos * ry * s,

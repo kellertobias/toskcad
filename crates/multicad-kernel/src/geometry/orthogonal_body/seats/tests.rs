@@ -235,13 +235,13 @@ fn actual_conical_azimuth_weights_have_policy_bounded_centroid_covariance() {
     // whole-support Jacobian bounds, independent of these quadrature samples.
     for i in 0..4096 {
         let theta = TAU * (i as f64 + 0.5) / 4096.;
-        let (s, c) = theta.sin_cos();
+        let (s, c) = theta.portable_sin_cos();
         let mut n = normal.map(|x| x * slope);
         n[u] -= c;
         n[v] -= s;
         let world =
             std::array::from_fn::<_, 3, _>(|j| (0..3).map(|k| cof[k][j] * n[k]).sum::<f64>());
-        let w = world[0].hypot(world[1]).hypot(world[2]);
+        let w = world[0].portable_hypot(world[1]).portable_hypot(world[2]);
         weight += w;
         cosine += w * c;
         sine += w * s;

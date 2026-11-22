@@ -7,6 +7,7 @@ use multicad_kernel::{
     CurvedEdge2d, CurvedProfile, DrawingProjection, DrawingSolid, GeometryPolicy, MeshOptions,
     PlaneFrame, RevolutionAxis, RigidTransform, Solid, project_drawing,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 fn profile(
@@ -211,7 +212,7 @@ fn signed_partial_revolution_has_two_ordered_cap_wires_and_a_real_cavity() {
     let expected = FRAC_PI_2 * 291.;
     assert!((rust.volume_mm3().unwrap() - expected).abs() < 1e-8);
     let angle = PI / 4.;
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     assert!(
         rust.rust_revolution_contains([2. * cos, -2. * sin, 3.])
             .unwrap()

@@ -78,7 +78,7 @@ fn fixture(left: bool) -> Fixture {
     let station = -6.7;
     let start = -hanger.spec().plain_length_mm - hanger.metric().full_length_mm();
     let angle = std::f64::consts::TAU * (station - start) / 0.5 * if left { -1. } else { 1. };
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     let nut_frame = Frame {
         origin_mm: [0., 0., station],
         axes: [[c, s, 0.], [-s, c, 0.], [0., 0., c * c + s * s]],
@@ -135,7 +135,7 @@ fn nut_station(f: &mut Fixture, station: f64) {
         } else {
             1.
         };
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     f.nut_frame = Frame {
         origin_mm: [0., 0., station],
         axes: [[c, s, 0.], [-s, c, 0.], [0., 0., c * c + s * s]],
@@ -292,7 +292,7 @@ fn real_caps_and_full_stock_corners_control_bearing_not_only_the_hole_axis() {
     let wood = Placed::new(Material::Cells(&f.wood), identity()).unwrap();
     let face = cap(&wood, 2, [Q::zero(), Q::zero(), Q::zero()], -1, [2., 3.]);
     let angle = 0.001_f64;
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     let tilted = Placed::new(
         Material::Cells(&f.clamp),
         Frame {

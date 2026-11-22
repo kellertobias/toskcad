@@ -4,6 +4,7 @@ use crate::{
     constraint_sketch::{ConstraintKind, Curve, CurveKind, source::Source},
     document::{DocumentError, EntityId},
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 
 const MIN_LENGTH_MM: f64 = 1e-7;
@@ -107,7 +108,7 @@ fn invalid(message: impl Into<String>) -> DocumentError {
     DocumentError::Invalid(message.into())
 }
 fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 fn point(source: &mut Source, input: &PointInput) -> Result<(EntityId, [f64; 2]), DocumentError> {
     match *input {
@@ -152,8 +153,8 @@ fn circular_bounds(
     arc: Option<([f64; 2], [f64; 2], bool)>,
 ) -> Result<(), DocumentError> {
     let sweep = arc.map(|(a, b, clockwise)| {
-        let start = (a[1] - center[1]).atan2(a[0] - center[0]);
-        let end = (b[1] - center[1]).atan2(b[0] - center[0]);
+        let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
+        let end = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
         (
             start,
             if clockwise {
@@ -176,8 +177,8 @@ fn circular_bounds(
             }
         }
         bounds([
-            center[0] + radius * angle.cos(),
-            center[1] + radius * angle.sin(),
+            center[0] + radius * angle.portable_cos(),
+            center[1] + radius * angle.portable_sin(),
         ])?;
     }
     Ok(())
@@ -289,7 +290,7 @@ pub fn center_points_rectangle_corners(
 ) -> Result<[[f64; 2]; 4], DocumentError> {
     let radius = distance(center, corner);
     let toward = sub(adjacent, center);
-    let length = toward[0].hypot(toward[1]);
+    let length = toward[0].portable_hypot(toward[1]);
     if radius <= MIN_LENGTH_MM || length <= MIN_LENGTH_MM {
         return Err(invalid(
             "Rectangle corners must be away from the rectangle center",

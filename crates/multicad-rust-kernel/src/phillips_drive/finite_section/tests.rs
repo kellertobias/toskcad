@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::cell::Cell;
 fn i([lo, hi]: Bounds) -> I {
     I::new(lo, hi)
@@ -99,8 +100,8 @@ fn metric_sections_have_shared_oriented_real_supports_and_agree_with_independent
                         assert!(sweep > 0.);
                         let angle = i(start_angle_rad_bounds).midpoint() + sweep / 2.;
                         (
-                            [r * angle.cos(), r * angle.sin()],
-                            [-angle.sin(), angle.cos()],
+                            [r * angle.portable_cos(), r * angle.portable_sin()],
+                            [-angle.portable_sin(), angle.portable_cos()],
                             r * r * sweep / 2.,
                         )
                     }
@@ -118,8 +119,14 @@ fn metric_sections_have_shared_oriented_real_supports_and_agree_with_independent
                         let sweep = i(sweep_rad_bounds).midpoint();
                         assert!(sweep < 0.);
                         let angle = i(start_angle_rad_bounds).midpoint() + sweep / 2.;
-                        let p = rot([rx * angle.cos(), ry * angle.sin()], quarter_turn);
-                        let t = rot([rx * angle.sin(), -ry * angle.cos()], quarter_turn);
+                        let p = rot(
+                            [rx * angle.portable_cos(), ry * angle.portable_sin()],
+                            quarter_turn,
+                        );
+                        let t = rot(
+                            [rx * angle.portable_sin(), -ry * angle.portable_cos()],
+                            quarter_turn,
+                        );
                         (
                             [center[0] + p[0], center[1] + p[1]],
                             t,
@@ -131,8 +138,9 @@ fn metric_sections_have_shared_oriented_real_supports_and_agree_with_independent
                 };
                 signed_area += area;
                 if depth > 0. {
-                    let norm = tangent[0].hypot(tangent[1]);
-                    let epsilon = 1e-5_f64.min((pa[0] - pb[0]).hypot(pa[1] - pb[1]) / 100.);
+                    let norm = tangent[0].portable_hypot(tangent[1]);
+                    let epsilon =
+                        1e-5_f64.min((pa[0] - pb[0]).portable_hypot(pa[1] - pb[1]) / 100.);
                     assert!(epsilon > 0.);
                     let left = [-tangent[1] / norm * epsilon, tangent[0] / norm * epsilon];
                     let inside = [point[0] + left[0], point[1] + left[1], depth];
@@ -274,5 +282,5 @@ fn real_contact_and_section_join_events_and_unrepresentable_rounds_refuse() {
     assert!(intersection_angle(I::point(1.), I::point(1.)).is_err());
     assert!(intersection_angle(I::point(1.), I::point(1e-300)).is_err());
     let a = intersection_angle(I::point(1.), I::point(0.2)).unwrap();
-    assert!(a.lo <= 0.2_f64.atan() && a.hi >= 0.2_f64.atan());
+    assert!(a.lo <= 0.2_f64.portable_atan() && a.hi >= 0.2_f64.portable_atan());
 }

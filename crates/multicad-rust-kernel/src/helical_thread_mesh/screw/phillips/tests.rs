@@ -315,8 +315,8 @@ fn actual_cap_uses_and_literal_plane_order_cannot_be_repaired_or_welded() {
     for p in changed.vertices.as_chunks_mut::<3>().0 {
         let [x, y, z] = *p;
         *p = [
-            x * 0.01f64.cos() - y * 0.01f64.sin(),
-            x * 0.01f64.sin() + y * 0.01f64.cos(),
+            x * 0.01f64.portable_cos() - y * 0.01f64.portable_sin(),
+            x * 0.01f64.portable_sin() + y * 0.01f64.portable_cos(),
             z,
         ];
     }

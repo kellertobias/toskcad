@@ -524,7 +524,7 @@ fn whole_source_polylines_keep_canonical_ends_and_independent_stock_circle_chord
                 ] {
                     let p = boundary.curve_point(id, t, None).unwrap();
                     assert!(
-                        (p.point_mm[0] - expected[0]).hypot(p.point_mm[1] - expected[1])
+                        (p.point_mm[0] - expected[0]).portable_hypot(p.point_mm[1] - expected[1])
                             <= p.error_mm
                     );
                 }
@@ -533,7 +533,7 @@ fn whole_source_polylines_keep_canonical_ends_and_independent_stock_circle_chord
                         (pair[0][0] + pair[1][0]) * 0.5,
                         (pair[0][1] + pair[1][1]) * 0.5,
                     ];
-                    let sagitta = 2.5 - midpoint[0].hypot(midpoint[1]);
+                    let sagitta = 2.5 - midpoint[0].portable_hypot(midpoint[1]);
                     assert!(sagitta <= polyline.maximum_error_mm);
                 }
                 assert!(matches!(

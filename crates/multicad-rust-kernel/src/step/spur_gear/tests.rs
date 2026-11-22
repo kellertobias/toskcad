@@ -13,11 +13,11 @@ fn profile(teeth: u32, bore: f64) -> Profile {
         Spec {
             teeth,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * pressure.cos(),
+            base_radius_mm: pitch * pressure.portable_cos(),
             tip_radius_mm: pitch + 2.,
             root_radius_mm: pitch - 2.5,
             root_fillet_radius_mm: 0.4,
-            half_base_angle_rad: PI / (2. * pitch) + pressure.tan()
+            half_base_angle_rad: PI / (2. * pitch) + pressure.portable_tan()
                 - pressure
                 - 0.05 / (2. * pitch),
             face_width_mm: 8.,
@@ -215,11 +215,11 @@ fn thin_ring(teeth: u32, rim: f64) -> Ring {
         RingSpec {
             teeth,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * a.cos(),
+            base_radius_mm: pitch * a.portable_cos(),
             tip_radius_mm: pitch - 1.,
             root_radius_mm: pitch + 1.25,
             root_fillet_radius_mm: 0.2,
-            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.tan() + a,
+            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.portable_tan() + a,
             face_width_mm: 2.,
             outer_radius_mm: pitch + rim,
         },

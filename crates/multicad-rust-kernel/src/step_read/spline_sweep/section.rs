@@ -120,7 +120,7 @@ fn convex_pair(section: &[Boundary], tolerance: f64) -> Result<()> {
         if turn.is_nan() || turn <= tolerance * norm(before).max(norm(after)) {
             return Err(ReadError::Unsupported);
         }
-        turning += turn.atan2(dot2(before, after));
+        turning += turn.portable_atan2(dot2(before, after));
     }
     if (turning - TAU).abs() > 1e-9 {
         return Err(ReadError::Unsupported);
@@ -235,7 +235,7 @@ fn boundary(
             let arc = Arc {
                 center,
                 radius: round.radius,
-                start: y.atan2(x),
+                start: y.portable_atan2(x),
                 sweep: directed_sweep(round, plane, edge.forward),
             };
             vec![Piece::Arc(arc)]
@@ -409,7 +409,7 @@ mod convex_pair_tests {
         let reflex = [[0., 0.], [4., 0.], [4., 4.], [2., 1.], [0., 4.]];
         let straight = [[0., 0.], [2., 0.], [4., 0.], [4., 4.]];
         let star = [0., 2., 4., 1., 3.].map(|step: f64| {
-            let (sin, cos) = (step * TAU / 5.).sin_cos();
+            let (sin, cos) = (step * TAU / 5.).portable_sin_cos();
             [cos, sin]
         });
         for points in [&reflex[..], &straight, &star] {

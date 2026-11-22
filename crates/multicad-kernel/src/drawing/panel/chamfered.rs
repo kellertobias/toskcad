@@ -10,7 +10,7 @@ pub(in crate::drawing) fn project_chamfered_bores(
     let treatments = stock.bore_treatments.as_ref()?;
     let [u, v, toward_viewer] = planar::view_axes(options.frame);
     let axis = stock.frame.normal();
-    if dot(axis, u).hypot(dot(axis, v)) > 32. * f64::EPSILON {
+    if dot(axis, u).portable_hypot(dot(axis, v)) > 32. * f64::EPSILON {
         return None;
     }
     if options.detail.is_some() || !stock.pockets.is_empty() {

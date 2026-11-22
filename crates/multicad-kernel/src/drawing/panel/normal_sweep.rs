@@ -16,7 +16,7 @@ pub(in crate::drawing) fn project_normal_sweep(
     let alternate = || curved::project_scene(std::slice::from_ref(input), options);
     let [u, v, toward_viewer] = planar::view_axes(options.frame);
     let axis = frame.normal();
-    let axial = dot(axis, u).hypot(dot(axis, v)) <= 32. * f64::EPSILON;
+    let axial = dot(axis, u).portable_hypot(dot(axis, v)) <= 32. * f64::EPSILON;
     let transverse = dot(axis, toward_viewer).abs() <= 32. * f64::EPSILON;
     if !axial && !transverse {
         return Some(alternate());
@@ -62,7 +62,7 @@ pub(in crate::drawing) fn project_normal_sweep(
                 // all its edges and generators are behind the front cap.
                 for [a, b] in piercing_edges(faces, outline, toward_viewer) {
                     let [a, b] = [screen.point(a), screen.point(b)];
-                    if (a[0] - b[0]).hypot(a[1] - b[1]) > tolerance {
+                    if (a[0] - b[0]).portable_hypot(a[1] - b[1]) > tolerance {
                         edges.push(Edge {
                             hidden: true,
                             curve: Curve::Line([a, b]),

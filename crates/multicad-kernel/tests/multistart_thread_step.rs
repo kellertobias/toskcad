@@ -8,6 +8,7 @@ use multicad_kernel::{
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
     *,
 };
+use multicad_precision::PortableMath as _;
 fn near(a: f64, b: f64, tol: f64) {
     assert!((a - b).abs() < tol, "{a} != {b}");
 }
@@ -101,8 +102,8 @@ fn sourced_multiple_start_threads_keep_geometry_references_and_independent_nativ
                             let radius = spec.major_radius_mm - spec.depth_mm / 2.;
                             let p = std::array::from_fn(|i| {
                                 frame.origin[i]
-                                    + frame.u[i] * radius * angle.cos()
-                                    + frame.v[i] * radius * angle.sin()
+                                    + frame.u[i] * radius * angle.portable_cos()
+                                    + frame.v[i] * radius * angle.portable_sin()
                                     + frame.normal()[i] * z * spec.pitch_mm
                             });
                             assert_eq!(
@@ -136,8 +137,8 @@ fn sourced_multiple_start_threads_keep_geometry_references_and_independent_nativ
                                 let radius = spec.major_radius_mm - spec.depth_mm / 2.;
                                 let point = std::array::from_fn(|i| {
                                     frame.origin[i]
-                                        + frame.u[i] * radius * angle.cos()
-                                        + frame.v[i] * radius * angle.sin()
+                                        + frame.u[i] * radius * angle.portable_cos()
+                                        + frame.v[i] * radius * angle.portable_sin()
                                         + frame.normal()[i] * z
                                 });
                                 let probe = Solid::box_solid([0.01; 3], policy)

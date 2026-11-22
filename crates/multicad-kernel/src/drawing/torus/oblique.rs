@@ -16,13 +16,14 @@ impl Harmonic {
     fn new(constant: f64, cosine: f64, sine: f64) -> Self {
         Self {
             constant,
-            phase: sine.atan2(cosine),
-            radius: cosine.hypot(sine),
+            phase: sine.portable_atan2(cosine),
+            radius: cosine.portable_hypot(sine),
         }
     }
 
     fn at(self, t: f64) -> f64 {
-        self.radius.mul_add((t - self.phase).cos(), self.constant)
+        self.radius
+            .mul_add((t - self.phase).portable_cos(), self.constant)
     }
 
     fn roots(self) -> Vec<f64> {
@@ -30,7 +31,7 @@ impl Harmonic {
         if !(-1.0..=1.).contains(&quotient) {
             return Vec::new();
         }
-        let delta = quotient.acos();
+        let delta = quotient.portable_acos();
         [self.phase - delta, self.phase + delta]
             .map(|t| t.rem_euclid(TAU))
             .to_vec()
@@ -81,7 +82,8 @@ impl Slice {
         let minimum = (a[0] * b[0]).sqrt();
         let maximum = (a[1] * b[1]).sqrt();
         let axial = self.axial.range(span);
-        let enclosure = (axial[1] - axial[0]).hypot((maximum - minimum) / self.inclination);
+        let enclosure =
+            (axial[1] - axial[0]).portable_hypot((maximum - minimum) / self.inclination);
         if minimum == 0. {
             return enclosure;
         }
@@ -92,7 +94,8 @@ impl Slice {
         let second = first + 2. * da * db;
         let derivative =
             (second / (2. * minimum) + first.powi(2) / (4. * minimum.powi(3))) / self.inclination;
-        let remainder = self.axial.radius.hypot(derivative) * (span[1] - span[0]).powi(2) / 8.;
+        let remainder =
+            self.axial.radius.portable_hypot(derivative) * (span[1] - span[0]).powi(2) / 8.;
         remainder.min(enclosure)
     }
 
@@ -142,7 +145,7 @@ pub(super) fn section(
     depth: f64,
 ) -> Result<Vec<ProjectedVector>, GeometryError> {
     let [a, b, c] = axis;
-    let s = a.hypot(b);
+    let s = a.portable_hypot(b);
     let offset = depth - center[2];
     if offset.abs() >= s * major + minor {
         return Ok(Vec::new());
@@ -201,7 +204,9 @@ pub(super) fn section(
                     let xyz = [p[0], p[1], offset];
                     let axial = xyz.into_iter().zip(axis).map(|(x, d)| x * d).sum::<f64>();
                     let radial: [f64; 3] = std::array::from_fn(|i| xyz[i] - axis[i] * axial);
-                    let radius = radial[0].hypot(radial[1]).hypot(radial[2]);
+                    let radius = radial[0]
+                        .portable_hypot(radial[1])
+                        .portable_hypot(radial[2]);
                     let normal: Point = std::array::from_fn(|i| {
                         radial[i] * (1. - major / radius) + axis[i] * axial
                     });
@@ -233,8 +238,8 @@ struct Silhouette {
 
 impl Silhouette {
     fn point(&self, t: f64, side: f64) -> [f64; 3] {
-        let (sin, cos) = t.rem_euclid(TAU).sin_cos();
-        let normal = self.c.hypot(self.s * cos);
+        let (sin, cos) = t.rem_euclid(TAU).portable_sin_cos();
+        let normal = self.c.portable_hypot(self.s * cos);
         let u = -cos * (self.c * self.major + side * self.minor / normal);
         let v = sin * (self.major + side * self.minor * self.c / normal);
         let [a, b] = self.projected_axis;
@@ -247,8 +252,8 @@ impl Silhouette {
 
     fn chord_error(&self, [lo, hi]: [f64; 2]) -> f64 {
         // Cuts at the quadrant boundaries ensure |cos| is monotone here.
-        let [a, b] = [lo.cos().abs(), hi.cos().abs()];
-        let normal = self.c.hypot(self.s * a.min(b));
+        let [a, b] = [lo.portable_cos().abs(), hi.portable_cos().abs()];
+        let normal = self.c.portable_hypot(self.s * a.min(b));
         let c2 = self.c * self.c;
         let g = normal.recip();
         let g1 = self.s.powi(2) / (2. * normal.powi(3));
@@ -257,15 +262,15 @@ impl Silhouette {
             c2 * (a.max(b) / normal.powi(3) + 3. * self.s.powi(2) * a.max(b) / normal.powi(5));
         let u2 = self.c * self.major + self.minor * t_over_normal;
         let v2 = self.major + self.minor * self.c * (g + 2. * g1 + g2);
-        u2.hypot(v2).hypot(self.s * self.major) * (hi - lo).powi(2) / 8.
+        u2.portable_hypot(v2).portable_hypot(self.s * self.major) * (hi - lo).powi(2) / 8.
     }
 
     fn hidden(&self, angle: f64, side: f64, near: Option<f64>) -> bool {
         if side > 0. {
             return false;
         }
-        let cos = angle.cos();
-        let normal = self.c.hypot(self.s * cos);
+        let cos = angle.portable_cos();
+        let normal = self.c.portable_hypot(self.s * cos);
         // Deflate the viewing-ray quartic by its double silhouette root
         // z = R*s*cos(t). The remaining quadratic supplies the other lobe.
         let hidden = if cos < 0. {
@@ -294,7 +299,7 @@ pub(in crate::drawing) fn contours(
     if axis[2] < 0. {
         axis = axis.map(|component| -component);
     }
-    let s = axis[0].hypot(axis[1]);
+    let s = axis[0].portable_hypot(axis[1]);
     let shape = Silhouette {
         center,
         projected_axis: [axis[0] / s, axis[1] / s],
@@ -315,7 +320,7 @@ pub(in crate::drawing) fn contours(
         .flatten()
         .filter_map(|depth| {
             let cos = depth / (s * major);
-            (-1. ..=1.).contains(&cos).then(|| cos.acos())
+            (-1. ..=1.).contains(&cos).then(|| cos.portable_acos())
         })
         .flat_map(|t| [t, TAU - t])
         .collect();
@@ -324,19 +329,22 @@ pub(in crate::drawing) fn contours(
         let mut cuts = quarters.to_vec();
         cuts.extend_from_slice(&depth_cuts);
         if side < 0. {
-            for normal in [minor / (major * shape.c), (shape.c * minor / major).cbrt()] {
+            for normal in [
+                minor / (major * shape.c),
+                (shape.c * minor / major).portable_cbrt(),
+            ] {
                 if normal <= shape.c || normal >= 1. {
                     continue;
                 }
                 let cosine = ((normal - shape.c) * (normal + shape.c)).sqrt() / s;
-                let angle = cosine.clamp(0., 1.).acos();
+                let angle = cosine.clamp(0., 1.).portable_acos();
                 cuts.extend([angle, PI - angle, PI + angle, TAU - angle]);
             }
             if let Some(near) = near {
                 for cosine in
                     AnalyticFace::oblique_torus_cap_crossings([major, minor], [s, shape.c], near)
                 {
-                    let angle = cosine.acos();
+                    let angle = cosine.portable_acos();
                     cuts.extend([angle, TAU - angle]);
                 }
             }
@@ -346,7 +354,7 @@ pub(in crate::drawing) fn contours(
         for pair in cuts.windows(2) {
             let span = [pair[0], pair[1]];
             let middle = span[0].midpoint(span[1]);
-            let depth = s * major * middle.cos();
+            let depth = s * major * middle.portable_cos();
             if near.is_some_and(|near| depth > near) || far.is_some_and(|far| depth < far) {
                 continue;
             }

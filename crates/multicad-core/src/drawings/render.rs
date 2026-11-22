@@ -6,6 +6,7 @@ use super::{
     VectorRole, ViewEvaluation, draft_dimension, layout_page, sheet_graphic,
 };
 use crate::document::{Document, EntityId};
+use multicad_precision::PortableMath as _;
 
 /// What an item is, for layers, classes and styling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -99,7 +100,7 @@ pub struct PageRender {
 impl PageRender {
     fn text(&mut self, layer: Layer, at: [f64; 2], height: f64, angle: f64, value: &str) {
         for (i, line) in value.lines().enumerate() {
-            let (s, c) = angle.to_radians().sin_cos();
+            let (s, c) = angle.to_radians().portable_sin_cos();
             let down = i as f64 * LINE_MM;
             self.texts.push(Text {
                 layer,

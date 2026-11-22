@@ -11,6 +11,7 @@ use multicad_kernel::{
         spur_gear::{Edge, Profile, Spec},
     },
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 const WIDTH: f64 = 4.;
@@ -24,11 +25,11 @@ fn spec(sweep: GearSweep, twist: f64, hub: Option<GearHub>) -> InvoluteGear {
         hub,
         teeth: TEETH,
         pitch_radius_mm: PITCH,
-        base_radius_mm: PITCH * a.cos(),
+        base_radius_mm: PITCH * a.portable_cos(),
         tip_radius_mm: PITCH + 1.,
         root_radius_mm: PITCH - 1.25,
         root_fillet_radius_mm: 0.2,
-        half_base_angle_rad: (PI / 2. - 0.05) / (2. * PITCH) + a.tan() - a,
+        half_base_angle_rad: (PI / 2. - 0.05) / (2. * PITCH) + a.portable_tan() - a,
         face_width_mm: WIDTH,
         bore_radius_mm: BORE,
         twist_rad_per_mm: twist,
@@ -205,11 +206,11 @@ fn every_view_class_of_a_twisted_gear_draws() {
                 started.elapsed().as_secs_f64()
             );
             assert!(!vectors.is_empty(), "{label}");
-            let reach = (PITCH + 1.).hypot(8.) + 1e-6;
+            let reach = (PITCH + 1.).portable_hypot(8.) + 1e-6;
             for vector in &vectors {
                 assert!(vector.preview_mm.len() >= 2, "{label}");
                 for p in &vector.preview_mm {
-                    assert!(p[0].hypot(p[1]) <= reach, "{label}: {p:?}");
+                    assert!(p[0].portable_hypot(p[1]) <= reach, "{label}: {p:?}");
                 }
             }
             if options.section_offset_mm.is_some() {
@@ -239,11 +240,11 @@ struct Oracle {
 }
 
 fn swept(edge: Edge, w: [f64; 2], [a, b]: [f64; 2], [pa, pb]: [[f64; 2]; 2], depth: u32) -> f64 {
-    let chord = (pb[0] - pa[0]).hypot(pb[1] - pa[1]);
+    let chord = (pb[0] - pa[0]).portable_hypot(pb[1] - pa[1]);
     let mid = [0.5 * (pa[0] + pb[0]), 0.5 * (pa[1] + pb[1])];
-    if (w[0] - mid[0]).hypot(w[1] - mid[1]) > chord || depth > 60 {
+    if (w[0] - mid[0]).portable_hypot(w[1] - mid[1]) > chord || depth > 60 {
         let [p, q] = [[pa[0] - w[0], pa[1] - w[1]], [pb[0] - w[0], pb[1] - w[1]]];
-        return (p[0] * q[1] - p[1] * q[0]).atan2(p[0] * q[0] + p[1] * q[1]);
+        return (p[0] * q[1] - p[1] * q[0]).portable_atan2(p[0] * q[0] + p[1] * q[1]);
     }
     let m = 0.5 * (a + b);
     let pm = edge.point(m);
@@ -275,7 +276,7 @@ impl Oracle {
     }
 
     fn inside(&self, [x, y, z]: [f64; 3]) -> bool {
-        let r = x.hypot(y);
+        let r = x.portable_hypot(y);
         if r <= self.spec.bore_radius_mm {
             return false;
         }
@@ -294,7 +295,7 @@ impl Oracle {
         if r > self.spec.tip_radius_mm + 1e-3 {
             return false;
         }
-        let (sin, cos) = (-phase(&self.spec, z)).sin_cos();
+        let (sin, cos) = (-phase(&self.spec, z)).portable_sin_cos();
         let w = [x * cos - y * sin, x * sin + y * cos];
         let mut total = 0.;
         for &edge in &self.edges {
@@ -325,7 +326,7 @@ fn distance_to(vectors: &[&ProjectedVector], [x, y]: [f64; 2]) -> f64 {
             let [[a, b], [c, d]] = [w[0], w[1]];
             let [u, v] = [c - a, d - b];
             let along = (((x - a) * u + (y - b) * v) / (u * u + v * v).max(1e-300)).clamp(0., 1.);
-            (x - a - along * u).hypot(y - b - along * v)
+            (x - a - along * u).portable_hypot(y - b - along * v)
         })
         .fold(f64::INFINITY, f64::min)
 }
@@ -375,8 +376,8 @@ fn a_section_through_the_axis_follows_the_exact_flank_law() {
         let base = spec.base_radius_mm;
         let pitch = 2. * PI / f64::from(TEETH);
         let involute = |r: f64| {
-            let a = (base / r).acos();
-            a.tan() - a
+            let a = (base / r).portable_acos();
+            a.portable_tan() - a
         };
         let wrap = |a: f64| (a + PI).rem_euclid(2. * PI) - PI;
         let mut on_flank = 0;
@@ -767,7 +768,7 @@ fn every_occluding_contour_of_the_exact_solid_is_a_visible_curve() {
         );
         let visible: Vec<&ProjectedVector> = vectors.iter().collect();
         assert!(visible.iter().all(|v| v.role == VectorRole::Visible));
-        let reach = (PITCH + 1.).hypot(8.);
+        let reach = (PITCH + 1.).portable_hypot(8.);
         let depths = [-reach, reach];
         let depth = |paper: [f64; 2]| front(&oracle, frame, paper, depths);
         let jump = |a: Option<f64>, b: Option<f64>| match (a, b) {
@@ -794,7 +795,7 @@ fn every_occluding_contour_of_the_exact_solid_is_a_visible_curve() {
                     // Follow the jump down to a 1 µm pair of sight lines; a
                     // steep but continuous surface loses it on the way.
                     let mut real = true;
-                    while (b[0] - a[0]).hypot(b[1] - a[1]) > 1e-3 {
+                    while (b[0] - a[0]).portable_hypot(b[1] - a[1]) > 1e-3 {
                         let mid = [0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1])];
                         let dm = depth(mid);
                         if jump(da, dm) {

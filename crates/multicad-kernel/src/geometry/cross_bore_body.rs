@@ -155,7 +155,7 @@ impl Solid {
             return None;
         }
         travel[2] = 0.;
-        let norm = travel[0].hypot(travel[1]);
+        let norm = travel[0].portable_hypot(travel[1]);
         travel = travel.map(|c| c / norm);
         let base: [f64; 3] = std::array::from_fn(|i| tool_frame.origin[i] - frame.origin[i]);
         let binary = |length: Rational| {

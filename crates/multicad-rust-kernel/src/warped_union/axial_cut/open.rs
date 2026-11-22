@@ -36,7 +36,7 @@ impl Segment {
         if offset.abs() >= radius - tolerance {
             return Err(Error::Unsupported);
         }
-        let start_rad = (offset / radius).acos();
+        let start_rad = (offset / radius).portable_acos();
         Ok(Self {
             normal,
             tangent: cross(axis, normal),
@@ -44,7 +44,7 @@ impl Segment {
             offset,
             half_chord: ((radius - offset) * (radius + offset)).sqrt(),
             start_rad,
-            sweep_rad: 2. * (-offset / radius).acos(),
+            sweep_rad: 2. * (-offset / radius).portable_acos(),
         })
     }
 
@@ -59,7 +59,7 @@ impl Segment {
     fn support(&self, direction: Point) -> f64 {
         let u = dot(direction, self.normal);
         let v = dot(direction, self.tangent);
-        let length = u.hypot(v);
+        let length = u.portable_hypot(v);
         if self.radius * u <= self.offset * length {
             self.radius * length
         } else {
@@ -75,7 +75,7 @@ impl Segment {
             let squared = angle * angle;
             angle * squared * (1. / 6. + squared * (-1. / 120. + squared / 5040.))
         } else {
-            angle - angle.sin()
+            angle - angle.portable_sin()
         };
         0.5 * self.radius * self.radius * segment
     }

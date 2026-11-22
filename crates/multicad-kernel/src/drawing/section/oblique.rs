@@ -8,6 +8,7 @@
 //! their analytic form; the hatch boundary replaces them by tangent polygons
 //! that lie in the void, so no stroke enters a bore.
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::curved_projection::{Curve, Edge as CurvedEdge, Ellipse};
 use std::f64::consts::TAU;
 
@@ -69,7 +70,7 @@ impl Region {
     }
 
     fn axial(&self, angle: f64) -> f64 {
-        self.station + self.reach * angle.cos()
+        self.station + self.reach * angle.portable_cos()
     }
 
     /// Material outside the bore at `point`: outside the ellipse or the slab.
@@ -79,7 +80,9 @@ impl Region {
         let x = (d[0] * e.u[0] + d[1] * e.u[1]) / e.major;
         let y = (d[0] * e.v[0] + d[1] * e.v[1]) / e.minor;
         let axial = self.station + self.reach * x;
-        x.hypot(y) > 1. + tolerance || axial < self.low - tolerance || axial > self.high + tolerance
+        x.portable_hypot(y) > 1. + tolerance
+            || axial < self.low - tolerance
+            || axial > self.high + tolerance
     }
 }
 
@@ -98,7 +101,7 @@ impl Void {
             Self::Strip(corners) => (0..4).any(|i| {
                 let [a, b] = [corners[i], corners[(i + 1) % 4]];
                 (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0])
-                    < -tolerance * (b[0] - a[0]).hypot(b[1] - a[1])
+                    < -tolerance * (b[0] - a[0]).portable_hypot(b[1] - a[1])
             }),
         }
     }
@@ -111,7 +114,7 @@ impl Void {
 fn snap(anchors: &mut Vec<P2>, point: P2, tolerance: f64) -> P2 {
     if let Some(anchor) = anchors
         .iter()
-        .find(|a| (a[0] - point[0]).hypot(a[1] - point[1]) <= tolerance)
+        .find(|a| (a[0] - point[0]).portable_hypot(a[1] - point[1]) <= tolerance)
     {
         return *anchor;
     }
@@ -122,7 +125,7 @@ fn snap(anchors: &mut Vec<P2>, point: P2, tolerance: f64) -> P2 {
 /// Angles where `a cos θ + b sin θ = c`, or nothing. A double root is a
 /// tangency that cannot be classified and refuses.
 fn roots(a: f64, b: f64, c: f64, tolerance: f64) -> Result<Vec<f64>, GeometryError> {
-    let length = a.hypot(b);
+    let length = a.portable_hypot(b);
     if length <= tolerance {
         return Ok(Vec::new());
     }
@@ -133,8 +136,8 @@ fn roots(a: f64, b: f64, c: f64, tolerance: f64) -> Result<Vec<f64>, GeometryErr
     if ratio.abs() > 1. {
         return Ok(Vec::new());
     }
-    let phase = b.atan2(a);
-    let spread = ratio.acos();
+    let phase = b.portable_atan2(a);
+    let spread = ratio.portable_acos();
     Ok(vec![
         (phase + spread).rem_euclid(TAU),
         (phase - spread).rem_euclid(TAU),
@@ -203,12 +206,12 @@ fn polygon(
             ]
         })
         .collect();
-    flat.dedup_by(|a, b| (a[0] - b[0]).hypot(a[1] - b[1]) <= tolerance);
+    flat.dedup_by(|a, b| (a[0] - b[0]).portable_hypot(a[1] - b[1]) <= tolerance);
     let mut unique: Vec<P2> = Vec::new();
     for p in flat {
         if unique
             .iter()
-            .all(|q| (p[0] - q[0]).hypot(p[1] - q[1]) > tolerance)
+            .all(|q| (p[0] - q[0]).portable_hypot(p[1] - q[1]) > tolerance)
         {
             unique.push(p);
         }
@@ -220,8 +223,8 @@ fn polygon(
     let center = [0, 1].map(|i| unique.iter().map(|p| p[i]).sum::<f64>() / n);
     unique.sort_by(|a, b| {
         (a[1] - center[1])
-            .atan2(a[0] - center[0])
-            .total_cmp(&(b[1] - center[1]).atan2(b[0] - center[0]))
+            .portable_atan2(a[0] - center[0])
+            .total_cmp(&(b[1] - center[1]).portable_atan2(b[0] - center[0]))
     });
     Ok(unique)
 }
@@ -276,7 +279,7 @@ fn region(
             dot3(sub3(foot, origin), axes[1]),
         ];
         let d = [dot3(w, axes[0]), dot3(w, axes[1])];
-        let length = d[0].hypot(d[1]);
+        let length = d[0].portable_hypot(d[1]);
         let d = [d[0] / length, d[1] / length];
         let side = [-d[1] * half, d[0] * half];
         let end = [start[0] + d[0] * bore.height, start[1] + d[1] * bore.height];
@@ -295,7 +298,7 @@ fn region(
         dot3(sub3(center3, origin), axes[1]),
     ];
     let p = [dot3(w, axes[0]), dot3(w, axes[1])];
-    let length = p[0].hypot(p[1]);
+    let length = p[0].portable_hypot(p[1]);
     let (u, v) = if length <= tolerance {
         ([1., 0.], [0., 1.])
     } else {
@@ -358,7 +361,7 @@ pub(crate) fn section(
         .map(|i| {
             let [a, b] = [outline[i], outline[(i + 1) % count]];
             let d = [b[0] - a[0], b[1] - a[1]];
-            let length = d[0].hypot(d[1]);
+            let length = d[0].portable_hypot(d[1]);
             let normal = [-d[1] / length, d[0] / length];
             (normal, normal[0] * a[0] + normal[1] * a[1], a, b)
         })
@@ -424,7 +427,7 @@ pub(crate) fn section(
                     for pair in stops.windows(2) {
                         let [p, q] = [pair[0].1, pair[1].1];
                         let middle = [(p[0] + q[0]) / 2., (p[1] + q[1]) / 2.];
-                        if (q[0] - p[0]).hypot(q[1] - p[1]) > tolerance
+                        if (q[0] - p[0]).portable_hypot(q[1] - p[1]) > tolerance
                             && strictly_inside(middle)
                             && outside_bores(middle, Some(index))
                         {
@@ -495,7 +498,10 @@ pub(crate) fn section(
             }
             // The void lies inside the ellipse: chords plus tangent tips
             // outside it keep every hatch stroke in material.
-            let step_limit = 4. * (tolerance / (4. * (e.major + tolerance))).sqrt().asin();
+            let step_limit = 4.
+                * (tolerance / (4. * (e.major + tolerance)))
+                    .sqrt()
+                    .portable_asin();
             let pieces = ((end - start) / step_limit.clamp(1e-3, 0.5)).ceil().max(1.) as usize;
             if pieces > 100_000 {
                 return Err(err(
@@ -513,8 +519,8 @@ pub(crate) fn section(
             let mut last = first;
             for i in 0..pieces {
                 let middle = start + step * (i as f64 + 0.5);
-                let scale = 1. / (step / 2.).cos();
-                let (s, c) = middle.sin_cos();
+                let scale = 1. / (step / 2.).portable_cos();
+                let (s, c) = middle.portable_sin_cos();
                 let tip = std::array::from_fn(|k| {
                     e.center[k] + scale * (e.major * c * e.u[k] + e.minor * s * e.v[k])
                 });
@@ -560,7 +566,7 @@ pub(crate) fn section(
             for pair in stops.windows(2) {
                 let [p, q] = [pair[0].1, pair[1].1];
                 let middle = [(p[0] + q[0]) / 2., (p[1] + q[1]) / 2.];
-                if (q[0] - p[0]).hypot(q[1] - p[1]) > tolerance
+                if (q[0] - p[0]).portable_hypot(q[1] - p[1]) > tolerance
                     && strictly_inside(middle)
                     && outside_bores(middle, Some(index))
                 {
@@ -578,7 +584,8 @@ pub(crate) fn section(
         for pair in stops.windows(2) {
             let [p, q] = [pair[0].1, pair[1].1];
             let middle = [(p[0] + q[0]) / 2., (p[1] + q[1]) / 2.];
-            if (q[0] - p[0]).hypot(q[1] - p[1]) > tolerance && outside_bores(middle, None) {
+            if (q[0] - p[0]).portable_hypot(q[1] - p[1]) > tolerance && outside_bores(middle, None)
+            {
                 curves.push(Curve::Line([p, q]));
                 hatch.push([p, q]);
             }

@@ -9,6 +9,7 @@ use multicad_kernel::{
         profiled_screw::Spec,
     },
 };
+use multicad_precision::PortableMath as _;
 
 fn thread() -> HelicalThread {
     HelicalThread {
@@ -179,7 +180,7 @@ fn retained_socket_contour_controls_actual_faces_planes_references_and_exchange(
         )
         .unwrap();
         let (source, at) = original.rust_profiled_screw_geometry().unwrap();
-        let (s, c) = 0.37_f64.sin_cos();
+        let (s, c) = 0.37_f64.portable_sin_cos();
         let points = source
             .recess()
             .flat_hex_geometry()
@@ -226,7 +227,7 @@ fn retained_socket_contour_controls_actual_faces_planes_references_and_exchange(
         };
         let expected = project([points[0][0], points[0][1], source.head_top_z()]);
         let d = [points[1][0] - points[0][0], points[1][1] - points[0][1]];
-        let length = d[0].hypot(d[1]);
+        let length = d[0].portable_hypot(d[1]);
         assert!(
             frame
                 .u
@@ -522,8 +523,11 @@ fn covered_thread_prefix_keeps_actual_visible_faces_rims_and_phase() {
                     };
                     assert!(p[2] >= plain + start - 1e-12);
                     let z = p[2] - plain;
-                    let radius = p[0].hypot(p[1]);
-                    assert!((radius - source.thread().radius(p[1].atan2(p[0]), z)).abs() < 1e-10);
+                    let radius = p[0].portable_hypot(p[1]);
+                    assert!(
+                        (radius - source.thread().radius(p[1].portable_atan2(p[0]), z)).abs()
+                            < 1e-10
+                    );
                 }
                 assert_eq!(solid.volume_mm3().unwrap(), source.volume_mm3());
                 if plain == 0. && !left_hand {

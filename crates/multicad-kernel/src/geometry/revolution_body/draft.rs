@@ -49,7 +49,7 @@ impl Solid {
                 + neutral_origin[2]
                     .abs()
                     .max((height - neutral_origin[2]).abs());
-            let amplification = (1. + angle.tan().abs()).powi(2);
+            let amplification = (1. + angle.portable_tan().abs()).powi(2);
             let aligned = |direction: Point| {
                 let direction = vector(direction);
                 let residual = direction[0]
@@ -68,8 +68,8 @@ impl Solid {
             };
             let sense = aligned(pull)?;
             aligned(neutral.normal())?;
-            let radii =
-                [0., height].map(|z| radius - sense * angle.tan() * (z - neutral_origin[2]));
+            let radii = [0., height]
+                .map(|z| radius - sense * angle.portable_tan() * (z - neutral_origin[2]));
             for r in radii {
                 policy.length(r).map_err(|_| {
                     failure(

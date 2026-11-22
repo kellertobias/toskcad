@@ -26,8 +26,9 @@ impl Rail {
         let point = |s: f64| {
             let sample = gear.sample(piece, s);
             let r = gear.end_distance_along(End::Heel, sample.gamma);
-            let dr = heel * (sample.gamma - delta).sin() / (sample.gamma - delta).cos().powi(2);
-            let dgamma = -sample.derivative[2] / sample.gamma.sin();
+            let dr = heel * (sample.gamma - delta).portable_sin()
+                / (sample.gamma - delta).portable_cos().powi(2);
+            let dgamma = -sample.derivative[2] / sample.gamma.portable_sin();
             (
                 gear.point(End::Heel, sample.direction, sample.gamma),
                 std::array::from_fn(|i| {
@@ -139,7 +140,7 @@ pub fn write_bevel(
 }
 
 fn rotate(p: LocalPoint, angle: f64) -> LocalPoint {
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     [c * p[0] - s * p[1], s * p[0] + c * p[1], p[2]]
 }
 
@@ -172,7 +173,8 @@ pub(super) fn encode(
                 start_rad,
                 sweep_rad,
             } => {
-                let reference = placement.vector([start_rad.cos(), start_rad.sin(), 0.]);
+                let reference =
+                    placement.vector([start_rad.portable_cos(), start_rad.portable_sin(), 0.]);
                 let arc = circular_arc_edge(
                     file,
                     [a, b],

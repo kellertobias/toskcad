@@ -61,7 +61,7 @@ fn subtract(a: Point, b: Point) -> Point {
 }
 
 fn length([x, y, z]: Point) -> f64 {
-    x.hypot(y).hypot(z)
+    x.portable_hypot(y).portable_hypot(z)
 }
 
 fn local_vector(frame: PlaneFrame, point: Point) -> Point {

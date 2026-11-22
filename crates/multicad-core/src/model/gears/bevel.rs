@@ -95,21 +95,24 @@ pub struct ResolvedBevelPair {
 }
 fn spherical(gamma: f64, phi: f64) -> [f64; 3] {
     [
-        gamma.sin() * phi.cos(),
-        gamma.sin() * phi.sin(),
-        gamma.cos(),
+        gamma.portable_sin() * phi.portable_cos(),
+        gamma.portable_sin() * phi.portable_sin(),
+        gamma.portable_cos(),
     ]
 }
 fn spherical_sigma(gamma: f64, beta: f64) -> Result<f64, DocumentError> {
-    let value = gamma.cos() / beta.cos();
+    let value = gamma.portable_cos() / beta.portable_cos();
     if !(-1. ..=1.).contains(&value) {
         return Err(invalid("Bevel spherical involute lies below its base cone"));
     }
-    Ok(value.acos())
+    Ok(value.portable_acos())
 }
 fn spherical_inv(gamma: f64, beta: f64) -> Result<f64, DocumentError> {
     let sigma = spherical_sigma(gamma, beta)?;
-    Ok(sigma / beta.sin() - sigma.sin().atan2(beta.sin() * sigma.cos()))
+    Ok(sigma / beta.portable_sin()
+        - sigma
+            .portable_sin()
+            .portable_atan2(beta.portable_sin() * sigma.portable_cos()))
 }
 impl GearParameters {
     pub(super) fn resolve_bevel(
@@ -162,19 +165,21 @@ impl GearParameters {
                 "Straight bevels require zero helix, hand none, center gap and profile shift; hubs and other tooth systems are unavailable",
             ));
         }
-        let delta = shaft.sin().atan2(mate / z + shaft.cos());
-        let distance = m * z / (2. * delta.sin());
+        let delta = shaft
+            .portable_sin()
+            .portable_atan2(mate / z + shaft.portable_cos());
+        let distance = m * z / (2. * delta.portable_sin());
         if width > distance / 3. || width > 10. * m {
             return Err(invalid(
                 "Bevel cone face width must not exceed min(cone distance / 3, 10 * module)",
             ));
         }
         let inner = distance - width;
-        let beta = (delta.sin() * alpha.cos()).asin();
-        let tip = delta + (m / distance).atan();
-        let root = delta - (1.25 * m / distance).atan();
+        let beta = (delta.portable_sin() * alpha.portable_cos()).portable_asin();
+        let tip = delta + (m / distance).portable_atan();
+        let root = delta - (1.25 * m / distance).portable_atan();
         let radius = m * fillet;
-        let rho = (radius / distance).asin();
+        let rho = (radius / distance).portable_asin();
         if !(0. ..PI / 2.).contains(&root)
             || root == 0.
             || tip >= PI / 2.
@@ -192,16 +197,16 @@ impl GearParameters {
         let half = physical / (m * z) + spherical_inv(delta, beta)?;
         let tip_half = half - spherical_inv(tip, beta)?;
         let center_gamma = root + rho;
-        let branch_threshold = (beta.cos() * rho.cos()).acos();
+        let branch_threshold = (beta.portable_cos() * rho.portable_cos()).portable_acos();
         let (branch, touch_gamma, touch_sigma, center, touch) = if center_gamma <= branch_threshold
         {
-            let gamma = (center_gamma.cos() / rho.cos()).acos();
+            let gamma = (center_gamma.portable_cos() / rho.portable_cos()).portable_acos();
             if !gamma.is_finite() || gamma > beta + 1e-12 {
                 return Err(invalid(
                     "Bevel meridian root transition exceeds the base cone",
                 ));
             }
-            let phi = half + (rho.sin() / center_gamma.sin()).asin();
+            let phi = half + (rho.portable_sin() / center_gamma.portable_sin()).portable_asin();
             (
                 BevelRootBranch::Meridian,
                 gamma,
@@ -210,16 +215,18 @@ impl GearParameters {
                 spherical(gamma, half),
             )
         } else {
-            let sigma = (center_gamma.cos() / beta.cos()).acos() - rho;
-            let gamma = (beta.cos() * sigma.cos()).acos();
+            let sigma = (center_gamma.portable_cos() / beta.portable_cos()).portable_acos() - rho;
+            let gamma = (beta.portable_cos() * sigma.portable_cos()).portable_acos();
             let phi = half - spherical_inv(gamma, beta)?;
             let c = spherical(gamma, phi);
-            let dg = beta.cos() * sigma.sin() / gamma.sin();
-            let dp = -1. / beta.sin() + beta.sin() / gamma.sin().powi(2);
+            let dg = beta.portable_cos() * sigma.portable_sin() / gamma.portable_sin();
+            let dp = -1. / beta.portable_sin() + beta.portable_sin() / gamma.portable_sin().powi(2);
             let derivative = [
-                gamma.cos() * phi.cos() * dg - gamma.sin() * phi.sin() * dp,
-                gamma.cos() * phi.sin() * dg + gamma.sin() * phi.cos() * dp,
-                -gamma.sin() * dg,
+                gamma.portable_cos() * phi.portable_cos() * dg
+                    - gamma.portable_sin() * phi.portable_sin() * dp,
+                gamma.portable_cos() * phi.portable_sin() * dg
+                    + gamma.portable_sin() * phi.portable_cos() * dp,
+                -gamma.portable_sin() * dg,
             ];
             let norm = derivative.iter().map(|x| x * x).sum::<f64>().sqrt();
             if norm <= 0. || !norm.is_finite() {
@@ -231,12 +238,12 @@ impl GearParameters {
                 c[2] * t[0] - c[0] * t[2],
                 c[0] * t[1] - c[1] * t[0],
             ];
-            let u = std::array::from_fn(|i| rho.cos() * c[i] + rho.sin() * n[i]);
+            let u = std::array::from_fn(|i| rho.portable_cos() * c[i] + rho.portable_sin() * n[i]);
             (BevelRootBranch::Involute, gamma, sigma, u, c)
         };
-        let center_phi = center[1].atan2(center[0]);
+        let center_phi = center[1].portable_atan2(center[0]);
         let root_tangent = spherical(root, center_phi);
-        let toe_root = inner * root.sin() / (root - delta).cos();
+        let toe_root = inner * root.portable_sin() / (root - delta).portable_cos();
         if physical <= 0.
             || tip_half <= 1e-5 / (m * z / 2.)
             || center_phi >= PI / z
@@ -249,8 +256,8 @@ impl GearParameters {
                 .chain(&touch)
                 .chain(&root_tangent)
                 .any(|v| !v.is_finite())
-            || (center[2].acos() - center_gamma).abs() > 1e-10
-            || tip_half.sin() * inner * tip.sin() <= 1e-5
+            || (center[2].portable_acos() - center_gamma).abs() > 1e-10
+            || tip_half.portable_sin() * inner * tip.portable_sin() <= 1e-5
         {
             return Err(invalid(
                 "Bevel thinning, custom root circle or bore leaves a missing tip/root flat, invalid base transition or insufficient toe wall",
@@ -278,13 +285,13 @@ impl GearParameters {
             bore_radius_mm: bore / 2.,
             minimum_wall_mm: wall,
             toe_root_radius_mm: toe_root,
-            heel_root_radius_mm: distance * root.sin() / (root - delta).cos(),
-            heel_tip_radius_mm: distance * tip.sin() / (tip - delta).cos(),
-            toe_tip_radius_mm: inner * tip.sin() / (tip - delta).cos(),
-            heel_root_axial_mm: distance * root.cos() / (root - delta).cos(),
-            heel_tip_axial_mm: distance * tip.cos() / (tip - delta).cos(),
-            toe_root_axial_mm: inner * root.cos() / (root - delta).cos(),
-            toe_tip_axial_mm: inner * tip.cos() / (tip - delta).cos(),
+            heel_root_radius_mm: distance * root.portable_sin() / (root - delta).portable_cos(),
+            heel_tip_radius_mm: distance * tip.portable_sin() / (tip - delta).portable_cos(),
+            toe_tip_radius_mm: inner * tip.portable_sin() / (tip - delta).portable_cos(),
+            heel_root_axial_mm: distance * root.portable_cos() / (root - delta).portable_cos(),
+            heel_tip_axial_mm: distance * tip.portable_cos() / (tip - delta).portable_cos(),
+            toe_root_axial_mm: inner * root.portable_cos() / (root - delta).portable_cos(),
+            toe_tip_axial_mm: inner * tip.portable_cos() / (tip - delta).portable_cos(),
             root_fillet_radius_mm: radius,
             root_rounding_angle_rad: rho,
             root_branch: branch,
@@ -384,9 +391,11 @@ impl GearPairParameters {
             let u = if i == 0 {
                 base.u
             } else {
-                std::array::from_fn(|j| base.u[j] * shaft.cos() - base.n[j] * shaft.sin())
+                std::array::from_fn(|j| {
+                    base.u[j] * shaft.portable_cos() - base.n[j] * shaft.portable_sin()
+                })
             };
-            let (sin, cos) = phases[i].rem_euclid(2. * PI).sin_cos();
+            let (sin, cos) = phases[i].rem_euclid(2. * PI).portable_sin_cos();
             crate::references::ReferenceFrame {
                 origin_mm: base.origin,
                 u: std::array::from_fn(|j| u[j] * cos + base.v[j] * sin),

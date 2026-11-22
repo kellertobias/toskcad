@@ -7,6 +7,7 @@ use eframe::{
     wgpu::{self, util::DeviceExt},
 };
 use multicad_core::document::EntityId;
+use multicad_precision::PortableMath as _;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -397,8 +398,8 @@ impl Renderer {
             self.scene = Some(scene.clone());
             self.selection = selection;
         }
-        let (s, c) = camera.yaw.sin_cos();
-        let (sp, cp) = camera.pitch.sin_cos();
+        let (s, c) = camera.yaw.portable_sin_cos();
+        let (sp, cp) = camera.pitch.portable_sin_cos();
         let forward = [cp * s, cp * c, sp];
         let distance = size.y.max(1.) / camera.scale * 2.;
         let mut near = 0.1;

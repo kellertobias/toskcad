@@ -3,6 +3,7 @@ use crate::{
     display::{DisplayMesh, MeshError, Tessellation},
     rounded_thread::Thread,
 };
+use multicad_precision::PortableMath as _;
 use std::{collections::HashMap, f64::consts::TAU};
 mod bore;
 mod certificate;
@@ -88,7 +89,8 @@ enum Receiver<'a> {
 pub fn volume_error_bound(thread: &Thread, options: Tessellation) -> Result<f64, Error> {
     options.check()?;
     let receipt = Receipt::new(thread, options)?;
-    let minimum = (thread.root_radius_mm() - receipt.point_error) * (options.angle / 8.).cos();
+    let minimum =
+        (thread.root_radius_mm() - receipt.point_error) * (options.angle / 8.).portable_cos();
     let mut slope = 0_f64;
     for (band, pair) in thread.profile_breaks().windows(2).enumerate() {
         for phase in pair {
@@ -115,7 +117,7 @@ fn radial_graph_volume_bound(
     if minimum <= 0. {
         return Err(MeshError::UnresolvedBoundary.into());
     }
-    let angular = 2. * (deflection / (2. * minimum)).min(1.).asin();
+    let angular = 2. * (deflection / (2. * minimum)).min(1.).portable_asin();
     let error = deflection + radial_speed * angular;
     let bound = std::f64::consts::PI * length * error * (2. * radius + error);
     if !bound.is_finite() {
@@ -493,7 +495,7 @@ impl<'a, 'b> Builder<'a, 'b> {
             }
         };
         let radius = self.thread.radius(angle, z);
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let id = self.mesh.vertices.len() as u32 / 3;
         self.mesh.vertices.extend([radius * cos, radius * sin, z]);
         self.parameters.push([angle, z]);

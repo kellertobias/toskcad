@@ -24,7 +24,7 @@ struct Chart {
 impl Chart {
     fn new(cut: Cut) -> Self {
         let [x, y] = cut.rim;
-        let shift = (cut.tangent * y).atan2(cut.spec.stock_radius_mm + x);
+        let shift = (cut.tangent * y).portable_atan2(cut.spec.stock_radius_mm + x);
         let width = shift + cut.vertical * y / cut.rise;
         let low = cut.spec.start_height_mm - cut.vertical * y;
         let high = cut.spec.start_height_mm + cut.vertical * y;
@@ -32,7 +32,7 @@ impl Chart {
             cut,
             width,
             half_azimuth: shift,
-            alpha: (x / cut.spec.tube_radius_mm).acos(),
+            alpha: (x / cut.spec.tube_radius_mm).portable_acos(),
             low,
             high,
             bottom: (low - (high - low)).max(low * 0.5),
@@ -42,7 +42,7 @@ impl Chart {
     fn inside(&self, column: f64, row: f64) -> Point {
         let cut = self.cut;
         let y = (2. * column - 1.) * cut.rim[1];
-        let shift = (cut.tangent * y / cut.spec.stock_radius_mm).asin();
+        let shift = (cut.tangent * y / cut.spec.stock_radius_mm).portable_asin();
         let end_z = cut.spec.start_height_mm - cut.vertical * y;
         let azimuth = shift + cut.vertical * y / cut.rise;
         self.cylinder(azimuth, mix(self.bottom, end_z, row))
@@ -51,7 +51,7 @@ impl Chart {
     fn cylinder(&self, azimuth: f64, z: f64) -> Point {
         let spec = self.cut.spec;
         let angle = spec.start_angle_rad + azimuth + (z - spec.start_height_mm) / self.cut.rise;
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let r = spec.stock_radius_mm;
         [r * cos, r * sin, z]
     }
@@ -59,13 +59,13 @@ impl Chart {
     fn cavity(&self, column: f64, row: f64) -> Point {
         let cut = self.cut;
         let alpha = self.alpha + column * (TAU - 2. * self.alpha);
-        let (s, c) = alpha.sin_cos();
+        let (s, c) = alpha.portable_sin_cos();
         let [x, y] = [cut.spec.tube_radius_mm * c, cut.spec.tube_radius_mm * s];
         let top = cut.spec.stock_height_mm;
         let start = cut.spec.start_height_mm - cut.vertical * y;
         let z = mix(start, top, row);
         let theta = (z - start) / cut.rise;
-        let (s, c) = (cut.spec.start_angle_rad + theta).sin_cos();
+        let (s, c) = (cut.spec.start_angle_rad + theta).portable_sin_cos();
         let radial = cut.spec.stock_radius_mm + x;
         let side = cut.tangent * y;
         [radial * c - side * s, radial * s + side * c, z]
@@ -73,7 +73,7 @@ impl Chart {
 
     fn start_uv(&self, point: Point) -> [f64; 2] {
         let cut = self.cut;
-        let (s, c) = cut.spec.start_angle_rad.sin_cos();
+        let (s, c) = cut.spec.start_angle_rad.portable_sin_cos();
         [
             c * point[0] + s * point[1] - cut.spec.stock_radius_mm,
             cut.tangent * (c * point[1] - s * point[0])
@@ -102,7 +102,8 @@ impl Counts {
         // Limit deflection below the physical gap between lifted turns.
         // z-rise*azimuth has local gradient norm < 4 near the stock radius.
         let turn_gap = cut.spec.pitch_mm
-            - 2. * (cut.vertical * tube + rise * (cut.tangent * tube / (radius - tube)).asin());
+            - 2. * (cut.vertical * tube
+                + rise * (cut.tangent * tube / (radius - tube)).portable_asin());
         let deflection = options.deflection.min(tube / 16.).min(turn_gap / 16.);
         // On a cylinder only the angular span affects chord error. Divide
         // the cell's allowed span between its row and column directions.

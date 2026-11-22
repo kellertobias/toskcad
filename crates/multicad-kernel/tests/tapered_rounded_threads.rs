@@ -3,6 +3,7 @@ use multicad_kernel::{
     BooleanOperation, GeometryError, PlaneFrame, RigidTransform, RoundedHelicalThread, Solid,
     rust_kernel::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec},
 };
+use multicad_precision::PortableMath as _;
 
 /// Owned-kernel tapered rounded (BSPT / ISO 7) pipe thread. Its tangent circle
 /// radius is derived from the exact closure equation; it must contain the
@@ -45,7 +46,7 @@ fn rust_tapered(s: RoundedHelicalThread) -> Result<Solid, GeometryError> {
 fn expected_volume(s: RoundedHelicalThread) -> f64 {
     let a = 27.5_f64.to_radians();
     let k = s.radial_taper;
-    let m = 1. / a.tan();
+    let m = 1. / a.portable_tan();
     let q = (1. + k * k).sqrt();
     let r = s.rounding_radius_mm;
     let h = s.depth_mm;
@@ -53,7 +54,7 @@ fn expected_volume(s: RoundedHelicalThread) -> f64 {
     let fundamental = p * (m * m - k * k) / (2. * m);
     let left = -fundamental / (m - k);
     let right = fundamental / (m + k);
-    let half = r * a.cos();
+    let half = r * a.portable_cos();
     let crest_center = -r * q;
     let first = left + k * r / q;
     let samples = 20000;
@@ -67,11 +68,11 @@ fn expected_volume(s: RoundedHelicalThread) -> f64 {
         let radius = if z < left + half {
             -h + k * left + r * q - (r * r - (z - left).powi(2)).sqrt()
         } else if z < -half {
-            crest_center + r * a.sin() + m * (z + half)
+            crest_center + r * a.portable_sin() + m * (z + half)
         } else if z <= half {
             crest_center + (r * r - z * z).sqrt()
         } else if z < right - half {
-            crest_center + r * a.sin() - m * (z - half)
+            crest_center + r * a.portable_sin() - m * (z - half)
         } else {
             -h + k * right + r * q - (r * r - (z - right).powi(2)).sqrt()
         };
@@ -176,12 +177,12 @@ fn fraction(solid: &Solid, point: [f64; 3], size: f64) -> f64 {
 fn tapered_profile_preserves_axial_circles_flanks_and_gauge_cones() {
     let a = 27.5_f64.to_radians();
     let pitch = 25.4 / 28.;
-    let depth = pitch / (3. * a.tan());
+    let depth = pitch / (3. * a.portable_tan());
     for k in [1. / 32., -1. / 32.] {
-        let m = 1. / a.tan();
+        let m = 1. / a.portable_tan();
         let q = (1_f64 + k * k).sqrt();
         let fundamental = pitch * (m * m - k * k) / (2. * m);
-        let r = (fundamental - depth) / (2. * (1. / a.sin() - q));
+        let r = (fundamental - depth) / (2. * (1. / a.portable_sin() - q));
         assert!((fundamental / pitch - 0.960237).abs() < 0.0000005);
         assert!((r / pitch - 0.137278).abs() < 0.0000005);
         let gauge_z = if k > 0. { 4. } else { pitch / 2. };
@@ -214,8 +215,8 @@ fn tapered_profile_preserves_axial_circles_flanks_and_gauge_cones() {
                     let measured = fraction(
                         &solid,
                         [
-                            (radius + offset) * theta.cos(),
-                            (radius + offset) * theta.sin(),
+                            (radius + offset) * theta.portable_cos(),
+                            (radius + offset) * theta.portable_sin(),
                             z,
                         ],
                         0.0002,
@@ -231,7 +232,7 @@ fn tapered_profile_preserves_axial_circles_flanks_and_gauge_cones() {
                 }
             }
         }
-        let half = r * a.cos();
+        let half = r * a.portable_cos();
         // Independent analytic meridian: centers translate along the taper,
         // but each arc remains a circle, with unsheared +/-cot(alpha) flanks.
         for turn in [2., 4.] {
@@ -258,7 +259,7 @@ fn tapered_profile_preserves_axial_circles_flanks_and_gauge_cones() {
                 ),
                 (
                     z + 0.25 * pitch,
-                    crest_center + r * a.sin() - m * (0.25 * pitch - half),
+                    crest_center + r * a.portable_sin() - m * (0.25 * pitch - half),
                 ),
             ] {
                 let epsilon = 0.001;

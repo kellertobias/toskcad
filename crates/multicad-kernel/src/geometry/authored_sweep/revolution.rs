@@ -13,7 +13,7 @@ const REVOLVE: &str = "Rust curved revolution";
 
 /// Rotation about the unit axis `a` through `origin` by `angle`.
 fn rotation(origin: P, a: P, angle: f64) -> Affine {
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     let m: [P; 3] = std::array::from_fn(|i| {
         std::array::from_fn(|j| {
             let identity = f64::from(u8::from(i == j));
@@ -47,7 +47,7 @@ fn middle(path: &Path, tolerance: f64) -> Result<(P, P), GeometryError> {
             range,
         } => {
             let t = 0.5 * (range[0] + range[1]);
-            let (sin, cos) = t.sin_cos();
+            let (sin, cos) = t.portable_sin_cos();
             (
                 add(*center, add(scale(axes[0], cos), scale(axes[1], sin))),
                 add(scale(axes[0], -sin), scale(axes[1], cos)),
@@ -80,7 +80,7 @@ impl Meridian {
     }
 
     fn radial_at(self, angle: f64) -> P {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         add(
             scale(self.radial, c),
             scale(cross(self.axis, self.radial), s),
@@ -101,7 +101,7 @@ impl Meridian {
         match path {
             Path::Line([a, b]) => {
                 let ([r0, z0], [r1, z1]) = (self.coordinates(*a), self.coordinates(*b));
-                let scale_mm = (r1 - r0).hypot(z1 - z0);
+                let scale_mm = (r1 - r0).portable_hypot(z1 - z0);
                 if (r1 - r0).abs() <= 1e-12 * scale_mm {
                     return Ok(Surface::Cylinder {
                         frame: self.frame(z0),
@@ -127,7 +127,7 @@ impl Meridian {
                 Ok(Surface::Cone {
                     frame,
                     radius,
-                    half_angle: ((r1 - r0).abs() / height.abs()).atan(),
+                    half_angle: ((r1 - r0).abs() / height.abs()).portable_atan(),
                 })
             }
             Path::Conic { center, axes, .. } => {
@@ -244,10 +244,10 @@ impl Solid {
                     range,
                 } => {
                     let along = [dot(axes[0], radial), dot(axes[1], radial)];
-                    let nearest = (-along[1]).atan2(-along[0]);
+                    let nearest = (-along[1]).portable_atan2(-along[0]);
                     let travel = (nearest - range[0]).rem_euclid(TAU);
                     let inside = travel > 1e-9 && travel < range[1] - range[0] - 1e-9;
-                    let (sin, cos) = nearest.sin_cos();
+                    let (sin, cos) = nearest.portable_sin_cos();
                     let reach = meridian.coordinates(*center)[0] + along[0] * cos + along[1] * sin;
                     inside && reach <= tolerance
                 }

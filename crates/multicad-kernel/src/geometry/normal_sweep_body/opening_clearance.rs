@@ -32,7 +32,7 @@ fn disk_inside(outline: &[Edge], p: [f64; 2], radius: f64, margin: f64) -> bool 
         },
     ] = outline
     {
-        return (p[0] - center[0]).hypot(p[1] - center[1]) + radius + margin <= *radius_mm;
+        return (p[0] - center[0]).portable_hypot(p[1] - center[1]) + radius + margin <= *radius_mm;
     }
     // Otherwise the certificate holds four straight edges; a convex
     // counter-clockwise polygon contains the disk when the center keeps the
@@ -57,7 +57,7 @@ fn disk_inside(outline: &[Edge], p: [f64; 2], radius: f64, margin: f64) -> bool 
     convex
         && lines.iter().all(|&(a, b)| {
             let d = [b[0] - a[0], b[1] - a[1]];
-            let length = d[0].hypot(d[1]);
+            let length = d[0].portable_hypot(d[1]);
             length > 0. && (d[0] * (p[1] - a[1]) - d[1] * (p[0] - a[0])) / length >= radius + margin
         })
 }
@@ -118,10 +118,12 @@ impl Rectangle {
             c[0].clamp(0., self.length),
             c[1].clamp(-self.half_width, self.half_width),
         ];
-        let near = (c[0] - nearest[0]).hypot(c[1] - nearest[1]);
+        let near = (c[0] - nearest[0]).portable_hypot(c[1] - nearest[1]);
         let far = [0., self.length]
             .into_iter()
-            .flat_map(|s| [-self.half_width, self.half_width].map(|t| (c[0] - s).hypot(c[1] - t)))
+            .flat_map(|s| {
+                [-self.half_width, self.half_width].map(|t| (c[0] - s).portable_hypot(c[1] - t))
+            })
             .fold(0., f64::max);
         !(near >= radius || far <= radius)
     }
@@ -132,7 +134,7 @@ impl Rectangle {
     /// an arc that reaches the interior must start there or cross the
     /// boundary on its way.
     fn may_meet_arc(&self, center: [f64; 2], a: [f64; 2], b: [f64; 2], clockwise: bool) -> bool {
-        let radius = (a[0] - center[0]).hypot(a[1] - center[1]);
+        let radius = (a[0] - center[0]).portable_hypot(a[1] - center[1]);
         if !self.may_meet_circle(center, radius) {
             return false;
         }
@@ -146,8 +148,8 @@ impl Rectangle {
         }
         // Counter-clockwise angle from the start, in [0, τ).
         let turn = |x: [f64; 2]| {
-            let start = (p[1] - c[1]).atan2(p[0] - c[0]);
-            let angle = (x[1] - c[1]).atan2(x[0] - c[0]) - start;
+            let start = (p[1] - c[1]).portable_atan2(p[0] - c[0]);
+            let angle = (x[1] - c[1]).portable_atan2(x[0] - c[0]) - start;
             let angle = if clockwise { -angle } else { angle };
             angle.rem_euclid(std::f64::consts::TAU)
         };
@@ -237,7 +239,7 @@ fn cylinder_misses_profile(
     }
     let in_plane = |w: [f64; 3]| [dot(w, frame.u), dot(w, frame.v)];
     let direction = in_plane(axis);
-    let norm = direction[0].hypot(direction[1]);
+    let norm = direction[0].portable_hypot(direction[1]);
     let scale = base
         .into_iter()
         .chain(frame.origin)

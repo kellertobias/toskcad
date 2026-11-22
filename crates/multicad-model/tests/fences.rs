@@ -7,6 +7,7 @@ use multicad_core::{
 };
 use multicad_kernel::{GeometryPolicy, Solid};
 use multicad_model::{Compiler, EvaluationCache, GeometryBackend, Model, ModelError};
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
 }
@@ -213,7 +214,7 @@ fn l_closed_and_rotated_runs_keep_native_member_counts_and_do_not_overlap() {
         let m = compile(&s);
         let v = volume(&s, &m, run.id);
         assert_eq!(m.snapshot().bodies.len(), count);
-        let (sin, cos) = 30_f64.to_radians().sin_cos();
+        let (sin, cos) = 30_f64.to_radians().portable_sin_cos();
         for (vertex, p) in run.definition.path.vertices.iter_mut().zip(points) {
             vertex.point = [
                 length(p[0] * cos - p[1] * sin + 300.),

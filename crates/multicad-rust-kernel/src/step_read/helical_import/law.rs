@@ -32,16 +32,17 @@ impl Law {
                     && a > -std::f64::consts::FRAC_PI_2
                     && b < std::f64::consts::FRAC_PI_2,
             )?;
-            let f = (phase_lower - phase_upper) / (b.sin() - a.sin());
+            let f = (phase_lower - phase_upper) / (b.portable_sin() - a.portable_sin());
             // The literal circular-root domain carries its tangent angles;
             // avoid recovering depth by subtracting distant world radii.
             let lower = std::f64::consts::FRAC_PI_2 - b;
             let upper = std::f64::consts::FRAC_PI_2 + a;
             let half = (lower + upper) / 2.;
             let tilt = (upper - lower) / 2.;
-            let intersection = (pitch - 2. * phase_start) / (lower.tan() + upper.tan());
+            let intersection =
+                (pitch - 2. * phase_start) / (lower.portable_tan() + upper.portable_tan());
             (
-                intersection - f * (tilt.cos() / half.sin() - 1.),
+                intersection - f * (tilt.portable_cos() / half.portable_sin() - 1.),
                 Some(f),
                 [lower.to_degrees(), upper.to_degrees()],
             )
@@ -49,7 +50,10 @@ impl Law {
             (
                 major - upper_radius,
                 None,
-                [lower_run.atan().to_degrees(), upper_run.atan().to_degrees()],
+                [
+                    lower_run.portable_atan().to_degrees(),
+                    upper_run.portable_atan().to_degrees(),
+                ],
             )
         };
         Ok(Self {

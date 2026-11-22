@@ -3,12 +3,12 @@ use crate::rounded_thread::Spec;
 fn thread(left_hand: bool) -> Thread {
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     Thread::new(Spec {
         major_radius_mm: 3.175,
         pitch_mm: p,
         length_mm: 3.7 * p,
-        depth_mm: p / (3. * a.tan()),
+        depth_mm: p / (3. * a.portable_tan()),
         crest_radius_mm: r,
         root_radius_mm: r,
         flank_angle_deg: 27.5,
@@ -30,7 +30,7 @@ fn literal_through_material_and_cylindrical_support_are_independent_of_hand() {
         assert!((b.volume_mm3() + t.volume_mm3() - PI * 25. * b.length_mm()).abs() < 1e-12);
         for z in [0., 1., b.length_mm()] {
             for theta in [0_f64, 0.31, 1.7, 4.2] {
-                let (s, c) = theta.sin_cos();
+                let (s, c) = theta.portable_sin_cos();
                 let r = t.radius(theta, z);
                 assert!(!b.contains([0., 0., z], 0.));
                 assert!(b.contains([4.9 * c, 4.9 * s, z], 0.));
@@ -48,7 +48,7 @@ fn literal_through_material_and_cylindrical_support_are_independent_of_hand() {
             [0.; 3],
         ] {
             let bounds = b.support_bounds(d, 1e-10).unwrap();
-            let expected = 5. * d[0].hypot(d[1]) + b.length_mm() * d[2].max(0.);
+            let expected = 5. * d[0].portable_hypot(d[1]) + b.length_mm() * d[2].max(0.);
             assert!(
                 bounds[0] <= expected && bounds[1] >= expected,
                 "{d:?} {bounds:?} {expected}"

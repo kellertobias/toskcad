@@ -21,6 +21,7 @@ use multicad_kernel::{
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
 use multicad_model::{Compiler, GeometryBackend, Model};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn near(actual: f64, expected: f64) {
@@ -76,7 +77,7 @@ fn expected(
         + PI * (openings * (outer * outer - inner * inner)
             + (2. - openings) * (outer * outer + inner * inner));
     let normal = frame.normal();
-    let radial = |i: usize| outer * frame.u[i].hypot(frame.v[i]);
+    let radial = |i: usize| outer * frame.u[i].portable_hypot(frame.v[i]);
     let bounds = Bounds {
         min: std::array::from_fn(|i| {
             frame.origin[i] + (normal[i] * a[0]).min(normal[i] * a[1]) - radial(i)

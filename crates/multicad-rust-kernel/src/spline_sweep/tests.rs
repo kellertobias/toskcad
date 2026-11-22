@@ -5,6 +5,7 @@ use crate::{
     spur_gear, step,
     step_read::{ImportProfile, ReadError, read_import_compound, read_import_solid},
 };
+use multicad_precision::PortableMath as _;
 
 const TOLERANCE: f64 = 1e-7;
 const OPTIONS: Tessellation = Tessellation {
@@ -57,7 +58,7 @@ fn non_gear_sweep_metrics_retain_cubic_area_centroid_and_support() {
     assert_eq!(sweep.support([0.; 3]), 0.);
     assert!(sweep.support([f64::INFINITY, 0., 0.]).is_nan());
 
-    let exact_length = (5. + 16. / 3. * 0.75_f64.asinh()) / 2.;
+    let exact_length = (5. + 16. / 3. * 0.75_f64.portable_asinh()) / 2.;
     let [lo, hi] = parabola().length_bounds_mm(1e-5).unwrap();
     assert!(lo <= exact_length && exact_length <= hi && hi - lo <= 1e-5);
     let [lo, hi] = sweep.surface_area_bounds_mm2(1e-4).unwrap();
@@ -110,11 +111,11 @@ fn gear() -> spur_gear::Profile {
         spur_gear::Spec {
             teeth,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * angle.cos(),
+            base_radius_mm: pitch * angle.portable_cos(),
             tip_radius_mm: pitch + 2.,
             root_radius_mm: pitch - 2.5,
             root_fillet_radius_mm: 0.4,
-            half_base_angle_rad: std::f64::consts::PI / (2. * pitch) + angle.tan()
+            half_base_angle_rad: std::f64::consts::PI / (2. * pitch) + angle.portable_tan()
                 - angle
                 - 0.05 / (2. * pitch),
             face_width_mm: 8.,

@@ -6,9 +6,9 @@ use multicad_rust_kernel::{display::DisplayMesh, manufacturing::certify};
 fn rd(internal: bool, left_hand: bool) -> Spec {
     let p = 3.175;
     let a = 15_f64.to_radians();
-    let r = p * (a.cos() - a.sin()) / (4. * (1. - a.sin()));
+    let r = p * (a.portable_cos() - a.portable_sin()) / (4. * (1. - a.portable_sin()));
     let d = if internal {
-        0.05 * p * a.sin() / (1. - a.sin())
+        0.05 * p * a.portable_sin() / (1. - a.portable_sin())
     } else {
         0.
     };
@@ -74,7 +74,7 @@ fn rounded_hex_nut_and_screw_have_exact_volume_closed_mesh_faces_and_topology() 
             })
             .unwrap();
             assert!(
-                (proof.signed_volume_mm3 - volume).abs() < 0.05 * volume.cbrt(),
+                (proof.signed_volume_mm3 - volume).abs() < 0.05 * volume.portable_cbrt(),
                 "{} {volume}",
                 proof.signed_volume_mm3
             );

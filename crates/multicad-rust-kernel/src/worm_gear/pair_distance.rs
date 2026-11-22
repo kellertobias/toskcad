@@ -432,7 +432,7 @@ impl Search<'_> {
         let z = value[2];
         let (blank, h) = (self.blank, self.h);
         let beyond = (z.lo - h).max(-h - z.hi).max(0.);
-        let outside = (radius.lo - blank).max(0.).hypot(beyond);
+        let outside = (radius.lo - blank).max(0.).portable_hypot(beyond);
         let within = radius.lo <= blank;
         let beyond_radius = radius.hi > blank;
         let slab = z.lo <= h && z.hi >= -h;
@@ -709,7 +709,7 @@ impl Search<'_> {
             .iter()
             .map(|m| {
                 let ends = gap(m.value[2], k(self.h)).min(gap(m.value[2], k(-self.h)));
-                gap(radius(m), bore).hypot(ends)
+                gap(radius(m), bore).portable_hypot(ends)
             })
             .fold(f64::INFINITY, f64::min);
         (wall, circle)
@@ -719,12 +719,12 @@ impl Search<'_> {
     /// material, is an actual wheel point.
     fn observe_material(&mut self, image: &Image) {
         let p = image.local;
-        let r = p[0].hypot(p[1]);
+        let r = p[0].portable_hypot(p[1]);
         let scale = if r > self.blank { self.blank / r } else { 1. };
         let q = [p[0] * scale, p[1] * scale, p[2].clamp(-self.h, self.h)];
         let wheel = self.wheel;
         let m = wheel.module_mm();
-        let rq = q[0].hypot(q[1]);
+        let rq = q[0].portable_hypot(q[1]);
         if wheel.bore_radius_mm().is_some_and(|b| rq * m <= b)
             || wheel.space_margin(q[0], q[1], q[2]) <= 0.
         {
@@ -741,12 +741,15 @@ impl Search<'_> {
     /// Whether the projected box center lies strictly in a tooth space.
     fn projected_space(&self, image: &Image) -> bool {
         let [x, y, z] = image.local;
-        let r = x.hypot(y);
+        let r = x.portable_hypot(y);
         let scale = if r > self.blank { self.blank / r } else { 1. };
         let (x, y, z) = (x * scale, y * scale, z.clamp(-self.h, self.h));
         let wheel = self.wheel;
         let m = wheel.module_mm();
-        if wheel.bore_radius_mm().is_some_and(|b| (x.hypot(y)) * m < b) {
+        if wheel
+            .bore_radius_mm()
+            .is_some_and(|b| (x.portable_hypot(y)) * m < b)
+        {
             return true;
         }
         wheel.space_margin(x, y, z) < -1e-12
@@ -911,9 +914,9 @@ mod tests {
     /// Canonical mating pose, as in the clearance tests.
     fn pose(teeth: u32, drive: f64, extra: f64) -> [Placement; 2] {
         let center = f64::from(teeth) / 2. + 5.;
-        let (sw, cw) = drive.sin_cos();
+        let (sw, cw) = drive.portable_sin_cos();
         let turn = -drive / f64::from(teeth) + extra;
-        let (s, c) = turn.sin_cos();
+        let (s, c) = turn.portable_sin_cos();
         [
             Placement {
                 origin_mm: [center, 0., 0.],

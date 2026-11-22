@@ -7,6 +7,7 @@
 //! folded, developed and scheduled values agree; the deliverables are read
 //! back by independent readers; and an external MCP client previews,
 //! applies and undoes a panel change with attributed activity.
+use multicad_precision::PortableMath as _;
 #[path = "../examples/control_desk_review.rs"]
 #[allow(dead_code)]
 mod review;
@@ -529,10 +530,10 @@ fn polyline_area(poly: &::dxf::entities::LwPolyline) -> f64 {
             if a.bulge.abs() < 1e-12 {
                 cross
             } else {
-                let theta = 4. * a.bulge.atan();
-                let chord = (a.x - b.x).hypot(a.y - b.y);
-                let radius = chord / (2. * (theta.abs() * 0.5).sin());
-                cross + radius * radius * (theta - theta.sin()) * 0.5
+                let theta = 4. * a.bulge.portable_atan();
+                let chord = (a.x - b.x).portable_hypot(a.y - b.y);
+                let radius = chord / (2. * (theta.abs() * 0.5).portable_sin());
+                cross + radius * radius * (theta - theta.portable_sin()) * 0.5
             }
         })
         .sum()

@@ -5,6 +5,7 @@ use multicad_core::{
 use multicad_kernel::{
     BRepSelection, GeometryErrorKind, GeometryPolicy, PlaneFrame, Solid, rust_kernel::Rational,
 };
+use multicad_precision::PortableMath as _;
 
 fn sphere() -> Solid {
     Solid::rust_sphere_named(
@@ -76,11 +77,21 @@ fn finite_sphere_and_surface_distances_keep_witnesses_and_interior_semantics() {
                 };
                 assert_eq!(on_probe, point);
                 let delta: [f64; 3] = std::array::from_fn(|i| on_sphere[i] - on_probe[i]);
-                assert!((delta[0].hypot(delta[1]).hypot(delta[2]) - expected).abs() < 1e-7);
+                assert!(
+                    (delta[0].portable_hypot(delta[1]).portable_hypot(delta[2]) - expected).abs()
+                        < 1e-7
+                );
                 if spherical != BRepSelection::Whole || material > 0. {
                     let relative: [f64; 3] =
                         std::array::from_fn(|i| on_sphere[i] - [10., -20., 30.][i]);
-                    assert!((relative[0].hypot(relative[1]).hypot(relative[2]) - 2.).abs() < 1e-7);
+                    assert!(
+                        (relative[0]
+                            .portable_hypot(relative[1])
+                            .portable_hypot(relative[2])
+                            - 2.)
+                            .abs()
+                            < 1e-7
+                    );
                 }
             }
         }
@@ -105,7 +116,7 @@ fn subnormal_probes_keep_a_valid_surface_witness_without_unique_direction_claims
     assert_eq!(result.total_solutions, None);
     assert!(!result.witnesses_complete);
     let p = result.witnesses[0].a_mm;
-    assert!((p[0].hypot(p[1]).hypot(p[2]) - 2.).abs() < 1e-7);
+    assert!((p[0].portable_hypot(p[1]).portable_hypot(p[2]) - 2.).abs() < 1e-7);
 }
 
 #[test]

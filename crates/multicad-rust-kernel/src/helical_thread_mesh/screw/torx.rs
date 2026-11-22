@@ -33,11 +33,11 @@ pub(super) fn stations(source: &Drive, options: Tessellation) -> Result<Vec<f64>
             } else {
                 let t = arc.start_angle_rad + arc.sweep_rad * i as f64 / count;
                 [
-                    arc.center_mm[0] + arc.radius_mm * t.cos(),
-                    arc.center_mm[1] + arc.radius_mm * t.sin(),
+                    arc.center_mm[0] + arc.radius_mm * t.portable_cos(),
+                    arc.center_mm[1] + arc.radius_mm * t.portable_sin(),
                 ]
             };
-            result.push(point[1].atan2(point[0]).rem_euclid(TAU));
+            result.push(point[1].portable_atan2(point[0]).rem_euclid(TAU));
         }
     }
     Ok(result)
@@ -73,20 +73,22 @@ fn validate_ring(
         .zip(points.iter().cycle().skip(1))
         .take(points.len())
     {
-        let theta = a[1].atan2(a[0]).rem_euclid(TAU);
-        let delta = (b[1].atan2(b[0]) - theta).rem_euclid(TAU);
+        let theta = a[1].portable_atan2(a[0]).rem_euclid(TAU);
+        let delta = (b[1].portable_atan2(b[0]) - theta).rem_euclid(TAU);
         let index = source
             .arc_index_at_angle(theta + delta * 0.5)
             .ok_or(MeshError::UnresolvedBoundary)?;
         let arc = &source.arcs()[index];
         let pa = [a[0] - arc.center_mm[0], a[1] - arc.center_mm[1]];
         let pb = [b[0] - arc.center_mm[0], b[1] - arc.center_mm[1]];
-        let span =
-            ((pb[1].atan2(pb[0]) - pa[1].atan2(pa[0])) * arc.sweep_rad.signum()).rem_euclid(TAU);
+        let span = ((pb[1].portable_atan2(pb[0]) - pa[1].portable_atan2(pa[0]))
+            * arc.sweep_rad.signum())
+        .rem_euclid(TAU);
         let parameter_reserve = reserve / arc.radius_mm;
         let finite_endpoint = |p: [f64; 2]| {
-            let offset =
-                ((p[1].atan2(p[0]) - arc.start_angle_rad) * arc.sweep_rad.signum()).rem_euclid(TAU);
+            let offset = ((p[1].portable_atan2(p[0]) - arc.start_angle_rad)
+                * arc.sweep_rad.signum())
+            .rem_euclid(TAU);
             offset <= arc.sweep_rad.abs() + parameter_reserve || TAU - offset <= parameter_reserve
         };
         let chord = (I::point(arc.radius_mm)
@@ -107,8 +109,8 @@ fn validate_ring(
             && span <= arc.sweep_rad.abs() + parameter_reserve
             && finite_endpoint(pa)
             && finite_endpoint(pb)
-            && (pa[0].hypot(pa[1]) - arc.radius_mm).abs() <= reserve
-            && (pb[0].hypot(pb[1]) - arc.radius_mm).abs() <= reserve
+            && (pa[0].portable_hypot(pa[1]) - arc.radius_mm).abs() <= reserve
+            && (pb[0].portable_hypot(pb[1]) - arc.radius_mm).abs() <= reserve
             && chord <= chord_request(source, options)
             && floor <= options.deflection / 4.)
         {
@@ -137,11 +139,11 @@ impl HeadMesh<'_, '_> {
                 let r = source
                     .radius_at_angle_mm(angle)
                     .ok_or(MeshError::UnresolvedBoundary)?;
-                [r * angle.cos(), r * angle.sin()]
+                [r * angle.portable_cos(), r * angle.portable_sin()]
             };
             let z = if floor {
                 top + source.cone().tip_depth_mm
-                    - point[0].hypot(point[1]) * source.cone().depth_per_radius
+                    - point[0].portable_hypot(point[1]) * source.cone().depth_per_radius
             } else {
                 top
             };

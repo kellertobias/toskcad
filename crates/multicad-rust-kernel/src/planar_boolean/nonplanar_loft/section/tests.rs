@@ -4,7 +4,7 @@ const TOL: f64 = 1e-7;
 const RECTANGLE: [[f64; 2]; 4] = [[-2., -1.], [2., -1.], [2., 1.], [-2., 1.]];
 
 fn loft() -> NonplanarLoft {
-    let (sin, cos) = std::f64::consts::FRAC_PI_6.sin_cos();
+    let (sin, cos) = std::f64::consts::FRAC_PI_6.portable_sin_cos();
     let top = RECTANGLE.map(|[x, y]| [cos * x - sin * y + 1., sin * x + cos * y + 0.5]);
     NonplanarLoft::new([&RECTANGLE, &top], 6., TOL).unwrap()
 }

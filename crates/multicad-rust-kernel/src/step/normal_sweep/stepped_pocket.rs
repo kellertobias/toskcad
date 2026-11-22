@@ -75,7 +75,7 @@ fn ring_walls(
                 WallSupport::Cylinder(axis),
             ) => {
                 let [x, y] = std::array::from_fn(|j| a[j] - center[j]);
-                let radius = x.hypot(y);
+                let radius = x.portable_hypot(y);
                 let axis = if *clockwise {
                     let center = file.point(placement.point_f64(*center, levels[0]));
                     file.axis(

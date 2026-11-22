@@ -5,6 +5,7 @@
 //! integrated over the trimmed parameter domains with the exact surface
 //! evaluators; tessellation, sections and bounds read the same boundary.
 
+use multicad_precision::PortableMath as _;
 pub mod affine;
 mod containment;
 pub mod curve;
@@ -89,7 +90,7 @@ pub(crate) fn turn(a: Point, b: Point) -> f64 {
     if sine == 0. && cosine == 0. {
         0.
     } else {
-        sine.atan2(cosine)
+        sine.portable_atan2(cosine)
     }
 }
 

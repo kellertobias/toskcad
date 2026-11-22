@@ -61,7 +61,7 @@ pub(crate) fn round_contacts(
                     };
                     if endpoints.insert(parameter) {
                         if points.iter().any(|p| {
-                            (p[0] - point[0]).hypot(p[1] - point[1])
+                            (p[0] - point[0]).portable_hypot(p[1] - point[1])
                                 <= policy.linear_tolerance_mm * 2.
                         }) {
                             return Err(uncertain());
@@ -95,7 +95,8 @@ pub(crate) fn round_contacts(
                     std::array::from_fn(|i| center[i] + (hull.0[i].lo + hull.0[i].hi) * 0.5);
                 if hull.sample_error(point, center) > policy.linear_tolerance_mm * 0.125
                     || points.iter().any(|p| {
-                        (p[0] - point[0]).hypot(p[1] - point[1]) <= policy.linear_tolerance_mm * 2.
+                        (p[0] - point[0]).portable_hypot(p[1] - point[1])
+                            <= policy.linear_tolerance_mm * 2.
                     })
                 {
                     return Err(uncertain());

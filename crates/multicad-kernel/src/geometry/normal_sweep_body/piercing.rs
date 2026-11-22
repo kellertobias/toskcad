@@ -267,7 +267,11 @@ impl NormalSweepBody {
                     *value += (*value - center) * ratio;
                 }
             }
-            let thickness = opening.spec.through.into_iter().fold(0_f64, f64::hypot);
+            let thickness = opening
+                .spec
+                .through
+                .into_iter()
+                .fold(0_f64, f64::portable_hypot);
             for (index, &edge) in opening.spec.outline.iter().enumerate() {
                 let center = frames
                     .map(|frame| crate::geometry::rounded_slot_body::point(frame, edge.centroid()));
@@ -358,7 +362,7 @@ fn cavity_plane(frame: ReferenceFrame, edge: Edge) -> Option<ReferenceFrame> {
         return None;
     };
     let [dx, dy] = std::array::from_fn(|i| b[i] - a[i]);
-    let length = dx.hypot(dy);
+    let length = dx.portable_hypot(dy);
     Some(ReferenceFrame {
         origin_mm: crate::geometry::rounded_slot_body::point(frame, a),
         u: std::array::from_fn(|i| (dx * frame.u[i] + dy * frame.v[i]) / length),

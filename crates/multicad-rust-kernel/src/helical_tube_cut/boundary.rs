@@ -25,7 +25,7 @@ impl Cut {
     }
 
     pub fn floor_frame(self) -> (Point, Point, Point) {
-        let (sin, cos) = self.spec.start_angle_rad.sin_cos();
+        let (sin, cos) = self.spec.start_angle_rad.portable_sin_cos();
         let radial = [cos, sin, 0.];
         let transverse = [-sin * self.tangent, cos * self.tangent, -self.vertical];
         (
@@ -47,11 +47,12 @@ impl Cut {
                 [b, a + TAU]
             }
             BoundaryEdge::FloorRim | BoundaryEdge::TopCavity => {
-                let first = (self.rim[0] / self.spec.tube_radius_mm).acos();
+                let first = (self.rim[0] / self.spec.tube_radius_mm).portable_acos();
                 [first, TAU - first]
             }
             BoundaryEdge::FloorCylinder => {
-                let limit = (self.tangent * self.rim[1] / self.spec.stock_radius_mm).asin();
+                let limit =
+                    (self.tangent * self.rim[1] / self.spec.stock_radius_mm).portable_asin();
                 [-limit, limit]
             }
             BoundaryEdge::Rail { positive } => {
@@ -65,7 +66,7 @@ impl Cut {
     pub fn edge_point(self, edge: BoundaryEdge, parameter: f64) -> Point {
         let radius = self.spec.stock_radius_mm;
         let tube = self.spec.tube_radius_mm;
-        let (sin, cos) = parameter.sin_cos();
+        let (sin, cos) = parameter.portable_sin_cos();
         match edge {
             BoundaryEdge::Bottom => [radius * cos, radius * sin, 0.],
             BoundaryEdge::TopRim => [radius * cos, radius * sin, self.spec.stock_height_mm],
@@ -77,7 +78,7 @@ impl Cut {
                 [radius * cos, radius * sin, z]
             }
             BoundaryEdge::FloorCylinder => {
-                let (sin_phase, cos_phase) = self.spec.start_angle_rad.sin_cos();
+                let (sin_phase, cos_phase) = self.spec.start_angle_rad.portable_sin_cos();
                 [
                     radius * (cos_phase * cos - sin_phase * sin),
                     radius * (sin_phase * cos + cos_phase * sin),
@@ -128,16 +129,17 @@ impl Cut {
         let cylinder_removed = 2.
             * radius
             * center_sweep
-            * (self.vertical * half + self.rise * (self.tangent * half / radius).asin());
+            * (self.vertical * half + self.rise * (self.tangent * half / radius).portable_asin());
         let cavity_angles = self.edge_domain(BoundaryEdge::FloorRim);
         let [a, b] = cavity_angles;
         let cavity_area = tube
             * center_sweep
-            * (radius / self.vertical * (b - a) + self.vertical * tube * (b.sin() - a.sin()));
+            * (radius / self.vertical * (b - a)
+                + self.vertical * tube * (b.portable_sin() - a.portable_sin()));
 
-        let beta = (half / tube).asin();
+        let beta = (half / tube).portable_asin();
         let caps = integrate([-beta, beta], |t| {
-            let (sin, cos) = t.sin_cos();
+            let (sin, cos) = t.portable_sin_cos();
             let y = tube * sin;
             let dy = tube * cos;
             let lo = -dy;
@@ -161,7 +163,7 @@ impl Cut {
             .map(|value| value * width * dy)
         });
         let wall = integrate([-beta, beta], |t| {
-            let (sin, cos) = t.sin_cos();
+            let (sin, cos) = t.portable_sin_cos();
             let y = tube * sin;
             let transverse = self.tangent * y;
             let radial = (radius * radius - transverse * transverse).sqrt();
@@ -171,7 +173,7 @@ impl Cut {
                 .map(|value| value * jacobian)
         });
         let cavity = integrate(cavity_angles, |t| {
-            let (sin, cos) = t.sin_cos();
+            let (sin, cos) = t.portable_sin_cos();
             let x = tube * cos;
             let y = tube * sin;
             let jacobian = tube * (radius / self.vertical + self.vertical * x);
@@ -215,7 +217,7 @@ impl Cut {
     }
 
     fn rotated_xy(self, turn: f64, x: f64, y: f64) -> [f64; 2] {
-        let (sin, cos) = (turn + self.spec.start_angle_rad).sin_cos();
+        let (sin, cos) = (turn + self.spec.start_angle_rad).portable_sin_cos();
         let a = self.spec.stock_radius_mm + x;
         let b = self.tangent * y;
         [a * cos - b * sin, a * sin + b * cos]
@@ -225,17 +227,17 @@ impl Cut {
         let radius = self.spec.stock_radius_mm;
         let tube = self.spec.tube_radius_mm;
         let y = self.rim[1];
-        let alpha = (self.tangent * y / radius).asin();
-        let beta = (y / tube).asin();
+        let alpha = (self.tangent * y / radius).portable_asin();
+        let beta = (y / tube).portable_asin();
         let disk = 0.5 * (y * (-self.rim[0]) + tube * tube * beta);
         // Compute the very small difference from the rectangle without
         // subtracting two large R*y terms.
-        let sine = alpha.sin();
+        let sine = alpha.portable_sin();
         let difference = if alpha < 0.01 {
             let a2 = alpha * alpha;
             alpha * a2 * (-1. / 3. + a2 * (7. / 60. - a2 * (31. / 2520.)))
         } else {
-            alpha + sine * (alpha.cos() - 2.)
+            alpha + sine * (alpha.portable_cos() - 2.)
         };
         disk + radius * radius * difference / (2. * self.tangent)
     }
@@ -243,8 +245,8 @@ impl Cut {
     fn swept_moment(self, x: f64, y: f64, profile_y: f64) -> Point {
         let sweep = self.cap_angle(profile_y);
         let phase = self.spec.start_angle_rad;
-        let (sin, cos) = (phase + sweep * 0.5).sin_cos();
-        let factor = 2. * (sweep * 0.5).sin();
+        let (sin, cos) = (phase + sweep * 0.5).portable_sin_cos();
+        let factor = 2. * (sweep * 0.5).portable_sin();
         [
             factor * (x * cos - y * sin),
             factor * (x * sin + y * cos),

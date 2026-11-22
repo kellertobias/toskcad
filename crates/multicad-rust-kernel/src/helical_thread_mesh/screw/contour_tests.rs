@@ -22,7 +22,7 @@ fn drive_ring_requires_distinct_corner_stations_before_allocating_geometry() {
     };
     let strips = phase_strips(&thread, TAU / 24., options).unwrap();
     let mut builder = Builder::new(&thread, 24, strips, options);
-    let (s, c) = 0.37_f64.sin_cos();
+    let (s, c) = 0.37_f64.portable_sin_cos();
     let points = crate::headed_screw::hex_vertices(2.).map(|[x, y]| [c * x - s * y, s * x + c * y]);
     let drive = crate::hex_drive::HexDrive::from_retained_corners(points, 2., 1e-12).unwrap();
     let mut head = HeadMesh {
@@ -40,7 +40,7 @@ fn drive_ring_requires_distinct_corner_stations_before_allocating_geometry() {
         Err(MeshError::UnresolvedBoundary)
     );
     assert!(head.builder.mesh.vertices.is_empty());
-    let angles = points.map(|[x, y]| y.atan2(x).rem_euclid(TAU));
+    let angles = points.map(|[x, y]| y.portable_atan2(x).rem_euclid(TAU));
     head.builder
         .insert_angular_stations(&angles, 1e-12)
         .unwrap();

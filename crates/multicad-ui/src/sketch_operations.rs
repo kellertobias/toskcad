@@ -12,6 +12,7 @@ use multicad_core::{
         Contact, Endpoint, ExtendLine, ExtendSpline, TrimCurve, TrimPolicy, TrimRequest,
     },
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -386,7 +387,7 @@ impl Panel {
                     MirrorAxis::Vertical => [0., 1.],
                     MirrorAxis::Angle => {
                         let angle = self.angle_deg.to_radians();
-                        [angle.cos(), angle.sin()]
+                        [angle.portable_cos(), angle.portable_sin()]
                     }
                 },
             }),

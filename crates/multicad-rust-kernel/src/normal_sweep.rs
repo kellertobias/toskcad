@@ -3,6 +3,7 @@ use crate::{
     polygon::MAX_VERTICES,
     revolution::{Sum, cross, distance_to_segment, dot, length, sub},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, TAU};
 
 mod classify;
@@ -73,7 +74,7 @@ fn scale([x, y]: Point, multiplier: f64) -> Point {
 }
 
 fn polar(angle: f64) -> Point {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     [cos, sin]
 }
 
@@ -96,7 +97,7 @@ impl Round {
     }
 
     fn contains_direction(self, [x, y]: Point, tolerance: f64) -> bool {
-        self.contains_angle(y.atan2(x), tolerance)
+        self.contains_angle(y.portable_atan2(x), tolerance)
     }
 }
 
@@ -154,7 +155,13 @@ impl Edge {
             } => {
                 let [x, y] = sub(a, center);
                 let [u, v] = sub(b, center);
-                (center, x.hypot(y), y.atan2(x), v.atan2(u), clockwise)
+                (
+                    center,
+                    x.portable_hypot(y),
+                    y.portable_atan2(x),
+                    v.portable_atan2(u),
+                    clockwise,
+                )
             }
             Self::Circle {
                 center,
@@ -217,7 +224,10 @@ impl Edge {
                 let half = round.sweep / 2.;
                 add(
                     round.center,
-                    scale(polar(round.start + half), round.radius * half.sin() / half),
+                    scale(
+                        polar(round.start + half),
+                        round.radius * half.portable_sin() / half,
+                    ),
                 )
             },
         )
@@ -260,15 +270,19 @@ impl Edge {
             let sweep = round.sweep;
             let half = sweep / 2.;
             let full = sweep.abs() == TAU;
-            let segment_area =
-                round.radius.powi(2) / 2. * if full { sweep } else { sweep - sweep.sin() };
+            let segment_area = round.radius.powi(2) / 2.
+                * if full {
+                    sweep
+                } else {
+                    sweep - sweep.portable_sin()
+                };
             let center = sub(round.center, origin);
             let radial_moment = if full {
                 [0.; 2]
             } else {
                 scale(
                     polar(round.start + half),
-                    2. / 3. * (round.radius * half.sin()).powi(3),
+                    2. / 3. * (round.radius * half.portable_sin()).powi(3),
                 )
             };
             moment[0] += segment_area;
@@ -303,7 +317,9 @@ impl Edge {
             }
             let offset = (y - round.center[1]).abs().min(round.radius);
             let dx = ((round.radius - offset) * (round.radius + offset)).sqrt();
-            let sign = (round.start + a.midpoint(b) * round.sweep).cos().signum();
+            let sign = (round.start + a.midpoint(b) * round.sweep)
+                .portable_cos()
+                .signum();
             inside ^= round.center[0] + sign * dx > x;
         }
         inside

@@ -7,7 +7,7 @@ pub(super) fn thread(internal: bool, rd: bool, left_hand: bool) -> Thread {
         (
             p,
             a,
-            p * (a.cos() - a.sin()) / (4. * (1. - a.sin())),
+            p * (a.portable_cos() - a.portable_sin()) / (4. * (1. - a.portable_sin())),
             p / 2.,
             10.,
         )
@@ -17,13 +17,13 @@ pub(super) fn thread(internal: bool, rd: bool, left_hand: bool) -> Thread {
         (
             p,
             a,
-            p * a.cos() / (12. * (1. - a.sin())),
-            p / (3. * a.tan()),
+            p * a.portable_cos() / (12. * (1. - a.portable_sin())),
+            p / (3. * a.portable_tan()),
             3.175,
         )
     };
     let d = if internal && rd {
-        0.05 * p * a.sin() / (1. - a.sin())
+        0.05 * p * a.portable_sin() / (1. - a.portable_sin())
     } else {
         0.
     };

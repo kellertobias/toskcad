@@ -9,6 +9,7 @@ use multicad_kernel::{
     MeshOptions, PlaneFrame, RigidTransform, Solid, project_drawing,
     rust_kernel::spur_gear::clearance::ResultKind,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 const GAP: f64 = 3.;
@@ -16,21 +17,23 @@ const WIDTH: f64 = 10.;
 
 fn specification(teeth: u32) -> InvoluteGear {
     let beta = 15_f64.to_radians();
-    let at = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let transverse_module = 2. / beta.cos();
+    let at = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let transverse_module = 2. / beta.portable_cos();
     let pitch = transverse_module * f64::from(teeth) / 2.;
     InvoluteGear {
         teeth,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * at.cos(),
+        base_radius_mm: pitch * at.portable_cos(),
         tip_radius_mm: pitch + 2.,
         root_radius_mm: pitch - 2.5,
         root_fillet_radius_mm: 0.4,
-        half_base_angle_rad: (PI * transverse_module / 2. - 0.05) / (2. * pitch) + at.tan() - at,
+        half_base_angle_rad: (PI * transverse_module / 2. - 0.05) / (2. * pitch)
+            + at.portable_tan()
+            - at,
         face_width_mm: WIDTH,
         bore_radius_mm: 4.,
         hub: None,
-        twist_rad_per_mm: if teeth == 24 { 1. } else { -1. } * beta.tan() / pitch,
+        twist_rad_per_mm: if teeth == 24 { 1. } else { -1. } * beta.portable_tan() / pitch,
         sweep: GearSweep::GappedChevron { gap_mm: GAP },
     }
 }
@@ -101,7 +104,7 @@ fn named_world_topology_metrics_mesh_and_verified_step() {
     assert_eq!(shoulders.len(), 24);
     let section = shoulders.iter().map(|face| face.area_mm2).sum::<f64>();
     for face in &shoulders {
-        let radial = face.center_mm[0].hypot(face.center_mm[1]);
+        let radial = face.center_mm[0].portable_hypot(face.center_mm[1]);
         assert!(radial > root && radial < spec.tip_radius_mm);
     }
     let volume = solid.volume_mm3().unwrap();
@@ -254,7 +257,7 @@ fn pair_certificate_clears_the_meshing_pose_and_rejects_wrong_ones() {
     let b = Solid::rust_double_helical_named(specification(36), EntityId::new(), policy).unwrap();
     let center = specification(24).pitch_radius_mm + specification(36).pitch_radius_mm;
     let placed = |solid: &Solid, phase: f64| {
-        let (s, c) = phase.sin_cos();
+        let (s, c) = phase.portable_sin_cos();
         solid
             .transformed(RigidTransform {
                 rotation: [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]],
@@ -312,7 +315,7 @@ fn drawings_of_gapped_gears_follow_the_bands_and_the_core() {
         .map(|face| face.area_mm2)
         .sum();
     let core = PI * (root * root - bore * bore);
-    let radius = |p: &[f64; 2]| p[0].hypot(p[1]);
+    let radius = |p: &[f64; 2]| p[0].portable_hypot(p[1]);
 
     let view = project_drawing(
         &[DrawingSolid {

@@ -1,4 +1,5 @@
 //! Reproducible native source and genuine DXF output for manual review.
+use multicad_precision::PortableMath as _;
 #[path = "../src/files.rs"]
 mod files;
 use multicad_core::{
@@ -137,8 +138,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 rotation_xyzw: [
                     0.,
                     0.,
-                    std::f64::consts::FRAC_PI_4.sin(),
-                    std::f64::consts::FRAC_PI_4.cos(),
+                    std::f64::consts::FRAC_PI_4.portable_sin(),
+                    std::f64::consts::FRAC_PI_4.portable_cos(),
                 ],
             },
             placement_source: None,

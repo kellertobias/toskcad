@@ -1,5 +1,6 @@
 //! Exact regular ring torus and a periodic display tessellation.
 use crate::display::{DisplayMesh, MeshError, Tessellation};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 
 #[derive(Clone, Copy, Debug)]
@@ -32,7 +33,7 @@ impl Torus {
 
     /// Signed distance to the periodic surface in local millimeters.
     pub fn signed_distance_mm(self, [x, y, z]: [f64; 3]) -> f64 {
-        (x.hypot(y) - self.major_mm).hypot(z) - self.minor_mm
+        (x.portable_hypot(y) - self.major_mm).portable_hypot(z) - self.minor_mm
     }
 
     pub fn mesh(self, options: Tessellation) -> Result<DisplayMesh, MeshError> {
@@ -64,7 +65,7 @@ impl Torus {
         };
         let meridian: Vec<_> = (0..v)
             .map(|i| {
-                let (sin, cos) = (TAU * i as f64 / v as f64).sin_cos();
+                let (sin, cos) = (TAU * i as f64 / v as f64).portable_sin_cos();
                 (
                     self.minor_mm.mul_add(cos, self.major_mm),
                     self.minor_mm * sin,
@@ -72,7 +73,7 @@ impl Torus {
             })
             .collect();
         for i in 0..u {
-            let (sin, cos) = (TAU * i as f64 / u as f64).sin_cos();
+            let (sin, cos) = (TAU * i as f64 / u as f64).portable_sin_cos();
             for &(rho, z) in &meridian {
                 mesh.vertices.extend([rho * cos, rho * sin, z]);
             }

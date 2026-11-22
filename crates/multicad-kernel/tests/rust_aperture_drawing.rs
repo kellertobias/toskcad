@@ -7,6 +7,7 @@ use multicad_kernel::{
     CircularPocketTool, DrawingProjection, DrawingSolid, GeometryErrorKind, GeometryPolicy,
     PlaneFrame, RoundedSlotTool, Solid, project_drawing,
 };
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{Circle, Rational, cylinder::AxialCylinder};
 
 fn block(origin: [f64; 3], size: [i64; 3]) -> Solid {
@@ -469,7 +470,7 @@ fn oblique_bore_resolves_seated_clearance_and_recessed_pins() {
     // inside the offset pin and still within its axial interval [17, 23].
     let t = 0.1;
     let point = [12., 10. - t * a, 20. + t * a];
-    assert!((point[0] - 10.05).hypot(point[1] - 10.) < 2.);
+    assert!((point[0] - 10.05).portable_hypot(point[1] - 10.) < 2.);
     assert!((17. ..23.).contains(&point[2]));
     let mouth = [12., 30. * a];
     let interference = project_drawing(
@@ -492,7 +493,7 @@ fn oblique_bore_resolves_seated_clearance_and_recessed_pins() {
             && edge
                 .preview_mm
                 .iter()
-                .any(|[x, y]| (x - mouth[0]).hypot(y - mouth[1]) < 0.05)
+                .any(|[x, y]| (x - mouth[0]).portable_hypot(y - mouth[1]) < 0.05)
     };
     assert!(
         interference

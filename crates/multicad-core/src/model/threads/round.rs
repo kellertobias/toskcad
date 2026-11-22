@@ -98,9 +98,9 @@ pub(super) fn resolve_round(
         ));
     }
     let a = 15_f64.to_radians();
-    let base = pitch * (a.cos() - a.sin()) / (4. * (1. - a.sin()));
+    let base = pitch * (a.portable_cos() - a.portable_sin()) / (4. * (1. - a.portable_sin()));
     let clearance = 0.05 * pitch;
-    let delta = clearance * a.sin() / (1. - a.sin());
+    let delta = clearance * a.portable_sin() / (1. - a.portable_sin());
     let internal = mode == ThreadMode::CutInternal;
     let crest = base - if internal { delta } else { 0. };
     let root = base + if internal { delta } else { 0. };

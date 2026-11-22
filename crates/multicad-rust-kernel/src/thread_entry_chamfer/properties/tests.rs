@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 #[test]
 fn certified_full_entry_disks_keep_tiny_cap_centroids_without_global_precision_starvation() {
     for (left, starts, rounded) in [(false, 1, true), (true, 2, true), (false, 1, false)] {
@@ -93,7 +94,12 @@ fn reference(body: &Chamfer) -> ([f64; 11], Vec<[f64; 4]>) {
                         let angle = theta0 + z / h;
                         let area = (outer * outer - inner * inner) / (2. * h.abs()) * dq * wa;
                         let radial = (outer.powi(3) - inner.powi(3)) / (3. * h.abs()) * dq * wa;
-                        let values = [area, radial * angle.cos(), radial * angle.sin(), area * z];
+                        let values = [
+                            area,
+                            radial * angle.portable_cos(),
+                            radial * angle.portable_sin(),
+                            area * z,
+                        ];
                         sum[10] += area;
                         for (i, value) in values.into_iter().enumerate() {
                             faces[index][i] += value;
@@ -105,7 +111,7 @@ fn reference(body: &Chamfer) -> ([f64; 11], Vec<[f64; 4]>) {
                             for (b, wb) in GAUSS {
                                 let z = lo + (cell as f64 + b) * dz;
                                 let theta = theta0 + z / h;
-                                let (s, c) = theta.sin_cos();
+                                let (s, c) = theta.portable_sin_cos();
                                 let radius = if cone { body.cone_radius(z) } else { r };
                                 let w = dq * dz * wa * wb / h.abs();
                                 let v = radius * radius / 2. * w;
@@ -147,7 +153,11 @@ fn reference(body: &Chamfer) -> ([f64; 11], Vec<[f64; 4]>) {
                                     u[0] * v[1] - u[1] * v[0],
                                 ];
                                 let area =
-                                    cross[0].hypot(cross[1]).hypot(cross[2]) * dq * dz * wa * wb;
+                                    cross[0].portable_hypot(cross[1]).portable_hypot(cross[2])
+                                        * dq
+                                        * dz
+                                        * wa
+                                        * wb;
                                 sum[10] += area;
                                 let index = if cone {
                                     body.cone_face_index(start, segment.half)
@@ -452,7 +462,7 @@ fn entry_mesh_roles_agree_with_source_phase_and_retained_supports_for_every_hand
                     .map(|&i| mesh.vertices[3 * i as usize + axis] / 3.)
                     .sum()
             });
-            let theta = p[1].atan2(p[0]);
+            let theta = p[1].portable_atan2(p[0]);
             let global = (p[2] - body.tool.helical_rate() * theta).rem_euclid(period);
             let start = (global / pitch).floor() as u32;
             let phase = global - f64::from(start) * pitch;

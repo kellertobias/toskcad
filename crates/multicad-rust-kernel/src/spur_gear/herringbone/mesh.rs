@@ -4,6 +4,7 @@ use crate::{
     revolution::length,
     spur_gear::{clearance::segment_tubes_clear, scale, sub},
 };
+use multicad_precision::PortableMath as _;
 use spade::Point2;
 
 const MAX_COLLISION_CHECKS: usize = 2_000_000;
@@ -119,9 +120,9 @@ fn embedded_strip(
     guard: f64,
     remaining: &mut usize,
 ) -> Result<bool, MeshError> {
-    let tube = 0.5 * (angle * 0.5).tan();
+    let tube = 0.5 * (angle * 0.5).portable_tan();
     let maximum_margin = 2. * tube * maximum_length + guard;
-    let bisector_limit = 2. * angle.sin() + 1024. * f64::EPSILON;
+    let bisector_limit = 2. * angle.portable_sin() + 1024. * f64::EPSILON;
     for (i, a) in segments.iter().enumerate() {
         for b in &segments[i + 1..] {
             if b.x[0] - a.x[1] > maximum_margin {
@@ -356,7 +357,7 @@ impl Gap {
                 (1..segments)
                     .map(|i| {
                         let angle = (to - from).mul_add(i as f64 / segments as f64, from);
-                        [radius * angle.cos(), radius * angle.sin()]
+                        [radius * angle.portable_cos(), radius * angle.portable_sin()]
                     })
                     .collect::<Vec<_>>(),
             );
@@ -483,7 +484,7 @@ impl Circle {
         };
         for i in 0..self.count {
             let angle = TAU * i as f64 / self.count as f64;
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = angle.portable_sin_cos();
             mesh.vertices
                 .extend([self.radius * cos, self.radius * sin, z]);
         }

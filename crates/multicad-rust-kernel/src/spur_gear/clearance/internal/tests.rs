@@ -13,11 +13,11 @@ fn ring(teeth: u32) -> Ring {
         RingSpec {
             teeth,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * a.cos(),
+            base_radius_mm: pitch * a.portable_cos(),
             tip_radius_mm: pitch - 1.,
             root_radius_mm: pitch + 1.25,
             root_fillet_radius_mm: 0.2,
-            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.tan() + a,
+            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.portable_tan() + a,
             face_width_mm: 2.,
             outer_radius_mm: pitch + 4.,
         },
@@ -35,11 +35,11 @@ fn pinion(bore: f64) -> Profile {
         Spec {
             teeth: 24,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * a.cos(),
+            base_radius_mm: pitch * a.portable_cos(),
             tip_radius_mm: pitch + 1.,
             root_radius_mm: pitch - 1.25,
             root_fillet_radius_mm: 0.2,
-            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.portable_tan() - a,
             face_width_mm: 2.,
             bore_radius_mm: bore,
         },
@@ -50,7 +50,7 @@ fn pinion(bore: f64) -> Profile {
 }
 
 fn place(x: f64, theta: f64) -> Placement {
-    let (sin, cos) = theta.sin_cos();
+    let (sin, cos) = theta.portable_sin_cos();
     Placement {
         center_mm: [x, 0.],
         axes: [[cos, sin], [-sin, cos]],

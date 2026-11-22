@@ -85,7 +85,7 @@ pub(super) fn placed_at(
     std::array::from_fn(|i| {
         let base = placements[i];
         let [u, v] = base.axes;
-        let (sin, cos) = gears[i].phase_at(z_mm).sin_cos();
+        let (sin, cos) = gears[i].phase_at(z_mm).portable_sin_cos();
         let radial_speed = gears[i].tip_radius_mm() * gears[i].twist_rad_per_mm().abs();
         Placement {
             center_mm: base.center_mm,
@@ -107,8 +107,8 @@ mod tests {
     fn coaxial_hubs_preserve_clearance_outside_the_aligned_tooth_bands() {
         use crate::spur_gear::Hub;
         let phase = std::f64::consts::PI * (1. + 1. / 36.);
-        let (sin, cos) = phase.sin_cos();
-        let center = 60. / 15_f64.to_radians().cos();
+        let (sin, cos) = phase.portable_sin_cos();
+        let center = 60. / 15_f64.to_radians().portable_cos();
         let placements = [
             Placement::default(),
             Placement {
@@ -153,7 +153,7 @@ mod tests {
         let center = spec_a.pitch_radius_mm + spec_b.pitch_radius_mm;
         let nominal = std::f64::consts::PI * (1. + 1. / 36.);
         let at_phase = |phase: f64| {
-            let (sin, cos) = phase.sin_cos();
+            let (sin, cos) = phase.portable_sin_cos();
             [
                 Placement::default(),
                 Placement {
@@ -195,7 +195,7 @@ mod tests {
             certify_herringbone([&linear_a, &chevron_b], placement, tolerance, None),
             Ok(ResultKind::CommonInterior)
         );
-        let (sin, cos) = linear_a.phase_at(spec_a.face_width_mm).sin_cos();
+        let (sin, cos) = linear_a.phase_at(spec_a.face_width_mm).portable_sin_cos();
         let end_a = Placement {
             axes: [[cos, sin], [-sin, cos]],
             ..placement[0]
@@ -220,24 +220,24 @@ mod tests {
         // so at many heights the pitch witness lies in both gaps while
         // neighbouring tips still collide.
         let beta = 20_f64.to_radians();
-        let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
+        let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
         let gear = |teeth: u32, hand: f64| {
-            let pitch = 2. * f64::from(teeth) / (2. * beta.cos());
+            let pitch = 2. * f64::from(teeth) / (2. * beta.portable_cos());
             let spec = crate::spur_gear::Spec {
                 teeth,
                 pitch_radius_mm: pitch,
-                base_radius_mm: pitch * pressure.cos(),
+                base_radius_mm: pitch * pressure.portable_cos(),
                 tip_radius_mm: pitch + 2.,
                 root_radius_mm: pitch - 2.5,
                 root_fillet_radius_mm: 0.4,
                 half_base_angle_rad: std::f64::consts::PI / (2. * f64::from(teeth))
-                    + pressure.tan()
+                    + pressure.portable_tan()
                     - pressure
                     - 0.05 / (2. * pitch),
                 face_width_mm: 8.,
                 bore_radius_mm: 2.,
             };
-            let twist = hand * beta.tan() / pitch;
+            let twist = hand * beta.portable_tan() / pitch;
             (
                 Herringbone::new_helical(spec, twist, 1e-5, 1e7).unwrap(),
                 pitch,
@@ -245,7 +245,7 @@ mod tests {
         };
         let ((a, ra), (b, rb)) = (gear(20, 1.), gear(30, -1.));
         let at_phase = |phase: f64| {
-            let (sin, cos) = phase.sin_cos();
+            let (sin, cos) = phase.portable_sin_cos();
             [
                 Placement::default(),
                 Placement {
@@ -274,7 +274,7 @@ mod tests {
         });
         let pair = [&a, &b];
         let placement = |distance: f64, phase: f64| {
-            let (sin, cos) = phase.sin_cos();
+            let (sin, cos) = phase.portable_sin_cos();
             [
                 Placement::default(),
                 Placement {
@@ -284,7 +284,7 @@ mod tests {
                 },
             ]
         };
-        let center = 60. / 15_f64.to_radians().cos();
+        let center = 60. / 15_f64.to_radians().portable_cos();
         let tolerance = 1e-7;
         let clear = placement(center, std::f64::consts::PI * (1. + 1. / 36.));
         let overlaps = placement(center, std::f64::consts::PI);
@@ -331,7 +331,7 @@ mod tests {
         });
         let center = spec_a.pitch_radius_mm + spec_b.pitch_radius_mm;
         let at_phase = |phase: f64| {
-            let (sin, cos) = phase.sin_cos();
+            let (sin, cos) = phase.portable_sin_cos();
             [
                 Placement::default(),
                 Placement {

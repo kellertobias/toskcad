@@ -248,6 +248,7 @@ pub fn certify_boundary_distance(
 mod tests {
     use super::*;
     use crate::normal_sweep;
+    use multicad_precision::PortableMath as _;
 
     fn square(offset: f64) -> Vec<(usize, Edge)> {
         let p = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]].map(|[x, y]| [x + offset, y]);
@@ -265,7 +266,12 @@ mod tests {
     }
 
     fn disc(center: [f64; 2], radius: f64) -> Vec<(usize, Edge)> {
-        let at = |a: f64| [center[0] + radius * a.cos(), center[1] + radius * a.sin()];
+        let at = |a: f64| {
+            [
+                center[0] + radius * a.portable_cos(),
+                center[1] + radius * a.portable_sin(),
+            ]
+        };
         (0..4)
             .map(|i| {
                 let a = std::f64::consts::FRAC_PI_2 * i as f64;

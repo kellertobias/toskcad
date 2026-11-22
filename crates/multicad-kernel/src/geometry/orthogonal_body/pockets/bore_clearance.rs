@@ -78,7 +78,8 @@ impl Solid {
         }
         let [i, j] = [(axis + 1) % 3, (axis + 2) % 3];
         let inside = |center: Point, hole_radius: f64| {
-            (start[i] - center[i]).hypot(start[j] - center[j]) + radius + numeric <= hole_radius
+            (start[i] - center[i]).portable_hypot(start[j] - center[j]) + radius + numeric
+                <= hole_radius
         };
         // Axial intervals of the tool's own column that a hole leaves void.
         let mut voids: Vec<[f64; 2]> = Vec::new();
@@ -164,9 +165,9 @@ fn relate(column: &Column, min: Point, max: Point, numeric: f64) -> Relation {
     // Nearest and farthest points of the cross-section rectangle.
     let near = |n: usize| c[n].clamp(min[n], max[n]) - c[n];
     let far = |n: usize| (min[n] - c[n]).abs().max((max[n] - c[n]).abs());
-    if near(i).hypot(near(j)) >= column.radius + numeric {
+    if near(i).portable_hypot(near(j)) >= column.radius + numeric {
         Relation::Apart
-    } else if far(i).hypot(far(j)) + numeric <= column.radius {
+    } else if far(i).portable_hypot(far(j)) + numeric <= column.radius {
         Relation::Within
     } else {
         Relation::Partial

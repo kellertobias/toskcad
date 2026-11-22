@@ -4,6 +4,7 @@
 //! Euclidean poles. Plane contacts are isolated on the homogeneous depth
 //! polynomial, whose Bernstein coefficients have the sign of the depth.
 use super::{Contact, Method, validate};
+use multicad_precision::PortableMath as _;
 
 const MAX_DEPTH: usize = 60;
 const MAX_PIECES: usize = 20_000;
@@ -151,14 +152,14 @@ impl Bezier {
         let first = poles[0];
         let reach = poles
             .iter()
-            .map(|p| (p[0] - first[0]).hypot(p[1] - first[1]))
+            .map(|p| (p[0] - first[0]).portable_hypot(p[1] - first[1]))
             .fold(0., f64::max);
         if reach <= tolerance {
             return Err(Error::Collapsed);
         }
         let last = poles[poles.len() - 1];
         let chord = [last[0] - first[0], last[1] - first[1]];
-        let length = chord[0].hypot(chord[1]);
+        let length = chord[0].portable_hypot(chord[1]);
         if length <= tolerance {
             return Err(Error::Retraced);
         }
@@ -269,7 +270,9 @@ impl Bezier {
                 return Err(Error::Unresolved);
             }
             // A crossing at a vanishing depth derivative is not transverse.
-            let speed = derivative[0].hypot(derivative[1]).hypot(derivative[2]);
+            let speed = derivative[0]
+                .portable_hypot(derivative[1])
+                .portable_hypot(derivative[2]);
             let crossing = crossing.filter(|_| derivative[2].abs() > 1e-9 * speed);
             result.push((
                 [point[0], point[1]],
@@ -330,7 +333,9 @@ fn lerp(a: [f64; 4], b: [f64; 4], t: f64) -> [f64; 4] {
 }
 
 fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1]).hypot(a[2] - b[2])
+    (a[0] - b[0])
+        .portable_hypot(a[1] - b[1])
+        .portable_hypot(a[2] - b[2])
 }
 
 #[cfg(test)]

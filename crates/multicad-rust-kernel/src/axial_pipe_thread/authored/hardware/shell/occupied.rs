@@ -87,13 +87,15 @@ fn plane(input: &Input, face: &Face) -> Result<Axis, Error> {
             {
                 return Err(Error::Invalid);
             }
-            let norm = a.normal[0].hypot(a.normal[1]).hypot(a.normal[2]);
+            let norm = a.normal[0]
+                .portable_hypot(a.normal[1])
+                .portable_hypot(a.normal[2]);
             let cross = [
                 a.normal[1] * a.reference[2] - a.normal[2] * a.reference[1],
                 a.normal[2] * a.reference[0] - a.normal[0] * a.reference[2],
                 a.normal[0] * a.reference[1] - a.normal[1] * a.reference[0],
             ];
-            let transverse = cross[0].hypot(cross[1]).hypot(cross[2]);
+            let transverse = cross[0].portable_hypot(cross[1]).portable_hypot(cross[2]);
             if !norm.is_finite() || norm == 0. || !transverse.is_finite() || transverse == 0. {
                 return Err(Error::Invalid);
             }

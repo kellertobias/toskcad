@@ -200,7 +200,7 @@ impl Thread {
         let bounds = self.hermite_bounds(&mut work)?;
         let nu = bounds.map(|b| {
             (b.profile / (1024. * budget * 0.5))
-                .powf(0.1)
+                .portable_powf(0.1)
                 .ceil()
                 .max(1.) as usize
         });
@@ -215,7 +215,7 @@ impl Thread {
             .zip(nu)
             .map(|(b, n)| mixed(b, n).hi)
             .fold(0., f64::max);
-        let nz = (self.spec().length_mm * (mz / (1024. * budget * 0.5)).powf(0.1))
+        let nz = (self.spec().length_mm * (mz / (1024. * budget * 0.5)).portable_powf(0.1))
             .ceil()
             .max(1.) as usize;
         let (nu, nz, errors) = self.certify_partition(bounds, nu, nz, budget, &mut work)?;

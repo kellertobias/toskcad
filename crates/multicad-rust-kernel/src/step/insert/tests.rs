@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 #[test]
 fn invalid_and_cancelled_requests_fail_before_publication() {
     assert!(matches!(Work::new(0, None), Err(Error::Invalid)));
@@ -119,7 +120,11 @@ fn independent_sampled_carriers_and_edited_interior_poles_have_measured_transfer
                 let t = pair[0] + u * (pair[1] - pair[0]);
                 let r = a[0] + d[0] * t;
                 let theta = sign * std::f64::consts::TAU * (a[2] + d[2] * t);
-                let source = [r * theta.cos(), r * theta.sin(), a[1] + d[1] * t];
+                let source = [
+                    r * theta.portable_cos(),
+                    r * theta.portable_sin(),
+                    a[1] + d[1] * t,
+                ];
                 let value = bezier(controls.to_vec(), u);
                 let error = (0..3).map(|k| (value[k] - source[k]).abs()).sum::<f64>();
                 assert!(
@@ -128,8 +133,10 @@ fn independent_sampled_carriers_and_edited_interior_poles_have_measured_transfer
                     curve.position_error_mm()
                 );
                 let tangent = [
-                    d[0] * theta.cos() - sign * std::f64::consts::TAU * d[2] * r * theta.sin(),
-                    d[0] * theta.sin() + sign * std::f64::consts::TAU * d[2] * r * theta.cos(),
+                    d[0] * theta.portable_cos()
+                        - sign * std::f64::consts::TAU * d[2] * r * theta.portable_sin(),
+                    d[0] * theta.portable_sin()
+                        + sign * std::f64::consts::TAU * d[2] * r * theta.portable_cos(),
                     d[1],
                 ];
                 let derivative = bezier(

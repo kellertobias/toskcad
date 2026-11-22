@@ -36,7 +36,7 @@ pub(super) fn rail_cut(y: f64, source: usize) -> AxialCut {
         recess: Some(ConvexRecess {
             rim_mm: (0..6)
                 .map(|i| {
-                    let (sin, cos) = (TAU * i as f64 / 6.).sin_cos();
+                    let (sin, cos) = (TAU * i as f64 / 6.).portable_sin_cos();
                     [11., y + 3. * cos, 20. + 3. * sin]
                 })
                 .collect(),

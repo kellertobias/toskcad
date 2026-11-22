@@ -85,7 +85,7 @@ fn metric_torx_mesh_retains_every_circle_contact_and_actual_cone_across_thread_v
                         let [x, y] = arc.start_mm;
                         assert!(vertices.contains(&[x, y, top]));
                         let z = top + source.cone().tip_depth_mm
-                            - x.hypot(y) * source.cone().depth_per_radius;
+                            - x.portable_hypot(y) * source.cone().depth_per_radius;
                         assert!(vertices.contains(&[x, y, z]));
                     }
                     let faces = screw.faces();
@@ -109,20 +109,21 @@ fn metric_torx_mesh_retains_every_circle_contact_and_actual_cone_across_thread_v
                             // The varying rim and central apex lie on the actual cone.
                             for [x, y, z] in p {
                                 let expected = top + source.cone().tip_depth_mm
-                                    - x.hypot(y) * source.cone().depth_per_radius;
+                                    - x.portable_hypot(y) * source.cone().depth_per_radius;
                                 assert!((z - expected).abs() <= 4. * screw.source_error_mm());
                             }
                             let center = std::array::from_fn::<_, 3, _>(|i| {
                                 (p[0][i] + p[1][i] + p[2][i]) / 3.
                             });
                             let cone_z = top + source.cone().tip_depth_mm
-                                - center[0].hypot(center[1]) * source.cone().depth_per_radius;
+                                - center[0].portable_hypot(center[1])
+                                    * source.cone().depth_per_radius;
                             assert!((center[2] - cone_z).abs() < opts.deflection);
                         } else if (wall..wall + 12).contains(&face) {
                             let arc = source.arcs()[(face - wall) as usize];
                             for point in p {
                                 let radius = (point[0] - arc.center_mm[0])
-                                    .hypot(point[1] - arc.center_mm[1]);
+                                    .portable_hypot(point[1] - arc.center_mm[1]);
                                 assert!(
                                     (radius - arc.radius_mm).abs() <= 4. * source.source_error_mm()
                                 );
@@ -298,7 +299,7 @@ fn cylindrical_socket_caps_keep_true_torx_cavity_and_full_original_threads() {
                     x,
                     y,
                     actual.head_top_z() + drive.cone().tip_depth_mm
-                        - x.hypot(y) * drive.cone().depth_per_radius
+                        - x.portable_hypot(y) * drive.cone().depth_per_radius
                 ]));
             }
             let expected = actual.thread().volume_mm3()
@@ -343,7 +344,7 @@ fn cosmetic_profiled_torx_retains_real_head_and_conical_drive_with_one_smooth_sh
                     if *face == body {
                         for vertex in triangle {
                             let [x, y, z] = mesh.vertices.as_chunks::<3>().0[*vertex as usize];
-                            assert!((x.hypot(y) - r).abs() < 1e-12 * scale);
+                            assert!((x.portable_hypot(y) - r).abs() < 1e-12 * scale);
                             assert!(z == interval[0] || z == interval[1]);
                         }
                     }
@@ -400,7 +401,7 @@ fn cosmetic_profiled_source_has_its_own_cylinder_volume_faces_and_queries() {
         let mut fills_old_groove = false;
         for i in 0..128 {
             let a = TAU * i as f64 / 128.;
-            let p = [r * 0.99 * a.cos(), r * 0.99 * a.sin(), z];
+            let p = [r * 0.99 * a.portable_cos(), r * 0.99 * a.portable_sin(), z];
             assert!(body.contains(p, 0.));
             fills_old_groove |= !before.contains(p, 0.);
         }

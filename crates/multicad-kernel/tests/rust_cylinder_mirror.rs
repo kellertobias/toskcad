@@ -3,6 +3,7 @@ use multicad_kernel::{
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
     *,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 fn near(a: f64, b: f64) {
@@ -230,8 +231,8 @@ fn rust_cylinder_mirror_preserves_every_named_boundary_and_reflects_cap_and_rim_
                                     std::array::from_fn(|i| {
                                         frame.origin_mm[i]
                                             + old_r
-                                                * (frame.u[i] * angle.cos()
-                                                    + frame.v[i] * angle.sin())
+                                                * (frame.u[i] * angle.portable_cos()
+                                                    + frame.v[i] * angle.portable_sin())
                                     })
                                 };
                                 near_point(
@@ -603,7 +604,7 @@ fn mirrored_primitive_and_authored_cylinders_remain_exact_chamfer_draft_and_shel
                 let expected = match operation {
                     0 => PI * (25. * 8. - 0.5 * (5. * 0.5 - 0.25 / 3.)),
                     1 => {
-                        let r = 5. - 8. * angle.tan();
+                        let r = 5. - 8. * angle.portable_tan();
                         PI * 8. / 3. * (25. + 5. * r + r * r)
                     }
                     _ => PI * (25. * 8. - 4.5_f64.powi(2) * 7.5),
@@ -774,7 +775,8 @@ fn cylinder_mirror_certifies_extreme_authored_caps_in_the_world_frame() {
                 let close = |actual: [f64; 3], expected: [f64; 3]| {
                     let delta = std::array::from_fn::<_, 3, _>(|i| actual[i] - expected[i]);
                     assert!(
-                        delta[0].hypot(delta[1]).hypot(delta[2]) <= policy.linear_tolerance_mm,
+                        delta[0].portable_hypot(delta[1]).portable_hypot(delta[2])
+                            <= policy.linear_tolerance_mm,
                         "{actual:?} != {expected:?}"
                     );
                 };

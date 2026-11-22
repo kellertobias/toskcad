@@ -1,4 +1,5 @@
 //! Native mounting geometry and nut threads from retained canonical parameters.
+use multicad_precision::PortableMath as _;
 mod custom_connection;
 mod pipe_hardware;
 mod profiled_heads;
@@ -263,7 +264,7 @@ fn hexagon(across_flats: f64) -> Vec<CurvedEdge2d> {
     let radius = across_flats / 3_f64.sqrt();
     let point = |i: usize| {
         let angle = std::f64::consts::PI / 6. + i as f64 * std::f64::consts::TAU / 6.;
-        [radius * angle.cos(), radius * angle.sin()]
+        [radius * angle.portable_cos(), radius * angle.portable_sin()]
     };
     (0..6)
         .map(|i| CurvedEdge2d::Line {
@@ -992,7 +993,7 @@ pub(super) fn build_resolved(
             let radius = across_flats_mm / 3_f64.sqrt();
             let point = |i: usize| {
                 let angle = std::f64::consts::PI / 6. + i as f64 * std::f64::consts::TAU / 6.;
-                [radius * angle.cos(), radius * angle.sin()]
+                [radius * angle.portable_cos(), radius * angle.portable_sin()]
             };
             let outer = (0..6)
                 .map(|i| CurvedEdge2d::Line {

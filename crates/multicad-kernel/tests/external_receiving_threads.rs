@@ -2,6 +2,7 @@ use multicad_core::{
     document::EntityId,
     references::{GeometryIntent, Origin, Resolution, TopologyKind, resolve},
 };
+use multicad_precision::PortableMath as _;
 
 use multicad_kernel::{
     GeometryPolicy, HelicalThread, MeshOptions, PlaneFrame, Solid,
@@ -24,7 +25,7 @@ fn spec(length: f64, left: bool, starts: u32) -> HelicalThread {
 fn rounded_spec(length: f64, left: bool, starts: u32, radius: f64) -> HelicalThread {
     let mut request = spec(length, left, starts);
     let intersection =
-        (request.pitch_mm - request.crest_width_mm) / (2. * 30_f64.to_radians().tan());
+        (request.pitch_mm - request.crest_width_mm) / (2. * 30_f64.to_radians().portable_tan());
     request.depth_mm = intersection - radius;
     request
 }
@@ -156,7 +157,7 @@ fn reversed_clocked_stock_caps_keep_saved_attachments_without_false_wall_or_circ
                 let source = stock(radius, PlaneFrame::default(), owner);
                 let before = source.topology_snapshot(owner, 0).unwrap();
                 let angle = 0.37_f64;
-                let (c, s) = (angle.cos(), angle.sin());
+                let (c, s) = (angle.portable_cos(), angle.portable_sin());
                 let sign = if reversed { -1. } else { 1. };
                 let frame = PlaneFrame {
                     origin: [0., 0., if reversed { 8. } else { 0. }],

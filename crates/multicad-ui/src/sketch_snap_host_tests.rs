@@ -364,7 +364,7 @@ fn perpendicular_snap_commits_the_exact_foot_with_grid_on_and_off() {
             .find(|p| (p[0] - shown[0]).abs() < 1e-12 && (p[1] - shown[1]).abs() < 1e-12)
             .unwrap_or_else(|| panic!("grid {grid}: shown {shown:?} not committed"));
         let drawn = [end[0] - first[0], end[1] - first[1]];
-        let length = drawn[0].hypot(drawn[1]);
+        let length = drawn[0].portable_hypot(drawn[1]);
         assert!(length > 5., "grid {grid}: {drawn:?}");
         assert!(
             (drawn[0] * ab[0] + drawn[1] * ab[1]).abs() < 1e-9 * length * 50.,

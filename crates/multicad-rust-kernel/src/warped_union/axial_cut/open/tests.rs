@@ -49,7 +49,7 @@ fn both_major_and_minor_segments_preserve_a_watertight_open_notch() {
         assert_eq!(result.solid_count(), 1);
 
         let offset = SIDE.point_mm[2] - z;
-        let angle = TAU - 2. * (offset / 2.).acos();
+        let angle = TAU - 2. * (offset / 2.).portable_acos();
         let half_chord = (4. - offset * offset).sqrt();
         let removed_area = 2. * angle + offset * half_chord;
         near(base.volume_mm3() - result.volume_mm3(), 5. * removed_area);

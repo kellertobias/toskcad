@@ -16,7 +16,7 @@ pub(in crate::drawing) fn project_herringbone(
     }
     let [u, v, toward_viewer] = planar::view_axes(options.frame);
     let axis = placement.normal();
-    if dot(axis, u).hypot(dot(axis, v)) > 64. * f64::EPSILON
+    if dot(axis, u).portable_hypot(dot(axis, v)) > 64. * f64::EPSILON
         || options.detail.is_some()
         || options.section_u_mm.is_some()
         || options.section_v_mm.is_some()
@@ -119,7 +119,7 @@ pub(in crate::drawing) fn project_herringbone(
             .expect("gear tip")
             .edge;
         let [x, y] = tip.point(0.);
-        let half = y.atan2(x).abs();
+        let half = y.portable_atan2(x).abs();
         let screen = Screen {
             origin: options.frame.origin,
             axes: [u, v],
@@ -128,7 +128,7 @@ pub(in crate::drawing) fn project_herringbone(
         output.tip_silhouette(
             &screen,
             body.section(placement, near_z, 1.),
-            (x.hypot(y), half),
+            (x.portable_hypot(y), half),
             (pitch, teeth),
             sweep.map(|phase| phase - near_phase),
         )?;
@@ -339,7 +339,7 @@ impl Output {
             .chain([tooth.edge.point(b)])
             .map(project)
         {
-            if (next[0] - last[0]).hypot(next[1] - last[1]) <= 1e-7 {
+            if (next[0] - last[0]).portable_hypot(next[1] - last[1]) <= 1e-7 {
                 continue;
             }
             self.options.maximum_curves = self
@@ -370,7 +370,7 @@ impl Output {
 fn flank_visibility(tooth: ToothEdge, pitch: f64, threshold: f64) -> Option<[f64; 2]> {
     let visible = |fraction| {
         let [x, y] = tooth.edge.point(fraction);
-        let angle = y.atan2(x) - f64::from(tooth.tooth) * pitch;
+        let angle = y.portable_atan2(x) - f64::from(tooth.tooth) * pitch;
         let width = ((angle + PI).rem_euclid(TAU) - PI).abs();
         width < threshold
     };

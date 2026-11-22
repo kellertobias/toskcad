@@ -38,7 +38,7 @@ fn removed_by_slices(radius: f64, offset: f64, rho: f64, range: [f64; 2]) -> f64
         } else if d <= -rho {
             PI * rho * rho
         } else {
-            rho * rho * (d / rho).acos() - d * (rho * rho - d * d).sqrt()
+            rho * rho * (d / rho).portable_acos() - d * (rho * rho - d * d).sqrt()
         }
     };
     let n = 400_000;
@@ -101,7 +101,7 @@ fn radial_through_bore_matches_crossing_cylinders() {
         (0..n)
             .map(|k| {
                 let t = -PI / 2. + (f64::from(k) + 0.5) * step;
-                t.cos().powi(2) * (81. - 2.75f64.powi(2) * t.sin().powi(2)).sqrt()
+                t.portable_cos().powi(2) * (81. - 2.75f64.powi(2) * t.portable_sin().powi(2)).sqrt()
             })
             .sum::<f64>()
             * step
@@ -296,8 +296,8 @@ fn rims_lie_on_both_supports() {
     ));
     for side in 0..2 {
         for point in cut.sample_rim(side, options()).unwrap() {
-            assert!((point[0].hypot(point[1]) - 9.).abs() < 1e-12);
-            assert!(((point[1] - 2.).hypot(point[2] - 1.) - 2.75).abs() < 1e-12);
+            assert!((point[0].portable_hypot(point[1]) - 9.).abs() < 1e-12);
+            assert!(((point[1] - 2.).portable_hypot(point[2] - 1.) - 2.75).abs() < 1e-12);
         }
     }
     let [low, high] = cut.extent([1., 0., 0.]);

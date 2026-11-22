@@ -33,7 +33,9 @@ fn frame(file: &mut StepFile, frame: &Frame) -> Entity {
 
 /// A direction scaled by its length, as `VECTOR`.
 fn vector(file: &mut StepFile, vector: Point) -> Entity {
-    let length = vector[0].hypot(vector[1]).hypot(vector[2]);
+    let length = vector[0]
+        .portable_hypot(vector[1])
+        .portable_hypot(vector[2]);
     let direction = file.direction(vector.map(|x| x / length));
     file.entity(format_args!("VECTOR('',{direction},{length:.16E})"))
 }

@@ -17,6 +17,7 @@ use multicad_core::{
     project_file::ContentHash,
 };
 use multicad_model::Compiler;
+use multicad_precision::PortableMath as _;
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -165,7 +166,7 @@ fn a_tab_picked_on_the_curved_side_is_checked_natively_snapped_and_applied() {
     for (a, b) in snapped.iter().zip(exact.point_mm) {
         assert!((a - b).abs() < 1e-6);
     }
-    let radius = (snapped[0] - 100.).hypot(snapped[1] - 50.);
+    let radius = (snapped[0] - 100.).portable_hypot(snapped[1] - 50.);
     assert!((radius - 8.).abs() < 1e-4, "{radius}");
     c.preview(&s, &Default::default(), Channel::Ui).unwrap();
     wait(&mut c, &s);

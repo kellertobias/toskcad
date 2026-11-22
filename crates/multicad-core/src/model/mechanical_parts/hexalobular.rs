@@ -1,6 +1,7 @@
 //! Sixfold tangent-circle engineering contours; not an ISO gauge certificate.
 use super::invalid;
 use crate::document::DocumentError;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -50,8 +51,8 @@ impl HexalobularContour {
         }
         let sum = r + ri;
         let contact = [c + (d * cos30 - c) * r / sum, d * 0.5 * r / sum];
-        let theta = contact[1].atan2(contact[0]);
-        let outer_half = contact[1].atan2(contact[0] - c);
+        let theta = contact[1].portable_atan2(contact[0]);
+        let outer_half = contact[1].portable_atan2(contact[0] - c);
         let inward = [-cos30, -0.5];
         let inner_direction = [(contact[0] - d * cos30) / ri, (contact[1] - d * 0.5) / ri];
         let inner_cos = inward[0] * inner_direction[0] + inward[1] * inner_direction[1];
@@ -62,14 +63,14 @@ impl HexalobularContour {
             && theta < PI / 6.
             && outer_half > 0.
             && outer_half < PI
-            && c * outer_half.cos() + r > 0.
+            && c * outer_half.portable_cos() + r > 0.
             && inner_cos > 0.
             && d * inner_cos - ri > 0.)
         {
             return Err(fail());
         }
         let rotate = |p: [f64; 2], angle: f64| {
-            let (s, c) = angle.sin_cos();
+            let (s, c) = angle.portable_sin_cos();
             [a * (c * p[0] - s * p[1]), a * (s * p[0] + c * p[1])]
         };
         let outer_centers: [[f64; 2]; 6] =

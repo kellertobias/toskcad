@@ -4,6 +4,7 @@
 //! geometry kernel is involved.
 #![allow(dead_code)]
 use multicad_core::document::{Document, EntityData, EntityId};
+use multicad_precision::PortableMath as _;
 use serde_json::Value;
 
 /// A straight prism: a planar polygon swept along `sweep`.
@@ -276,10 +277,10 @@ impl Boundary {
         };
         let c = arcs[i]?;
         let [a, b] = [vertices[i], vertices[(i + 1) % vertices.len()]];
-        let [ra, rb] = [a, b].map(|p| (p[0] - c[0]).hypot(p[1] - c[1]));
+        let [ra, rb] = [a, b].map(|p| (p[0] - c[0]).portable_hypot(p[1] - c[1]));
         assert!((ra - rb).abs() < 1e-9, "arc ends off its circle");
         let dot = (a[0] - c[0]) * (b[0] - c[0]) + (a[1] - c[1]) * (b[1] - c[1]);
-        let theta = (dot / (ra * rb)).clamp(-1., 1.).acos();
+        let theta = (dot / (ra * rb)).clamp(-1., 1.).portable_acos();
         let side = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
         Some((ra, theta, (side > 0.) == (Self::shoelace(vertices) > 0.)))
     }
@@ -298,7 +299,7 @@ impl Boundary {
                 let mut area = Self::shoelace(vertices).abs();
                 for i in 0..self.edges() {
                     if let Some((r, theta, outward)) = self.arc(i) {
-                        let segment = r * r * (theta - theta.sin()) / 2.;
+                        let segment = r * r * (theta - theta.portable_sin()) / 2.;
                         area += if outward { segment } else { -segment };
                     }
                 }
@@ -314,7 +315,7 @@ impl Boundary {
                     Some((r, theta, _)) => r * theta,
                     None => {
                         let [a, b] = [vertices[i], vertices[(i + 1) % vertices.len()]];
-                        (b[0] - a[0]).hypot(b[1] - a[1])
+                        (b[0] - a[0]).portable_hypot(b[1] - a[1])
                     }
                 })
                 .sum(),
@@ -339,7 +340,7 @@ impl Boundary {
                     add(*p);
                     let Some(c) = arcs[i] else { continue };
                     let [a, q] = [*p, vertices[(i + 1) % vertices.len()]];
-                    let r = (a[0] - c[0]).hypot(a[1] - c[1]);
+                    let r = (a[0] - c[0]).portable_hypot(a[1] - c[1]);
                     // An axis extreme of the circle lies on the minor arc when
                     // it is on the arc's side of the chord.
                     for d in [[1., 0.], [-1., 0.], [0., 1.], [0., -1.]] {
@@ -367,8 +368,8 @@ impl Boundary {
 /// chord midpoint direction.
 fn chord_offset(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> [f64; 2] {
     let m = [(a[0] + b[0]) / 2. - c[0], (a[1] + b[1]) / 2. - c[1]];
-    let length = m[0].hypot(m[1]);
-    let r = (a[0] - c[0]).hypot(a[1] - c[1]);
+    let length = m[0].portable_hypot(m[1]);
+    let r = (a[0] - c[0]).portable_hypot(a[1] - c[1]);
     [-m[0] / length * r, -m[1] / length * r]
 }
 

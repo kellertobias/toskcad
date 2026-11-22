@@ -123,7 +123,7 @@ impl Wheel {
                         3 => {
                             let [a, b] = [0., 1.].map(|u| {
                                 let [x, y] = self.piece_point(section, Piece::Torus, u);
-                                y.atan2(x)
+                                y.portable_atan2(x)
                             });
                             Shape::Arc {
                                 z_mm: z,

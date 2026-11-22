@@ -1,4 +1,5 @@
 //! Analytic trim curves shared by intersecting plane and cylinder supports.
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{SQRT_2, TAU};
 
 type Point = [f64; 3];
@@ -110,7 +111,7 @@ impl Ellipse {
     }
 
     pub fn point_at(self, parameter_rad: f64) -> Point {
-        let (sin, cos) = parameter_rad.sin_cos();
+        let (sin, cos) = parameter_rad.portable_sin_cos();
         let [major, minor] = self.semiaxes_mm;
         std::array::from_fn(|i| {
             self.center_mm[i] + self.major_axis[i] * major * cos + self.minor_axis[i] * minor * sin
@@ -119,7 +120,7 @@ impl Ellipse {
 
     /// Derivative with respect to the increasing ellipse parameter.
     pub fn tangent_at(self, parameter_rad: f64) -> Point {
-        let (sin, cos) = parameter_rad.sin_cos();
+        let (sin, cos) = parameter_rad.portable_sin_cos();
         let [major, minor] = self.semiaxes_mm;
         std::array::from_fn(|i| {
             -self.major_axis[i] * major * sin + self.minor_axis[i] * minor * cos
@@ -134,7 +135,7 @@ impl Ellipse {
         let delta = sub(point_mm, self.center_mm);
         let x = dot(delta, self.major_axis) / self.semiaxes_mm[0];
         let y = dot(delta, self.minor_axis) / self.semiaxes_mm[1];
-        let parameter = angle(y.atan2(x));
+        let parameter = angle(y.portable_atan2(x));
         (length(sub(point_mm, self.point_at(parameter))) <= tolerance_mm).then_some(parameter)
     }
 
@@ -146,19 +147,19 @@ impl Ellipse {
         }
         let offset = dot(sub(plane.origin_mm, self.center_mm), plane.normal);
         let [a, b] = self.projected_coefficients(plane.normal);
-        let extent = a.hypot(b);
+        let extent = a.portable_hypot(b);
         if offset.abs() + extent <= tolerance_mm {
             return Ok(PlaneCrossings::Coincident);
         }
         if offset.abs() > extent + tolerance_mm {
             return Ok(PlaneCrossings::None);
         }
-        let peak = b.atan2(a);
+        let peak = b.portable_atan2(a);
         if (offset.abs() - extent).abs() <= tolerance_mm {
             let extremum = if offset >= 0. { peak } else { peak + TAU * 0.5 };
             return Ok(PlaneCrossings::Tangent(angle(extremum)));
         }
-        let displacement = (offset / extent).acos();
+        let displacement = (offset / extent).portable_acos();
         let mut crossings = [angle(peak - displacement), angle(peak + displacement)];
         crossings.sort_by(f64::total_cmp);
         Ok(PlaneCrossings::Crossing(crossings))
@@ -248,11 +249,11 @@ impl EllipseArc {
     pub fn range_along(self, direction: Point) -> [f64; 2] {
         let [a, b] = self.ellipse.projected_coefficients(direction);
         let center = dot(self.ellipse.center_mm, direction);
-        let projection = |t: f64| center + a * t.cos() + b * t.sin();
+        let projection = |t: f64| center + a * t.portable_cos() + b * t.portable_sin();
         let [start, end] = [self.start_rad, self.start_rad + self.sweep_rad].map(projection);
         let mut range = [start.min(end), start.max(end)];
-        let peak = b.atan2(a);
-        let extent = a.hypot(b);
+        let peak = b.portable_atan2(a);
+        let extent = a.portable_hypot(b);
         for (i, extremum) in [peak + TAU * 0.5, peak].into_iter().enumerate() {
             let traveled = angle((extremum - self.start_rad) * self.sweep_rad.signum());
             if traveled <= self.sweep_rad.abs() {
@@ -365,7 +366,7 @@ fn cross([x, y, z]: Point, [a, b, c]: Point) -> Point {
 }
 
 fn length([x, y, z]: Point) -> f64 {
-    x.hypot(y).hypot(z)
+    x.portable_hypot(y).portable_hypot(z)
 }
 
 fn unit(vector: Point) -> Result<Point, Error> {

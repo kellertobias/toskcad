@@ -12,6 +12,7 @@ use multicad_kernel::{
     BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, RevolutionAxis,
     RigidTransform, Solid,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 type Edge = (CurvedEdge2d, &'static str);
@@ -135,8 +136,8 @@ pub(super) fn blank(
             ..
         } => {
             let theta = (included_angle_deg / 2.).to_radians();
-            let rim = height - (r - shank) / theta.tan();
-            let neck_z = n * (theta / 2.).tan();
+            let rim = height - (r - shank) / theta.portable_tan();
+            let neck_z = n * (theta / 2.).portable_tan();
             if !rim.is_finite() || rim < 0. || ch < 0. || ch > rim || plain_length < neck_z {
                 return Err(error(
                     Some(feature),
@@ -144,7 +145,10 @@ pub(super) fn blank(
                 ));
             }
             let center = [shank + n, neck_z];
-            let tangent = [center[0] - n * theta.cos(), center[1] - n * theta.sin()];
+            let tangent = [
+                center[0] - n * theta.portable_cos(),
+                center[1] - n * theta.portable_sin(),
+            ];
             line(&mut edges, [0., top], [r - ch, top], "top.land");
             line(&mut edges, [r - ch, top], [r, top + ch], "top.chamfer");
             line(&mut edges, [r, top + ch], [r, top + rim], "rim");
@@ -218,7 +222,7 @@ fn conical_bottom(
     policy: GeometryPolicy,
 ) -> Result<Solid, ModelError> {
     let half = (angle / 2.).to_radians();
-    let upper = tip - reach / half.tan();
+    let upper = tip - reach / half.portable_tan();
     revolve(
         feature,
         component,
@@ -256,7 +260,7 @@ fn hexalobular(
 ) -> Result<Solid, ModelError> {
     let [major, minor, lobe, depth, angle] = dimensions;
     let top = -head.height_mm();
-    let tip = top + depth + major / (angle / 2.).to_radians().tan();
+    let tip = top + depth + major / (angle / 2.).to_radians().portable_tan();
     let contour = HexalobularContour::new(2. * major, 2. * minor, lobe)
         .map_err(|e| error(Some(feature), e))?;
     let margin = major.max(1.);
@@ -295,7 +299,7 @@ fn hexalobular(
     // The finite cone's closure is outside the entire prism/head. A radius
     // based only on the lobes can close inside a deep functional region and
     // leave a false cap across the physical mouth.
-    let cone_reach = (tip - start + margin) * (angle / 2.).to_radians().tan();
+    let cone_reach = (tip - start + margin) * (angle / 2.).to_radians().portable_tan();
     let cone = conical_bottom(
         feature,
         "hexalobular.bottom",
@@ -321,13 +325,19 @@ fn phillips(
     let g = p.g_diameter_mm;
     let b = p.b_width_mm;
     let r = p.mouth_radius_mm;
-    let tg = (m - g) / (2. * a.tan());
-    let total = tg + g / 2. * floor.tan();
-    let tb = tg + (g - b) / 2. * floor.tan();
+    let tg = (m - g) / (2. * a.portable_tan());
+    let total = tg + g / 2. * floor.portable_tan();
+    let tb = tg + (g - b) / 2. * floor.portable_tan();
     let tip = top + total;
-    let center = [m / 2. + r * (1. - a.sin()) / a.cos(), top + r];
+    let center = [
+        m / 2. + r * (1. - a.portable_sin()) / a.portable_cos(),
+        top + r,
+    ];
     let qhead = [center[0], top];
-    let qflank = [center[0] - r * a.cos(), center[1] - r * a.sin()];
+    let qflank = [
+        center[0] - r * a.portable_cos(),
+        center[1] - r * a.portable_sin(),
+    ];
     if qflank[1] >= top + tg - policy.minimum_feature_mm {
         return Err(error(
             Some(feature),
@@ -391,7 +401,7 @@ fn phillips(
     // here has horizontal section Rx=R/cos(beta), not projected Rx=R*cos(beta).
     let zlo = above - margin;
     let zhi = tip + margin;
-    let rb = b / 2. + (top + tb - zlo) * beta.tan();
+    let rb = b / 2. + (top + tb - zlo) * beta.portable_tan();
     let reach = 4. * (head.maximum_radius_mm() + m + tip.abs() + 1.);
     let mut edges = vec![];
     let roles: Vec<String>;
@@ -409,10 +419,13 @@ fn phillips(
             ]
             .map(str::to_owned)
             .into();
-            let de = e / (2. * (angle_deg / 2.).to_radians().tan());
+            let de = e / (2. * (angle_deg / 2.).to_radians().portable_tan());
             let upper = [de, e / 2.];
             let lower = [de, -e / 2.];
-            let far = [de + reach * theta.cos(), e / 2. + reach * theta.sin()];
+            let far = [
+                de + reach * theta.portable_cos(),
+                e / 2. + reach * theta.portable_sin(),
+            ];
             edges.extend([
                 CurvedEdge2d::Line {
                     a: [0., 0.],
@@ -437,11 +450,14 @@ fn phillips(
             roles = ["inner.round", "outer.upper", "closure", "outer.lower"]
                 .map(str::to_owned)
                 .into();
-            let upper = [radius - radius * theta.sin(), radius * theta.cos()];
+            let upper = [
+                radius - radius * theta.portable_sin(),
+                radius * theta.portable_cos(),
+            ];
             let lower = [upper[0], -upper[1]];
             let far = [
-                upper[0] + reach * theta.cos(),
-                upper[1] + reach * theta.sin(),
+                upper[0] + reach * theta.portable_cos(),
+                upper[1] + reach * theta.portable_sin(),
             ];
             edges.extend([
                 CurvedEdge2d::Arc {
@@ -468,20 +484,20 @@ fn phillips(
         CurvedProfile {
             frame: PlaneFrame {
                 origin: [rb, 0., zlo],
-                u: [beta.cos(), 0., beta.sin()],
+                u: [beta.portable_cos(), 0., beta.portable_sin()],
                 v: [0., 1., 0.],
             },
             outer: edges.clone(),
             holes: vec![],
         },
         &roles,
-        [-(zhi - zlo) * beta.tan(), 0., zhi - zlo],
+        [-(zhi - zlo) * beta.portable_tan(), 0., zhi - zlo],
         policy,
     )?;
     // Fresh independently named constructions retain each wing's authored role.
     for i in 0..4 {
         let angle = i as f64 * PI / 2.;
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         let current = if i == 0 {
             corner.share().map_err(|e| error(Some(feature), e))?
         } else {
@@ -491,14 +507,14 @@ fn phillips(
                 CurvedProfile {
                     frame: PlaneFrame {
                         origin: [rb, 0., zlo],
-                        u: [beta.cos(), 0., beta.sin()],
+                        u: [beta.portable_cos(), 0., beta.portable_sin()],
                         v: [0., 1., 0.],
                     },
                     outer: edges.clone(),
                     holes: vec![],
                 },
                 &roles,
-                [-(zhi - zlo) * beta.tan(), 0., zhi - zlo],
+                [-(zhi - zlo) * beta.portable_tan(), 0., zhi - zlo],
                 policy,
             )?;
             ccorner
@@ -635,12 +651,12 @@ pub(super) fn validate_native_clearance(
             ..
         } => {
             let theta = (included_angle_deg / 2.).to_radians();
-            let rim = k - (radius_mm - shank) / theta.tan();
-            let center = neck_radius_mm * (theta / 2.).tan();
+            let rim = k - (radius_mm - shank) / theta.portable_tan();
+            let center = neck_radius_mm * (theta / 2.).portable_tan();
             breaks.extend([
                 edge_chamfer_mm,
                 rim,
-                k + center - neck_radius_mm * theta.sin(),
+                k + center - neck_radius_mm * theta.portable_sin(),
                 k + center,
             ]);
         }
@@ -649,9 +665,10 @@ pub(super) fn validate_native_clearance(
     match drive {
         ResolvedScrewDrive::Hexalobular { depth_mm, .. } => breaks.push(*depth_mm),
         ResolvedScrewDrive::PhillipsH { profile } => breaks.extend([
-            profile.mouth_radius_mm * (1. - profile.outer_flank_angle_deg.to_radians().sin()),
+            profile.mouth_radius_mm
+                * (1. - profile.outer_flank_angle_deg.to_radians().portable_sin()),
             (profile.mouth_diameter_mm - profile.g_diameter_mm)
-                / (2. * profile.outer_flank_angle_deg.to_radians().tan()),
+                / (2. * profile.outer_flank_angle_deg.to_radians().portable_tan()),
         ]),
         _ => {}
     }

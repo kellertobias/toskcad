@@ -65,16 +65,16 @@ fn actual_internal_max_source_keeps_phase_hands_starts_endpoints_and_largest_env
                     }
                     assert!(source.contains_void(
                         [
-                            radius * theta.cos() * 0.999,
-                            radius * theta.sin() * 0.999,
+                            radius * theta.portable_cos() * 0.999,
+                            radius * theta.portable_sin() * 0.999,
                             z
                         ],
                         0.
                     ));
                     assert!(!source.contains_void(
                         [
-                            radius * theta.cos() * 1.001,
-                            radius * theta.sin() * 1.001,
+                            radius * theta.portable_cos() * 1.001,
+                            radius * theta.portable_sin() * 1.001,
                             z
                         ],
                         0.
@@ -295,7 +295,8 @@ fn entry_only_scaling_and_unresolved_literal_root_keep_source_precision_explicit
     let root = 0.05;
     let circle = Thread::new(Spec {
         root_radius_mm: Some(root),
-        depth_mm: (spec.pitch_mm - spec.crest_width_mm) / (2. * 30_f64.to_radians().tan()) - root,
+        depth_mm: (spec.pitch_mm - spec.crest_width_mm) / (2. * 30_f64.to_radians().portable_tan())
+            - root,
         ..spec
     })
     .unwrap();

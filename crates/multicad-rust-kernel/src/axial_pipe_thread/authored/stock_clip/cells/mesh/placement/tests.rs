@@ -43,7 +43,7 @@ fn actual_source_placed_mesh_retains_connectivity_source_quality_and_independent
             assert_eq!(p.mesh().face_indices, old.face_indices);
             assert_eq!(p.mesh().vertices.len(), old.vertices.len());
             assert!(p.source_distance_mm() <= quality().deflection);
-            assert!(p.normal_chord() <= 2. * (quality().angle / 2.).sin());
+            assert!(p.normal_chord() <= 2. * (quality().angle / 2.).portable_sin());
             for (local, world) in old
                 .vertices
                 .as_chunks::<3>()

@@ -10,6 +10,7 @@ use multicad_core::{
 };
 use multicad_kernel::{BooleanOperation, GeometryPolicy, Solid};
 use multicad_model::{Compiler, export::Exporter};
+use multicad_precision::PortableMath as _;
 use std::{f64::consts::PI, path::Path};
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
@@ -189,7 +190,11 @@ fn external_cut_retains_the_unthreaded_shaft_and_internal_cut_mates_with_the_sep
         for angle in 0..32 {
             let theta = f64::from(angle) * 2. * PI / 32.;
             for radius in [0., 3., 3.4, 3.8, 3.99] {
-                let point = [10. + radius * theta.cos(), 10. + radius * theta.sin(), z];
+                let point = [
+                    10. + radius * theta.portable_cos(),
+                    10. + radius * theta.portable_sin(),
+                    z,
+                ];
                 if male.rust_thread_contains(point).unwrap() {
                     assert!(!receiver.rust_thread_contains(point).unwrap(), "{point:?}");
                 }
@@ -772,7 +777,7 @@ fn blind_thread_tool_refuses_missing_floor_wall_and_unproved_frame_atomically() 
                 length: length(length_mm),
                 frame: PrimitiveFrame {
                     origin: [length(x), length(10.), length(0.)],
-                    u: [angle.cos(), 0., angle.sin()],
+                    u: [angle.portable_cos(), 0., angle.portable_sin()],
                     v: [0., 1., 0.],
                 },
                 ..params()

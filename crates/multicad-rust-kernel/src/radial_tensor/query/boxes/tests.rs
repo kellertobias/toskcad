@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::cell::Cell;
 fn at(point: Point, width: f64) -> [[f64; 2]; 3] {
     point.map(|v| [v - width / 2., v + width / 2.])
@@ -64,7 +65,7 @@ fn actual_retained_sector_and_core_boxes_preserve_all_coordinates_and_source_ide
         .point_bounds([0, 0], [[0.37; 2], [0.41; 2]])
         .unwrap()
         .map(|v| v[0].midpoint(v[1]));
-    let radius = p[0].hypot(p[1]);
+    let radius = p[0].portable_hypot(p[1]);
     for (offset, location) in [(-0.01, Location::Inside), (0.01, Location::Outside)] {
         let point = [
             p[0] * (radius + offset) / radius,

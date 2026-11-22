@@ -23,6 +23,7 @@ use multicad_model::{
         sheet_dxf::{SheetDxf, SheetDxfLayers, SheetDxfOptions, SheetFlatProvider},
     },
 };
+use multicad_precision::PortableMath as _;
 use std::io::Cursor;
 
 fn actor() -> Actor {
@@ -53,10 +54,10 @@ fn measured_area(poly: &::dxf::entities::LwPolyline) -> f64 {
             if a.bulge.abs() < 1e-12 {
                 cross
             } else {
-                let theta = 4. * a.bulge.atan();
-                let chord = (a.x - b.x).hypot(a.y - b.y);
-                let radius = chord / (2. * (theta.abs() * 0.5).sin());
-                cross + radius * radius * (theta - theta.sin()) * 0.5
+                let theta = 4. * a.bulge.portable_atan();
+                let chord = (a.x - b.x).portable_hypot(a.y - b.y);
+                let radius = chord / (2. * (theta.abs() * 0.5).portable_sin());
+                cross + radius * radius * (theta - theta.portable_sin()) * 0.5
             }
         })
         .sum()

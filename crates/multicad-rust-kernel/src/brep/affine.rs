@@ -11,6 +11,7 @@ use super::{
     Boundary, Curve, Edge, Error, Face, Frame, Point, Result, Surface, add, cross, dot, ensure,
     norm, scale,
 };
+use multicad_precision::PortableMath as _;
 
 /// `point -> matrix * point + translation` with a positive determinant.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -91,8 +92,8 @@ impl Affine {
             };
             return Ok((Curve::Circle { frame, radius }, 0.));
         }
-        let phi = 0.5 * (2. * pq).atan2(pp - qq);
-        let (sin, cos) = phi.sin_cos();
+        let phi = 0.5 * (2. * pq).portable_atan2(pp - qq);
+        let (sin, cos) = phi.portable_sin_cos();
         let major = add(scale(p, cos), scale(q, sin));
         let minor = add(scale(p, -sin), scale(q, cos));
         let x = unit(major)?;

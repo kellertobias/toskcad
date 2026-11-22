@@ -5,6 +5,7 @@ use multicad_core::{
     project_file::{self, ProjectFile},
     symbols::{self, SymbolAuthorRequest, SymbolKind},
 };
+use multicad_precision::PortableMath as _;
 
 fn parameters(diameter: f64, pitch: f64, fit: ThreadFit) -> ThreadParameters {
     ThreadParameters {
@@ -161,7 +162,10 @@ fn allowances_hit_real_class_boundaries_without_mutating_source_limits_or_root_r
                 let h = 3_f64.sqrt() / 2. * row.pitch_mm;
                 let cmax = h / 4.
                     - rmin
-                        * (1. - (std::f64::consts::PI / 3. - (1. - td / (4. * rmin)).acos()).cos())
+                        * (1.
+                            - (std::f64::consts::PI / 3.
+                                - (1. - td / (4. * rmin)).portable_acos())
+                            .portable_cos())
                     + td / 2.;
                 assert!(r >= 0.125 * row.pitch_mm);
                 assert!(r + td / 2. < cmax);

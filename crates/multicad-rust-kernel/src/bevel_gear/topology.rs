@@ -300,7 +300,7 @@ impl Bevel {
                 start_rad,
                 sweep_rad,
             } => {
-                let (sin, cos) = (start_rad + sweep_rad * s).sin_cos();
+                let (sin, cos) = (start_rad + sweep_rad * s).portable_sin_cos();
                 [radius_mm * cos, radius_mm * sin, z_mm]
             }
             Shape::Sampled { sector, piece, end } => {
@@ -314,7 +314,7 @@ impl Bevel {
         let [a, b] = edge.vertices.map(|v| topology.vertices_mm[v as usize]);
         let spacing = TAU / f64::from(self.spec.teeth);
         let arc = |sector: u32, end: End, gamma: f64, start: f64, sweep: f64| Shape::Arc {
-            z_mm: self.end_distance_along(end, gamma) * gamma.cos(),
+            z_mm: self.end_distance_along(end, gamma) * gamma.portable_cos(),
             radius_mm: self.end_radius(end, gamma),
             start_rad: self.sector_start(sector) + start,
             sweep_rad: sweep,

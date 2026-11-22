@@ -7,25 +7,28 @@ use multicad_kernel::{
     MeshOptions, RigidTransform, Solid, project_drawing,
     rust_kernel::spur_gear::clearance::ResultKind,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn specification(teeth: u32) -> InvoluteGear {
     let beta = 15_f64.to_radians();
-    let at = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let transverse_module = 2. / beta.cos();
+    let at = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let transverse_module = 2. / beta.portable_cos();
     let pitch = transverse_module * f64::from(teeth) / 2.;
     InvoluteGear {
         teeth,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * at.cos(),
+        base_radius_mm: pitch * at.portable_cos(),
         tip_radius_mm: pitch + 2.,
         root_radius_mm: pitch - 2.5,
         root_fillet_radius_mm: 0.4,
-        half_base_angle_rad: (PI * transverse_module / 2. - 0.05) / (2. * pitch) + at.tan() - at,
+        half_base_angle_rad: (PI * transverse_module / 2. - 0.05) / (2. * pitch)
+            + at.portable_tan()
+            - at,
         face_width_mm: 4.,
         bore_radius_mm: 4.,
         hub: None,
-        twist_rad_per_mm: if teeth == 24 { 1. } else { -1. } * beta.tan() / pitch,
+        twist_rad_per_mm: if teeth == 24 { 1. } else { -1. } * beta.portable_tan() / pitch,
         sweep: GearSweep::Chevron,
     }
 }
@@ -345,7 +348,7 @@ fn full_axial_certificate_rejects_a_half_tooth_phase_error_and_tilted_pairs() {
     let b = Solid::rust_herringbone_named(specification(36), EntityId::new(), policy).unwrap();
     let center = specification(24).pitch_radius_mm + specification(36).pitch_radius_mm;
     let placed = |phase: f64| {
-        let (s, c) = phase.sin_cos();
+        let (s, c) = phase.portable_sin_cos();
         b.transformed(RigidTransform {
             rotation: [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]],
             translation_mm: [center, 0., 0.],

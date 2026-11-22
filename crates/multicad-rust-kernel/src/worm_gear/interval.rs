@@ -14,6 +14,7 @@
 //! `f^(k)(x)/k!` for every `x` in the base interval. Nesting series gives
 //! mixed partial derivatives.
 use super::jet::Real;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
@@ -42,7 +43,7 @@ impl Interval {
 
     /// Arc tangent, increasing, from the platform libm.
     pub(crate) fn atan(self) -> Self {
-        Self::library(self.lo.atan(), self.hi.atan())
+        Self::library(self.lo.portable_atan(), self.hi.portable_atan())
     }
 
     /// Largest magnitude of any enclosed value.
@@ -130,7 +131,10 @@ impl Real for Interval {
 
     /// The exact argument lies in `[-1, 1]`, so the enclosure clamps.
     fn asin(self) -> Self {
-        Self::library(self.lo.max(-1.).asin(), self.hi.min(1.).asin())
+        Self::library(
+            self.lo.max(-1.).portable_asin(),
+            self.hi.min(1.).portable_asin(),
+        )
     }
 
     fn sin_cos(self) -> (Self, Self) {
@@ -138,8 +142,8 @@ impl Real for Interval {
             let unit = Self::new(-1., 1.);
             return (unit, unit);
         }
-        let (sa, ca) = self.lo.sin_cos();
-        let (sb, cb) = self.hi.sin_cos();
+        let (sa, ca) = self.lo.portable_sin_cos();
+        let (sb, cb) = self.hi.portable_sin_cos();
         let range = |a: f64, b: f64, top: f64, bottom: f64| {
             let hi = if self.reaches(top) { 1. } else { a.max(b) };
             let lo = if self.reaches(bottom) { -1. } else { a.min(b) };
@@ -323,7 +327,10 @@ mod tests {
             let (s, c) = Interval::new(lo, hi).sin_cos();
             for i in 0..=64 {
                 let x: f64 = lo + (hi - lo) * f64::from(i) / 64.;
-                assert!(encloses(s, x.sin()) && encloses(c, x.cos()), "{lo} {hi}");
+                assert!(
+                    encloses(s, x.portable_sin()) && encloses(c, x.portable_cos()),
+                    "{lo} {hi}"
+                );
             }
             assert!(s.hi - s.lo < 0.5 && c.hi - c.lo < 0.5);
         }
@@ -339,7 +346,11 @@ mod tests {
                 + (x / S5::constant(3.)).asin()
                 - (-x)
         };
-        let g = |x: f64| (x * x).sin() * (1. + x).sqrt() / (2. + x.cos()) + (x / 3.).asin() + x;
+        let g = |x: f64| {
+            (x * x).portable_sin() * (1. + x).sqrt() / (2. + x.portable_cos())
+                + (x / 3.).portable_asin()
+                + x
+        };
         let x0 = 0.4;
         let series = f(S5::variable(Interval::point(x0)));
         // Central differences of increasing order with a small step.

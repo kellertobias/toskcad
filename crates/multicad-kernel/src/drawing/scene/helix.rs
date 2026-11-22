@@ -23,6 +23,7 @@
 //! two-coordinate chart, so near a branch end, where the native
 //! parametrisation has a square-root singularity, the bound is taken in the
 //! other chart coordinate, in which the curve is smooth.
+use multicad_precision::PortableMath as _;
 mod fastener;
 mod proven;
 
@@ -216,7 +217,7 @@ impl Span {
         else {
             return None;
         };
-        let norm = alpha.hypot(beta);
+        let norm = alpha.portable_hypot(beta);
         if norm <= 1e-300 {
             return None;
         }
@@ -363,7 +364,7 @@ impl Profile {
             let center = circle([a, r(a)], [m, r(m)], [b, r(b)])?;
             Span::Arc {
                 center,
-                radius: (a - center[0]).hypot(r(a) - center[1]),
+                radius: (a - center[0]).portable_hypot(r(a) - center[1]),
                 sign: -1.,
                 range: [a, b],
             }
@@ -601,7 +602,7 @@ impl Law {
     }
 
     fn surface(&self, r: f64, theta: f64, z: f64) -> P3 {
-        let (sin, cos) = theta.sin_cos();
+        let (sin, cos) = theta.portable_sin_cos();
         self.view([r * cos, r * sin, z])
     }
 }
@@ -631,7 +632,7 @@ impl Path for Helix {
 
     fn paper(&self, [from, to]: [f64; 2]) -> Option<Curve> {
         // Seen along the axis, a helix projects onto a circle.
-        if self.law.axes[2][0].hypot(self.law.axes[2][1]) > 1e-12 {
+        if self.law.axes[2][0].portable_hypot(self.law.axes[2][1]) > 1e-12 {
             return None;
         }
         let c = self.law.view([0.; 3]);
@@ -724,17 +725,19 @@ impl Outline {
         slack: f64,
     ) -> Option<f64> {
         let [r, slope] = span.eval(phi);
-        let rho = view[0].hypot(view[1]);
-        let alpha = view[1].atan2(view[0]);
+        let rho = view[0].portable_hypot(view[1]);
+        let alpha = view[1].portable_atan2(view[0]);
         let a = -r * rho;
         let b = law.rate * slope * rho;
         let c = -r * slope * view[2];
-        let norm = a.hypot(b);
+        let norm = a.portable_hypot(b);
         if norm <= 1e-300 || c.abs() > norm * (1. + slack) {
             return None;
         }
         // atan2(b, a) is continuous as pi + atan2(-b, -a) since a < 0.
-        Some(alpha + PI + (-b).atan2(-a) + sign * (c / norm).clamp(-1., 1.).acos())
+        Some(
+            alpha + PI + (-b).portable_atan2(-a) + sign * (c / norm).clamp(-1., 1.).portable_acos(),
+        )
     }
 
     fn at(&self, phi: f64) -> P3 {
@@ -754,7 +757,7 @@ impl Outline {
     /// `A`, `B` and `C` of the contour condition `A cos psi + B sin psi = C`.
     fn terms<N: Num>(&self, phi: N) -> [N; 3] {
         let [r, s] = self.span.radius_at(phi);
-        let rho = self.view[0].hypot(self.view[1]);
+        let rho = self.view[0].portable_hypot(self.view[1]);
         [
             -(r * N::k(rho)),
             N::k(self.law.rate * rho) * s,
@@ -789,7 +792,7 @@ impl Outline {
         }
         let [p, q, r] = self.terms(phi);
         let norm = (p.sqr() + q.sqr()).sqrt();
-        let alpha = self.view[1].atan2(self.view[0]);
+        let alpha = self.view[1].portable_atan2(self.view[0]);
         // As `angle_within`: atan2(-B, -A) = atan(B / A) since A < 0.
         let theta =
             Iv::point(alpha) + Iv::pi() + (q / p).atan() + Iv::point(self.sign) * (r / norm).acos();
@@ -806,7 +809,7 @@ impl Chart for Outline {
 
     fn relation<N: Num>(&self, phi: N, theta: N) -> N {
         let [a, b, c] = self.terms(phi);
-        let psi = theta - N::k(self.view[1].atan2(self.view[0]));
+        let psi = theta - N::k(self.view[1].portable_atan2(self.view[0]));
         a * psi.cos() + b * psi.sin() - c
     }
 
@@ -903,7 +906,7 @@ pub(super) struct Meridian {
 
 impl Meridian {
     pub(super) fn line(&self, theta: f64) -> [f64; 3] {
-        let (sin, cos) = theta.sin_cos();
+        let (sin, cos) = theta.portable_sin_cos();
         let n = self.n;
         let alpha = n[0] * cos + n[1] * sin;
         [
@@ -922,7 +925,7 @@ impl Meridian {
 
     /// `d value / d theta` at a fixed profile point.
     fn slope(&self, theta: f64, q: P2) -> f64 {
-        let (sin, cos) = theta.sin_cos();
+        let (sin, cos) = theta.portable_sin_cos();
         let n = self.n;
         let alpha = n[0] * cos + n[1] * sin;
         let turn = n[1] * cos - n[0] * sin;
@@ -959,13 +962,13 @@ impl Touch {
             return None;
         };
         let at = |beta: f64| {
-            let (sin, cos) = beta.sin_cos();
+            let (sin, cos) = beta.portable_sin_cos();
             [center[0] + radius * cos, center[1] + radius * sin]
         };
-        let angle = |p: P2| (p[1] - center[1]).atan2(p[0] - center[0]);
+        let angle = |p: P2| (p[1] - center[1]).portable_atan2(p[0] - center[0]);
         let reach = |theta: f64| {
             let [alpha, beta, gamma] = meridian.line(theta);
-            let norm = alpha.hypot(beta);
+            let norm = alpha.portable_hypot(beta);
             let delta = (beta * center[0] + alpha * center[1] - gamma) / norm;
             (radius - delta.abs()) * (radius + delta.abs())
         };
@@ -983,7 +986,7 @@ impl Touch {
             }
         }
         let outside = touch - direction * mu;
-        let nxy = meridian.n[0].hypot(meridian.n[1]);
+        let nxy = meridian.n[0].portable_hypot(meridian.n[1]);
         let lead = meridian.tau.abs() * meridian.k;
         let mut fraction = 0.45;
         for _ in 0..48 {
@@ -1027,7 +1030,7 @@ impl Touch {
         let Span::Arc { center, radius, .. } = *span else {
             unreachable!("touches are on arcs")
         };
-        let (sin, cos) = beta.sin_cos();
+        let (sin, cos) = beta.portable_sin_cos();
         let q = [center[0] + radius * cos, center[1] + radius * sin];
         let f = |theta: f64| meridian.value(theta, q);
         let [mut lo, mut hi] = self.bracket;
@@ -1168,7 +1171,7 @@ impl Branch {
             };
             let near = touch.bracket[0];
             let q = profile(theta + TAU * ((near - theta) / TAU).round());
-            let beta = (q[1] - center[1]).atan2(q[0] - center[0]);
+            let beta = (q[1] - center[1]).portable_atan2(q[0] - center[0]);
             let s = wrap(beta - touch.beta[0]) / (touch.beta[1] - touch.beta[0]);
             if s > 0. && s <= 1. {
                 return Some(if end == 0 { s * a } else { 1. - s * b });
@@ -1401,7 +1404,7 @@ impl Sweep {
 
     /// The profile point of a local point at the chart angle `theta`.
     fn profile(&self, p: P3) -> impl Fn(f64) -> P2 + '_ {
-        move |theta| [p[2] - self.law.rate * theta, p[0].hypot(p[1])]
+        move |theta| [p[2] - self.law.rate * theta, p[0].portable_hypot(p[1])]
     }
 }
 
@@ -1697,14 +1700,14 @@ struct ConeCut {
 
 impl ConeCut {
     fn local(cone: &Cone, (n, c): (P3, f64), theta: f64) -> Option<P3> {
-        let q = n[0] * theta.cos() + n[1] * theta.sin();
+        let q = n[0] * theta.portable_cos() + n[1] * theta.portable_sin();
         let denominator = q * cone.slope + n[2];
         if denominator.abs() <= 1e-14 {
             return None;
         }
         let z = (c - q * cone.entry) / denominator;
         let r = cone.radius(z);
-        Some([r * theta.cos(), r * theta.sin(), z])
+        Some([r * theta.portable_cos(), r * theta.portable_sin(), z])
     }
 }
 
@@ -2184,11 +2187,12 @@ impl Thread {
             let ends = self.z.map(|z| (z - s[2]) / d[2]);
             [ends[0].min(ends[1]), ends[0].max(ends[1])]
         };
-        let rho = d[0].hypot(d[1]);
+        let rho = d[0].portable_hypot(d[1]);
         // Radial range: r(t)^2 = |s_xy + t d_xy|^2.
         let within = |radius: f64| -> Option<[f64; 2]> {
             if rho <= 1e-15 {
-                return (s[0].hypot(s[1]) < radius).then_some([f64::NEG_INFINITY, f64::INFINITY]);
+                return (s[0].portable_hypot(s[1]) < radius)
+                    .then_some([f64::NEG_INFINITY, f64::INFINITY]);
             }
             let a = rho * rho;
             let b = s[0] * d[0] + s[1] * d[1];
@@ -2209,8 +2213,8 @@ impl Thread {
         }
         let g = |t: f64| {
             let p = add(s, scaled(d, t));
-            let r = p[0].hypot(p[1]);
-            profile.radius(p[2] - self.rate() * p[1].atan2(p[0])) - r
+            let r = p[0].portable_hypot(p[1]);
+            profile.radius(p[2] - self.rate() * p[1].portable_atan2(p[0])) - r
         };
         let mut stretches = vec![span];
         if let Some([a, b]) = core {
@@ -2250,21 +2254,21 @@ impl Thread {
     fn crossings(&self, s: P3, d: P3, [a, b]: [f64; 2]) -> Result<Vec<f64>, GeometryError> {
         let profile = &self.law.profile;
         let rate = self.rate();
-        let rho = d[0].hypot(d[1]);
+        let rho = d[0].portable_hypot(d[1]);
         if rho <= 1e-15 {
             // Along the axis: a fixed angle and radius, a linear phase.
             return Ok(self.axial_crossings(s, d, [a, b]));
         }
         let g = |t: f64| {
             let p = add(s, scaled(d, t));
-            profile.radius(p[2] - rate * p[1].atan2(p[0])) - p[0].hypot(p[1])
+            profile.radius(p[2] - rate * p[1].portable_atan2(p[0])) - p[0].portable_hypot(p[1])
         };
         // First derivative, exact on the span containing the point.
         let slope = |t: f64| {
             let p = add(s, scaled(d, t));
             let r2 = p[0] * p[0] + p[1] * p[1];
             let r = r2.sqrt();
-            let phi = p[2] - rate * p[1].atan2(p[0]);
+            let phi = p[2] - rate * p[1].portable_atan2(p[0]);
             let (index, base) = profile.locate(phi);
             let [_, profile_slope] = profile.spans[index].eval(phi - base);
             let dphi = d[2] - rate * (p[0] * d[1] - p[1] * d[0]) / r2;
@@ -2327,8 +2331,8 @@ impl Thread {
     /// Exact crossings of a line parallel to the axis.
     fn axial_crossings(&self, s: P3, d: P3, [a, b]: [f64; 2]) -> Vec<f64> {
         let profile = &self.law.profile;
-        let r = s[0].hypot(s[1]);
-        let theta = s[1].atan2(s[0]);
+        let r = s[0].portable_hypot(s[1]);
+        let theta = s[1].portable_atan2(s[0]);
         // phi(t) = s_z - rate * theta + t * d_z with d_z = +-1.
         let phi0 = s[2] - self.rate() * theta;
         let [p, q] = [phi0 + a * d[2], phi0 + b * d[2]];
@@ -2379,7 +2383,7 @@ impl Thread {
         {
             // In the shoulder plane the union is open only where both the
             // thread below and the neck above have material: inside the neck.
-            let rho = d[0].hypot(d[1]);
+            let rho = d[0].portable_hypot(d[1]);
             let b = s[0] * d[0] + s[1] * d[1];
             let c = s[0] * s[0] + s[1] * s[1] - radius * radius;
             if rho <= 1e-15 {
@@ -2404,7 +2408,7 @@ impl Thread {
             // In the shoulder plane the material on both sides is the
             // annulus between the tail cylinder and the stock.
             let disc = |radius: f64| -> Vec<[f64; 2]> {
-                let rho = d[0].hypot(d[1]);
+                let rho = d[0].portable_hypot(d[1]);
                 let b = s[0] * d[0] + s[1] * d[1];
                 let c = s[0] * s[0] + s[1] * s[1] - radius * radius;
                 if rho <= 1e-15 {
@@ -2460,9 +2464,9 @@ impl Thread {
             // its surface over the band: that stretch is boundary, not
             // material, so a stretch whose middle is not beyond the void's
             // radius there is dropped.
-            let axial = d[0].hypot(d[1]) <= 1e-15;
-            let r = s[0].hypot(s[1]);
-            let theta = s[1].atan2(s[0]);
+            let axial = d[0].portable_hypot(d[1]) <= 1e-15;
+            let r = s[0].portable_hypot(s[1]);
+            let theta = s[1].portable_atan2(s[0]);
             let profile = &self.law.profile;
             let beyond = |t: f64| {
                 let z = s[2] + t * d[2];
@@ -2531,8 +2535,8 @@ impl Thread {
             // its visibility can change without a crossing in the paper.
             let view = self.local_vector([0., 0., 1.]);
             let mut stops = vec![a, b];
-            if view[0].hypot(view[1]) > 1e-12 {
-                let fold = view[1].atan2(view[0]) + PI / 2.;
+            if view[0].portable_hypot(view[1]) > 1e-12 {
+                let fold = view[1].portable_atan2(view[0]) + PI / 2.;
                 let mut k = ((a - fold) / PI).ceil();
                 while fold + k * PI < b {
                     stops.push(fold + k * PI);
@@ -2581,7 +2585,7 @@ impl Thread {
 
     fn outlines(&self, output: &mut Vec<Candidate>) -> Result<(), GeometryError> {
         let view = self.local_vector([0., 0., 1.]);
-        let rho = view[0].hypot(view[1]);
+        let rho = view[0].portable_hypot(view[1]);
         let profile = &self.law.profile;
         if rho <= 1e-9 {
             // Along the axis the outlines are the helices of stationary radius.
@@ -2701,8 +2705,8 @@ impl Thread {
     fn contour_on_caps(&self, view: P3) -> Result<Vec<(f64, f64)>, GeometryError> {
         let profile = &self.law.profile;
         let k = self.rate();
-        let rho = view[0].hypot(view[1]);
-        let alpha = view[1].atan2(view[0]);
+        let rho = view[0].portable_hypot(view[1]);
+        let alpha = view[1].portable_atan2(view[0]);
         let (rmax, slope, curvature) = (profile.maximum, profile.slope, profile.curvature);
         let lipschitz = rho * (k.abs() * slope + rmax)
             + rho * k.abs() * (k.abs() * curvature + slope)
@@ -2717,7 +2721,9 @@ impl Thread {
                 let g = |theta: f64| {
                     let [r, d] = span.eval(level - k * theta);
                     let psi = theta - alpha;
-                    -r * rho * psi.cos() + k * d * rho * psi.sin() + r * d * view[2]
+                    -r * rho * psi.portable_cos()
+                        + k * d * rho * psi.portable_sin()
+                        + r * d * view[2]
                 };
                 let mut roots = Vec::new();
                 isolate(&g, range, lipschitz, &mut roots)?;
@@ -2789,8 +2795,8 @@ impl Thread {
         };
         let profile = &self.law.profile;
         let k = self.rate();
-        let rho = view[0].hypot(view[1]);
-        let alpha = view[1].atan2(view[0]);
+        let rho = view[0].portable_hypot(view[1]);
+        let alpha = view[1].portable_atan2(view[0]);
         let (_, turn) = self.seam_rates(&cone);
         let (rmax, slope, curvature) = (profile.maximum, profile.slope, profile.curvature);
         let lipschitz = rho * (slope + rmax * turn + k.abs() * curvature + k.abs() * slope * turn)
@@ -2802,7 +2808,7 @@ impl Thread {
                 let (_, _, theta) = seam.at(phi);
                 let [r, d] = seam.span.eval(phi);
                 let psi = theta - alpha;
-                -r * rho * psi.cos() + k * d * rho * psi.sin() + r * d * view[2]
+                -r * rho * psi.portable_cos() + k * d * rho * psi.portable_sin() + r * d * view[2]
             };
             let mut roots = Vec::new();
             isolate(&g, seam.range, lipschitz, &mut roots)?;
@@ -2820,7 +2826,7 @@ impl Thread {
             return Ok(());
         };
         let view = self.local_vector([0., 0., 1.]);
-        let rho = view[0].hypot(view[1]);
+        let rho = view[0].portable_hypot(view[1]);
         if rho <= 1e-9 {
             return Ok(());
         }
@@ -2828,12 +2834,12 @@ impl Thread {
         if ratio.abs() >= 1. {
             return Ok(());
         }
-        let alpha = view[1].atan2(view[0]);
+        let alpha = view[1].portable_atan2(view[0]);
         let profile = &self.law.profile;
         let k = self.rate();
         for sign in [-1., 1.] {
-            let theta = alpha + sign * ratio.acos();
-            let (sin, cos) = theta.sin_cos();
+            let theta = alpha + sign * ratio.portable_acos();
+            let (sin, cos) = theta.portable_sin_cos();
             // The cone bounds the material where it trims the thread: roots
             // of R(z - k theta) - C(z) along the generator.
             let f = |z: f64| profile.radius(z - k * theta) - cone.radius(z);
@@ -2874,7 +2880,7 @@ impl Thread {
         let k = law.rate;
         let angle = |phi: f64| Outline::angle(law, span, view, sign, phi);
         // theta lies within 3pi/2 of alpha + pi, which bounds z = phi + k theta.
-        let alpha = view[1].atan2(view[0]);
+        let alpha = view[1].portable_atan2(view[0]);
         let reach = k.abs() * 1.5 * PI;
         let lo = range[0] + k * (alpha + PI) - reach;
         let hi = range[1] + k * (alpha + PI) + reach;
@@ -2937,7 +2943,7 @@ impl Thread {
     /// the sight: a constant angle, and phases from the band crossing it.
     fn flat_outlines(&self, span: &Span, view: P3, output: &mut Vec<Candidate>) {
         let r = span.flat().expect("flat band");
-        let alpha = view[1].atan2(view[0]);
+        let alpha = view[1].portable_atan2(view[0]);
         let rate = self.rate();
         let [a, b] = span.range();
         for theta in [alpha + PI / 2., alpha - PI / 2.] {
@@ -2948,7 +2954,7 @@ impl Thread {
                 let low = self.start(r);
                 let [lo, hi] = [z0.max(low), z1.min(self.z[1])];
                 if hi - lo > 1e-12 {
-                    let (sin, cos) = theta.sin_cos();
+                    let (sin, cos) = theta.portable_sin_cos();
                     output.push(Candidate {
                         kind: Kind::Outline,
                         path: Arc::new(Segment(
@@ -2966,7 +2972,7 @@ impl Thread {
         let law = &self.law;
         let profile = &law.profile;
         let rate = self.rate();
-        let nxy = n[0].hypot(n[1]);
+        let nxy = n[0].portable_hypot(n[1]);
         let mut output: Loop = Vec::new();
         if nxy <= 1e-12 {
             // Across the axis: the cap curve at that level.
@@ -2980,7 +2986,7 @@ impl Thread {
         if n[2].abs() <= 1e-12 && c.abs() <= 4. * self.tolerance {
             // Containing the axis: both meridian profiles and the cap lines.
             let h = [-n[1] / nxy, n[0] / nxy, 0.];
-            let theta = h[1].atan2(h[0]);
+            let theta = h[1].portable_atan2(h[0]);
             for (side, angle) in [(1., theta), (-1., theta + PI)] {
                 for m in self.copies() {
                     let shift = rate * angle + m as f64 * self.pitch();
@@ -3128,8 +3134,8 @@ impl Thread {
                 }
                 let [a, b] = span.range();
                 for sign in [-1., 1.] {
-                    let theta = n[1].atan2(n[0]) + sign * ratio.acos();
-                    let (sin, cos) = theta.sin_cos();
+                    let theta = n[1].portable_atan2(n[0]) + sign * ratio.portable_acos();
+                    let (sin, cos) = theta.portable_sin_cos();
                     for m in self.copies() {
                         let shift = rate * theta + m as f64 * self.pitch();
                         // On an entry chamfer the band starts at its station.
@@ -3189,19 +3195,19 @@ impl Thread {
             for seam in self.seams() {
                 let h = |phi: f64| {
                     let ([r, theta, z], _, _) = seam.at(phi);
-                    dot3(n, [r * theta.cos(), r * theta.sin(), z]) - c
+                    dot3(n, [r * theta.portable_cos(), r * theta.portable_sin(), z]) - c
                 };
                 let mut roots = Vec::new();
                 isolate(&h, seam.range, lipschitz + 1e-12, &mut roots)?;
                 for phi in roots {
                     let ([r, theta, z], _, _) = seam.at(phi);
-                    seam_points.push([r * theta.cos(), r * theta.sin(), z]);
+                    seam_points.push([r * theta.portable_cos(), r * theta.portable_sin(), z]);
                 }
             }
             chord_ends.extend(seam_points.iter().copied());
             // The cone's own section between its ends and the seams.
             let mut events = vec![0., TAU];
-            let base = n[1].atan2(n[0]);
+            let base = n[1].portable_atan2(n[0]);
             for q in [
                 c / cone.entry,
                 (c - n[2] * cone.length) / cone.radius(cone.length),
@@ -3210,11 +3216,15 @@ impl Thread {
                 let ratio = q / nxy;
                 if ratio.abs() < 1. {
                     for sign in [-1., 1.] {
-                        events.push((base + sign * ratio.acos()).rem_euclid(TAU));
+                        events.push((base + sign * ratio.portable_acos()).rem_euclid(TAU));
                     }
                 }
             }
-            events.extend(seam_points.iter().map(|p| p[1].atan2(p[0]).rem_euclid(TAU)));
+            events.extend(
+                seam_points
+                    .iter()
+                    .map(|p| p[1].portable_atan2(p[0]).rem_euclid(TAU)),
+            );
             events.sort_by(f64::total_cmp);
             events.dedup_by(|x, y| (*x - *y).abs() <= 1e-13);
             for pair in events.windows(2) {
@@ -3270,10 +3280,10 @@ impl Thread {
         // point moves by the angle's error times the radius squared over the
         // offset), so the angle is measured from the chart centre at full
         // precision.
-        let base = n[0].atan2(-n[1]);
+        let base = n[0].portable_atan2(-n[1]);
         let [low, high] = [*self.copies().start() - 1, *self.copies().end() + 1];
         for base in [base, base + PI] {
-            let (sin, cos) = base.sin_cos();
+            let (sin, cos) = base.portable_sin_cos();
             let n = [n[0] * cos + n[1] * sin, n[1] * cos - n[0] * sin, n[2]];
             let chart = [-PI / 2., PI / 2.];
             for m in low..=high {
@@ -3305,7 +3315,7 @@ impl Thread {
                             let f = |theta: f64| {
                                 let [alpha, beta, gamma] = Sweep::line(law, (n, c), theta);
                                 alpha * center[1] + beta * center[0] - gamma
-                                    + side * radius * alpha.hypot(beta)
+                                    + side * radius * alpha.portable_hypot(beta)
                             };
                             let lip = lu + radius * nxy + 1e-12;
                             isolate(&f, chart, lip, &mut touches)?;
@@ -3337,7 +3347,7 @@ impl Thread {
                             // at an end of that cap's exact chord.
                             let mut stops = vec![0., 1.];
                             for point in &chord_ends {
-                                let theta = point[1].atan2(point[0]) - base;
+                                let theta = point[1].portable_atan2(point[0]) - base;
                                 let theta = theta - TAU * (theta / TAU).round();
                                 let profile = branch.profile(*point);
                                 let Some(t) = branch.branch.parameter(theta, &profile) else {
@@ -3368,9 +3378,9 @@ impl Thread {
                             for piece in stops.windows(2) {
                                 let q = law.local(sweep.point(0.5 * (piece[0] + piece[1])));
                                 let z = q[2];
-                                let kept = self
-                                    .cone
-                                    .is_none_or(|cone| cone.keeps(q[0].hypot(q[1]), z, 1e-12));
+                                let kept = self.cone.is_none_or(|cone| {
+                                    cone.keeps(q[0].portable_hypot(q[1]), z, 1e-12)
+                                });
                                 if kept
                                     && z > self.z[0]
                                     && z < self.z[1]
@@ -3398,10 +3408,10 @@ impl Thread {
     /// `level` inside the thread's cross-section there.
     fn cap_line(&self, s: P3, d: P3, level: f64) -> Result<Vec<[f64; 2]>, GeometryError> {
         let profile = &self.law.profile;
-        let rho = d[0].hypot(d[1]);
+        let rho = d[0].portable_hypot(d[1]);
         if rho <= 1e-15 {
-            let r = s[0].hypot(s[1]);
-            let inside = r < profile.radius(level - self.rate() * s[1].atan2(s[0]));
+            let r = s[0].portable_hypot(s[1]);
+            let inside = r < profile.radius(level - self.rate() * s[1].portable_atan2(s[0]));
             return Ok(if inside {
                 vec![[-1e9, 1e9]]
             } else {
@@ -3410,7 +3420,8 @@ impl Thread {
         }
         let g = |t: f64| {
             let p = add(s, scaled(d, t));
-            profile.radius(level - self.rate() * p[1].atan2(p[0])) - p[0].hypot(p[1])
+            profile.radius(level - self.rate() * p[1].portable_atan2(p[0]))
+                - p[0].portable_hypot(p[1])
         };
         let b = s[0] * d[0] + s[1] * d[1];
         let foot2 = s[0] * s[0] + s[1] * s[1] - b * b;
@@ -3443,7 +3454,7 @@ impl Thread {
     }
 
     fn cap_chord(&self, n: P3, c: f64, level: f64) -> Result<Vec<[P3; 2]>, GeometryError> {
-        let nxy = n[0].hypot(n[1]);
+        let nxy = n[0].portable_hypot(n[1]);
         if nxy <= 1e-12 {
             return Ok(Vec::new());
         }
@@ -3454,10 +3465,11 @@ impl Thread {
         let profile = &self.law.profile;
         let g = |t: f64| {
             let p = add(s, scaled(d, t));
-            profile.radius(level - self.rate() * p[1].atan2(p[0])) - p[0].hypot(p[1])
+            profile.radius(level - self.rate() * p[1].portable_atan2(p[0]))
+                - p[0].portable_hypot(p[1])
         };
         let reach = profile.maximum;
-        let foot = s[0].hypot(s[1]);
+        let foot = s[0].portable_hypot(s[1]);
         if foot >= reach {
             return Ok(Vec::new());
         }
@@ -3529,7 +3541,7 @@ impl Member for Thread {
         };
         let n = self.local_vector([0., 0., 1.]);
         let c = depth - self.law.origin[2];
-        let nxy = n[0].hypot(n[1]);
+        let nxy = n[0].portable_hypot(n[1]);
         let mut output: Loop = loops.pop().unwrap_or_default();
         let base: Loop = prism
             .section(depth, tolerance_mm)?
@@ -3660,7 +3672,7 @@ impl Thread {
                         && (b - level).abs() <= 4. * self.tolerance
                 }) && matches!(path.paper([0., 1.]), Some(Curve::Line(_)))
             };
-            let axial = n[0].hypot(n[1]) <= 1e-12;
+            let axial = n[0].portable_hypot(n[1]) <= 1e-12;
             output.extend(
                 prism
                     .section(depth, tolerance_mm)?
@@ -3685,7 +3697,7 @@ impl Thread {
                 .into_iter()
                 .flatten()
                 .collect();
-            let nxy = n[0].hypot(n[1]);
+            let nxy = n[0].portable_hypot(n[1]);
             let axial = nxy <= 1e-12;
             if axial {
                 // Across the axis, only one part is cut at a level.
@@ -3756,11 +3768,11 @@ impl Thread {
     /// The station interval, along the cap chord direction, of a disc of
     /// radius `radius` at `level` cut by the plane.
     fn disc_chord(&self, n: P3, c: f64, level: f64, radius: f64) -> Option<[f64; 2]> {
-        let nxy = n[0].hypot(n[1]);
+        let nxy = n[0].portable_hypot(n[1]);
         let d = [n[1] / nxy, -n[0] / nxy, 0.];
         let offset = (c - n[2] * level) / (nxy * nxy);
         let s = [n[0] * offset, n[1] * offset, level];
-        let foot = s[0].hypot(s[1]);
+        let foot = s[0].portable_hypot(s[1]);
         (foot < radius).then(|| {
             let half = (radius * radius - foot * foot).sqrt();
             let center = dot3(s, d);

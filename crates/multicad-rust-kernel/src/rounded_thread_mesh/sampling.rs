@@ -21,8 +21,8 @@ impl Receipt {
         let phase_error = 128. * f64::EPSILON * (s.length_mm + s.pitch_mm);
         let point_error =
             128. * f64::EPSILON * (1. + slope) * (s.major_radius_mm + s.length_mm + s.pitch_mm);
-        let normal_phase = (slope.hypot(rate * curvature))
-            .hypot(slope * slope + s.major_radius_mm * curvature)
+        let normal_phase = (slope.portable_hypot(rate * curvature))
+            .portable_hypot(slope * slope + s.major_radius_mm * curvature)
             / root;
         let normal_error = 128.
             * f64::EPSILON
@@ -65,7 +65,7 @@ pub(super) fn phase_strips(
     let s = thread.spec();
     let root = thread.root_radius_mm();
     let rate = thread.helical_rate().abs();
-    let normal_scale = (rate / root).hypot(1.);
+    let normal_scale = (rate / root).portable_hypot(1.);
     let mut strips = Vec::new();
     for (band, bounds) in thread.profile_breaks().windows(2).enumerate() {
         work.checkpoint()?;
@@ -80,8 +80,8 @@ pub(super) fn phase_strips(
                 + 2. * slope * theta * width
                 + curvature * width * width)
                 * 0.125;
-            let normal =
-                normal_scale * (b.atan() - a.atan()).abs() + rate * slope * width / (root * root);
+            let normal = normal_scale * (b.portable_atan() - a.portable_atan()).abs()
+                + rate * slope * width / (root * root);
             if chord * (1. + 64. * f64::EPSILON) + receipt.point_error <= options.deflection / 2.
                 && (theta + normal) * (1. + 64. * f64::EPSILON) + receipt.normal_error
                     <= options.angle / 2.

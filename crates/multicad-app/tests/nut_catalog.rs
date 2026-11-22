@@ -1,3 +1,4 @@
+use multicad_precision::PortableMath as _;
 #[allow(dead_code)]
 #[path = "../examples/mechanical_library.rs"]
 mod generator;
@@ -200,7 +201,7 @@ fn native_m10_families_keep_distinct_maximum_references_and_real_threaded_solids
             .into_iter()
             .filter_map(|face| {
                 let (origin, normal) = face.plane?;
-                let planar_length = normal[0].hypot(normal[1]);
+                let planar_length = normal[0].portable_hypot(normal[1]);
                 (normal[2].abs() < 1e-8 && planar_length > 0.99).then_some(
                     (origin[0] * normal[0] + origin[1] * normal[1]).abs() / planar_length,
                 )
@@ -563,7 +564,7 @@ fn all_shipped_nuts_have_checked_typed_sources_and_independent_native_profile_wi
             .iter()
             .filter_map(|face| {
                 let (origin, normal) = face.plane?;
-                let horizontal = normal[0].hypot(normal[1]);
+                let horizontal = normal[0].portable_hypot(normal[1]);
                 (normal[2].abs() < 1e-8 && horizontal > 0.99)
                     .then_some((origin[0] * normal[0] + origin[1] * normal[1]).abs() / horizontal)
             })

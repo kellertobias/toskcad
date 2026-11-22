@@ -633,11 +633,11 @@ fn assert_print_quality(solid: &Solid, q: MeshOptions) {
     let spec = source.spec();
     let omega = std::f64::consts::TAU / spec.pitch_mm;
     for v in mesh.mesh.vertices.as_chunks::<3>().0 {
-        let r = v[0].hypot(v[1]);
+        let r = v[0].portable_hypot(v[1]);
         if r < 1e-9 {
             continue; // Cap fan centre.
         }
-        let theta = v[1].atan2(v[0]);
+        let theta = v[1].portable_atan2(v[0]);
         let phase = (v[2] - theta / omega).rem_euclid(spec.pitch_mm);
         let [lo, hi] = source
             .radial_bounds([phase, phase], [v[2].clamp(0., spec.length_mm); 2])

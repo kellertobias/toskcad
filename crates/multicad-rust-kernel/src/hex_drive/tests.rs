@@ -3,7 +3,7 @@ use super::*;
 fn actual_rotated_corners_drive_area_rays_edges_and_centroid() {
     for angle in [0_f64, 0.37, 2.9] {
         for offset in [0., 1e-14] {
-            let (s, c) = angle.sin_cos();
+            let (s, c) = angle.portable_sin_cos();
             let corners = headed_screw::hex_vertices(2.)
                 .map(|[x, y]| [c * x - s * y + offset, s * x + c * y]);
             let drive = HexDrive::from_retained_corners(corners, 2., 1e-12).unwrap();
@@ -28,7 +28,7 @@ fn actual_rotated_corners_drive_area_rays_edges_and_centroid() {
                 drive.maximum_radius_mm()
                     >= corners
                         .into_iter()
-                        .map(|p| p[0].hypot(p[1]))
+                        .map(|p| p[0].portable_hypot(p[1]))
                         .fold(0., f64::max)
             );
             let [lo, hi] = drive.area_bounds_mm2(1e-10).unwrap();
@@ -39,7 +39,7 @@ fn actual_rotated_corners_drive_area_rays_edges_and_centroid() {
                 let r = drive.radius_at_angle_mm(theta);
                 let side = drive.side_at_angle(theta).unwrap();
                 let [a, b] = drive.edge_mm(side);
-                let point = [r * theta.cos(), r * theta.sin()];
+                let point = [r * theta.portable_cos(), r * theta.portable_sin()];
                 assert!(cross(difference(b, a), difference(point, a)).abs() < 1e-12);
             }
             assert!(drive.radius_at_angle_mm(f64::NAN).is_nan());

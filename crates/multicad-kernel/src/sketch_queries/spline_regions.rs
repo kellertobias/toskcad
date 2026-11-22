@@ -43,7 +43,7 @@ pub(crate) fn signed_area(
                 [center[0] - radius_mm, center[1] - radius_mm],
             ],
         })
-        .map(|p| (p[0] - origin[0]).hypot(p[1] - origin[1]))
+        .map(|p| (p[0] - origin[0]).portable_hypot(p[1] - origin[1]))
         .fold(1., f64::max);
     let allowance =
         (policy.linear_tolerance_mm * extent / 64.).max(256. * f64::EPSILON * extent * extent);
@@ -154,23 +154,24 @@ pub(super) fn classify(
         match &edge.curve {
             ExactCurve::BSpline { poles, .. } => {
                 for p in poles {
-                    radius = radius.max((p[0] - point[0]).hypot(p[1] - point[1]));
+                    radius = radius.max((p[0] - point[0]).portable_hypot(p[1] - point[1]));
                 }
             }
             ExactCurve::Circle { center, radius_mm } => {
-                radius = radius.max((center[0] - point[0]).hypot(center[1] - point[1]) + radius_mm)
+                radius = radius
+                    .max((center[0] - point[0]).portable_hypot(center[1] - point[1]) + radius_mm)
             }
             ExactCurve::Line { a, b } => {
                 for p in [a, b] {
-                    radius = radius.max((p[0] - point[0]).hypot(p[1] - point[1]));
+                    radius = radius.max((p[0] - point[0]).portable_hypot(p[1] - point[1]));
                 }
             }
             ExactCurve::Arc { center, a, b, .. } => {
                 radius = radius.max(
-                    (center[0] - point[0]).hypot(center[1] - point[1])
+                    (center[0] - point[0]).portable_hypot(center[1] - point[1])
                         + (a[0] - center[0])
-                            .hypot(a[1] - center[1])
-                            .max((b[0] - center[0]).hypot(b[1] - center[1])),
+                            .portable_hypot(a[1] - center[1])
+                            .max((b[0] - center[0]).portable_hypot(b[1] - center[1])),
                 );
             }
         }
@@ -207,9 +208,9 @@ pub(super) fn classify(
                     .map_err(error)?;
                     for (hit, side) in crossings {
                         if side == 0
-                            || previous
-                                .iter()
-                                .any(|p| (p[0] - hit[0]).hypot(p[1] - hit[1]) <= tolerance * 2.)
+                            || previous.iter().any(|p| {
+                                (p[0] - hit[0]).portable_hypot(p[1] - hit[1]) <= tolerance * 2.
+                            })
                         {
                             return Err(error("Ray passes through a boundary join"));
                         }
@@ -226,7 +227,7 @@ pub(super) fn classify(
                 for hit in contacts.points {
                     if previous
                         .iter()
-                        .any(|p| (p[0] - hit[0]).hypot(p[1] - hit[1]) <= tolerance * 2.)
+                        .any(|p| (p[0] - hit[0]).portable_hypot(p[1] - hit[1]) <= tolerance * 2.)
                     {
                         return Err(error("Ray passes through a boundary join"));
                     }
@@ -393,7 +394,7 @@ mod tests {
         let crossing = curve(3, vec![[0., 0.], [20., 20.], [-10., 20.], [10., 0.]]);
         let hits = q.self_intersections(&crossing, tolerance).unwrap();
         assert_eq!(hits.points.len(), 1);
-        assert!((hits.points[0][0] - 5.).hypot(hits.points[0][1] - 6.) < tolerance);
+        assert!((hits.points[0][0] - 5.).portable_hypot(hits.points[0][1] - 6.) < tolerance);
     }
     #[test]
     fn positive_weight_circle_has_certified_area_winding_and_knot_boundary() {
@@ -456,7 +457,7 @@ mod tests {
         let hits = q.intersections(&arch, &circle, tolerance).unwrap();
         assert_eq!(hits.points.len(), 1);
         let [x, y] = hits.points[0];
-        assert!((x.hypot(y) - 4.).abs() < tolerance);
+        assert!((x.portable_hypot(y) - 4.).abs() < tolerance);
         assert_eq!(
             q.intersections(
                 &arch,

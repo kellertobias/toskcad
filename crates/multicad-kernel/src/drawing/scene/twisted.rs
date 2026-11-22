@@ -9,6 +9,7 @@
 //! `tau` and outward normal `nu`.
 use super::paths::{dot2, dot3};
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::spur_gear::Edge;
 use std::f64::consts::TAU;
 
@@ -78,7 +79,7 @@ impl Frame {
 
     /// The transverse plane at `z`, turned by `phase`.
     pub(super) fn level(&self, z: f64, phase: f64) -> paths::Lift {
-        let (sin, cos) = phase.sin_cos();
+        let (sin, cos) = phase.portable_sin_cos();
         paths::Lift {
             origin: self.place([0., 0., z]),
             x: std::array::from_fn(|i| cos * self.axes[0][i] + sin * self.axes[1][i]),
@@ -193,7 +194,7 @@ impl Patch {
     pub(super) fn bounds(&self, level: Level) -> trace::Bounds {
         let height = self.band.height();
         let twist = self.band.twist.abs();
-        let slope = self.toward[0].hypot(self.toward[1]);
+        let slope = self.toward[0].portable_hypot(self.toward[1]);
         let [c0, c1, c2, c3] = self.flank.size;
         match level {
             Level::Cut(_) => trace::Bounds {
@@ -314,9 +315,9 @@ impl Path for Helix {
     }
 
     fn flatten(&self, tolerance_mm: f64) -> Vec<f64> {
-        let radius = self.point[0].hypot(self.point[1]);
+        let radius = self.point[0].portable_hypot(self.point[1]);
         let step = if tolerance_mm < radius {
-            2. * (1. - tolerance_mm / radius).acos()
+            2. * (1. - tolerance_mm / radius).portable_acos()
         } else {
             TAU / 6.
         };
@@ -330,8 +331,8 @@ impl Path for Helix {
             return None;
         }
         let z = [from, to].map(|t| self.z[0] + (self.z[1] - self.z[0]) * t);
-        let radius = self.point[0].hypot(self.point[1]);
-        let start = self.point[1].atan2(self.point[0]) + self.band.phase_at(z[0]);
+        let radius = self.point[0].portable_hypot(self.point[1]);
+        let start = self.point[1].portable_atan2(self.point[0]) + self.band.phase_at(z[0]);
         let [x, y] = [self.frame.axes[0], self.frame.axes[1]];
         paths::conic(
             [self.frame.origin[0], self.frame.origin[1]],
@@ -474,8 +475,8 @@ impl Gear {
         let gear = Self {
             frame,
             toward,
-            slope: toward[0].hypot(toward[1]),
-            azimuth: toward[1].atan2(toward[0]),
+            slope: toward[0].portable_hypot(toward[1]),
+            azimuth: toward[1].portable_atan2(toward[0]),
             flanks,
             bands,
             bore: profile

@@ -146,15 +146,15 @@ fn signed_area(ring: &[CurvedEdge2d]) -> f64 {
                 b,
                 clockwise,
             } => {
-                let r = (a[0] - center[0]).hypot(a[1] - center[1]);
-                let start = (a[1] - center[1]).atan2(a[0] - center[0]);
-                let end = (b[1] - center[1]).atan2(b[0] - center[0]);
+                let r = (a[0] - center[0]).portable_hypot(a[1] - center[1]);
+                let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
+                let end = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
                 let mut sweep = (end - start).rem_euclid(std::f64::consts::TAU);
                 if clockwise {
                     sweep -= std::f64::consts::TAU;
                 }
                 let chord = (a[0] * b[1] - b[0] * a[1]) / 2.;
-                chord + r * r * (sweep - sweep.sin()) / 2.
+                chord + r * r * (sweep - sweep.portable_sin()) / 2.
             }
             CurvedEdge2d::Circle { .. } => f64::NAN,
             CurvedEdge2d::BSpline(_) => f64::NAN,

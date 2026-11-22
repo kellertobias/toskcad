@@ -1,6 +1,7 @@
 //! Exact sphere metrics and bounded tessellation in its local frame.
 
 use crate::display::{DisplayMesh, MeshError, Tessellation};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, PI, TAU};
 
 #[derive(Clone, Copy, Debug)]
@@ -32,7 +33,7 @@ impl Sphere {
         if point.into_iter().any(|x| !x.is_finite()) {
             return None;
         }
-        let radial = point[0].hypot(point[1]).hypot(point[2]);
+        let radial = point[0].portable_hypot(point[1]).portable_hypot(point[2]);
         if !radial.is_finite() {
             return None;
         }
@@ -58,7 +59,10 @@ impl Sphere {
             // rescaled vector, then expand without an overflowing R/norm.
             let scale = point.into_iter().map(f64::abs).fold(0., f64::max);
             let scaled = point.map(|x| x / scale);
-            let factor = self.radius_mm / scaled[0].hypot(scaled[1]).hypot(scaled[2]);
+            let factor = self.radius_mm
+                / scaled[0]
+                    .portable_hypot(scaled[1])
+                    .portable_hypot(scaled[2]);
             scaled.map(|x| x * factor)
         } else {
             point.map(|coordinate| {
@@ -121,10 +125,10 @@ impl Sphere {
         };
         mesh.vertices.extend([0., 0., -r]);
         let meridians: Vec<_> = (0..columns)
-            .map(|column| (TAU * column as f64 / columns as f64).sin_cos())
+            .map(|column| (TAU * column as f64 / columns as f64).portable_sin_cos())
             .collect();
         for row in 1..rows {
-            let (sin, cos) = (PI * row as f64 / rows as f64 - FRAC_PI_2).sin_cos();
+            let (sin, cos) = (PI * row as f64 / rows as f64 - FRAC_PI_2).portable_sin_cos();
             let xy = r * cos;
             let z = r * sin;
             for &(sin, cos) in &meridians {
@@ -186,7 +190,7 @@ mod tests {
         assert_eq!(occupied.distance_mm, 0.);
         let tiny = f64::from_bits(1);
         let subnormal = sphere.closest_surface_point([tiny, tiny, 0.]).unwrap();
-        assert!((subnormal.point_mm[0].hypot(subnormal.point_mm[1]) - 2.).abs() < 1e-14);
+        assert!((subnormal.point_mm[0].portable_hypot(subnormal.point_mm[1]) - 2.).abs() < 1e-14);
         let large = Sphere::new(1e7).unwrap();
         let far = large.closest_surface_point([1e-20, 1e308, 0.]).unwrap();
         assert!(far.point_mm[0] > 0. && far.point_mm[1] == 1e7);

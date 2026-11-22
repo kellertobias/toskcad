@@ -9,6 +9,7 @@ use multicad_core::{
     drawings::{VectorCurve, VectorRole},
     materials::HatchPattern,
 };
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec};
 use std::f64::consts::TAU;
 
@@ -22,7 +23,7 @@ fn bspt(frame: PlaneFrame) -> Solid {
             length_mm: 6.5,
             radial_taper: 1. / 32.,
             section: AuthoredSection::BsptRounded {
-                depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
+                depth_mm: p / (3. * 27.5_f64.to_radians().portable_tan()),
             },
             crest_radius_limit_mm: None,
         },
@@ -88,9 +89,9 @@ fn contains(solid: &Solid, w: P3) -> Option<bool> {
         return Some(false);
     }
     let k = spec.pitch_mm / TAU;
-    let q = (z - k * y.atan2(x)).rem_euclid(spec.pitch_mm);
+    let q = (z - k * y.portable_atan2(x)).rem_euclid(spec.pitch_mm);
     let [lo, hi] = source.transport.radial_bounds([q, q], [z, z]).ok()?;
-    let r = x.hypot(y);
+    let r = x.portable_hypot(y);
     if r < lo {
         Some(true)
     } else if r > hi {
@@ -154,7 +155,11 @@ fn pipe_material_along_lines_agrees_with_source_bounds() {
             for offset in [0., 3.9, 4.6, 5.9, 6.7] {
                 let angle = k as f64 * 0.7;
                 lines.push((
-                    world([offset * angle.cos(), offset * angle.sin(), 3.]),
+                    world([
+                        offset * angle.portable_cos(),
+                        offset * angle.portable_sin(),
+                        3.,
+                    ]),
                     direction(d),
                 ));
             }
@@ -237,7 +242,7 @@ fn near(vectors: &[ProjectedVector], role: Option<VectorRole>, point: P2, reach:
                 let along = (((point[0] - a0) * dx + (point[1] - a1) * dy)
                     / (dx * dx + dy * dy).max(1e-300))
                 .clamp(0., 1.);
-                (point[0] - a0 - along * dx).hypot(point[1] - a1 - along * dy) < reach
+                (point[0] - a0 - along * dx).portable_hypot(point[1] - a1 - along * dy) < reach
             })
         })
 }
@@ -268,15 +273,15 @@ fn pipe_outlines_satisfy_the_contour_condition() {
                 for i in 1..8 {
                     let w = world(&view, frame, candidate.path.point(i as f64 / 8.));
                     let [x, y, z] = w;
-                    let theta = y.atan2(x);
-                    let r = x.hypot(y);
+                    let theta = y.portable_atan2(x);
+                    let r = x.portable_hypot(y);
                     let bound = radius(theta, z);
                     assert!((r - bound).abs() < 1e-8, "{label}: {w:?} {r} {bound}");
                     // G = r - F(theta, z): grad in Cartesian coordinates.
                     let h = 1e-6;
                     let df_theta = (radius(theta + h, z) - radius(theta - h, z)) / (2. * h);
                     let df_z = (radius(theta, z + h) - radius(theta, z - h)) / (2. * h);
-                    let (sin, cos) = theta.sin_cos();
+                    let (sin, cos) = theta.portable_sin_cos();
                     let normal = [cos + sin * df_theta / r, sin - cos * df_theta / r, -df_z];
                     let length = dot3(normal, normal).sqrt();
                     let dot = dot3(normal, toward) / length;
@@ -418,8 +423,8 @@ fn pipe_sections_lie_on_the_source_boundary() {
                 for q in &vector.preview_mm {
                     let w = world(&view, frame, [q[0], q[1], 0.]);
                     let [x, y, z] = chart(&solid, w);
-                    let radius = x.hypot(y);
-                    let theta = y.atan2(x);
+                    let radius = x.portable_hypot(y);
+                    let theta = y.portable_atan2(x);
                     let [lo, hi] = bounds(theta, z);
                     let on = |value: f64| value.abs() < 1e-6;
                     let ok = (radius > lo - 1e-6
@@ -590,7 +595,7 @@ fn pipe_occluding_contours_agree_with_a_depth_map_oracle() {
 /// axis whose horizontal direction is at `angle`, and the area of the same
 /// cut by containment on a grid of `step`.
 fn side_cut(solid: &Solid, offset: f64, angle: f64, step: f64) -> (f64, f64) {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     let frame = PlaneFrame {
         origin: [-offset * sin, offset * cos, 3.],
         u: [cos, sin, 0.],

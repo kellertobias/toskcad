@@ -64,7 +64,8 @@ impl TorusBody {
     pub(super) fn bounds(&self, frame: PlaneFrame) -> Bounds {
         let major = self.geometry.major_radius_mm();
         let minor = self.geometry.minor_radius_mm();
-        let half: [f64; 3] = std::array::from_fn(|i| major * frame.u[i].hypot(frame.v[i]) + minor);
+        let half: [f64; 3] =
+            std::array::from_fn(|i| major * frame.u[i].portable_hypot(frame.v[i]) + minor);
         Bounds {
             min: std::array::from_fn(|i| frame.origin[i] - half[i]),
             max: std::array::from_fn(|i| frame.origin[i] + half[i]),

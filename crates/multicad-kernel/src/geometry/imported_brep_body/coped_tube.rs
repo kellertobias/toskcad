@@ -107,7 +107,7 @@ struct Chart {
 
 impl Chart {
     fn radial(&self, theta: f64) -> (P, P) {
-        let (s, c) = theta.sin_cos();
+        let (s, c) = theta.portable_sin_cos();
         (
             mix(scale(self.e1, c), s, self.e2),
             mix(scale(self.e1, -s), c, self.e2),
@@ -116,7 +116,7 @@ impl Chart {
 
     /// Saddle point and its theta derivative at wall radius `rho`.
     fn saddle(&self, rho: f64, theta: f64) -> (P, P) {
-        let (s, c) = theta.sin_cos();
+        let (s, c) = theta.portable_sin_cos();
         let root = (self.rc * self.rc - rho * rho * s * s).max(0.).sqrt();
         let t = (rho * self.cos * c + root) / self.sin;
         let dt = (-rho * self.cos * s - rho * rho * s * c / root) / self.sin;
@@ -193,11 +193,11 @@ impl Chart {
         let band = |nodes: usize| {
             (0..nodes)
                 .map(|k| {
-                    let s = (TAU * k as f64 / nodes as f64).sin();
+                    let s = (TAU * k as f64 / nodes as f64).portable_sin();
                     let a = rc2 - inner * inner * s * s;
                     let b = (rc2 - outer * outer * s * s).max(0.);
                     (outer * outer - inner * inner) * (a * a + a * b + b * b)
-                        / (3. * (a.powf(1.5) + b.powf(1.5)))
+                        / (3. * (a.portable_powf(1.5) + b.portable_powf(1.5)))
                 })
                 .sum::<f64>()
                 * TAU

@@ -2,6 +2,7 @@
 //! Literal imported/retained sections remain a different source type.
 use super::{Error, I, bounds, ceiling, hull, interval};
 use crate::tapered_thread::Series;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 mod boundary;
 mod classify;

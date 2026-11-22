@@ -3,6 +3,7 @@
 //! the returned cuts explicitly carry circles, not polygon approximations.
 use super::*;
 use crate::{model::common::number, model::length, parameters::EvaluatedParameters};
+use multicad_precision::PortableMath as _;
 
 pub fn resolve_dowels(
     document: &Document,
@@ -52,7 +53,7 @@ pub fn resolve_dowels(
             .slot
             .take()
             .ok_or_else(|| invalid("Dowel contact did not yield a circular drilling tool"))?;
-        if (a[0] - b[0]).hypot(a[1] - b[1]) > 1e-6 {
+        if (a[0] - b[0]).portable_hypot(a[1] - b[1]) > 1e-6 {
             return Err(invalid("Dowel receiving tool must be circular"));
         }
         cut.circle = Some((a, r));

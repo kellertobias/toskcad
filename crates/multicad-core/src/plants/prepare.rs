@@ -6,6 +6,7 @@ use crate::{
     document::{Mutation, Placement},
     symbols::{SymbolDefinition, SymbolEditRequest, SymbolPlaceRequest, SymbolValue},
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -263,7 +264,9 @@ pub fn planar_move(
             "This plant is tilted; use Move / Copy to edit its pose",
         ));
     }
-    let current = pose.rotation[1][0].atan2(pose.rotation[0][0]).to_degrees();
+    let current = pose.rotation[1][0]
+        .portable_atan2(pose.rotation[0][0])
+        .to_degrees();
     if pose.translation_mm == position_mm && (rotation_deg - current).abs() < 1e-9 {
         return Ok(None);
     }

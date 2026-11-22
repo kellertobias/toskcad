@@ -8,6 +8,7 @@ use multicad_core::{
     plants::{self, PlantKind, SizeBasis},
     symbols,
 };
+use multicad_precision::PortableMath as _;
 #[derive(Clone, Debug)]
 pub enum PlantCommand {
     Place(Box<plants::PlantPlaceRequest>),
@@ -95,7 +96,9 @@ impl PlantPanel {
             return Err("This plant is tilted; use Move / Copy to edit its pose".into());
         }
         self.position = pose.translation_mm;
-        self.rotation_deg = pose.rotation[1][0].atan2(pose.rotation[0][0]).to_degrees();
+        self.rotation_deg = pose.rotation[1][0]
+            .portable_atan2(pose.rotation[0][0])
+            .to_degrees();
         self.kind = plant.template.kind;
         self.height = plant.height_mm;
         self.spread = plant.spread_mm;
@@ -155,7 +158,7 @@ impl PlantPanel {
             request.placement.name = self.name.clone();
             request.placement.placement = Placement {
                 translation_mm: self.position,
-                rotation_xyzw: [0., 0., half.sin(), half.cos()],
+                rotation_xyzw: [0., 0., half.portable_sin(), half.portable_cos()],
             };
             for (id, value) in [
                 (template.height_parameter, self.height),
@@ -326,8 +329,8 @@ impl PlantPanel {
                 let a = std::f64::consts::TAU * i as f64 / 64.;
                 let p = view.camera.project(
                     [
-                        (center[0] + self.spread / 2. * a.cos()) as f32,
-                        (center[1] + self.spread / 2. * a.sin()) as f32,
+                        (center[0] + self.spread / 2. * a.portable_cos()) as f32,
+                        (center[1] + self.spread / 2. * a.portable_sin()) as f32,
                         self.position[2] as f32,
                     ],
                     view.rect,

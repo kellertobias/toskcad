@@ -62,7 +62,7 @@ pub fn profiled_screw_pieces(screw: &Screw) -> R<Vec<HardwarePiece>> {
         } = segment.curve
         {
             // Only the extremes the arc actually passes bound it.
-            let start = (segment.start[1] - center[1]).atan2(segment.start[0] - center[0]);
+            let start = (segment.start[1] - center[1]).portable_atan2(segment.start[0] - center[0]);
             let passes = |angle: f64| {
                 let t = ((angle - start) * sweep.signum()).rem_euclid(std::f64::consts::TAU);
                 t <= sweep.abs()

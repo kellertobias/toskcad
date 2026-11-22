@@ -4,6 +4,7 @@ use crate::{
     authored_hanger_bolt::{BoundaryOptions, Hanger},
     step::hanger::*,
 };
+use multicad_precision::PortableMath as _;
 #[test]
 fn actual_trimmed_candidate_is_independently_decoded_from_literal_step_entities() {
     for (left, nb) in [(false, false), (true, true)] {
@@ -405,7 +406,7 @@ fn actual_trimmed_candidate_is_independently_decoded_from_literal_step_entities(
         for z in [-12.713, -7.132, -0.713, 0.713, 5.132, 11.713] {
             for r in [0.7, 1.13, 1.37, 1.63, 1.83, 2.03] {
                 for angle in [0., 0.173_f64, 1.371, 2.713, 4.113, 5.839] {
-                    let point = [r * angle.cos(), r * angle.sin(), z];
+                    let point = [r * angle.portable_cos(), r * angle.portable_sin(), z];
                     let oracle = source.classify_box(point.map(|v| [v, v]), None).unwrap();
                     let query = occupied
                         .classify_point(point, QueryOptions::default(), None)

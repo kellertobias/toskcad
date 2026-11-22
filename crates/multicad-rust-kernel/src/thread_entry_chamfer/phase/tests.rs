@@ -1,5 +1,6 @@
 use super::*;
 use crate::thread_entry_chamfer::tests::tool;
+use multicad_precision::PortableMath as _;
 #[test]
 fn monotone_pieces_keep_actual_circle_intersections_and_dense_phase_coverage() {
     for rounded in [false, true] {
@@ -38,7 +39,8 @@ fn exact_root_contact_and_neighboring_representable_entries_have_honest_topology
     let mut spec = tool(false, 1, true).spec();
     let root = 0.125;
     spec.root_radius_mm = Some(root);
-    spec.depth_mm = (spec.pitch_mm - spec.crest_width_mm) / (2. * 30_f64.to_radians().tan()) - root;
+    spec.depth_mm =
+        (spec.pitch_mm - spec.crest_width_mm) / (2. * 30_f64.to_radians().portable_tan()) - root;
     let source = Thread::new(spec).unwrap();
     let circle = source.root_circle().unwrap();
     let minimum = circle.center_radius - circle.radius;
@@ -99,7 +101,7 @@ fn inverse_trim_queries_refuse_noninterior_and_nonunique_intersections() {
     let mut spec = tool(false, 1, true).spec();
     spec.root_radius_mm = Some(0.125);
     spec.depth_mm =
-        (spec.pitch_mm - spec.crest_width_mm) / (2. * 30_f64.to_radians().tan()) - 0.125;
+        (spec.pitch_mm - spec.crest_width_mm) / (2. * 30_f64.to_radians().portable_tan()) - 0.125;
     let source = crate::helical_thread::Thread::new(spec).unwrap();
     let circle = source.root_circle().unwrap();
     let minimum = circle.center_radius - circle.radius;
@@ -122,8 +124,9 @@ fn incompatible_shared_source_endpoint_classifications_are_never_published() {
         for fraction in [0.1, 0.5, 0.9] {
             for scale in [1.01, 1.1, 2., 10., 1000.] {
                 let radians = angle.to_radians();
-                let radius = 0.875 / (2. * radians.cos()) * fraction;
-                let depth = 0.875 / (2. * radians.tan()) - radius * (1. / radians.sin() - 1.);
+                let radius = 0.875 / (2. * radians.portable_cos()) * fraction;
+                let depth = 0.875 / (2. * radians.portable_tan())
+                    - radius * (1. / radians.portable_sin() - 1.);
                 let Ok(source) = crate::helical_thread::Thread::new(crate::helical_thread::Spec {
                     major_radius_mm: depth * scale,
                     pitch_mm: 1.,

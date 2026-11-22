@@ -167,9 +167,9 @@ impl Solid {
                     policy.point([point[0], point[1], 0.])?;
                     policy.point(profile.frame.point(point))?;
                 }
-                policy.length((b[0] - a[0]).hypot(b[1] - a[1]))?;
-                policy.length((next[0] - a[0]).hypot(next[1] - a[1]))?;
-                if (b[0] - next[0]).hypot(b[1] - next[1]) > tolerance {
+                policy.length((b[0] - a[0]).portable_hypot(b[1] - a[1]))?;
+                policy.length((next[0] - a[0]).portable_hypot(next[1] - a[1]))?;
+                if (b[0] - next[0]).portable_hypot(b[1] - next[1]) > tolerance {
                     return Err(input("Loft section wire is disconnected"));
                 }
                 if uz.mul_add(a[0], vz * a[1]).abs() > tolerance {
@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn smooth_loft_at_the_input_limit_keeps_caps_and_station_references() {
         let points: [[f64; 2]; 64] = std::array::from_fn(|i| {
-            let (sin, cos) = (std::f64::consts::TAU * i as f64 / 64.).sin_cos();
+            let (sin, cos) = (std::f64::consts::TAU * i as f64 / 64.).portable_sin_cos();
             [30. * cos, 30. * sin]
         });
         let outer: Vec<_> = (0..points.len())

@@ -4,7 +4,7 @@ const TOL: f64 = 1e-7;
 
 fn fixture() -> NonplanarLoft {
     let lower = [[-2., -1.], [2., -1.], [2., 1.], [-2., 1.]];
-    let (s, c) = std::f64::consts::FRAC_PI_6.sin_cos();
+    let (s, c) = std::f64::consts::FRAC_PI_6.portable_sin_cos();
     let upper = lower.map(|[x, y]| [c * x - s * y + 1., s * x + c * y + 0.5]);
     NonplanarLoft::new([&lower, &upper], 6., TOL).unwrap()
 }

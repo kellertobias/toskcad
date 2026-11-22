@@ -171,8 +171,11 @@ mod tests {
             length_mm: 4.2,
             depth_mm: if rounded {
                 let [lower, upper] = [30_f64.to_radians(), 35_f64.to_radians()];
-                (0.7 - 0.1) / (lower.tan() + upper.tan())
-                    - 0.06 * (((upper - lower) * 0.5).cos() / ((upper + lower) * 0.5).sin() - 1.)
+                (0.7 - 0.1) / (lower.portable_tan() + upper.portable_tan())
+                    - 0.06
+                        * (((upper - lower) * 0.5).portable_cos()
+                            / ((upper + lower) * 0.5).portable_sin()
+                            - 1.)
             } else {
                 0.35
             },
@@ -196,8 +199,8 @@ mod tests {
                             let radius = thread.radius(theta, z);
                             for (offset, occupied) in [(-0.001, true), (0.001, false)] {
                                 let centre = [
-                                    (radius + offset) * theta.cos(),
-                                    (radius + offset) * theta.sin(),
+                                    (radius + offset) * theta.portable_cos(),
+                                    (radius + offset) * theta.portable_sin(),
                                     z,
                                 ];
                                 let bounds = centre.map(|v| [v - 1e-6, v + 1e-6]);
@@ -278,7 +281,11 @@ mod tests {
                         let z = 0.9 + n as f64 * 0.0123;
                         let r = t.radius(theta, z);
                         for offset in [-0.04, 0.04] {
-                            let p = [(r + offset) * theta.cos(), (r + offset) * theta.sin(), z];
+                            let p = [
+                                (r + offset) * theta.portable_cos(),
+                                (r + offset) * theta.portable_sin(),
+                                z,
+                            ];
                             let b = p.map(|v| [v - 1e-7, v + 1e-7]);
                             let class = t.classify_box(b).unwrap();
                             assert_eq!(class, if offset < 0. { Inside } else { Outside });
@@ -307,7 +314,8 @@ mod precision_tests {
             crest_width_mm: 0.0625,
             lower_flank_deg: 1.,
             upper_flank_deg: 1.,
-            depth_mm: (0.5 - 0.0625) / (2. * a.tan()) - root * (1. / a.sin() - 1.),
+            depth_mm: (0.5 - 0.0625) / (2. * a.portable_tan())
+                - root * (1. / a.portable_sin() - 1.),
             root_radius_mm: Some(root),
             starts: 1,
             left_hand: false,

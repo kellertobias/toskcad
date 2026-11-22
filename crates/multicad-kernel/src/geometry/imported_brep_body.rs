@@ -475,7 +475,9 @@ impl ImportedBrepBody {
         // deflection the clearance clears four times over. A box nearer the
         // boundary first walks its centre away within certified clearance
         // balls, which never cross the boundary.
-        let diagonal = (0..3).map(|i| high[i] - low[i]).fold(0., f64::hypot);
+        let diagonal = (0..3)
+            .map(|i| high[i] - low[i])
+            .fold(0., f64::portable_hypot);
         let coarse = (diagonal * 1.25e-4).max(10. * margin);
         let levels = [1., 0.5, 0.25, 0.125].map(|f| (coarse * f).max(10. * margin));
         let (point, free) = if clearance >= 4. * coarse {

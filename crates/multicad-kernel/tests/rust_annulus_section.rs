@@ -7,6 +7,7 @@ use multicad_kernel::{
     DrawingHatch, DrawingProjection, DrawingSolid, GeometryErrorKind, PlaneFrame, ProjectedVector,
     Solid, project_drawing,
 };
+use multicad_precision::PortableMath as _;
 
 fn stock(frame: PlaneFrame) -> Solid {
     Solid::rust_annulus(2., 5., 8., EntityId::new(), frame, Default::default()).unwrap()
@@ -188,9 +189,9 @@ fn section_normalizes_the_accepted_roundoff_in_the_stock_frame() {
 fn rotating_oblique_window_and_hatch_follow_the_finite_cut() {
     let solid = stock(PlaneFrame::default());
     for tilt in [0.05_f64, 0.2, 0.5, 0.95, 1.3, 1.53] {
-        let (sin, cos) = tilt.sin_cos();
+        let (sin, cos) = tilt.portable_sin_cos();
         for angle in [0.11_f64, 0.55, 1.9, 3.2, 5.3] {
-            let (s, c) = angle.sin_cos();
+            let (s, c) = angle.portable_sin_cos();
             let frame = PlaneFrame {
                 u: [c * cos, s, c * sin],
                 v: [-s * cos, c, -s * sin],
@@ -223,7 +224,7 @@ fn assert_cut(vectors: &[ProjectedVector], options: DrawingProjection, base: [f6
         let [x, y, z] = std::array::from_fn(|i| {
             xy[i] + normal[i] * options.section_offset_mm.unwrap() - base[i]
         });
-        let r = x.hypot(y);
+        let r = x.portable_hypot(y);
         assert!(
             (2. - 1e-8..=5. + 1e-8).contains(&r),
             "radial sample {r}, drawing point {:?}",

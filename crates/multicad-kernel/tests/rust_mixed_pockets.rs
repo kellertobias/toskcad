@@ -7,6 +7,7 @@ use multicad_kernel::{
     PlaneFrame, RigidTransform, Solid,
     rust_kernel::{Rational, display::DisplayMesh, manufacturing::certify},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn near(actual: f64, expected: f64) {
@@ -96,7 +97,7 @@ fn blind_tools_preserve_grooves_and_openings_on_multiple_stock_faces() {
             },
         },
     ];
-    let (sin, cos) = 0.53_f64.sin_cos();
+    let (sin, cos) = 0.53_f64.portable_sin_cos();
     let pose = RigidTransform {
         rotation: [[cos, -sin, 0.], [sin, cos, 0.], [0., 0., 1.]],
         translation_mm: [1_000_000., -600_000., 200.],

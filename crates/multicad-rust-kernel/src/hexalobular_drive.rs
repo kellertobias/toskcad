@@ -1,6 +1,7 @@
 //! Retained circular Torx-like recess boundary with its actual conical floor.
 //! This source does not substitute a flat bottom or certify an ISO gauge.
 use crate::{head_profile::TransportError, tapered_thread::interval::I};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 mod authoring;
@@ -79,8 +80,8 @@ fn polar_span(
     minimum_radius: f64,
     error: f64,
 ) -> Result<f64, Error> {
-    let a = start[1].atan2(start[0]);
-    let b = end[1].atan2(end[0]);
+    let a = start[1].portable_atan2(start[0]);
+    let b = end[1].portable_atan2(end[0]);
     let span = (b - a).rem_euclid(TAU);
     if span <= 32. * error / minimum_radius || span >= PI {
         return Err(Error::Unresolved);
@@ -122,7 +123,7 @@ impl Arc {
     fn center_support(self) -> (I, I) {
         let [x, y] = self.center_mm.map(I::point);
         let radius = (x.square() + y.square()).sqrt();
-        let angle = self.center_mm[1].atan2(self.center_mm[0]);
+        let angle = self.center_mm[1].portable_atan2(self.center_mm[0]);
         (
             radius,
             I::new(
@@ -208,7 +209,7 @@ impl Drive {
         }
         let error = (64. * f64::EPSILON * scale.max(1.) + transport.total_mm()).next_up();
         let mut angles = [0.; 13];
-        angles[0] = arcs[0].start_mm[1].atan2(arcs[0].start_mm[0]);
+        angles[0] = arcs[0].start_mm[1].portable_atan2(arcs[0].start_mm[0]);
         let mut radius = 0_f64;
         let mut radial_min_squared = [0.; 12];
         for (i, arc) in arcs.iter().copied().enumerate() {
@@ -225,9 +226,9 @@ impl Drive {
             let a = arc.start_angle_rad;
             let b = a + arc.sweep_rad;
             for (angle, point) in [(a, arc.start_mm), (b, arc.end_mm)] {
-                let (s, c) = angle.sin_cos();
+                let (s, c) = angle.portable_sin_cos();
                 if (arc.center_mm[0] + arc.radius_mm * c - point[0])
-                    .hypot(arc.center_mm[1] + arc.radius_mm * s - point[1])
+                    .portable_hypot(arc.center_mm[1] + arc.radius_mm * s - point[1])
                     > error
                 {
                     return Err(Error::Unresolved);
@@ -298,7 +299,10 @@ impl Drive {
     pub fn radius_at_angle_mm(&self, angle: f64) -> Option<f64> {
         let index = self.arc_index_at_angle(angle)?;
         let theta = (angle - self.angles[0]).rem_euclid(TAU) + self.angles[0];
-        ray_radius(self.arcs[index], [theta.cos(), theta.sin()])
+        ray_radius(
+            self.arcs[index],
+            [theta.portable_cos(), theta.portable_sin()],
+        )
     }
     pub fn arc_index_at_angle(&self, angle: f64) -> Option<usize> {
         if !angle.is_finite() {
@@ -313,8 +317,8 @@ impl Drive {
         if !point.into_iter().all(f64::is_finite) {
             return None;
         }
-        let radius = point[0].hypot(point[1]);
-        if radius > self.radius_at_angle_mm(point[1].atan2(point[0]))? {
+        let radius = point[0].portable_hypot(point[1]);
+        if radius > self.radius_at_angle_mm(point[1].portable_atan2(point[0]))? {
             return None;
         }
         Some(self.cone.tip_depth_mm - radius * self.cone.depth_per_radius)

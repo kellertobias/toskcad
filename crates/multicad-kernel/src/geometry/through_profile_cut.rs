@@ -44,7 +44,7 @@ fn sub(a: Point2, b: Point2) -> Point2 {
 }
 
 fn length(a: Point2) -> f64 {
-    a[0].hypot(a[1])
+    a[0].portable_hypot(a[1])
 }
 
 fn segment_distance(p: Point2, a: Point2, b: Point2) -> f64 {

@@ -365,7 +365,7 @@ impl NormalSweepBody {
             std::mem::swap(&mut a, &mut b);
         }
         let [dx, dy] = [b[0] - a[0], b[1] - a[1]];
-        let length = dx.hypot(dy);
+        let length = dx.portable_hypot(dy);
         let flip = authored && self.reverse;
         Some(ReferenceFrame {
             origin_mm: frame.point(a),
@@ -637,8 +637,8 @@ pub(super) fn rim_in_frame(edge: Edge, frame: ReferenceFrame) -> AnalyticGeometr
                     origin_mm: at(center),
                     ..frame
                 },
-                radius_mm: x.hypot(y),
-                start_rad: y.atan2(x),
+                radius_mm: x.portable_hypot(y),
+                start_rad: y.portable_atan2(x),
                 sweep_rad: edge.signed_sweep_rad().expect("circular arc"),
             }
         }

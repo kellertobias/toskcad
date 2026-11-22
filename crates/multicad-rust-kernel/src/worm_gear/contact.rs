@@ -140,12 +140,12 @@ impl<'a> Contact<'a> {
                     let (local, _) = self.map.point(patch, x);
                     // Only the near side of the worm faces the wheel.
                     if local[2].abs() >= wheel.half_width()
-                        || local[0].hypot(local[1]) >= wheel.blank()
+                        || local[0].portable_hypot(local[1]) >= wheel.blank()
                     {
                         continue;
                     }
                     let thread = self.map.thread_point(patch, x);
-                    let r = thread[0].hypot(thread[1]) / m;
+                    let r = thread[0].portable_hypot(thread[1]) / m;
                     poses.push(self.measure(local, r, side)?);
                 }
             }
@@ -163,10 +163,10 @@ impl<'a> Contact<'a> {
 
     /// Sector-0 rack pose of one worm flank point, checked against `Φ`.
     fn measure(&self, local: Point, r: f64, side: f64) -> Option<f64> {
-        let k = self.sector(local[1].atan2(local[0]));
+        let k = self.sector(local[1].portable_atan2(local[0]));
         let q = rotate_z(local, -k * 2. * self.wheel.span());
         let v = q[2];
-        let rho = q[0].hypot(q[1]);
+        let rho = q[0].portable_hypot(q[1]);
         let [qq, z, _] = self.wheel.contact(r, v, side);
         let x = self.center - qq;
         let reach = (rho * rho - x * x).max(0.).sqrt();
@@ -229,7 +229,7 @@ impl<'a> Contact<'a> {
     /// (`side`) or crest points (`on_crest`).
     fn space(&self, value: V3, side: f64, on_crest: bool) -> bool {
         let span = self.wheel.span();
-        let sector = self.sector(mid(value[1]).atan2(mid(value[0])));
+        let sector = self.sector(mid(value[1]).portable_atan2(mid(value[0])));
         let (s, c) = k(-sector * 2. * span).sin_cos();
         let x = c * value[0] - s * value[1];
         let y = s * value[0] + c * value[1];
@@ -432,7 +432,7 @@ impl<'a> Contact<'a> {
         let phases = worm.rail_phases();
         let band = if side == self.lower { 0 } else { 2 };
         let (lo, hi) = (phases[band + 1], phases[band]);
-        let raw = thread[2] - rate * thread[1].atan2(thread[0]);
+        let raw = thread[2] - rate * thread[1].portable_atan2(thread[0]);
         let phase = lo + (raw - lo).rem_euclid(pitch);
         if phase > hi {
             return None;
@@ -450,9 +450,9 @@ mod tests {
 
     fn pose(teeth: u32, drive: f64, extra: f64) -> [Placement; 2] {
         let center = f64::from(teeth) / 2. + 5.;
-        let (sw, cw) = drive.sin_cos();
+        let (sw, cw) = drive.portable_sin_cos();
         let turn = -drive / f64::from(teeth) + extra;
-        let (s, c) = turn.sin_cos();
+        let (s, c) = turn.portable_sin_cos();
         [
             Placement {
                 origin_mm: [center, 0., 0.],

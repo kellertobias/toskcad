@@ -5,6 +5,7 @@ use crate::{
     document::EntityId,
     sketch_transform::{self, Transform, TransformErrorKind, TransformOptions},
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_PATTERN_INSTANCES: usize = 256;
@@ -131,7 +132,7 @@ impl Pattern {
             Self::Linear { step_mm, .. } => {
                 let delta_mm = step_mm.map(|v| v * index as f64);
                 if step_mm.iter().any(|v| !v.is_finite())
-                    || step_mm[0].hypot(step_mm[1]) <= PLACEMENT_TOLERANCE_MM
+                    || step_mm[0].portable_hypot(step_mm[1]) <= PLACEMENT_TOLERANCE_MM
                     || delta_mm.iter().any(|v| !v.is_finite() || v.abs() > 1e9)
                 {
                     return Err(bad());
@@ -325,7 +326,7 @@ fn new_id(used: &mut BTreeSet<EntityId>) -> EntityId {
 }
 fn coincides(a: &Source, b: &Source) -> bool {
     a.sketch.points.iter().zip(&b.sketch.points).all(|(a, b)| {
-        (a.position_mm[0] - b.position_mm[0]).hypot(a.position_mm[1] - b.position_mm[1])
+        (a.position_mm[0] - b.position_mm[0]).portable_hypot(a.position_mm[1] - b.position_mm[1])
             <= PLACEMENT_TOLERANCE_MM
     })
 }

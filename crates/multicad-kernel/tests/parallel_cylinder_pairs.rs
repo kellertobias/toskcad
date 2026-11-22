@@ -3,6 +3,7 @@ use multicad_kernel::{
     BRepSelection, PlaneFrame, RigidTransform, Solid, SolidPairRelation,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
+use multicad_precision::PortableMath as _;
 fn q(n: i64, d: i64) -> Rational {
     Rational::new(n, d).unwrap()
 }
@@ -89,7 +90,7 @@ fn finite_parallel_pairs_keep_real_witnesses_and_honest_solution_counts_after_po
                     let rotated = dot(pose.rotation[i], offset);
                     (rotated + pose.translation_mm[i]) - pose.translation_mm[i]
                 });
-                let support = 10. * dot(direction, u).hypot(dot(direction, v))
+                let support = 10. * dot(direction, u).portable_hypot(dot(direction, v))
                     + 10. * dot(direction, n).abs();
                 let gap = dot(direction, delta) - support;
                 let scale = direction
@@ -121,8 +122,8 @@ fn finite_parallel_pairs_keep_real_witnesses_and_honest_solution_counts_after_po
             for witness in &inspection.minimum_distance.witnesses {
                 near(
                     (witness.a_mm[0] - witness.b_mm[0])
-                        .hypot(witness.a_mm[1] - witness.b_mm[1])
-                        .hypot(witness.a_mm[2] - witness.b_mm[2]),
+                        .portable_hypot(witness.a_mm[1] - witness.b_mm[1])
+                        .portable_hypot(witness.a_mm[2] - witness.b_mm[2]),
                     d,
                 );
             }

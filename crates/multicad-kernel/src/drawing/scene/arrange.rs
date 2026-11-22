@@ -2,6 +2,7 @@
 //! the paper plane. Chords only locate events; every event parameter is then
 //! refined on the exact path.
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::curved_projection::Ellipse;
 use std::collections::{HashMap, HashSet};
 
@@ -42,7 +43,7 @@ fn dot(a: P2, b: P2) -> f64 {
 }
 
 pub(in crate::drawing) fn distance(a: P2, b: P2) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 
 /// Whether two published ellipses are the same paper conic.
@@ -280,7 +281,7 @@ fn crossing(a: (&Strand, usize), b: (&Strand, usize), start: [f64; 2], eps: f64)
     let mut t = start;
     for _ in 0..8 {
         let residual = sub(at(0, t[0]), at(1, t[1]));
-        if residual[0].hypot(residual[1]) <= 1e-6 * eps {
+        if residual[0].portable_hypot(residual[1]) <= 1e-6 * eps {
             break;
         }
         let slope = |which: usize| {
@@ -549,7 +550,7 @@ fn meet(
         }
     }
     let [dp, dq] = [sub(p[1], p[0]), sub(q[1], q[0])];
-    let [lp, lq] = [dp[0].hypot(dp[1]), dq[0].hypot(dq[1])];
+    let [lp, lq] = [dp[0].portable_hypot(dp[1]), dq[0].portable_hypot(dq[1])];
     if lp <= eps || lq <= eps {
         return;
     }

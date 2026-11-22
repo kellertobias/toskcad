@@ -1,3 +1,4 @@
+use multicad_precision::PortableMath as _;
 #[derive(Debug)]
 pub(super) enum Refusal {
     Precision,
@@ -53,7 +54,7 @@ pub(super) fn facet(
             add_up(edge_error, other_error),
         );
     }
-    let length = cross[0].hypot(cross[1]).hypot(cross[2]);
+    let length = cross[0].portable_hypot(cross[1]).portable_hypot(cross[2]);
     let error_l1 = error.into_iter().fold(0., add_up);
     let length_upper = add_up(mul_up(length, 1. + 8. * f64::EPSILON), error_l1);
     let dot = cross
@@ -105,7 +106,7 @@ pub(super) fn facet(
             }
         }
     }
-    if lower < mul_up(length_upper, angle.cos().next_up()) {
+    if lower < mul_up(length_upper, angle.portable_cos().next_up()) {
         return Err(Refusal::Angle);
     }
     Ok(())

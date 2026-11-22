@@ -1,11 +1,12 @@
 use super::*;
 use crate::head_profile::Head;
+use multicad_precision::PortableMath as _;
 pub(super) fn head(radius: f64, angle: f64, neck: f64) -> Profile {
     let shank = radius * 0.5;
     Profile::new(
         Head::Countersunk {
             radius_mm: radius,
-            height_mm: (radius - shank) / (angle.to_radians() * 0.5).tan() + 0.4,
+            height_mm: (radius - shank) / (angle.to_radians() * 0.5).portable_tan() + 0.4,
             included_angle_deg: angle,
             edge_chamfer_mm: 0.1,
             neck_radius_mm: neck,
@@ -65,7 +66,7 @@ pub(super) fn seat(radius: f64, angle: f64) -> Seat {
     Seat {
         bore_radius_mm: bore,
         mouth_radius_mm: radius,
-        depth_mm: (radius - bore) / (angle.to_radians() * 0.5).tan(),
+        depth_mm: (radius - bore) / (angle.to_radians() * 0.5).portable_tan(),
     }
 }
 pub(super) fn options() -> Options {

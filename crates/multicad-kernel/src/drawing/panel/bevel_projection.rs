@@ -15,7 +15,7 @@ pub(in crate::drawing) fn project_bevel(
     let (body, placement) = input.solid.bevel_body()?;
     let [u, v, toward_viewer] = planar::view_axes(options.frame);
     let axis = placement.normal();
-    if dot(axis, u).hypot(dot(axis, v)) > 64. * f64::EPSILON
+    if dot(axis, u).portable_hypot(dot(axis, v)) > 64. * f64::EPSILON
         || options.detail.is_some()
         || options.section_u_mm.is_some()
         || options.section_v_mm.is_some()
@@ -81,9 +81,9 @@ pub(in crate::drawing) fn project_bevel(
         for item in items {
             let hidden = item.role == Role::Hidden;
             let curve = match item.curve {
-                ViewCurve::Radial { phi, radii } => {
-                    Curve::Line(radii.map(|r| local([r * phi.cos(), r * phi.sin(), 0.])))
-                }
+                ViewCurve::Radial { phi, radii } => Curve::Line(
+                    radii.map(|r| local([r * phi.portable_cos(), r * phi.portable_sin(), 0.])),
+                ),
                 ViewCurve::Arc {
                     radius,
                     start,
@@ -191,7 +191,7 @@ fn hatch_boundary(vectors: &[ProjectedVector], tolerance: f64) -> Vec<[Point; 2]
     let mut representative = |p: Point| {
         if let Some(&q) = ends
             .iter()
-            .find(|q| (p[0] - q[0]).hypot(p[1] - q[1]) <= snap)
+            .find(|q| (p[0] - q[0]).portable_hypot(p[1] - q[1]) <= snap)
         {
             return q;
         }
@@ -206,7 +206,7 @@ fn hatch_boundary(vectors: &[ProjectedVector], tolerance: f64) -> Vec<[Point; 2]
         let mut path = vec![first];
         for &p in &preview[1..preview.len() - 1] {
             let previous = path[path.len() - 1];
-            let far = |q: Point| (p[0] - q[0]).hypot(p[1] - q[1]) > snap;
+            let far = |q: Point| (p[0] - q[0]).portable_hypot(p[1] - q[1]) > snap;
             if far(previous) && far(last) {
                 path.push(p);
             }

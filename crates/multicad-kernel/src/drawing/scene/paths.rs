@@ -1,5 +1,6 @@
 //! Exact view-space paths shared by the scene members.
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{curved_projection::Ellipse, normal_sweep, spur_gear::Edge};
 use std::f64::consts::{PI, TAU};
 
@@ -61,7 +62,12 @@ pub(in crate::drawing) fn round(edge: normal_sweep::Edge) -> Option<(P2, f64, f6
         normal_sweep::Edge::Line { .. } => None,
         normal_sweep::Edge::Arc { center, a, .. } => {
             let [x, y] = [a[0] - center[0], a[1] - center[1]];
-            Some((center, x.hypot(y), y.atan2(x), edge.signed_sweep_rad()?))
+            Some((
+                center,
+                x.portable_hypot(y),
+                y.portable_atan2(x),
+                edge.signed_sweep_rad()?,
+            ))
         }
         normal_sweep::Edge::Circle {
             center,
@@ -79,7 +85,7 @@ pub(in crate::drawing) fn edge_point(edge: Edge, fraction: f64) -> P2 {
         && fraction != 1.
         && let Some((center, radius, start, sweep)) = round(planar)
     {
-        let (sin, cos) = (start + fraction * sweep).sin_cos();
+        let (sin, cos) = (start + fraction * sweep).portable_sin_cos();
         return [center[0] + radius * cos, center[1] + radius * sin];
     }
     edge.point(fraction)
@@ -110,8 +116,9 @@ pub(in crate::drawing) fn conic(
     start: f64,
     sweep: f64,
 ) -> Option<Curve> {
-    let turn = 0.5 * (2. * dot2(cosine, sine)).atan2(dot2(cosine, cosine) - dot2(sine, sine));
-    let (sin, cos) = turn.sin_cos();
+    let turn =
+        0.5 * (2. * dot2(cosine, sine)).portable_atan2(dot2(cosine, cosine) - dot2(sine, sine));
+    let (sin, cos) = turn.portable_sin_cos();
     let major = [
         cos * cosine[0] + sin * sine[0],
         cos * cosine[1] + sin * sine[1],
@@ -120,7 +127,7 @@ pub(in crate::drawing) fn conic(
         cos * sine[0] - sin * cosine[0],
         cos * sine[1] - sin * cosine[1],
     ];
-    let [a, b] = [major, minor].map(|axis| axis[0].hypot(axis[1]));
+    let [a, b] = [major, minor].map(|axis| axis[0].portable_hypot(axis[1]));
     if !(a.is_finite() && b > 1e-9 * a.max(1.)) {
         return None;
     }
@@ -139,7 +146,7 @@ pub(in crate::drawing) fn conic(
     }
     let (u, from) = if (a - b).abs() <= 1e-12 * a {
         // A circle rotates its basis so that the trim starts at zero.
-        let (sin, cos) = from.sin_cos();
+        let (sin, cos) = from.portable_sin_cos();
         ([cos * u[0] - sin * u[1], sin * u[0] + cos * u[1]], 0.)
     } else {
         (u, from.rem_euclid(TAU))
@@ -167,7 +174,7 @@ impl Path for ProfilePath {
                 None => 1.,
                 Some((_, radius, _, sweep)) => {
                     let step = if tolerance < radius {
-                        2. * (1. - tolerance / radius).acos()
+                        2. * (1. - tolerance / radius).portable_acos()
                     } else {
                         PI
                     };
@@ -176,7 +183,7 @@ impl Path for ProfilePath {
             },
             Edge::Involute(curve) => {
                 let [a, b] = curve.interval();
-                let second = curve.base_radius_mm() * a.max(b).hypot(1.);
+                let second = curve.base_radius_mm() * a.max(b).portable_hypot(1.);
                 ((b - a).abs() * span / (8. * tolerance / second).sqrt().min(0.3)).ceil()
             }
         };

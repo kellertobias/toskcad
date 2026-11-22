@@ -6,6 +6,7 @@ use multicad_core::{
     parameters::{self, BoundExpression, Unit},
     project_file::{self, ProjectFile},
 };
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -118,7 +119,7 @@ fn khk_shifted_pair_and_both_signed_examples_match_independent_source_rows() {
         );
         near(
             a.nominal_tooth_thickness_mm,
-            3. * (std::f64::consts::PI / 2. + 2. * x1 * 20_f64.to_radians().tan()),
+            3. * (std::f64::consts::PI / 2. + 2. * x1 * 20_f64.to_radians().portable_tan()),
         );
         if z1 == 12. {
             near(

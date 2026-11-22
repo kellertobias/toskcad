@@ -79,7 +79,7 @@ fn annulus_axial_circles_and_side_bore_limits_do_not_duplicate_visible_edges() {
         for arc in crop.into_iter().map(rim) {
             assert_eq!(arc.major, 2.);
             let [x, y] = difference(arc.point(arc.trim[0].midpoint(arc.trim[1])), detail.center);
-            assert!(x.hypot(y) < detail.radius);
+            assert!(x.portable_hypot(y) < detail.radius);
             assert_eq!(Curve::Ellipse(arc).preview(1e-7, 2), Err(Error::Limit));
         }
     }
@@ -152,7 +152,7 @@ fn far_bore_visibility_matches_independent_three_dimensional_material_rays() {
         assert!(ray_length > 0.);
         for sample in 0..400 {
             let angle = TAU * (f64::from(sample) + 0.13) / 400.;
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = angle.portable_sin_cos();
             let on_rim: [f64; 3] = std::array::from_fn(|i| inside * (u[i] * cos + w[i] * sin));
             let material = (1..=32).any(|step| {
                 let mut point = on_rim;
@@ -214,7 +214,7 @@ fn circle_detail_returns_exact_arcs_and_rejects_tangent_or_disjoint_curves() {
     assert_eq!(clipped.len(), 2);
     let a = rim(clipped[0]);
     let b = rim(clipped[1]);
-    let limit = (1. - 9. / 50_f64).acos();
+    let limit = (1. - 9. / 50_f64).portable_acos();
     assert!((a.trim[1] - limit).abs() < 1e-13);
     assert!((b.trim[0] - (TAU - limit)).abs() < 1e-13);
     for detail in [at([0.; 2], 5.), at([0.; 2], 8.)] {
@@ -252,10 +252,10 @@ fn centered_disk_cuts_an_ellipse_at_four_points() {
     for [start, end] in trim {
         for angle in [start, end] {
             let [x, y] = difference(ellipse.point(angle), detail.center);
-            assert!((x.hypot(y) - 4.).abs() < 1e-13);
+            assert!((x.portable_hypot(y) - 4.).abs() < 1e-13);
         }
         let [x, y] = difference(ellipse.point(start.midpoint(end)), detail.center);
-        assert!(x.hypot(y) < 4.);
+        assert!(x.portable_hypot(y) < 4.);
     }
     let half = Ellipse {
         trim: [PI, TAU],
@@ -333,7 +333,7 @@ fn numerical_policy_checks_inputs_and_preview_budget() {
         let midpoint = std::array::from_fn(|i| pair[0][i].midpoint(pair[1][i]));
         let exact = ellipse.point(TAU * (index as f64 + 0.5) / (preview.len() - 1) as f64);
         let [x, y] = difference(midpoint, exact);
-        assert!(x.hypot(y) <= 0.01);
+        assert!(x.portable_hypot(y) <= 0.01);
     }
     assert_eq!(curve.preview(0.01, 2), Err(Error::Limit));
     assert_eq!(curve.preview(0., 1_000), Err(Error::Invalid));

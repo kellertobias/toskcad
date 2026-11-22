@@ -114,7 +114,7 @@ fn decode_rim(shell: &mut Shell<'_, '_>, edge: u32, frame: Frame) -> Result<Rim>
     require(a == b)?;
     let local = frame.local(circle.center_mm);
     require(
-        local[0].hypot(local[1]) <= shell.tolerance / 16.
+        local[0].portable_hypot(local[1]) <= shell.tolerance / 16.
             && length(cross(circle.normal, frame.n)) < 1e-10,
     )?;
     Ok(Rim {
@@ -460,11 +460,11 @@ fn line_surface(
     } else {
         source.start[0]
     };
-    let source_angle = dr.abs().atan2(dz);
+    let source_angle = dr.abs().portable_atan2(dz);
     require(
         radius == expected_radius
             && proof.error.map_or(angle == source_angle, |error| {
-                (angle.tan() - source_angle.tan()).abs() * dz <= error
+                (angle.portable_tan() - source_angle.portable_tan()).abs() * dz <= error
             }),
     )?;
     let axis = shell.placement(axis)?;
@@ -480,7 +480,8 @@ fn line_surface(
         let delta = sub(rim.center, axis.origin);
         require(
             length(cross(delta, axis.normal)) <= error
-                && (radius + dot(delta, axis.normal) * angle.tan() - rim.radius).abs() <= error,
+                && (radius + dot(delta, axis.normal) * angle.portable_tan() - rim.radius).abs()
+                    <= error,
         )?;
     }
     require(to.z > from.z)
@@ -578,7 +579,7 @@ fn curved_surface(
     let radial = support.u;
     let expected_center: Point = std::array::from_fn(|i| support.origin[i] + center[0] * radial[i]);
     let expected_u: Point = std::array::from_fn(|i| {
-        start_angle.cos() * radial[i] + start_angle.sin() * support.normal[i]
+        start_angle.portable_cos() * radial[i] + start_angle.portable_sin() * support.normal[i]
     });
     let expected_n = cross(support.normal, radial).map(|v| -sweep.signum() * v);
     require(
@@ -590,8 +591,8 @@ fn curved_surface(
     for (rim, angle) in [(from, start_angle), (to, end)] {
         let point: Point = std::array::from_fn(|i| {
             support.origin[i]
-                + (center[0] + radius * angle.cos()) * radial[i]
-                + radius * angle.sin() * support.normal[i]
+                + (center[0] + radius * angle.portable_cos()) * radial[i]
+                + radius * angle.portable_sin() * support.normal[i]
         });
         require(length(sub(shell.vertex(rim.vertex)?, point)) <= error)?;
     }
@@ -1633,7 +1634,7 @@ mod tests {
                 let mut spec = old.spec();
                 spec.head = None;
                 for angle in [0.37_f64, -PI / 6.] {
-                    let (s, c) = angle.sin_cos();
+                    let (s, c) = angle.portable_sin_cos();
                     let corners = old
                         .recess()
                         .flat_hex_geometry()
@@ -1689,7 +1690,8 @@ mod tests {
                         .zip(source.recess().flat_hex_geometry().unwrap().0.corners_mm())
                     {
                         assert!(
-                            (a[0] - b[0]).hypot(a[1] - b[1]) < actual.profile().rounding_error_mm()
+                            (a[0] - b[0]).portable_hypot(a[1] - b[1])
+                                < actual.profile().rounding_error_mm()
                         );
                     }
                 }

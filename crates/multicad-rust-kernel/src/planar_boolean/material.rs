@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 
 mod certified;
 mod intersection;
@@ -205,7 +206,7 @@ fn split_cell(piece: ConvexPiece, plane: Plane, tolerance: f64) -> Result<Split,
     let v = cross(plane.normal, u);
     let angle = |point| {
         let offset = sub(point, center);
-        dot(v, offset).atan2(dot(u, offset))
+        dot(v, offset).portable_atan2(dot(u, offset))
     };
     cap.sort_by(|&a, &b| angle(a).total_cmp(&angle(b)));
     faces[0].push(cap.clone());

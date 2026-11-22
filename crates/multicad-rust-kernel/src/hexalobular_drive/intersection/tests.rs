@@ -39,7 +39,7 @@ fn retained_cylinder_cone_carriers_bind_whole_curves_and_keep_literal_shared_con
                 [
                     x,
                     y,
-                    source.cone.tip_depth_mm - source.cone.depth_per_radius * x.hypot(y),
+                    source.cone.tip_depth_mm - source.cone.depth_per_radius * x.portable_hypot(y),
                 ]
             };
             assert_eq!(spans[0].poles_mm[0], contact(arc.start_mm));
@@ -59,12 +59,13 @@ fn retained_cylinder_cone_carriers_bind_whole_curves_and_keep_literal_shared_con
                     let t = f64::from(i) / 100.;
                     let u = span.parameters[0] + (span.parameters[1] - span.parameters[0]) * t;
                     let theta = arc.start_angle_rad + arc.sweep_rad * u;
-                    let x = arc.center_mm[0] + arc.radius_mm * theta.cos();
-                    let y = arc.center_mm[1] + arc.radius_mm * theta.sin();
+                    let x = arc.center_mm[0] + arc.radius_mm * theta.portable_cos();
+                    let y = arc.center_mm[1] + arc.radius_mm * theta.portable_sin();
                     let exact = [
                         x,
                         y,
-                        source.cone.tip_depth_mm - source.cone.depth_per_radius * x.hypot(y),
+                        source.cone.tip_depth_mm
+                            - source.cone.depth_per_radius * x.portable_hypot(y),
                     ];
                     let p = point(span, t);
                     let distance = p
@@ -74,10 +75,11 @@ fn retained_cylinder_cone_carriers_bind_whole_curves_and_keep_literal_shared_con
                         .sum::<f64>()
                         .sqrt();
                     assert!(distance <= proof.total_error_bound_mm());
-                    let cylinder = (p[0] - arc.center_mm[0]).hypot(p[1] - arc.center_mm[1]);
+                    let cylinder =
+                        (p[0] - arc.center_mm[0]).portable_hypot(p[1] - arc.center_mm[1]);
                     assert!((cylinder - arc.radius_mm).abs() <= proof.total_error_bound_mm());
-                    let cone =
-                        source.cone.tip_depth_mm - source.cone.depth_per_radius * p[0].hypot(p[1]);
+                    let cone = source.cone.tip_depth_mm
+                        - source.cone.depth_per_radius * p[0].portable_hypot(p[1]);
                     assert!(
                         (p[2] - cone).abs()
                             <= (1. + source.cone.depth_per_radius) * proof.total_error_bound_mm()
@@ -164,22 +166,22 @@ fn literal_carrier_tampering_and_work_failures_remain_visible_without_source_rec
 fn ill_conditioned_retained_supports_refuse_a_carrier_instead_of_hiding_chart_uncertainty() {
     let points: [[f64; 2]; 12] = std::array::from_fn(|i| {
         let t = i as f64 * TAU / 12.;
-        [t.cos(), t.sin()]
+        [t.portable_cos(), t.portable_sin()]
     });
     let arcs = std::array::from_fn(|i| {
         let t = (i as f64 + 0.5) * TAU / 12.;
         let c = if i.is_multiple_of(2) {
             [0.; 2]
         } else {
-            [1e6 * t.cos(), 1e6 * t.sin()]
+            [1e6 * t.portable_cos(), 1e6 * t.portable_sin()]
         };
         let from = points[i];
         let to = points[(i + 1) % 12];
-        let a = (from[1] - c[1]).atan2(from[0] - c[0]);
-        let b = (to[1] - c[1]).atan2(to[0] - c[0]);
+        let a = (from[1] - c[1]).portable_atan2(from[0] - c[0]);
+        let b = (to[1] - c[1]).portable_atan2(to[0] - c[0]);
         Arc {
             center_mm: c,
-            radius_mm: (from[0] - c[0]).hypot(from[1] - c[1]),
+            radius_mm: (from[0] - c[0]).portable_hypot(from[1] - c[1]),
             start_mm: from,
             end_mm: to,
             start_angle_rad: a,

@@ -3,6 +3,7 @@ use crate::{
     display::{DisplayMesh, MeshError, Tessellation, triangulate_region},
     revolution::Revolution,
 };
+use multicad_precision::PortableMath as _;
 use spade::Point2;
 
 struct Wall {
@@ -89,7 +90,7 @@ pub fn tessellate(
         .collect();
     let poles = vertices.len() / 3;
     let stride = radial.len();
-    let half_step_sine = (angle.abs() / (2. * segments as f64)).sin();
+    let half_step_sine = (angle.abs() / (2. * segments as f64)).portable_sin();
     if radial
         .iter()
         .any(|[radius, _]| radius * half_step_sine < f64::MIN_POSITIVE)
@@ -98,7 +99,7 @@ pub fn tessellate(
     }
     vertices.reserve(3 * stride * stations);
     for station in 0..stations {
-        let (sin, cos) = (angle * (station as f64 / segments as f64)).sin_cos();
+        let (sin, cos) = (angle * (station as f64 / segments as f64)).portable_sin_cos();
         vertices.extend(
             radial
                 .iter()

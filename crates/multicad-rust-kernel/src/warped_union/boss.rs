@@ -171,7 +171,7 @@ impl Attachment {
             let [lo, hi] = face_range(shell, face, direction, self.tool.start_mm);
             lo.max(-hi).max(0.)
         });
-        radial_gap[0].hypot(radial_gap[1]) > self.tool.radius_mm + tolerance
+        radial_gap[0].portable_hypot(radial_gap[1]) > self.tool.radius_mm + tolerance
     }
 
     fn disjoint(&self, other: &Self, tolerance: f64) -> bool {
@@ -213,7 +213,7 @@ impl Attachment {
         };
         for i in 0..4 {
             let next = (i + 1) % 4;
-            let (sin, cos) = ((i as f64 + 0.5) * FRAC_PI_2).sin_cos();
+            let (sin, cos) = ((i as f64 + 0.5) * FRAC_PI_2).portable_sin_cos();
             let point_mm = std::array::from_fn(|j| {
                 self.mouth[j] + 0.5 * self.height * axis[j] + r * (cos * u[j] + sin * v[j])
             });

@@ -33,6 +33,7 @@
 //!   distance, joined by the chords of both end planes and the bore.
 use super::paths::{Segment, add, conic, dot3, scaled};
 use super::*;
+use multicad_precision::PortableMath as _;
 use shell::{Joint, Shell};
 use std::f64::consts::{PI, TAU};
 #[cfg(test)]
@@ -151,10 +152,10 @@ impl Inner {
     /// requires it between the end planes.
     fn inside(&self, [x, y, z]: V3, slab: bool) -> bool {
         let half = self.shell.half();
-        let r = x.hypot(y);
+        let r = x.portable_hypot(y);
         (!slab || z.abs() < half)
             && self.shell.bore().is_none_or(|bore| r > bore)
-            && r < self.shell.radius(y.atan2(x), z.clamp(-half, half))
+            && r < self.shell.radius(y.portable_atan2(x), z.clamp(-half, half))
     }
 
     /// Parameter intervals of the local line `a + t d` strictly inside the
@@ -178,7 +179,8 @@ impl Inner {
         // Parameters between which the line is within a radius of the axis.
         let within = |radius: f64| -> Option<[f64; 2]> {
             if planar <= 1e-24 {
-                return (a[0].hypot(a[1]) < radius).then_some([f64::NEG_INFINITY, f64::INFINITY]);
+                return (a[0].portable_hypot(a[1]) < radius)
+                    .then_some([f64::NEG_INFINITY, f64::INFINITY]);
             }
             let disc = radius * radius * planar - moment * moment;
             (disc > 0.).then(|| {
@@ -201,7 +203,7 @@ impl Inner {
         // land, whose boundary radius is that same value, is a grazing
         // contact and the thread around it is material.
         let axial = planar <= 1e-24;
-        let snapped = axial && (a[0].hypot(a[1]) - core).abs() <= tau;
+        let snapped = axial && (a[0].portable_hypot(a[1]) - core).abs() <= tau;
         let mut zones = vec![range];
         if !snapped && let Some([p, q]) = within(core) {
             zones = vec![[range[0], p.min(range[1])], [q.max(range[0]), range[1]]];
@@ -213,7 +215,8 @@ impl Inner {
             events.extend(pair);
         }
         let point = |t: f64| add(a, scaled(d, t));
-        if snapped && let Some(heights) = shell.core_line(a[1].atan2(a[0]), [-half, half]) {
+        if snapped && let Some(heights) = shell.core_line(a[1].portable_atan2(a[0]), [-half, half])
+        {
             // `d` is axial and unit here: the parameter is the height
             // offset along it.
             let output = heights
@@ -228,10 +231,10 @@ impl Inner {
             output.sort_by(|x, y| x[0].total_cmp(&y[0]));
             return Ok(output);
         }
-        let radius = |x: f64, y: f64| if snapped { core } else { x.hypot(y) };
+        let radius = |x: f64, y: f64| if snapped { core } else { x.portable_hypot(y) };
         let margin = |t: f64| {
             let [x, y, z] = point(t);
-            shell.radius(y.atan2(x), z.clamp(-half, half)) - radius(x, y)
+            shell.radius(y.portable_atan2(x), z.clamp(-half, half)) - radius(x, y)
         };
         let [turn, rise] = shell.lipschitz();
         let reach = planar.sqrt();
@@ -268,8 +271,8 @@ impl Inner {
                     * (1. + 1e-6);
             let [x, y, z] = point(mid);
             Some(shell.separated(
-                y.atan2(x),
-                x.hypot(y),
+                y.portable_atan2(x),
+                x.portable_hypot(y),
                 z.clamp(-half, half),
                 rate * (hi - lo) / 2.,
             ))
@@ -440,7 +443,8 @@ impl Path for Iso {
     /// one conic instead of crossing each other's chords.
     fn paper(&self, [from, to]: [f64; 2]) -> Option<Curve> {
         let inner = &self.inner;
-        if self.level || self.fixed != 0. || inner.toward[0].hypot(inner.toward[1]) > 1e-12 {
+        if self.level || self.fixed != 0. || inner.toward[0].portable_hypot(inner.toward[1]) > 1e-12
+        {
             return None;
         }
         let [radius, start, rate] = inner.shell.rail(self.patch)?;
@@ -473,7 +477,7 @@ impl Round {
 
 impl Path for Round {
     fn point(&self, t: f64) -> P3 {
-        let (sin, cos) = self.angle(t).sin_cos();
+        let (sin, cos) = self.angle(t).portable_sin_cos();
         add(
             self.center,
             add(scaled(self.cosine, cos), scaled(self.sine, sin)),
@@ -485,7 +489,7 @@ impl Path for Round {
         // major circle.
         let radius = (dot3(self.cosine, self.cosine) + dot3(self.sine, self.sine)).sqrt();
         let step = if tolerance_mm < radius {
-            2. * (1. - tolerance_mm / radius).acos()
+            2. * (1. - tolerance_mm / radius).portable_acos()
         } else {
             PI
         };
@@ -742,7 +746,7 @@ impl Body {
         let half = shell.half();
         let toward = inner.toward;
         let level = depth - inner.origin[2];
-        let lateral = toward[0].hypot(toward[1]);
+        let lateral = toward[0].portable_hypot(toward[1]);
         let mut pieces: Vec<Arc<dyn Path>> = Vec::new();
         let reverse = |path: Arc<dyn Path>| -> Arc<dyn Path> {
             Arc::new(Part {
@@ -794,13 +798,13 @@ impl Body {
             }
         }
         if let Some(bore) = shell.bore() {
-            let heading = toward[1].atan2(toward[0]);
+            let heading = toward[1].portable_atan2(toward[0]);
             if toward[2].abs() < 1e-12 {
                 let reach = level / (lateral * bore);
                 if reach.abs() < 1. {
                     for sign in [-1., 1.] {
-                        let angle = heading + sign * reach.acos();
-                        let (sin, cos) = angle.sin_cos();
+                        let angle = heading + sign * reach.portable_acos();
+                        let (sin, cos) = angle.portable_sin_cos();
                         // The bore wall faces the axis: travel along
                         // `d × (-radial)`.
                         let rise = -(toward[0] * sin - toward[1] * cos);
@@ -819,7 +823,7 @@ impl Body {
                 if high > low {
                     let center = inner.view([0., 0., level / toward[2]]);
                     let slope = -lateral * bore / toward[2];
-                    let (sin, cos) = heading.sin_cos();
+                    let (sin, cos) = heading.portable_sin_cos();
                     let cosine = add(
                         scaled(inner.axes[0], bore * cos),
                         add(
@@ -834,7 +838,10 @@ impl Body {
                     // Seen by the viewer the hole runs clockwise, which is
                     // a decreasing angle when the axis faces the viewer.
                     let turn = -toward[2].signum();
-                    for [from, to] in [[high.acos(), low.acos()], [-low.acos(), -high.acos()]] {
+                    for [from, to] in [
+                        [high.portable_acos(), low.portable_acos()],
+                        [-low.portable_acos(), -high.portable_acos()],
+                    ] {
                         let (start, sweep) = if turn > 0. {
                             (from, to - from)
                         } else {
@@ -942,10 +949,10 @@ impl Member for Body {
                 found.push((Kind::Edge, self.circle(bore, z, false)));
             }
             let toward = inner.toward;
-            if toward[0].hypot(toward[1]) > 1e-9 {
-                let heading = toward[1].atan2(toward[0]);
+            if toward[0].portable_hypot(toward[1]) > 1e-9 {
+                let heading = toward[1].portable_atan2(toward[0]);
                 for side in [-1., 1.] {
-                    let (sin, cos) = (heading + side * PI / 2.).sin_cos();
+                    let (sin, cos) = (heading + side * PI / 2.).portable_sin_cos();
                     let [p, q] = [-half, half].map(|z| inner.view([bore * cos, bore * sin, z]));
                     found.push((Kind::Outline, Arc::new(Segment(p, q))));
                 }

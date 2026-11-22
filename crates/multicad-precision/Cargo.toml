@@ -9,3 +9,7 @@ license.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+# Pure-software transcendental functions: identical bits on every platform.
+libm = "0.2.16"

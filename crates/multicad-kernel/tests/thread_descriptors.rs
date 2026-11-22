@@ -4,6 +4,7 @@ use multicad_core::document::EntityId;
 use multicad_kernel::{
     Bounds, GeometryPolicy, HelicalThread, PlaneFrame, RigidTransform, Solid, rust_kernel::Rational,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn iso(length_mm: f64, left_hand: bool, starts: u32) -> HelicalThread {
@@ -79,7 +80,7 @@ fn samples(frame: PlaneFrame, radius: f64, height: f64) -> Vec<[f64; 3]> {
             let r = 1.2 * radius * f64::from(j) / 28.;
             for k in 0..11 {
                 let a = 2. * PI * f64::from(k) / 11. + 0.013 * f64::from(i);
-                let [x, y] = [r * a.cos(), r * a.sin()];
+                let [x, y] = [r * a.portable_cos(), r * a.portable_sin()];
                 out.push(std::array::from_fn(|c| {
                     frame.origin[c] + x * frame.u[c] + y * frame.v[c] + z * n[c]
                 }));
@@ -103,7 +104,7 @@ fn helical_thread_descriptor_preserves_and_reproduces_the_plain_thread() {
     for (starts, left, root) in [(1, false, Some(1. / (4. * 3_f64.sqrt()))), (2, true, None)] {
         let spec = match root {
             Some(root) => HelicalThread {
-                depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+                depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().portable_tan()) - root,
                 ..iso(6.6, left, starts)
             },
             None => iso(6.6, left, starts),
@@ -159,12 +160,12 @@ fn helical_thread_descriptor_preserves_and_reproduces_the_plain_thread() {
 fn internal_contains(data: &multicad_kernel::InternalThreadData, p: [f64; 3], t: f64) -> bool {
     let [x, y, z] = local(data.frame, p);
     let length = data.thread.spec().length_mm;
-    let r = x.hypot(y);
+    let r = x.portable_hypot(y);
     z >= -t
         && z <= data.stock_length_mm + t
         && r <= data.stock_radius_mm + t
         && ((data.stock_length_mm > length && z >= length - t)
-            || r >= data.thread.radius(y.atan2(x), z.clamp(0., length)) - t)
+            || r >= data.thread.radius(y.portable_atan2(x), z.clamp(0., length)) - t)
 }
 
 #[test]

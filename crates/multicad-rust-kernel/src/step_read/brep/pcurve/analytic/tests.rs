@@ -48,10 +48,13 @@ fn scale_p(a: Point, b: f64) -> Point {
     a.map(|x| x * b)
 }
 fn radial_p(f: Frame, u: f64) -> Point {
-    add_p(scale_p(f.x, u.cos()), scale_p(f.y, u.sin()))
+    add_p(
+        scale_p(f.x, u.portable_cos()),
+        scale_p(f.y, u.portable_sin()),
+    )
 }
 fn rephase(mut f: Frame, angle: f64, reverse: bool) -> Frame {
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     let (x, y) = (f.x, f.y);
     f.x = add_p(scale_p(x, c), scale_p(y, s));
     f.y = add_p(scale_p(x, -s), scale_p(y, c));
@@ -114,7 +117,7 @@ fn cylinder_and_cone_isocurves_prove_complete_natural_images() {
             Surface::Cylinder { frame: f, radius }
         };
         let v = 1.25;
-        let rho = radius + if cone { v * angle.tan() } else { 0. };
+        let rho = radius + if cone { v * angle.portable_tan() } else { 0. };
         let circle_frame = Frame {
             origin: add_p(f.origin, scale_p(f.z, v)),
             ..f
@@ -126,7 +129,10 @@ fn cylinder_and_cone_isocurves_prove_complete_natural_images() {
         );
         let u = 0.71;
         let r = radial_p(f, u);
-        let generator = add_p(f.z, scale_p(r, if cone { angle.tan() } else { 0. }));
+        let generator = add_p(
+            f.z,
+            scale_p(r, if cone { angle.portable_tan() } else { 0. }),
+        );
         let p = add_p(add_p(f.origin, scale_p(r, radius)), scale_p(generator, 3.));
         check(
             &surface,
@@ -141,7 +147,7 @@ fn sphere_latitudes_and_both_torus_isocurves_cover_full_circles() {
     let radius = 2.5;
     let v = 0.47f64;
     let sphere = Surface::Sphere { frame: f, radius };
-    let center = add_p(f.origin, scale_p(f.z, radius * v.sin()));
+    let center = add_p(f.origin, scale_p(f.z, radius * v.portable_sin()));
     check(
         &sphere,
         &line([-4., v, 0.], [3., 0., 0.]),
@@ -154,7 +160,7 @@ fn sphere_latitudes_and_both_torus_isocurves_cover_full_circles() {
                 0.23,
                 false,
             ),
-            radius * v.cos(),
+            radius * v.portable_cos(),
         ),
     );
     let (major, minor) = (4., 0.75);
@@ -163,7 +169,7 @@ fn sphere_latitudes_and_both_torus_isocurves_cover_full_circles() {
         major,
         minor,
     };
-    let center = add_p(f.origin, scale_p(f.z, minor * v.sin()));
+    let center = add_p(f.origin, scale_p(f.z, minor * v.portable_sin()));
     check(
         &torus,
         &line([20., v, 0.], [-2., 0., 0.]),
@@ -176,7 +182,7 @@ fn sphere_latitudes_and_both_torus_isocurves_cover_full_circles() {
                 -0.3,
                 true,
             ),
-            major + minor * v.cos(),
+            major + minor * v.portable_cos(),
         ),
     );
     let u = 0.71;

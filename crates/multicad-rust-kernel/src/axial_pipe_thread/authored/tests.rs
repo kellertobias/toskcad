@@ -27,7 +27,7 @@ pub(super) fn bspt_spec(k: f64) -> AuthoredSpec {
         length_mm: 6.5,
         radial_taper: k,
         section: AuthoredSection::BsptRounded {
-            depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
+            depth_mm: p / (3. * 27.5_f64.to_radians().portable_tan()),
         },
         crest_radius_limit_mm: None,
     }
@@ -58,19 +58,19 @@ fn rounded_pipe_positive_moving_od_clips_are_not_silently_discarded() {
 }
 fn independent_bspt_volume(s: AuthoredSpec, d: f64) -> f64 {
     let a = 27.5_f64.to_radians();
-    let m = 1. / a.tan();
+    let m = 1. / a.portable_tan();
     let k = s.radial_taper;
     let p = s.pitch_mm;
     let l = s.length_mm;
     let r0 = s.major_radius_mm;
     let full = p * (m * m - k * k) / (2. * m);
     let q = (1. + k * k).sqrt();
-    let r = (full - d) / (2. * (1. / a.sin() - q));
-    let h = r * a.cos();
+    let r = (full - d) / (2. * (1. / a.portable_sin() - q));
+    let h = r * a.portable_cos();
     let v = full / (m + k);
     let crest = r0 - r * q;
     let root = r0 - d + r * q;
-    let circular = h * r * a.sin() + r * r * (std::f64::consts::FRAC_PI_2 - a);
+    let circular = h * r * a.portable_sin() + r * r * (std::f64::consts::FRAC_PI_2 - a);
     let mut first = 2. * h * (crest + root);
     let mut second = 2. * h * (crest * crest + root * root + 2. * r * r)
         + (k * k - 1.) * 4. * h.powi(3) / 3.
@@ -78,13 +78,13 @@ fn independent_bspt_volume(s: AuthoredSpec, d: f64) -> f64 {
     for (width, x, y) in [
         (
             v - 2. * h,
-            crest + r * a.sin() - k * h,
-            root - r * a.sin() + k * h,
+            crest + r * a.portable_sin() - k * h,
+            root - r * a.portable_sin() + k * h,
         ),
         (
             p - v - 2. * h,
-            root - r * a.sin() - k * h,
-            crest + r * a.sin() + k * h,
+            root - r * a.portable_sin() - k * h,
+            crest + r * a.portable_sin() + k * h,
         ),
     ] {
         first += width * (x + y) / 2.;
@@ -367,7 +367,7 @@ fn authored_bspt_has_derived_circle_supports_and_shared_actual_joins() {
     for k in [-1. / 32., 1. / 32.] {
         let p = 25.4 / 28.;
         let alpha = 27.5_f64.to_radians();
-        let depth = p / (3. * alpha.tan());
+        let depth = p / (3. * alpha.portable_tan());
         let s = AuthoredSpec {
             major_radius_mm: 9.728 / 2. - k * if k > 0. { 4. } else { p / 2. },
             pitch_mm: p,
@@ -378,9 +378,9 @@ fn authored_bspt_has_derived_circle_supports_and_shared_actual_joins() {
         };
         let t = AuthoredThread::new(s, 1e-7, 1e-6).unwrap();
         let r = t.derived_rounding_radius_bounds_mm().unwrap().unwrap();
-        let m = 1. / alpha.tan();
+        let m = 1. / alpha.portable_tan();
         let expected = (p * (m * m - k * k) / (2. * m) - depth)
-            / (2. * (1. / alpha.sin() - (1. + k * k).sqrt()));
+            / (2. * (1. / alpha.portable_sin() - (1. + k * k).sqrt()));
         assert!(r[0] <= expected && expected <= r[1]);
         assert_eq!(t.tolerance_mm(), 1e-7);
         assert_eq!(t.minimum_feature_mm(), 1e-6);
@@ -388,10 +388,10 @@ fn authored_bspt_has_derived_circle_supports_and_shared_actual_joins() {
         // Query every actual finite arc/flank, including both sides of each
         // tangent. The independent scalar formulas use the canonical pitch
         // and depth; a rounded radius is never fed back as a physical input.
-        let h = expected * alpha.cos();
+        let h = expected * alpha.portable_cos();
         let valley = p * (m * m - k * k) / (2. * m * (m + k));
         let center = s.major_radius_mm - expected * (1. + k * k).sqrt();
-        let tangent = center + expected * alpha.sin();
+        let tangent = center + expected * alpha.portable_sin();
         for n in 0..=200 {
             let q = p * n as f64 / 200.;
             let a = if q <= h {

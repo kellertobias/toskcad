@@ -105,8 +105,8 @@ pub(super) fn build(
         },
     };
     let tip = (spec.mouth_diameter_mm - spec.g_diameter_mm)
-        / (2. * spec.outer_flank_angle_deg.to_radians().tan())
-        + spec.g_diameter_mm / 2. * spec.floor_angle_deg.to_radians().tan();
+        / (2. * spec.outer_flank_angle_deg.to_radians().portable_tan())
+        + spec.g_diameter_mm / 2. * spec.floor_angle_deg.to_radians().portable_tan();
     let extent = profile
         .support([1., 0., 0.])
         .max(spec.mouth_diameter_mm)

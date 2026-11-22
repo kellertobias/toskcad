@@ -222,7 +222,7 @@ impl RoundedBlindBoreBody {
         let delta = std::array::from_fn(|i| point[i] - frame.origin[i]);
         let [x, y, z] = rows.map(|r| dot(r, delta) / det);
         let tolerance = self.inner.tolerance();
-        let rho = x.hypot(y);
+        let rho = x.portable_hypot(y);
         let height = self.geometry.stock_height_mm().as_f64();
         if !rho.is_finite()
             || !z.is_finite()
@@ -233,7 +233,12 @@ impl RoundedBlindBoreBody {
             return false;
         }
         z >= self.geometry.cutter().spec().length_mm
-            || rho >= self.geometry.cutter().radius(y.atan2(x), z.max(0.)) - tolerance
+            || rho
+                >= self
+                    .geometry
+                    .cutter()
+                    .radius(y.portable_atan2(x), z.max(0.))
+                    - tolerance
     }
     fn local_volume(&self) -> f64 {
         std::f64::consts::PI

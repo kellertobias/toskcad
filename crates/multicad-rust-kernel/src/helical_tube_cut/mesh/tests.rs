@@ -15,7 +15,7 @@ fn spec(start_height_mm: f64) -> Spec {
 }
 
 fn point(cut: Cut, theta: f64, x: f64, y: f64) -> [f64; 3] {
-    let (s, c) = (theta + cut.spec.start_angle_rad).sin_cos();
+    let (s, c) = (theta + cut.spec.start_angle_rad).portable_sin_cos();
     let radial = cut.spec.stock_radius_mm + x;
     [
         radial * c - cut.tangent * y * s,
@@ -92,7 +92,7 @@ fn tessellation_keeps_the_groove_open_with_conformal_trims_and_outward_volume() 
                 let [a, b, c] = triangle.map(|v| vertices[v as usize]);
                 if face == 2 {
                     let center = [(a[0] + b[0] + c[0]) / 3., (a[1] + b[1] + c[1]) / 3.];
-                    assert!(8. - center[0].hypot(center[1]) < coarse.deflection);
+                    assert!(8. - center[0].portable_hypot(center[1]) < coarse.deflection);
                 }
             }
             assert_eq!(seen, [true; 5]);

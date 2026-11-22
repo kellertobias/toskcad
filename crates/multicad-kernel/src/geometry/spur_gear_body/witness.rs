@@ -196,7 +196,7 @@ fn twisted_witnesses(
     for &(z, wall) in sections {
         let placed = std::array::from_fn(|i| {
             let [u, v] = base[i].axes;
-            let (sin, cos) = gears[i].phase_at(z).sin_cos();
+            let (sin, cos) = gears[i].phase_at(z).portable_sin_cos();
             Placement {
                 axes: [
                     [u[0] * cos + v[0] * sin, u[1] * cos + v[1] * sin],

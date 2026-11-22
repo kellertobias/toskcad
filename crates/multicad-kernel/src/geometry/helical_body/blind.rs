@@ -141,7 +141,7 @@ impl Solid {
         .map_err(crate::geometry::circular_pocket_body::pocket_error)?;
         let local_entry = local_point(cut.entry.origin);
         let [x, y, z] = std::array::from_fn(|i| witness.center_mm[i] - local_entry[i]);
-        if x.hypot(y).hypot(z) > tolerance {
+        if x.portable_hypot(y).portable_hypot(z) > tolerance {
             return Err(input("Blind tap does not start at the declared stock face"));
         }
         let inward = body.boundary.faces[witness.face].normal.map(|v| -v);
@@ -317,7 +317,7 @@ impl BlindStock {
             let radius = seat.radius_mm();
             let depth = seat.depth_mm();
             let area = PI * radius * radius - hole_area;
-            let (sin, cos) = (depth / seat.thread().helical_rate()).sin_cos();
+            let (sin, cos) = (depth / seat.thread().helical_rate()).portable_sin_cos();
             let [x, y] = mouth_moment;
             let [x, y] = [x * cos - y * sin, x * sin + y * cos];
             properties.push(([0., 0., depth * 0.5], TAU * radius * depth));

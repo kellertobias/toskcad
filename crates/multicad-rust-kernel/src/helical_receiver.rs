@@ -1,5 +1,6 @@
 //! Exact cylindrical stock with a finite, cap-entry threaded blind cavity.
 use crate::helical_thread::{Thread, ThreadError};
+use multicad_precision::PortableMath as _;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Receiver {
     thread: Thread,
@@ -42,9 +43,10 @@ impl Receiver {
             && tolerance >= 0.
             && z >= -tolerance
             && z <= self.stock_length_mm + tolerance
-            && x.hypot(y) <= self.radius_mm + tolerance
+            && x.portable_hypot(y) <= self.radius_mm + tolerance
             && (z >= self.thread.spec().length_mm - tolerance
-                || x.hypot(y) >= self.thread.radius(y.atan2(x), z.max(0.)) - tolerance)
+                || x.portable_hypot(y)
+                    >= self.thread.radius(y.portable_atan2(x), z.max(0.)) - tolerance)
     }
 }
 #[cfg(test)]

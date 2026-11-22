@@ -32,7 +32,7 @@ impl Spiral {
     }
 
     fn point(self, end: usize) -> [f64; 2] {
-        let (sin, cos) = self.angle_rad[end].sin_cos();
+        let (sin, cos) = self.angle_rad[end].portable_sin_cos();
         [self.radius_mm[end] * cos, self.radius_mm[end] * sin]
     }
 
@@ -56,7 +56,7 @@ impl Spiral {
         let last = chart.poles.len() - 1;
         for (index, expected) in [0, last].into_iter().zip(ends) {
             let [x, y] = std::array::from_fn(|i| chart.poles[index][i] - expected[i]);
-            if x.hypot(y) > tolerance {
+            if x.portable_hypot(y) > tolerance {
                 return Err(StepError::Limit);
             }
             chart.poles[index] = expected;
@@ -163,7 +163,7 @@ fn encode(
     for (index, piece) in pieces.iter().enumerate() {
         let [x, y] = piece.point(1);
         let [a, b] = ends[(index + 1) % count];
-        if (x - a).hypot(y - b) > tolerance / 16. {
+        if (x - a).portable_hypot(y - b) > tolerance / 16. {
             return Err(StepError::InvalidGeometry);
         }
     }

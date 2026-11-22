@@ -150,7 +150,7 @@ fn perpendicular_cylinder_patches_share_the_exact_elliptic_edge() {
     near(ellipse.semiaxes_mm()[1], 2.);
     let point = ellipse.point_at(shared.start_rad() + 0.5 * shared.sweep_rad());
     near(point[0], point[1]);
-    near(point[0].hypot(point[2] - 10.), 2.);
+    near(point[0].portable_hypot(point[2] - 10.), 2.);
     assert_eq!(
         shell
             .faces()

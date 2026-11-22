@@ -9,6 +9,7 @@ use multicad_model::{
     Compiler, GeometryBackend,
     assembly_inspection::{inspect_assembly, inspect_assembly_interruptible},
 };
+use multicad_precision::PortableMath as _;
 fn parameters(x: f64) -> PrimitiveParameters {
     PrimitiveParameters::Cylinder {
         radius: length(5.),
@@ -86,7 +87,7 @@ fn canonical_pair_queries_remain_read_only_and_follow_edits_history_and_reopen()
     let report = inspect_assembly(&next, &query(&session, &a, &b)).unwrap();
     let values = report.pairs[0].result.as_ref().unwrap();
     assert_eq!(values.relation, PairRelation::Overlapping);
-    let expected = 10. * (50. * (0.5_f64).acos() - 12.5 * 3_f64.sqrt());
+    let expected = 10. * (50. * (0.5_f64).portable_acos() - 12.5 * 3_f64.sqrt());
     assert!((values.overlap_volume_mm3 - expected).abs() < 1e-9);
     let saved = session.document().clone();
     session.undo(session.revision(), actor()).unwrap();

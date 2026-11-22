@@ -4,6 +4,7 @@
 //! the other coordinate and is evaluated by solving the function itself.
 use super::super::*;
 use super::solve::{Search, bisect, isolate, limit};
+use multicad_precision::PortableMath as _;
 
 /// Value and gradient at a point of the unit square.
 pub(super) type Eval<'a> = &'a dyn Fn(f64, f64) -> (f64, [f64; 2]);
@@ -139,7 +140,7 @@ pub(super) fn trace(
                 let p = at(x);
                 if !roots
                     .iter()
-                    .any(|(q, _)| (q[0] - p[0]).hypot(q[1] - p[1]) <= MERGE)
+                    .any(|(q, _)| (q[0] - p[0]).portable_hypot(q[1] - p[1]) <= MERGE)
                 {
                     roots.push((p, false));
                 }
@@ -156,7 +157,7 @@ pub(super) fn trace(
         let start = roots[index].0;
         let (_, g) = eval(start[0], start[1]);
         let mut heading = [-g[1], g[0]];
-        let size = heading[0].hypot(heading[1]);
+        let size = heading[0].portable_hypot(heading[1]);
         if size <= 1e-9 * magnitude {
             // The level set touches the boundary at a critical point of the
             // function: a tangential contact, which bounds nothing.
@@ -194,14 +195,15 @@ pub(super) fn trace(
             let (chain, stall) = walk(eval, bounds, start, heading, budget)?;
             let end = chain.ends[1];
             for (p, used) in &mut roots {
-                if (p[0] - end[0]).hypot(p[1] - end[1]) <= MERGE {
+                if (p[0] - end[0]).portable_hypot(p[1] - end[1]) <= MERGE {
                     *used = true;
                 }
             }
             let length: f64 = chain.steps.iter().map(|s| (s.u[1] - s.u[0]).abs()).sum();
             // A walk that returns to its own boundary point followed the
             // level set where it only touches the boundary.
-            let returned = from_boundary && (start[0] - end[0]).hypot(start[1] - end[1]) <= MERGE;
+            let returned =
+                from_boundary && (start[0] - end[0]).portable_hypot(start[1] - end[1]) <= MERGE;
             if length <= 1e-9 && !from_boundary {
                 // A branch probed off a critical point that cannot be
                 // followed is a dead end of the probe: no bridge to it.
@@ -252,7 +254,7 @@ fn junction(
     }
     let index = match junctions
         .iter()
-        .position(|j| (j.center[0] - at[0]).hypot(j.center[1] - at[1]) <= 0.5 * PROBE)
+        .position(|j| (j.center[0] - at[0]).portable_hypot(j.center[1] - at[1]) <= 0.5 * PROBE)
     {
         Some(index) => index,
         None => {
@@ -271,13 +273,13 @@ fn junction(
             bridge: true,
         });
     }
-    let size = arrival[0].hypot(arrival[1]);
+    let size = arrival[0].portable_hypot(arrival[1]);
     junctions[index]
         .used
         .push([-arrival[0] / size, -arrival[1] / size]);
     const COUNT: usize = 256;
     let value = |angle: f64| {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let p = [center[0] + PROBE * cos, center[1] + PROBE * sin];
         let inside = (0. ..=1.).contains(&p[0]) && (0. ..=1.).contains(&p[1]);
         (inside.then(|| eval(p[0], p[1]).0), p)

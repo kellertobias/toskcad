@@ -22,7 +22,7 @@ pub(in crate::drawing) fn project_spline_sweep(
             "Rust spline counter-loop drawing projection is not yet qualified",
         )));
     }
-    if dot(axis, u).hypot(dot(axis, v)) > 32. * f64::EPSILON
+    if dot(axis, u).portable_hypot(dot(axis, v)) > 32. * f64::EPSILON
         || options.detail.is_some()
         || options.section_offset_mm.is_some()
     {

@@ -6,6 +6,7 @@ use super::{
     Artwork, Collector, Diagnostics, Format, ImportError, UnitChoice, fail,
     geometry::{Affine, P, Segment, ellipse_arc, transform},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 
 const MAX_PAIRS: usize = 8_000_000;
@@ -333,7 +334,7 @@ pub fn parse(bytes: &[u8], units: UnitChoice) -> Result<Artwork, ImportError> {
                 let ratio = record.required(40)?;
                 let start = record.number(41)?.unwrap_or(0.);
                 let end = record.number(42)?.unwrap_or(TAU);
-                if u[0].hypot(u[1]) <= 0. || !(ratio > 0. && ratio <= 1. + 1e-9) {
+                if u[0].portable_hypot(u[1]) <= 0. || !(ratio > 0. && ratio <= 1. + 1e-9) {
                     diagnostics.add("dxf.degenerate", "Zero-length curves were skipped");
                     continue;
                 }
@@ -345,7 +346,7 @@ pub fn parse(bytes: &[u8], units: UnitChoice) -> Result<Artwork, ImportError> {
                 }
                 let full = sweep >= TAU - 1e-12;
                 let segment = if (ratio - 1.).abs() < 1e-12 {
-                    let r = u[0].hypot(u[1]);
+                    let r = u[0].portable_hypot(u[1]);
                     if full {
                         Segment::Circle {
                             center: c,
@@ -355,7 +356,7 @@ pub fn parse(bytes: &[u8], units: UnitChoice) -> Result<Artwork, ImportError> {
                         Segment::Arc {
                             center: c,
                             radius: r,
-                            start: u[1].atan2(u[0]) + z * start,
+                            start: u[1].portable_atan2(u[0]) + z * start,
                             sweep: z * sweep,
                         }
                     }
@@ -400,7 +401,7 @@ pub fn parse(bytes: &[u8], units: UnitChoice) -> Result<Artwork, ImportError> {
 }
 
 fn line(a: P, b: P) -> Option<Segment> {
-    ((a[0] - b[0]).hypot(a[1] - b[1]) > 1e-12).then_some(Segment::Line { a, b })
+    ((a[0] - b[0]).portable_hypot(a[1] - b[1]) > 1e-12).then_some(Segment::Line { a, b })
 }
 
 /// Mirrors an OCS curve with a −Z extrusion into WCS (X ↦ −X).
@@ -415,7 +416,7 @@ fn ocs(segment: &Segment, up: bool) -> Segment {
 /// Bulge `b = tan(θ/4)`, positive counterclockwise, on the edge after a vertex.
 pub(crate) fn bulge_segment(a: P, b: P, bulge: f64) -> Option<Segment> {
     let chord = [b[0] - a[0], b[1] - a[1]];
-    let d = chord[0].hypot(chord[1]);
+    let d = chord[0].portable_hypot(chord[1]);
     if d <= 1e-12 {
         return None;
     }
@@ -431,8 +432,8 @@ pub(crate) fn bulge_segment(a: P, b: P, bulge: f64) -> Option<Segment> {
     Some(Segment::Arc {
         center,
         radius: r.abs(),
-        start: (a[1] - center[1]).atan2(a[0] - center[0]),
-        sweep: 4. * bulge.atan(),
+        start: (a[1] - center[1]).portable_atan2(a[0] - center[0]),
+        sweep: 4. * bulge.portable_atan(),
     })
 }
 

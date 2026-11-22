@@ -782,6 +782,7 @@ mod worm_recipe_tests {
 #[cfg(test)]
 mod coverage_recipe_tests {
     use super::*;
+    use multicad_precision::PortableMath as _;
     #[test]
     fn pitch_unit_and_hub_partial_edits_preserve_original_dimensions_and_explicit_clearing() {
         let s =
@@ -852,8 +853,10 @@ mod coverage_recipe_tests {
             ("normal", 12.7, 20.),
             (
                 "transverse",
-                12.7 * beta.cos(),
-                (normal.tan() / beta.cos()).atan().to_degrees(),
+                12.7 * beta.portable_cos(),
+                (normal.portable_tan() / beta.portable_cos())
+                    .portable_atan()
+                    .to_degrees(),
             ),
         ] {
             let wire = json!({"family":"helical","pitch_input":"diametral_pitch","module_system":plane,"module":{"value":dp,"unit":"teeth_per_in"},"pressure_angle":{"value":angle,"unit":"deg"},"helix_angle":{"value":15.,"unit":"deg"},"hand":"right"});
@@ -891,7 +894,7 @@ mod coverage_recipe_tests {
         for (a, b) in radii[0][..4].iter().zip(&radii[1][..4]) {
             assert!((a - b).abs() < 1e-12);
         }
-        let selected_difference = 2. / beta.cos() - 2.;
+        let selected_difference = 2. / beta.portable_cos() - 2.;
         assert!(radii[1][4] > radii[0][4]);
         assert!(radii[1][5] < radii[0][5]);
         assert!((radii[1][4] - radii[0][4] - selected_difference).abs() < 1e-12);

@@ -31,7 +31,7 @@ pub(super) fn external(
         .normal
         .map(|n| if spec.left_hand { n } else { -n });
     let radial = |phase: f64| {
-        let (sin, cos) = ((z - phase) / rate).sin_cos();
+        let (sin, cos) = ((z - phase) / rate).portable_sin_cos();
         placement.vector([cos, sin, 0.])
     };
     let mut crests = Vec::with_capacity(corners.len());
@@ -117,7 +117,7 @@ pub(super) fn encode(
     let [_, start, _, _, crest, _] = thread.profile_breaks();
     let rate = thread.helical_rate();
     let radial = |phase: f64| {
-        let (sin, cos) = (-phase / rate).sin_cos();
+        let (sin, cos) = (-phase / rate).portable_sin_cos();
         placement.vector([cos, sin, 0.])
     };
     let first_dir = radial(start);
@@ -213,7 +213,7 @@ mod tests {
                     [start, crest].map(|p| {
                         let (sin, cos) = ((thread.spec().length_mm - p - k as f64)
                             / thread.helical_rate())
-                        .sin_cos();
+                        .portable_sin_cos();
                         file.vertex([3. * cos, 3. * sin, thread.spec().length_mm])
                     })
                 })

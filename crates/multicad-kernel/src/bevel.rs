@@ -5,6 +5,7 @@ use multicad_core::{
     document::EntityId,
     references::{Origin, TopologyKey, TopologyKind},
 };
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeMap, f64::consts::FRAC_PI_2};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,20 +68,20 @@ impl SphericalBevelGear {
             ));
         }
         let root_toe = (self.outer_cone_distance_mm - self.face_width_mm)
-            * self.root_cone_angle_rad.sin()
-            / (self.root_cone_angle_rad - self.pitch_cone_angle_rad).cos();
+            * self.root_cone_angle_rad.portable_sin()
+            / (self.root_cone_angle_rad - self.pitch_cone_angle_rad).portable_cos();
         if root_toe - self.bore_radius_mm < policy.minimum_feature_mm {
             return Err(failure(
                 GeometryErrorKind::Input,
                 "Bevel bore consumes the minimum toe root wall",
             ));
         }
-        let radius = self.outer_cone_distance_mm * self.tip_cone_angle_rad.sin()
-            / (self.tip_cone_angle_rad - self.pitch_cone_angle_rad).cos();
+        let radius = self.outer_cone_distance_mm * self.tip_cone_angle_rad.portable_sin()
+            / (self.tip_cone_angle_rad - self.pitch_cone_angle_rad).portable_cos();
         policy.point([
             radius,
             radius,
-            self.outer_cone_distance_mm / self.pitch_cone_angle_rad.cos(),
+            self.outer_cone_distance_mm / self.pitch_cone_angle_rad.portable_cos(),
         ])?;
         Ok(ffi::BevelData {
             teeth: self.teeth,

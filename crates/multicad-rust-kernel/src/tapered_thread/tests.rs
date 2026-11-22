@@ -242,7 +242,7 @@ fn multistart_asymmetric_patches_obey_chord_normals_and_real_volume() {
             let p = t.patch(band, I::point(u), I::point(z)).unwrap();
             let rotation =
                 -TAU * f64::from(start) / f64::from(starts) * if left { -1. } else { 1. };
-            let (s, c) = rotation.sin_cos();
+            let (s, c) = rotation.portable_sin_cos();
             let rotate = |v: [f64; 3]| [c * v[0] - s * v[1], s * v[0] + c * v[1], v[2]];
             let exact = rotate(p.map(|p| p.v.midpoint()));
             let bary: [f64; 3] =
@@ -273,7 +273,7 @@ fn multistart_asymmetric_patches_obey_chord_normals_and_real_volume() {
             }
             let dot = n.into_iter().zip(expected).map(|(a, b)| a * b).sum::<f64>();
             let norm = |v: [f64; 3]| v.into_iter().map(|x| x * x).sum::<f64>().sqrt();
-            assert!(dot / (norm(n) * norm(expected)) >= options.angle.cos() - 1e-10);
+            assert!(dot / (norm(n) * norm(expected)) >= options.angle.portable_cos() - 1e-10);
         }
     }
 }
@@ -346,7 +346,7 @@ fn retained_source_metadata_and_seam_receipts_are_explicit() {
         for z in [0., 3., 8.] {
             let p = t.seam_point_bounds(positive, z).unwrap();
             let radius = t.root_radius_at(z).unwrap();
-            let r = ((p[0][0] + p[0][1]) * 0.5).hypot((p[1][0] + p[1][1]) * 0.5);
+            let r = ((p[0][0] + p[0][1]) * 0.5).portable_hypot((p[1][0] + p[1][1]) * 0.5);
             assert!(r >= radius[0] - 1e-10 && r <= radius[1] + 1e-10);
         }
     }

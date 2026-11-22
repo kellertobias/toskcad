@@ -54,7 +54,7 @@ pub(in crate::drawing::section) fn project(
             if let Some((body, placement)) = solid.torus_body() {
                 let input = DrawingSolid { solid, hatch };
                 let (center, axis) = torus::drawing_frame(placement, options.frame);
-                if axis[0].hypot(axis[1]) <= torus::ANGULAR {
+                if axis[0].portable_hypot(axis[1]) <= torus::ANGULAR {
                     scene.axial_torus(input, placement, body.radii_mm(), source, depth)?;
                 } else if axis[2].abs() > torus::ANGULAR {
                     scene.oblique_torus(
@@ -225,7 +225,7 @@ impl Retained {
         };
         let [major, minor] = radii;
         let bounds: [[f64; 2]; 2] = std::array::from_fn(|i| {
-            let extent = major * axis[(i + 1) % 3].hypot(axis[(i + 2) % 3]) + minor;
+            let extent = major * axis[(i + 1) % 3].portable_hypot(axis[(i + 2) % 3]) + minor;
             [center[i] - extent, center[i] + extent]
         });
         let Some(sides) = self.torus_window_sides(bounds) else {
@@ -373,7 +373,7 @@ impl Retained {
             .options
             .section_offset_mm
             .expect("retained section depth");
-        let minimum = center[2] - radii[0] * axis[0].hypot(axis[1]) - radii[1];
+        let minimum = center[2] - radii[0] * axis[0].portable_hypot(axis[1]) - radii[1];
         let far = self
             .options
             .section_depth_mm
@@ -561,7 +561,7 @@ impl Retained {
         let distances = std::array::from_fn::<_, 2, _>(|axis| {
             windows[axis].map_or(0., |[lo, hi]| center[axis] - center[axis].clamp(lo, hi))
         });
-        if distances[0].hypot(distances[1]) >= outer {
+        if distances[0].portable_hypot(distances[1]) >= outer {
             return Ok(());
         }
         let bounds = center.map(|coordinate| [coordinate - outer, coordinate + outer]);
@@ -726,8 +726,8 @@ impl Retained {
                         ellipse.minor_axis().map(|component| component * minor),
                     ];
                     let [a, b] = [dot(across, u), dot(across, v)];
-                    let phase = b.atan2(a);
-                    let (sin, cos) = phase.sin_cos();
+                    let phase = b.portable_atan2(a);
+                    let (sin, cos) = phase.portable_sin_cos();
                     let [du, dv] = [dot(depth_axis, u), dot(depth_axis, v)];
                     // Align the projected coordinate with cosine. The depth of
                     // an oblique ellipse retains both terms after this rotation.
@@ -747,7 +747,7 @@ impl Retained {
                                             center: [x, y],
                                             u: std::array::from_fn(|i| f64::from(i == other)),
                                             v: std::array::from_fn(|i| f64::from(i == axis)),
-                                            major: a.hypot(b),
+                                            major: a.portable_hypot(b),
                                             minor: 0.,
                                             trim,
                                         },

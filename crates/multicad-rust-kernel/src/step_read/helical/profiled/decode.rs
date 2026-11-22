@@ -225,7 +225,7 @@ pub(in super::super::super) fn read(
     }
     let across = corners
         .into_iter()
-        .map(|p| p[0].hypot(p[1]))
+        .map(|p| p[0].portable_hypot(p[1]))
         .fold(0., f64::max)
         * 3_f64.sqrt();
     let drive = crate::hex_drive::HexDrive::from_retained_corners(corners, across, reserve)

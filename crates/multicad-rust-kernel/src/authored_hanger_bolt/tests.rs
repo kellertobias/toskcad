@@ -3,6 +3,7 @@ use crate::{
     authored_flat_thread::SourceOptions, authored_metric_thread::Spec as MetricSpec,
     helical_thread::Spec as WoodSpec,
 };
+use multicad_precision::PortableMath as _;
 pub(crate) fn fixture(left: bool, nb: bool) -> Spec {
     let p = 0.5;
     let major = (2.874 + 2.980) / 4.;
@@ -164,7 +165,7 @@ fn actual_phase_boxes_distinguish_wood_round_root_plain_and_real_join_domains() 
         for theta in [0.37, (4.1 + 0.2) / 0.5 * std::f64::consts::TAU] {
             let rate =
                 (if left { -1. } else { 1. }) * spec.metric.spec().pitch_mm / std::f64::consts::TAU;
-            let (sin, cos) = theta.sin_cos();
+            let (sin, cos) = theta.portable_sin_cos();
             for (phase, expected) in [(6., Inside), (6.25, Outside)] {
                 assert_eq!(
                     source.classify_box(

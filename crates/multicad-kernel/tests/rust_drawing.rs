@@ -8,6 +8,7 @@ use multicad_kernel::{
     PlaneFrame, ProjectedVector, Solid, project_drawing,
     rust_kernel::{Rational, polygon::PolygonPrism},
 };
+use multicad_precision::PortableMath as _;
 
 fn n(value: i64) -> Rational {
     Rational::new(value, 1).unwrap()
@@ -186,7 +187,7 @@ fn orthogonal_boolean_hole_preserves_the_trimmed_opening() {
     let mut lengths: Vec<_> = output
         .iter()
         .map(line)
-        .map(|[[x1, y1], [x2, y2]]| (x2 - x1).hypot(y2 - y1))
+        .map(|[[x1, y1], [x2, y2]]| (x2 - x1).portable_hypot(y2 - y1))
         .collect();
     lengths.sort_by(f64::total_cmp);
     assert_eq!(lengths, [4., 4., 4., 4., 10., 10., 10., 10.]);
@@ -204,7 +205,7 @@ fn unsupported_geometry_and_over_budget_output_fail_atomically() {
             .unwrap()
             .iter()
             .map(line)
-            .map(|[[x1, y1], [x2, y2]]| (x2 - x1).hypot(y2 - y1))
+            .map(|[[x1, y1], [x2, y2]]| (x2 - x1).portable_hypot(y2 - y1))
             .collect();
         lengths.sort_by(f64::total_cmp);
         assert_eq!(lengths, [5., 5., 5., 5., 10., 10., 10., 10.]);

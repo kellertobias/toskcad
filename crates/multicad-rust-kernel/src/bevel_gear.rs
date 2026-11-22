@@ -5,6 +5,7 @@
 //! direction `u` lies in the spherical tooth domain and whose distance `r`
 //! lies between the two back cones, less an optional axial bore.
 
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 pub mod clearance;
@@ -130,8 +131,8 @@ pub struct Bevel {
 }
 
 pub(crate) fn polar(gamma: f64, phi: f64) -> Point {
-    let (sg, cg) = gamma.sin_cos();
-    let (sp, cp) = phi.sin_cos();
+    let (sg, cg) = gamma.portable_sin_cos();
+    let (sp, cp) = phi.portable_sin_cos();
     [sg * cp, sg * sp, cg]
 }
 
@@ -164,7 +165,7 @@ fn unit(a: Point) -> Point {
 }
 
 fn rotate_z(p: Point, angle: f64) -> Point {
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     [c * p[0] - s * p[1], s * p[0] + c * p[1], p[2]]
 }
 
@@ -177,7 +178,7 @@ pub(crate) fn integrate(f: impl Fn(f64) -> f64, a: f64, b: f64, parts: usize) ->
     const N: usize = 16;
     let mut nodes = [(0., 0.); N];
     for (i, node) in nodes.iter_mut().enumerate() {
-        let mut x = (PI * (i as f64 + 0.75) / (N as f64 + 0.5)).cos();
+        let mut x = (PI * (i as f64 + 0.75) / (N as f64 + 0.5)).portable_cos();
         let mut derivative = 1.;
         for _ in 0..32 {
             let (mut p0, mut p1) = (1., x);
@@ -234,17 +235,17 @@ impl Bevel {
         {
             return Err(Error::InvalidDimensions);
         }
-        let heel_tip = distance * tip.sin() / (tip - pitch).cos();
-        if heel_tip.max(distance / pitch.cos()) > maximum_coordinate_mm
+        let heel_tip = distance * tip.portable_sin() / (tip - pitch).portable_cos();
+        if heel_tip.max(distance / pitch.portable_cos()) > maximum_coordinate_mm
             || maximum_coordinate_mm.is_nan()
         {
             return Err(Error::Limit);
         }
         let toe = distance - width;
-        if toe * root.sin() / (root - pitch).cos() - bore < minimum_mm {
+        if toe * root.portable_sin() / (root - pitch).portable_cos() - bore < minimum_mm {
             return Err(Error::InvalidProfile);
         }
-        let mut rounding = (fillet / distance).asin();
+        let mut rounding = (fillet / distance).portable_asin();
         // The fillet touches the meridian plane at γ_t with
         // cos γ_t = cos(root + ρ) / cos ρ. A meridian between γ_t and the base
         // cone shorter than the minimum feature is absorbed, as natively:
@@ -253,8 +254,12 @@ impl Bevel {
         // radially starting involute continues the fillet tangentially.
         // g decreases, dγ_t/dρ = sin(root) / (sin γ_t cos²ρ), so the fillet
         // radius changes by at most `minimum · sin β / sin(root)`.
-        let touch_of = |rho: f64| ((root + rho).cos() / rho.cos()).clamp(-1., 1.).acos();
-        let gap = |rho: f64| (root + rho).cos() - base.cos() * rho.cos();
+        let touch_of = |rho: f64| {
+            ((root + rho).portable_cos() / rho.portable_cos())
+                .clamp(-1., 1.)
+                .portable_acos()
+        };
+        let gap = |rho: f64| (root + rho).portable_cos() - base.portable_cos() * rho.portable_cos();
         let sliver = gap(rounding) >= 0.
             && base - touch_of(rounding) > 0.
             && base - touch_of(rounding) < minimum_mm / distance;
@@ -271,7 +276,8 @@ impl Bevel {
             rounding = lo;
         }
         let center_gamma = root + rounding;
-        let meridian = sliver || center_gamma <= (base.cos() * rounding.cos()).acos();
+        let meridian = sliver
+            || center_gamma <= (base.portable_cos() * rounding.portable_cos()).portable_acos();
         let mut gear = Self {
             spec,
             rounding,
@@ -283,7 +289,7 @@ impl Bevel {
             touch_gamma: 0.,
             touch_t: 0.,
             meridian,
-            tip_t: (tip.cos() / base.cos()).acos() / base.sin(),
+            tip_t: (tip.portable_cos() / base.portable_cos()).portable_acos() / base.portable_sin(),
             half_tip: 0.,
             inner_gamma: root / 2.,
             pieces: vec![],
@@ -292,31 +298,34 @@ impl Bevel {
             gear.touch_gamma = if sliver {
                 base
             } else {
-                (center_gamma.cos() / rounding.cos()).acos()
+                (center_gamma.portable_cos() / rounding.portable_cos()).portable_acos()
             };
-            gear.center_phi = half + (rounding.sin() / center_gamma.sin()).asin();
+            gear.center_phi =
+                half + (rounding.portable_sin() / center_gamma.portable_sin()).portable_asin();
             gear.center = polar(center_gamma, gear.center_phi);
             polar(gear.touch_gamma, half)
         } else {
-            let sigma = (center_gamma.cos() / base.cos()).acos() - rounding;
-            gear.touch_t = sigma / base.sin();
+            let sigma =
+                (center_gamma.portable_cos() / base.portable_cos()).portable_acos() - rounding;
+            gear.touch_t = sigma / base.portable_sin();
             let touch = gear.involute(gear.touch_t).0;
             let normal = unit(cross(touch, unit(gear.involute(gear.touch_t).1)));
-            gear.center =
-                std::array::from_fn(|i| touch[i] * rounding.cos() + normal[i] * rounding.sin());
-            gear.center_gamma = gear.center[2].acos();
-            gear.center_phi = gear.center[1].atan2(gear.center[0]);
-            gear.touch_gamma = touch[2].acos();
+            gear.center = std::array::from_fn(|i| {
+                touch[i] * rounding.portable_cos() + normal[i] * rounding.portable_sin()
+            });
+            gear.center_gamma = gear.center[2].portable_acos();
+            gear.center_phi = gear.center[1].portable_atan2(gear.center[0]);
+            gear.touch_gamma = touch[2].portable_acos();
             touch
         };
         let root_point = polar(root, gear.center_phi);
-        let a = unit(sub(root_point, scale(gear.center, rounding.cos())));
+        let a = unit(sub(root_point, scale(gear.center, rounding.portable_cos())));
         let b = unit(cross(gear.center, a));
         gear.fillet_axes = [a, b];
-        gear.arc = dot(touch, b).atan2(dot(touch, a));
+        gear.arc = dot(touch, b).portable_atan2(dot(touch, a));
         let tip_point = gear.involute(gear.tip_t).0;
-        gear.half_tip = tip_point[1].atan2(tip_point[0]);
-        let toe_scale = toe / (root - pitch).cos();
+        gear.half_tip = tip_point[1].portable_atan2(tip_point[0]);
+        let toe_scale = toe / (root - pitch).portable_cos();
         let spacing = PI / f64::from(teeth);
         let meridian_length = base - gear.touch_gamma;
         if !gear.arc.is_finite()
@@ -325,7 +334,7 @@ impl Bevel {
             || gear.center_phi >= spacing - minimum_mm / toe_scale
             || gear.touch_gamma >= pitch
             || gear.touch_gamma >= tip
-            || gear.half_tip <= minimum_mm / (distance * tip.sin())
+            || gear.half_tip <= minimum_mm / (distance * tip.portable_sin())
             || gear.half_tip >= gear.center_phi
             || root + rounding >= tip
             || (meridian && meridian_length < -1e-12)
@@ -386,22 +395,22 @@ impl Bevel {
 
     /// Distance from the pitch apex to the back cone along polar angle γ.
     pub fn end_distance_along(&self, end: End, gamma: f64) -> f64 {
-        self.end_distance_mm(end) / (gamma - self.spec.pitch_cone_angle_rad).cos()
+        self.end_distance_mm(end) / (gamma - self.spec.pitch_cone_angle_rad).portable_cos()
     }
 
     /// Distance from the axis of a back-cone point at polar angle γ.
     pub fn end_radius(&self, end: End, gamma: f64) -> f64 {
-        self.end_distance_along(end, gamma) * gamma.sin()
+        self.end_distance_along(end, gamma) * gamma.portable_sin()
     }
 
     /// Axial height of the apex of one back cone above the pitch apex.
     pub fn back_cone_apex_mm(&self, end: End) -> f64 {
-        self.end_distance_mm(end) / self.spec.pitch_cone_angle_rad.cos()
+        self.end_distance_mm(end) / self.spec.pitch_cone_angle_rad.portable_cos()
     }
 
     /// Axial height of a back-cone point at axial radius ρ.
     pub fn back_cone_height_mm(&self, end: End, radius: f64) -> f64 {
-        self.back_cone_apex_mm(end) - radius * self.spec.pitch_cone_angle_rad.tan()
+        self.back_cone_apex_mm(end) - radius * self.spec.pitch_cone_angle_rad.portable_tan()
     }
 
     pub fn point(&self, end: End, direction: Point, gamma: f64) -> Point {
@@ -412,8 +421,8 @@ impl Bevel {
     pub fn bore_gamma(&self, end: End) -> Option<f64> {
         let bore = self.bore_radius_mm()?;
         // ρ(γ) = d sin γ / cos(γ - δ) ⇒ tan γ = ρ cos δ / (d - ρ sin δ).
-        let (s, c) = self.spec.pitch_cone_angle_rad.sin_cos();
-        Some((bore * c).atan2(self.end_distance_mm(end) - bore * s))
+        let (s, c) = self.spec.pitch_cone_angle_rad.portable_sin_cos();
+        Some((bore * c).portable_atan2(self.end_distance_mm(end) - bore * s))
     }
 
     /// Whether the inner apex sector of one cap survives the bore.
@@ -439,15 +448,15 @@ impl Bevel {
     }
 
     fn involute(&self, t: f64) -> (Point, Point) {
-        let (b, c) = self.spec.base_cone_angle_rad.sin_cos();
+        let (b, c) = self.spec.base_cone_angle_rad.portable_sin_cos();
         let v = b * t;
-        let (st, ct) = t.sin_cos();
-        let (sv, cv) = v.sin_cos();
+        let (st, ct) = t.portable_sin_cos();
+        let (sv, cv) = v.portable_sin_cos();
         let x = b * ct * cv + st * sv;
         let y = b * st * cv - ct * sv;
         let dx = c * c * ct * sv;
         let dy = c * c * st * sv;
-        let (sh, ch) = self.spec.half_base_tooth_angle_rad.sin_cos();
+        let (sh, ch) = self.spec.half_base_tooth_angle_rad.portable_sin_cos();
         (
             [x * ch + y * sh, x * sh - y * ch, c * cv],
             [dx * ch + dy * sh, dx * sh - dy * ch, -b * c * sv],
@@ -456,8 +465,8 @@ impl Bevel {
 
     fn fillet(&self, theta: f64) -> (Point, Point) {
         let [a, b] = self.fillet_axes;
-        let (s, c) = theta.sin_cos();
-        let (sr, cr) = self.rounding.sin_cos();
+        let (s, c) = theta.portable_sin_cos();
+        let (sr, cr) = self.rounding.portable_sin_cos();
         (
             std::array::from_fn(|i| cr * self.center[i] + sr * (a[i] * c + b[i] * s)),
             std::array::from_fn(|i| sr * (-a[i] * s + b[i] * c)),
@@ -465,10 +474,10 @@ impl Bevel {
     }
 
     fn circle(gamma: f64, phi: f64, rate: f64) -> (Point, Point) {
-        let (sp, cp) = phi.sin_cos();
-        let s = gamma.sin();
+        let (sp, cp) = phi.portable_sin_cos();
+        let s = gamma.portable_sin();
         (
-            [s * cp, s * sp, gamma.cos()],
+            [s * cp, s * sp, gamma.portable_cos()],
             [-s * sp * rate, s * cp * rate, 0.],
         )
     }
@@ -512,8 +521,8 @@ impl Bevel {
                     (base, self.touch_gamma)
                 };
                 let gamma = from + (to - from) * s;
-                let (sg, cg) = gamma.sin_cos();
-                let (sh, ch) = half.sin_cos();
+                let (sg, cg) = gamma.portable_sin_cos();
+                let (sh, ch) = half.portable_sin_cos();
                 (
                     [sg * ch, sg * sh, cg],
                     scale([cg * ch, cg * sh, -sg], to - from),
@@ -536,8 +545,8 @@ impl Bevel {
         Sample {
             direction: p,
             derivative: d,
-            gamma: p[2].clamp(-1., 1.).acos(),
-            phi: p[1].atan2(p[0]),
+            gamma: p[2].clamp(-1., 1.).portable_acos(),
+            phi: p[1].portable_atan2(p[0]),
         }
     }
 
@@ -546,10 +555,14 @@ impl Bevel {
         match piece {
             Piece::RootLeft | Piece::RootRight => {
                 let span = PI / f64::from(self.spec.teeth) - self.center_phi;
-                span * span * self.spec.root_cone_angle_rad.sin()
+                span * span * self.spec.root_cone_angle_rad.portable_sin()
             }
-            Piece::Tip => 4. * self.half_tip * self.half_tip * self.spec.tip_cone_angle_rad.sin(),
-            Piece::FilletLeft | Piece::FilletRight => self.arc * self.arc * self.rounding.sin(),
+            Piece::Tip => {
+                4. * self.half_tip * self.half_tip * self.spec.tip_cone_angle_rad.portable_sin()
+            }
+            Piece::FilletLeft | Piece::FilletRight => {
+                self.arc * self.arc * self.rounding.portable_sin()
+            }
             Piece::MeridianLeft | Piece::MeridianRight => {
                 (self.spec.base_cone_angle_rad - self.touch_gamma).powi(2)
             }
@@ -565,28 +578,34 @@ impl Bevel {
         let half = self.spec.half_base_tooth_angle_rad;
         let base = self.spec.base_cone_angle_rad;
         if gamma <= self.touch_gamma {
-            let (sc, cc) = self.center_gamma.sin_cos();
-            let (sg, cg) = gamma.sin_cos();
-            let ratio = (self.rounding.cos() - cg * cc) / (sg * sc);
-            self.center_phi - ratio.clamp(-1., 1.).acos()
+            let (sc, cc) = self.center_gamma.portable_sin_cos();
+            let (sg, cg) = gamma.portable_sin_cos();
+            let ratio = (self.rounding.portable_cos() - cg * cc) / (sg * sc);
+            self.center_phi - ratio.clamp(-1., 1.).portable_acos()
         } else if self.meridian && gamma <= base {
             half
         } else {
-            let sigma = (gamma.cos() / base.cos()).clamp(-1., 1.).acos();
-            half - (sigma / base.sin() - sigma.sin().atan2(base.sin() * sigma.cos()))
+            let sigma = (gamma.portable_cos() / base.portable_cos())
+                .clamp(-1., 1.)
+                .portable_acos();
+            half - (sigma / base.portable_sin()
+                - sigma
+                    .portable_sin()
+                    .portable_atan2(base.portable_sin() * sigma.portable_cos()))
         }
     }
 
     /// Signed angular margin of a unit direction from the tooth domain.
     pub fn direction_margin(&self, direction: Point) -> f64 {
-        let gamma = direction[2].clamp(-1., 1.).acos();
+        let gamma = direction[2].clamp(-1., 1.).portable_acos();
         let pitch = TAU / f64::from(self.spec.teeth);
-        let phi = direction[1].atan2(direction[0]);
+        let phi = direction[1].portable_atan2(direction[0]);
         let local = phi - (phi / pitch).round() * pitch;
         let root = self.spec.root_cone_angle_rad;
         let tip = self.spec.tip_cone_angle_rad;
         let level = gamma.clamp(root, tip);
-        let tooth = (tip - gamma).min((self.half_width(level) - local.abs()) * gamma.sin());
+        let tooth =
+            (tip - gamma).min((self.half_width(level) - local.abs()) * gamma.portable_sin());
         (root - gamma).max(tooth)
     }
 
@@ -597,14 +616,17 @@ impl Bevel {
             return Containment::Outside;
         }
         let direction = scale(point, 1. / distance);
-        let phi = point[1].atan2(point[0]);
-        let (sp, cp) = self.spec.pitch_cone_angle_rad.sin_cos();
-        let along = dot(point, [sp * phi.cos(), sp * phi.sin(), cp]);
+        let phi = point[1].portable_atan2(point[0]);
+        let (sp, cp) = self.spec.pitch_cone_angle_rad.portable_sin_cos();
+        let along = dot(
+            point,
+            [sp * phi.portable_cos(), sp * phi.portable_sin(), cp],
+        );
         let mut margin = (self.end_distance_mm(End::Heel) - along)
             .min(along - self.end_distance_mm(End::Toe))
             .min(self.direction_margin(direction) * distance);
         if let Some(bore) = self.bore_radius_mm() {
-            margin = margin.min(point[0].hypot(point[1]) - bore);
+            margin = margin.min(point[0].portable_hypot(point[1]) - bore);
         }
         if margin > tolerance_mm {
             Containment::Inside
@@ -646,13 +668,14 @@ impl Bevel {
         // ∫ sin γ / cos³(γ - δ) dγ = cos δ / (2 cos²(γ-δ)) + sin δ tan(γ-δ).
         let primitive = |g: f64| {
             let x = g - delta;
-            delta.cos() / (2. * x.cos().powi(2)) + delta.sin() * x.tan()
+            delta.portable_cos() / (2. * x.portable_cos().powi(2))
+                + delta.portable_sin() * x.portable_tan()
         };
         let zero = primitive(0.);
         let sector = 2. * self.half_sector_integral(|g| k * (primitive(g) - zero));
         let bore = self.bore_radius_mm().unwrap_or(0.);
         f64::from(self.spec.teeth) * sector
-            - PI * bore * bore * self.spec.face_width_mm / delta.cos()
+            - PI * bore * bore * self.spec.face_width_mm / delta.portable_cos()
     }
 
     /// Area of one ruled side piece of one tooth.
@@ -662,7 +685,7 @@ impl Bevel {
         integrate(
             |s| {
                 let sample = self.sample(piece, s);
-                (heel * heel - toe * toe) / (2. * (sample.gamma - delta).cos().powi(2))
+                (heel * heel - toe * toe) / (2. * (sample.gamma - delta).portable_cos().powi(2))
                     * norm(sample.derivative)
             },
             0.,
@@ -679,7 +702,7 @@ impl Bevel {
         let sector = TAU / f64::from(self.spec.teeth);
         let inner = half(self.inner_gamma) * sector;
         let hole = self.bore_radius_mm().unwrap_or(0.).powi(2) / 2. * sector;
-        let slope = self.spec.pitch_cone_angle_rad.cos();
+        let slope = self.spec.pitch_cone_angle_rad.portable_cos();
         if self.has_core(end) {
             ((outline - inner) / slope, Some((inner - hole) / slope))
         } else {
@@ -688,8 +711,9 @@ impl Bevel {
     }
 
     pub fn bore_area_mm2(&self) -> Option<f64> {
-        self.bore_radius_mm()
-            .map(|bore| TAU * bore * self.spec.face_width_mm / self.spec.pitch_cone_angle_rad.cos())
+        self.bore_radius_mm().map(|bore| {
+            TAU * bore * self.spec.face_width_mm / self.spec.pitch_cone_angle_rad.portable_cos()
+        })
     }
 
     /// Maximum of `direction · p` over the local solid.
@@ -699,7 +723,7 @@ impl Bevel {
             if let Some(bore) = self.bore_radius_mm() {
                 best = best.max(
                     self.back_cone_height_mm(end, bore) * direction[2]
-                        + bore * direction[0].hypot(direction[1]),
+                        + bore * direction[0].portable_hypot(direction[1]),
                 );
             } else {
                 best = best.max(self.back_cone_apex_mm(end) * direction[2]);
@@ -751,10 +775,10 @@ impl Bevel {
     pub fn side_piece_at(&self, point: Point) -> Option<(u32, Piece)> {
         let length = norm(point);
         let direction = scale(point, 1. / length);
-        let gamma = direction[2].clamp(-1., 1.).acos();
+        let gamma = direction[2].clamp(-1., 1.).portable_acos();
         let teeth = self.spec.teeth;
         let pitch = TAU / f64::from(teeth);
-        let phi = direction[1].atan2(direction[0]);
+        let phi = direction[1].portable_atan2(direction[0]);
         let turns = (phi / pitch).round();
         let local = phi - turns * pitch;
         let sector = (turns as i64).rem_euclid(i64::from(teeth)) as u32;

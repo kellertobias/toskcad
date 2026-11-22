@@ -62,7 +62,7 @@ fn steep_actual_cone_operator_uses_the_earned_full_height_domain_and_whole_readb
 fn near_right_angle_without_a_positive_whole_cosine_bound_refuses_before_emission() {
     let body = Chamfer::from_material(tool(false), 2.6, 1e-20, None).unwrap();
     assert_eq!(
-        ((3. - 2.6) / body.entry_length_mm()).atan(),
+        ((3. - 2.6) / body.entry_length_mm()).portable_atan(),
         std::f64::consts::FRAC_PI_2
     );
     assert!(matches!(cone_angle(&body, 1e-7), Err(Error::Unsupported)));

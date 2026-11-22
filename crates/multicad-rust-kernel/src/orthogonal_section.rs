@@ -6,6 +6,7 @@ use crate::{
     orthogonal_slots::{self, OrthogonalSlot},
     stadium::Stadium,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 type Point = [f64; 2];
@@ -74,7 +75,7 @@ pub fn stadium_edges(profile: Stadium) -> [Edge; 4] {
             Edge::Arc {
                 center,
                 radius: profile.radius_mm(),
-                start_rad: (start[1] - center[1]).atan2(start[0] - center[0]),
+                start_rad: (start[1] - center[1]).portable_atan2(start[0] - center[0]),
                 sweep_rad: PI,
             }
         }

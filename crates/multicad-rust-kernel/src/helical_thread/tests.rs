@@ -42,7 +42,7 @@ fn flat_metric_profile_retains_the_axial_pitch_and_real_swept_volume() {
         1e-12,
     );
     assert!(thread.radius_at_phase(f64::NAN).is_nan());
-    let slope = (30_f64.to_radians().tan()).recip();
+    let slope = (30_f64.to_radians().portable_tan()).recip();
     close(thread.slope_at_phase(pitch / 4., 1), -slope, 1e-12);
     close(thread.slope_at_phase(3. * pitch / 4., 3), slope, 1e-12);
     assert_eq!(thread.slope_at_phase(pitch / 2., 2), 0.);
@@ -51,7 +51,7 @@ fn flat_metric_profile_retains_the_axial_pitch_and_real_swept_volume() {
     // than phase, coordinates.
     let axial_width = spec.crest_width_mm;
     let weighted_area = axial_width * (major * major - root * root) / 2.
-        + 2. * (30_f64.to_radians().tan())
+        + 2. * (30_f64.to_radians().portable_tan())
             * (major * (major * major - root * root) / 2. - (major.powi(3) - root.powi(3)) / 3.);
     let volume = spec.length_mm * (PI * root * root + TAU / pitch * weighted_area);
     close(thread.volume_mm3(), volume, 1e-10);
@@ -65,8 +65,9 @@ fn the_fitted_root_is_a_tangent_circle_on_both_flanks() {
         let [lower, upper] = [lower_deg, upper_deg].map(f64::to_radians);
         let half = (upper + lower) * 0.5;
         let tilt = (upper - lower) * 0.5;
-        let intersection = (base.pitch_mm - base.crest_width_mm) / (lower.tan() + upper.tan());
-        let depth = intersection - rounding * (tilt.cos() / half.sin() - 1.);
+        let intersection =
+            (base.pitch_mm - base.crest_width_mm) / (lower.portable_tan() + upper.portable_tan());
+        let depth = intersection - rounding * (tilt.portable_cos() / half.portable_sin() - 1.);
         let spec = Spec {
             depth_mm: depth,
             lower_flank_deg: lower_deg,
@@ -76,7 +77,7 @@ fn the_fitted_root_is_a_tangent_circle_on_both_flanks() {
         };
         let thread = Thread::new(spec).unwrap();
         let [_, crest_end, a, b, crest_start, _] = thread.profile_breaks();
-        let center_phase = a + rounding * upper.cos();
+        let center_phase = a + rounding * upper.portable_cos();
         close(
             thread.radius_at_phase(center_phase),
             thread.root_radius_mm(),
@@ -84,16 +85,24 @@ fn the_fitted_root_is_a_tangent_circle_on_both_flanks() {
         );
         close(
             thread.radius_at_phase(a),
-            base.major_radius_mm - (a - crest_end) / upper.tan(),
+            base.major_radius_mm - (a - crest_end) / upper.portable_tan(),
             1e-12,
         );
         close(
             thread.radius_at_phase(b),
-            base.major_radius_mm - (crest_start - b) / lower.tan(),
+            base.major_radius_mm - (crest_start - b) / lower.portable_tan(),
             1e-12,
         );
-        close(thread.slope_at_phase(a, 2), -upper.tan().recip(), 1e-10);
-        close(thread.slope_at_phase(b, 2), lower.tan().recip(), 1e-10);
+        close(
+            thread.slope_at_phase(a, 2),
+            -upper.portable_tan().recip(),
+            1e-10,
+        );
+        close(
+            thread.slope_at_phase(b, 2),
+            lower.portable_tan().recip(),
+            1e-10,
+        );
         let x = rounding * 0.2;
         close(
             thread.radius_at_phase(center_phase + x) - thread.root_radius_mm(),
@@ -140,7 +149,13 @@ fn handed_material_and_face_identities_close_across_the_angular_seam() {
             let theta = hand * TAU * z / thread.lead_mm() + TAU * f64::from(start) / 3.;
             let outside = theta + PI / 3.;
             let radius = spec.major_radius_mm - 0.05;
-            let point = |angle: f64| [angle.cos() * radius, angle.sin() * radius, z];
+            let point = |angle: f64| {
+                [
+                    angle.portable_cos() * radius,
+                    angle.portable_sin() * radius,
+                    z,
+                ]
+            };
             assert!(thread.contains(point(theta), 0.));
             assert!(!thread.contains(point(outside), 0.));
             close(
@@ -197,7 +212,7 @@ fn oblique_support_is_tight_and_uses_actual_crest_placement() {
             let mut sampled: f64 = f64::NEG_INFINITY;
             for i in 0..1024 {
                 let theta = f64::from(i) / 1024. * TAU;
-                let (sin, cos) = theta.sin_cos();
+                let (sin, cos) = theta.portable_sin_cos();
                 for j in 0..=768 {
                     let z = f64::from(j) / 768. * spec.length_mm;
                     let radius = thread.radius(theta, z);
@@ -216,8 +231,9 @@ fn oblique_support_is_tight_and_uses_actual_crest_placement() {
 fn invalid_profiles_and_exhausted_turn_budgets_are_distinct() {
     let spec = metric();
     let rounding = 0.15;
-    let fitted_depth =
-        (spec.pitch_mm - spec.crest_width_mm) / (2. * 30_f64.to_radians().tan()) - rounding;
+    let fitted_depth = (spec.pitch_mm - spec.crest_width_mm)
+        / (2. * 30_f64.to_radians().portable_tan())
+        - rounding;
     for invalid in [
         Spec {
             major_radius_mm: f64::NAN,
@@ -277,9 +293,10 @@ fn invalid_profiles_and_exhausted_turn_budgets_are_distinct() {
 fn rounded_metric(base: Spec, [lower, upper]: [f64; 2]) -> Thread {
     let [a, b] = [lower, upper].map(f64::to_radians);
     let root = 0.15;
-    let sharp_depth = (base.pitch_mm - base.crest_width_mm) / (a.tan() + b.tan());
+    let sharp_depth = (base.pitch_mm - base.crest_width_mm) / (a.portable_tan() + b.portable_tan());
     Thread::new(Spec {
-        depth_mm: sharp_depth - root * (((b - a) * 0.5).cos() / ((a + b) * 0.5).sin() - 1.),
+        depth_mm: sharp_depth
+            - root * (((b - a) * 0.5).portable_cos() / ((a + b) * 0.5).portable_sin() - 1.),
         lower_flank_deg: lower,
         upper_flank_deg: upper,
         root_radius_mm: Some(root),

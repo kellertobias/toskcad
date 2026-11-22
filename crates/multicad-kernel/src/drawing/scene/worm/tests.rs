@@ -35,7 +35,7 @@ fn wheel(m: f64, teeth: u32, bore: f64) -> Solid {
 }
 
 fn posed(solid: Solid) -> Solid {
-    let (s, c) = 0.3_f64.sin_cos();
+    let (s, c) = 0.3_f64.portable_sin_cos();
     solid
         .transformed(RigidTransform {
             rotation: [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]],
@@ -281,7 +281,7 @@ fn candidates_lie_on_the_boundary_and_outlines_are_complete() {
                     }
                 }
             }
-            let axial = inner.toward[0].hypot(inner.toward[1]) < 1e-9;
+            let axial = inner.toward[0].portable_hypot(inner.toward[1]) < 1e-9;
             assert!(axial || (traced > 0 && crossings > 0), "{name} {label}");
         }
     }
@@ -316,8 +316,8 @@ fn quadrature(solid: &Solid, body: &Body, depth: f64) -> f64 {
         (400, 800)
     };
     let centre = [0, 1].map(|k| 0.5 * (lo[k] + hi[k]));
-    let reach = 0.5 * (hi[0] - lo[0]).hypot(hi[1] - lo[1]) + 1e-3;
-    let (sin, cos) = 0.37_f64.sin_cos();
+    let reach = 0.5 * (hi[0] - lo[0]).portable_hypot(hi[1] - lo[1]) + 1e-3;
+    let (sin, cos) = 0.37_f64.portable_sin_cos();
     let inside = |x: f64, y: f64| {
         let paper = [
             centre[0] + cos * x - sin * y,
@@ -464,7 +464,7 @@ fn the_axial_plane_section_of_a_worm_is_its_straight_sided_profile() {
 
 /// The generated wheel and oblique frame of `tests/rust_scene_worm.rs`.
 fn compared_wheel() -> (Solid, PlaneFrame) {
-    let (s, c) = 0.1_f64.sin_cos();
+    let (s, c) = 0.1_f64.portable_sin_cos();
     let solid = Solid::rust_generated_za_worm_wheel_named(
         GeneratedZaWormWheel {
             teeth: 32,
@@ -520,11 +520,11 @@ fn roles_at(vectors: &[ProjectedVector], paper: P2, tangent: P2) -> Vec<VectorRo
         let near = vector.preview_mm.windows(2).any(|pair| {
             let [a, b] = [pair[0], pair[1]];
             let d = [b[0] - a[0], b[1] - a[1]];
-            let length = d[0].hypot(d[1]);
+            let length = d[0].portable_hypot(d[1]);
             let s = (((paper[0] - a[0]) * d[0] + (paper[1] - a[1]) * d[1])
                 / (length * length).max(1e-300))
             .clamp(0., 1.);
-            let gap = (a[0] + s * d[0] - paper[0]).hypot(a[1] + s * d[1] - paper[1]);
+            let gap = (a[0] + s * d[0] - paper[0]).portable_hypot(a[1] + s * d[1] - paper[1]);
             let sine = (d[0] * tangent[1] - d[1] * tangent[0]).abs() / length.max(1e-300);
             gap <= reach && sine < 0.2
         });
@@ -554,7 +554,7 @@ fn material_angle(own: &dyn Fn(P3) -> bool, path: &dyn Path, t: f64, radius: f64
     let samples = 1440;
     let inside = (0..samples)
         .filter(|&i| {
-            let (s, c) = (TAU * f64::from(i) / f64::from(samples)).sin_cos();
+            let (s, c) = (TAU * f64::from(i) / f64::from(samples)).portable_sin_cos();
             own(add(p, add(scaled(e1, radius * c), scaled(e2, radius * s))))
         })
         .count();
@@ -607,7 +607,7 @@ fn prove(
         Kind::Outline => {
             let [a, b] = [path.point(t - 1e-4), path.point(t + 1e-4)];
             let tangent = [b[0] - a[0], b[1] - a[1]];
-            let length = tangent[0].hypot(tangent[1]);
+            let length = tangent[0].portable_hypot(tangent[1]);
             assert!(
                 length > 1e-9,
                 "{label} t={t}: outline without a paper tangent"
@@ -651,7 +651,7 @@ fn prove(
         path.point((t + 1e-4).min(1.)),
     ];
     let tangent = [b[0] - a[0], b[1] - a[1]];
-    let length = tangent[0].hypot(tangent[1]);
+    let length = tangent[0].portable_hypot(tangent[1]);
     if length < 1e-12 {
         // The curve runs along the sight line here.
         proof.unpublished += 1;
@@ -694,7 +694,7 @@ fn passes(c: &Candidate, target: P2, reach: f64) -> bool {
         let s = (((target[0] - a[0]) * d[0] + (target[1] - a[1]) * d[1])
             / (d[0] * d[0] + d[1] * d[1]).max(1e-300))
         .clamp(0., 1.);
-        (a[0] + s * d[0] - target[0]).hypot(a[1] + s * d[1] - target[1]) < reach
+        (a[0] + s * d[0] - target[0]).portable_hypot(a[1] + s * d[1] - target[1]) < reach
     })
 }
 
@@ -915,7 +915,7 @@ fn oblique_box_and_wheel_edges_have_marched_visibility() {
             for v in &vectors {
                 if v.preview_mm
                     .iter()
-                    .any(|p| (p[0] - target[0]).hypot(p[1] - target[1]) < 5e-2)
+                    .any(|p| (p[0] - target[0]).portable_hypot(p[1] - target[1]) < 5e-2)
                 {
                     println!(
                         "{label}: vector {} {:?} {:?}",
@@ -943,7 +943,7 @@ fn oblique_box_and_wheel_edges_have_marched_visibility() {
 /// marching through the provider's predicate.
 #[test]
 fn axial_worm_detail_is_cropped_and_its_roles_marched() {
-    let (s, c) = 0.1_f64.sin_cos();
+    let (s, c) = 0.1_f64.portable_sin_cos();
     let solid = worm(1., 20., 2.)
         .transformed(RigidTransform {
             rotation: [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]],
@@ -973,7 +973,7 @@ fn axial_worm_detail_is_cropped_and_its_roles_marched() {
     assert!(vectors.iter().any(|v| v.role == VectorRole::Visible));
     for vector in &vectors {
         for p in &vector.preview_mm {
-            let gap = (p[0] - centre[0]).hypot(p[1] - centre[1]);
+            let gap = (p[0] - centre[0]).portable_hypot(p[1] - centre[1]);
             assert!(
                 gap <= radius + 1e-6,
                 "published {p:?} is {gap} mm from the centre"
@@ -991,7 +991,7 @@ fn axial_worm_detail_is_cropped_and_its_roles_marched() {
         for i in 1..64 {
             let t = f64::from(i) / 64.;
             let p = candidate.path.point(t);
-            if (p[0] - centre[0]).hypot(p[1] - centre[1]) > radius - 0.05 {
+            if (p[0] - centre[0]).portable_hypot(p[1] - centre[1]) > radius - 0.05 {
                 continue;
             }
             let before = proof.roles;
@@ -1007,7 +1007,7 @@ fn axial_worm_detail_is_cropped_and_its_roles_marched() {
                 "axial detail",
             );
             let local = inner.local(p);
-            let on_root = (local[0].hypot(local[1]) - screw.root_radius_mm()).abs() < 1e-9;
+            let on_root = (local[0].portable_hypot(local[1]) - screw.root_radius_mm()).abs() < 1e-9;
             if on_root && proof.roles > before {
                 root_hidden += 1;
             }
@@ -1102,7 +1102,7 @@ fn reach(
                     let w = [p[0] - a[0], p[1] - a[1]];
                     let t = ((w[0] * d[0] + w[1] * d[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-300))
                         .clamp(0., 1.);
-                    (w[0] - t * d[0]).hypot(w[1] - t * d[1])
+                    (w[0] - t * d[0]).portable_hypot(w[1] - t * d[1])
                 })
                 .fold(f64::INFINITY, f64::min)
         })
@@ -1114,7 +1114,7 @@ fn drawn_length(edges: &[ProjectedVector], role: VectorRole) -> f64 {
         .iter()
         .filter(|edge| edge.role == role)
         .flat_map(|edge| edge.preview_mm.windows(2))
-        .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+        .map(|w| (w[1][0] - w[0][0]).portable_hypot(w[1][1] - w[0][1]))
         .sum()
 }
 
@@ -1136,7 +1136,7 @@ fn axial_worm_rails_are_arcs_and_the_scene_matches_the_axial_law() {
                 // circle, and the arc ends are the path's ends.
                 for t in candidate.path.flatten(0.0005) {
                     let p = candidate.path.point(t);
-                    let r = (p[0] - arc.center[0]).hypot(p[1] - arc.center[1]);
+                    let r = (p[0] - arc.center[0]).portable_hypot(p[1] - arc.center[1]);
                     assert!((r - arc.major).abs() < 1e-9, "{name} {label} {r}");
                 }
                 let ends = [0., 1.].map(|t| {
@@ -1144,7 +1144,7 @@ fn axial_worm_rails_are_arcs_and_the_scene_matches_the_axial_law() {
                     [p[0], p[1]]
                 });
                 let trim = arc.trim.map(|angle| arc.point(angle));
-                let apart = |a: P2, b: P2| (a[0] - b[0]).hypot(a[1] - b[1]);
+                let apart = |a: P2, b: P2| (a[0] - b[0]).portable_hypot(a[1] - b[1]);
                 assert!(
                     (apart(ends[0], trim[0]) < 1e-9 && apart(ends[1], trim[1]) < 1e-9)
                         || (apart(ends[0], trim[1]) < 1e-9 && apart(ends[1], trim[0]) < 1e-9),
@@ -1207,7 +1207,13 @@ fn axial_lines_on_the_root_waist_are_material_through_the_contact() {
         let mut inside = 0;
         for k in 0..64 {
             let angle = TAU * f64::from(k) / 64.;
-            let at = |z: f64| inner.view([waist * angle.cos(), waist * angle.sin(), z]);
+            let at = |z: f64| {
+                inner.view([
+                    waist * angle.portable_cos(),
+                    waist * angle.portable_sin(),
+                    z,
+                ])
+            };
             let spans = body.sight([at(0.)[0], at(0.)[1]]).unwrap();
             for z in [-0.5 * half, 0.5 * half] {
                 let depth = at(z)[2];

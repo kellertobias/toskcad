@@ -3,6 +3,7 @@ use crate::{
     planar_boolean::Union,
     trim_curve::{Ellipse, EllipseArc},
 };
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeMap, f64::consts::FRAC_PI_2};
 
 mod axial_cut;
@@ -170,7 +171,7 @@ impl Band {
     }
 
     fn theta(self, w: f64) -> f64 {
-        (-self.radial_drop(w)).atan2(w)
+        (-self.radial_drop(w)).portable_atan2(w)
     }
 
     fn point(self, [x, y, w]: Point) -> Point {
@@ -345,7 +346,7 @@ fn support(
         return Ok(Support::Plane { normal });
     }
     let [nx, ny, nz] = normal;
-    let planar_length = nx.hypot(ny);
+    let planar_length = nx.portable_hypot(ny);
     if planar_length <= FRAME_EPS {
         let [lo, hi] = axial_extent(ring);
         if (band.point([0., 0., hi])[2] - band.point([0., 0., lo])[2]).abs() > tolerance {
@@ -395,13 +396,13 @@ fn edge_curve(band: Band, points: [Point; 2], tolerance: f64) -> Result<Curve, E
     if dw == 0. || band.region(a[2].min(b[2]), a[2].max(b[2]))? != Region::Round {
         return Ok(Curve::Line);
     }
-    let length = dx.hypot(dy);
+    let length = dx.portable_hypot(dy);
     let slack = 64. * f64::EPSILON * a[0].abs().max(a[1].abs()).max(1.);
     if length <= slack {
         return Ok(Curve::Line);
     }
     let radial = [dx / dw, dy / dw, 0.];
-    let horizontal = band.radius_mm * radial[0].hypot(radial[1]);
+    let horizontal = band.radius_mm * radial[0].portable_hypot(radial[1]);
     let center = [
         a[0] - radial[0] * a[2],
         a[1] - radial[1] * a[2],
@@ -442,7 +443,7 @@ fn cross([a, b, c]: Point, [x, y, z]: Point) -> Point {
 }
 
 fn length3([x, y, z]: Point) -> f64 {
-    x.hypot(y).hypot(z)
+    x.portable_hypot(y).portable_hypot(z)
 }
 
 #[cfg(test)]

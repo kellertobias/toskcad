@@ -11,6 +11,7 @@ use multicad_core::{
     references::{AnalyticGeometry, GeometryIntent, Origin, TopologyKind},
 };
 use multicad_model::{Compiler, Model};
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeSet;
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -672,7 +673,10 @@ fn sided_distance_and_bound_angle_rebuild_the_same_explicit_edge() {
     let Some(AnalyticGeometry::Plane { frame }) = generated.geometry else {
         panic!()
     };
-    near(frame.normal()[0].abs().acos(), std::f64::consts::PI / 6.);
+    near(
+        frame.normal()[0].abs().portable_acos(),
+        std::f64::consts::PI / 6.,
+    );
     let mut bytes = vec![];
     project_file::write(
         &ProjectFile::new(session.document().clone()).unwrap(),

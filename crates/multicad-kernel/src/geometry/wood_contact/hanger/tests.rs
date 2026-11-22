@@ -57,7 +57,7 @@ pub(super) fn fixture(
     let station = -6.7;
     let start = -source.spec().plain_length_mm - source.metric().full_length_mm();
     let angle = std::f64::consts::TAU * (station - start) / 0.5 * if left { -1. } else { 1. };
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     let nut = Solid::rust_hex_nut(
         crate::HelicalThread {
             major_radius_mm: 1.5,

@@ -13,6 +13,7 @@ use multicad_core::{
     },
 };
 use multicad_kernel::{CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, Solid};
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeSet;
 pub(super) struct Inputs<'a> {
     pub feature: EntityId,
@@ -78,7 +79,7 @@ fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a.into_iter().zip(b).map(|(a, b)| a * b).sum()
 }
 fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 impl Inputs<'_> {
     fn fail(&self, message: impl std::fmt::Display) -> ModelError {

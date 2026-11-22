@@ -67,8 +67,8 @@ pub(super) fn candidate(b: &Boundary, work: &mut Work<'_>) -> Result<Candidate> 
     cones.sort_by(|a, b| a.2.total_cmp(&b.2));
     let (_, mhalf, alpha) = *cones.first().ok_or(fail)?;
     let (_, floor0, phi) = *cones.last().ok_or(fail)?;
-    let k = alpha.tan();
-    let kc = phi.tan();
+    let k = alpha.portable_tan();
+    let kc = phi.portable_tan();
     // Intersect the two actual meridian cone laws r=a-k*z.
     let floor = (mhalf - floor0) / (k - kc);
     let g = 2. * (mhalf - k * floor);
@@ -83,22 +83,24 @@ pub(super) fn candidate(b: &Boundary, work: &mut Work<'_>) -> Result<Candidate> 
     });
     let (beta, theta, bwidth, inner) = if let Some((caxis, inner)) = rounded {
         let cn = vector(unit(caxis.normal));
-        let beta = (-cn[0]).atan2(cn[2]);
+        let beta = (-cn[0]).portable_atan2(cn[2]);
         let theta = b
             .faces()
             .iter()
             .find_map(|f| match f.support {
                 Surface::Plane { axis } => {
                     let x = vector(unit(axis.normal));
-                    (x[0] > 0. && x[1] < 0. && x[2] > 0.).then(|| x[0].hypot(x[2]).atan2(-x[1]))
+                    (x[0] > 0. && x[1] < 0. && x[2] > 0.)
+                        .then(|| x[0].portable_hypot(x[2]).portable_atan2(-x[1]))
                 }
                 _ => None,
             })
             .ok_or(fail)?;
         // Cylinder center x = b/2 + tan(beta)*(tip-b/(2*kc))
         //                    + inner_radius/cos(beta).
-        let bwidth = 2. * (local(caxis.origin)[0] - tip * beta.tan() - inner / beta.cos())
-            / (1. - beta.tan() / kc);
+        let bwidth = 2.
+            * (local(caxis.origin)[0] - tip * beta.portable_tan() - inner / beta.portable_cos())
+            / (1. - beta.portable_tan() / kc);
 
         (beta, theta, bwidth, Inner::Rounded { radius_mm: inner })
     } else {
@@ -113,7 +115,7 @@ pub(super) fn candidate(b: &Boundary, work: &mut Work<'_>) -> Result<Candidate> 
                 Surface::Plane { axis } => {
                     let n = vector(unit(axis.normal));
                     (n[0] > 0. && n[1] < 0. && n[2] > 0. && n[0] > -n[1])
-                        .then(|| (n[0].hypot(n[2]).atan2(-n[1]), axis, n))
+                        .then(|| (n[0].portable_hypot(n[2]).portable_atan2(-n[1]), axis, n))
                 }
                 _ => None,
             })
@@ -124,13 +126,15 @@ pub(super) fn candidate(b: &Boundary, work: &mut Work<'_>) -> Result<Candidate> 
         // The offset of an inner V plane divided by sin(half) is
         // S=cos(beta)*b/2+sin(beta)*(tip-b/(2kc)). The outer plane's
         // additional offset is e/2*(cot(half)*sin(theta)-cos(theta)).
-        let beta = inner_n[2].atan2(inner_n[0]);
+        let beta = inner_n[2].portable_atan2(inner_n[0]);
         let inner_offset = dot(inner_n, local(inner_axis.origin));
         let outer_offset = dot(outer_n, local(outer_axis.origin));
-        let center = inner_offset / half.sin();
-        let bwidth = 2. * (center - beta.sin() * tip) / (beta.cos() - beta.sin() / kc);
-        let ewidth = 2. * (outer_offset - theta.sin() * center)
-            / (half.cos() / half.sin() * theta.sin() - theta.cos());
+        let center = inner_offset / half.portable_sin();
+        let bwidth = 2. * (center - beta.portable_sin() * tip)
+            / (beta.portable_cos() - beta.portable_sin() / kc);
+        let ewidth = 2. * (outer_offset - theta.portable_sin() * center)
+            / (half.portable_cos() / half.portable_sin() * theta.portable_sin()
+                - theta.portable_cos());
         (
             beta,
             theta,
@@ -148,7 +152,7 @@ pub(super) fn candidate(b: &Boundary, work: &mut Work<'_>) -> Result<Candidate> 
         g_diameter_mm: g,
         tilt_angle_deg: beta.to_degrees(),
         outer_flank_angle_deg: alpha.to_degrees(),
-        floor_angle_deg: (1. / kc).atan().to_degrees(),
+        floor_angle_deg: (1. / kc).portable_atan().to_degrees(),
         outer_corner_angle_deg: 2. * theta.to_degrees(),
         inner,
     };

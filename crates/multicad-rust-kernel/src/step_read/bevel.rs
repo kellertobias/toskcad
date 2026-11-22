@@ -65,7 +65,7 @@ impl Decoded {
                 let e1 = scale(sub(a, *center), 1. / radius);
                 let e2 = cross(*normal, e1);
                 let sweep = sweep(self.ends, *center, *normal);
-                let (s, c) = (sweep * t).sin_cos();
+                let (s, c) = (sweep * t).portable_sin_cos();
                 std::array::from_fn(|i| center[i] + radius * (c * e1[i] + s * e2[i]))
             }
             Curve::Spline { poles, knots } => de_boor(poles, knots, t),
@@ -111,7 +111,7 @@ impl Decoded {
 fn sweep(ends: [Point; 2], center: Point, normal: Point) -> f64 {
     let [a, b] = ends.map(|p| sub(p, center));
     dot(cross(a, b), normal)
-        .atan2(dot(a, b))
+        .portable_atan2(dot(a, b))
         .rem_euclid(std::f64::consts::TAU)
 }
 
@@ -288,7 +288,7 @@ pub(super) fn verify_member(
                     // Back cone: p · n is the cone distance a cos δ.
                     require(axis[2] < -1. + 1e-12)?;
                     let delta = std::f64::consts::FRAC_PI_2 - semi;
-                    flux += apex[2] * delta.cos() * green / delta.cos();
+                    flux += apex[2] * delta.portable_cos() * green / delta.portable_cos();
                 } else {
                     require(axis[2] > 1. - 1e-12 && forward)?;
                 }

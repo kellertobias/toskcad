@@ -36,36 +36,36 @@ fn refuses_unsafe_rotation_and_trim_inputs() {
 fn bounded_writer_keeps_one_shell_and_shared_three_station_boundaries() {
     use crate::spur_gear::Spec;
     let beta = 15_f64.to_radians();
-    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let module = 2. / beta.cos();
+    let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let module = 2. / beta.portable_cos();
     let pitch = 12. * module;
     let spec = Spec {
         teeth: 24,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * pressure.cos(),
+        base_radius_mm: pitch * pressure.portable_cos(),
         tip_radius_mm: pitch + 2.,
         root_radius_mm: pitch - 2.5,
         root_fillet_radius_mm: 0.4,
         half_base_angle_rad: (std::f64::consts::PI * module / 2. - 0.05) / (2. * pitch)
-            + pressure.tan()
+            + pressure.portable_tan()
             - pressure,
         face_width_mm: 4.,
         bore_radius_mm: 4.,
     };
-    let gear = Herringbone::new(spec, beta.tan() / pitch, 1e-5, 1e7).unwrap();
+    let gear = Herringbone::new(spec, beta.portable_tan() / pitch, 1e-5, 1e7).unwrap();
     let many_pressure = 10_f64.to_radians();
     let many_pitch = 64. * module;
-    let many_twist = beta.tan() / many_pitch;
+    let many_twist = beta.portable_tan() / many_pitch;
     let many = Herringbone::new(
         Spec {
             teeth: 128,
             pitch_radius_mm: many_pitch,
-            base_radius_mm: many_pitch * many_pressure.cos(),
+            base_radius_mm: many_pitch * many_pressure.portable_cos(),
             tip_radius_mm: many_pitch + 2.,
             root_radius_mm: many_pitch - 2.5,
             face_width_mm: 0.99 * std::f64::consts::PI / many_twist,
             half_base_angle_rad: (std::f64::consts::PI * module / 2. - 0.05) / (2. * many_pitch)
-                + many_pressure.tan()
+                + many_pressure.portable_tan()
                 - many_pressure,
             ..spec
         },
@@ -115,7 +115,7 @@ fn bounded_writer_keeps_one_shell_and_shared_three_station_boundaries() {
     assert!(text.contains("RATIONAL_B_SPLINE_SURFACE"));
     assert!(text.len() < crate::step_read::MAX_PLANAR_STEP_BYTES);
     for hand in [-1., 1.] {
-        let rate = hand * beta.tan() / pitch;
+        let rate = hand * beta.portable_tan() / pitch;
         let helical = Herringbone::new_helical(spec, rate, 1e-5, 1e7).unwrap();
         let plan = prepare(&helical, [0.; 3], 1e-7).unwrap();
         assert_eq!(plan.spins[0].poles.last(), plan.spins[1].poles.first());
@@ -141,7 +141,11 @@ fn bounded_writer_keeps_one_shell_and_shared_three_station_boundaries() {
                 }
                 let z = (band as f64 + fraction) * spec.face_width_mm / 2.;
                 let phase = rate * z;
-                assert!((poles[0][0] - phase.cos()).hypot(poles[0][1] - phase.sin()) < 1e-9);
+                assert!(
+                    (poles[0][0] - phase.portable_cos())
+                        .portable_hypot(poles[0][1] - phase.portable_sin())
+                        < 1e-9
+                );
             }
         }
         let text = write_herringbone(&helical, [0.; 3], [1., 0., 0.], [0., 1., 0.], 1e-7).unwrap();
@@ -184,8 +188,8 @@ fn axial_rotation_preserves_the_apex_and_certifies_either_hand() {
                 (u - a) / (b - a),
             );
             let signed = angle * t;
-            assert!((x - signed.cos()).hypot(y - signed.sin()) < 1e-10);
-            let actual = y.atan2(x);
+            assert!((x - signed.portable_cos()).portable_hypot(y - signed.portable_sin()) < 1e-10);
+            let actual = y.portable_atan2(x);
             assert!(angle.signum() * (actual - previous) > 0.);
             previous = actual;
         }
@@ -230,7 +234,7 @@ fn exact_arc_chart_has_positive_weights_and_meets_the_authored_radius() {
                 .sum::<f64>()
                 / sum
         });
-        assert!(((x - 2.).hypot(y - 2.) - 2.).abs() < 1e-14);
+        assert!(((x - 2.).portable_hypot(y - 2.) - 2.).abs() < 1e-14);
     }
 }
 
@@ -239,21 +243,22 @@ fn gap_below_axial_resolution_refuses_a_zero_length_core_seam() {
     use crate::spur_gear::Spec;
     use std::f64::consts::PI;
     let beta = 15_f64.to_radians();
-    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let module = 2. / beta.cos();
+    let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let module = 2. / beta.portable_cos();
     let pitch = 12. * module;
     let spec = Spec {
         teeth: 24,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * pressure.cos(),
+        base_radius_mm: pitch * pressure.portable_cos(),
         tip_radius_mm: pitch + 2.,
         root_radius_mm: pitch - 2.5,
         root_fillet_radius_mm: 0.4,
-        half_base_angle_rad: (PI * module / 2. - 0.05) / (2. * pitch) + pressure.tan() - pressure,
+        half_base_angle_rad: (PI * module / 2. - 0.05) / (2. * pitch) + pressure.portable_tan()
+            - pressure,
         face_width_mm: 10.,
         bore_radius_mm: 4.,
     };
-    let twist = beta.tan() / pitch;
+    let twist = beta.portable_tan() / pitch;
     let [origin, u, v] = [[0.; 3], [1., 0., 0.], [0., 1., 0.]];
     let gear = Herringbone::new_gapped(spec, twist, 3., 1e-5, 1e7).unwrap();
     assert!(write_herringbone(&gear, origin, u, v, 1e-7).is_ok());

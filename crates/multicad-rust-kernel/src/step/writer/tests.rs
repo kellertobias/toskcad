@@ -83,24 +83,25 @@ fn canonical_hubbed_twenty_four_thirty_six_pair_fits_the_shared_exchange_budget(
     use std::{f64::consts::PI, time::Instant};
 
     let beta = 15_f64.to_radians();
-    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let module = 2. / beta.cos();
+    let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let module = 2. / beta.portable_cos();
     let gears = [24, 36].map(|teeth| {
         let pitch = f64::from(teeth) * module / 2.;
         Herringbone::new(
             Spec {
                 teeth,
                 pitch_radius_mm: pitch,
-                base_radius_mm: pitch * pressure.cos(),
+                base_radius_mm: pitch * pressure.portable_cos(),
                 tip_radius_mm: pitch + 2.,
                 root_radius_mm: pitch - 2.5,
                 root_fillet_radius_mm: 0.4,
-                half_base_angle_rad: (PI * module / 2. - 0.05) / (2. * pitch) + pressure.tan()
+                half_base_angle_rad: (PI * module / 2. - 0.05) / (2. * pitch)
+                    + pressure.portable_tan()
                     - pressure,
                 face_width_mm: 4.,
                 bore_radius_mm: 4.,
             },
-            if teeth == 24 { 1. } else { -1. } * beta.tan() / pitch,
+            if teeth == 24 { 1. } else { -1. } * beta.portable_tan() / pitch,
             1e-5,
             1e7,
         )
@@ -117,7 +118,7 @@ fn canonical_hubbed_twenty_four_thirty_six_pair_fits_the_shared_exchange_budget(
         .unwrap()
     });
     let center = 30. * module;
-    let (sin, cos) = (PI + PI / 36.).sin_cos();
+    let (sin, cos) = (PI + PI / 36.).portable_sin_cos();
     let frames = [
         [[12., 23., 34.], [0., 1., 0.], [0., 0., 1.]],
         [[12., 23. + center, 34.], [0., cos, sin], [0., -sin, cos]],

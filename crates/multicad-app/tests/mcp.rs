@@ -1,5 +1,6 @@
 //! Protocol evidence for `multicad --mcp`: an independent newline-delimited
 //! JSON-RPC client (no MCP SDK) drives the real executable over stdio.
+use multicad_precision::PortableMath as _;
 use serde_json::{Value, json};
 use std::{
     f64::consts::PI,
@@ -4470,7 +4471,7 @@ fn rust_stdio_parallel_cylinder_pair_queries_are_read_only_and_source_guarded() 
     assert_eq!(overlap["relation"], "overlapping");
     close(
         overlap["common_volume_mm3"].as_f64().unwrap(),
-        10. * (50. * (0.5_f64).acos() - 12.5 * 3_f64.sqrt()),
+        10. * (50. * (0.5_f64).portable_acos() - 12.5 * 3_f64.sqrt()),
     );
     let mut tiny = query(5, 6);
     tiny["contact_tolerance"] = length(1e-3);

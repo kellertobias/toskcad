@@ -3,6 +3,7 @@ use multicad_kernel::{
     BooleanOperation, GeometryErrorKind, GeometryPolicy, HelicalThread, MeshOptions, PlaneFrame,
     RigidTransform, Solid,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 fn metric() -> HelicalThread {
@@ -66,8 +67,26 @@ fn metric_complete_turn_and_fractional_spines_produce_measurable_accurate_solids
         let radius = spec.major_radius_mm - spec.depth_mm * 0.05;
         for z in [length * 0.19, length * 0.47, length * 0.83] {
             let angle = TAU * z / pitch;
-            assert!(probe(&solid, [radius * angle.cos(), radius * angle.sin(), z]) > 0.999);
-            assert!(probe(&solid, [-radius * angle.cos(), -radius * angle.sin(), z]) < 1e-5);
+            assert!(
+                probe(
+                    &solid,
+                    [
+                        radius * angle.portable_cos(),
+                        radius * angle.portable_sin(),
+                        z
+                    ]
+                ) > 0.999
+            );
+            assert!(
+                probe(
+                    &solid,
+                    [
+                        -radius * angle.portable_cos(),
+                        -radius * angle.portable_sin(),
+                        z
+                    ]
+                ) < 1e-5
+            );
         }
     }
 }
@@ -121,8 +140,18 @@ fn short_unf_internal_tools_retain_helices_at_nonintegral_lengths() {
         let r = spec.major_radius_mm - 0.05 * spec.depth_mm;
         for z in [length * 0.23, length * 0.47, length * 0.71] {
             let angle = TAU * z / pitch;
-            assert!(probe(&solid, [r * angle.cos(), r * angle.sin(), z]) > 0.999);
-            assert!(probe(&solid, [-r * angle.cos(), -r * angle.sin(), z]) < 1e-5);
+            assert!(
+                probe(
+                    &solid,
+                    [r * angle.portable_cos(), r * angle.portable_sin(), z]
+                ) > 0.999
+            );
+            assert!(
+                probe(
+                    &solid,
+                    [-r * angle.portable_cos(), -r * angle.portable_sin(), z]
+                ) < 1e-5
+            );
         }
     }
 }
@@ -148,7 +177,8 @@ fn probe(solid: &Solid, center: [f64; 3]) -> f64 {
 fn expected_volume(s: HelicalThread) -> f64 {
     let r = s.major_radius_mm;
     let root = r - s.depth_mm;
-    let slopes = s.lower_flank_deg.to_radians().tan() + s.upper_flank_deg.to_radians().tan();
+    let slopes = s.lower_flank_deg.to_radians().portable_tan()
+        + s.upper_flank_deg.to_radians().portable_tan();
     let integral = s.crest_width_mm * (r * r - root * root) / 2.
         + slopes * (r * (r * r - root * root) / 2. - (r.powi(3) - root.powi(3)) / 3.);
     s.length_mm * (PI * root * root + TAU / s.pitch_mm * integral)
@@ -191,9 +221,14 @@ fn handedness_and_multiple_starts_follow_the_requested_lead_with_complete_face_a
             let theta =
                 sign * TAU * z / spec.lead_mm() + TAU * f64::from(start) / f64::from(starts);
             let r = spec.major_radius_mm - spec.depth_mm * 0.1;
-            assert!(probe(&solid, [r * theta.cos(), r * theta.sin(), z]) > 0.999);
+            assert!(
+                probe(
+                    &solid,
+                    [r * theta.portable_cos(), r * theta.portable_sin(), z]
+                ) > 0.999
+            );
             let gap = theta + PI / f64::from(starts);
-            assert!(probe(&solid, [r * gap.cos(), r * gap.sin(), z]) < 1e-5);
+            assert!(probe(&solid, [r * gap.portable_cos(), r * gap.portable_sin(), z]) < 1e-5);
         }
         let topology = solid.topology_snapshot(feature, 0).unwrap();
         let faces: Vec<_> = topology
@@ -275,7 +310,12 @@ fn custom_conical_threads_and_step_mesh_export_retain_physical_helices() {
         let z = 4.;
         let theta = TAU * z / spec.lead_mm();
         let r = 4. + radial_taper * z - 0.05;
-        assert!(probe(&solid, [r * theta.cos(), r * theta.sin(), z]) > 0.999);
+        assert!(
+            probe(
+                &solid,
+                [r * theta.portable_cos(), r * theta.portable_sin(), z]
+            ) > 0.999
+        );
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("modeled-thread.step");
         solid.write_step(&path).unwrap();

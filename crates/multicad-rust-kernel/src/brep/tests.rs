@@ -314,7 +314,7 @@ fn sections_lie_on_the_exact_boundary_and_close() {
     assert_eq!(loops.len(), 1);
     let radial = loops[0]
         .iter()
-        .map(|p| (p[0].hypot(p[1]) - 6.).abs())
+        .map(|p| (p[0].portable_hypot(p[1]) - 6.).abs())
         .fold(0., f64::max);
     let axial = loops[0]
         .iter()
@@ -368,7 +368,7 @@ fn sections_lie_on_the_exact_boundary_and_close() {
     assert!(
         loops[0]
             .iter()
-            .all(|p| (p[0].hypot(p[1]) - 4.).abs() < 1e-9)
+            .all(|p| (p[0].portable_hypot(p[1]) - 4.).abs() < 1e-9)
     );
 }
 
@@ -760,7 +760,7 @@ fn perimeter(a: f64, b: f64) -> f64 {
     (0..n)
         .map(|k| {
             let t = (k as f64 + 0.5) / n as f64 * 2. * PI;
-            (a * t.sin()).hypot(b * t.cos()) * 2. * PI / n as f64
+            (a * t.portable_sin()).portable_hypot(b * t.portable_cos()) * 2. * PI / n as f64
         })
         .sum()
 }
@@ -786,7 +786,7 @@ fn elliptic_cylinder_matches_its_closed_forms_and_round_trips() {
     assert!(
         loops[0]
             .iter()
-            .all(|p| ((p[0] / 3.).hypot(p[1] / 2.) - 1.).abs() < 1e-9)
+            .all(|p| ((p[0] / 3.).portable_hypot(p[1] / 2.) - 1.).abs() < 1e-9)
     );
     let mut writer = crate::step::Writer::new();
     writer.append_brep(&elliptic).unwrap();
@@ -1847,9 +1847,12 @@ fn parabolic_and_hyperbolic_prisms_match_their_closed_forms_and_round_trip() {
     // region holds 8/3 mm^2.
     let parabola = conic_prism("PARABOLA('',{},1.)", [1., -2., 0.], [1., 2., 0.]);
     // x = cosh t, y = sinh t: the region holds sinh(2) / 2 - 1.
-    let (c, h) = (1f64.cosh(), 1f64.sinh());
+    let (c, h) = (1f64.portable_cosh(), 1f64.portable_sinh());
     let hyperbola = conic_prism("HYPERBOLA('',{},1.,1.)", [c, -h, 0.], [c, h, 0.]);
-    for (text, cap) in [(parabola, 8. / 3.), (hyperbola, 2f64.sinh() / 2. - 1.)] {
+    for (text, cap) in [
+        (parabola, 8. / 3.),
+        (hyperbola, 2f64.portable_sinh() / 2. - 1.),
+    ] {
         let prism = solid(&text);
         assert!(
             close(prism.volume_mm3(), 5. * cap, 1e-12),
@@ -2163,7 +2166,7 @@ const CRESCENT: &str = "\
 #[test]
 fn thin_faces_between_near_arcs_take_their_sense_from_the_arcs() {
     // Each arc's segment is its sector less the triangle on the chord.
-    let segment = |r: f64| r * r * (1. / r).asin() - (r * r - 1.).sqrt();
+    let segment = |r: f64| r * r * (1. / r).portable_asin() - (r * r - 1.).sqrt();
     let flat = 0.9 * (6. - 35f64.sqrt());
     let area = segment(6.) - segment((1. + flat * flat) / (2. * flat));
     let text = part21("#98", CRESCENT);
@@ -2291,7 +2294,7 @@ fn circle(radius: f64, clockwise: bool) -> Vec<[f64; 2]> {
     (0..12)
         .map(|k| {
             let t = f64::from(k) * PI / 6. * if clockwise { -1. } else { 1. };
-            [radius * t.cos(), radius * t.sin()]
+            [radius * t.portable_cos(), radius * t.portable_sin()]
         })
         .collect()
 }
@@ -2871,8 +2874,8 @@ fn horn_torus_faces_close_at_the_point_on_their_axis() {
         // Every vertex lies on the torus or the plane, and one is the point
         // where the torus touches its axis.
         assert!(mesh.positions.iter().all(|p| {
-            let rho = p[0].hypot(p[1]);
-            ((rho - 2.).hypot(p[2]) - 2.).abs() < 1e-9 || (p[2] - 2.).abs() < 1e-12
+            let rho = p[0].portable_hypot(p[1]);
+            ((rho - 2.).portable_hypot(p[2]) - 2.).abs() < 1e-9 || (p[2] - 2.).abs() < 1e-12
         }));
         assert!(mesh.positions.iter().any(|p| norm(*p) < 1e-12));
     }
@@ -2895,7 +2898,7 @@ fn horn_torus_faces_close_at_the_point_on_their_axis() {
     );
     assert!(loops[0].iter().all(|p| {
         p[1].abs() < 1e-12
-            && ((p[0].abs() - 2.).hypot(p[2]) - 2.)
+            && ((p[0].abs() - 2.).portable_hypot(p[2]) - 2.)
                 .abs()
                 .min((p[2] - 2.).abs())
                 < 1e-9
@@ -2917,7 +2920,7 @@ fn horn_torus_faces_close_at_the_point_on_their_axis() {
     assert!(
         loops[0]
             .iter()
-            .all(|p| (p[0].hypot(p[1]) - (2. + 3f64.sqrt())).abs() < 1e-9)
+            .all(|p| (p[0].portable_hypot(p[1]) - (2. + 3f64.sqrt())).abs() < 1e-9)
     );
     // The removed quarter with the plane is the cup alone. Its torus face is
     // reversed and its lone loop bounds a region on either side, both
@@ -3248,7 +3251,7 @@ fn affine_images_keep_exact_volume_and_turn_circles_into_ellipses() {
         certified(&scaled, 0.05);
     }
     // A uniform scale with a rotation keeps every analytic family.
-    let (sin, cos) = 0.3_f64.sin_cos();
+    let (sin, cos) = 0.3_f64.portable_sin_cos();
     let similar = affine(
         [
             [1.5 * cos, -1.5 * sin, 0.],

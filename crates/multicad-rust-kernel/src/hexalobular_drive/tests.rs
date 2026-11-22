@@ -90,8 +90,8 @@ fn fixture() -> [Arc; 12] {
         ),
     ];
     source.map(|(center_mm, radius_mm, start_mm, end_mm, convex)| {
-        let a = (start_mm[1] - center_mm[1]).atan2(start_mm[0] - center_mm[0]);
-        let b = (end_mm[1] - center_mm[1]).atan2(end_mm[0] - center_mm[0]);
+        let a = (start_mm[1] - center_mm[1]).portable_atan2(start_mm[0] - center_mm[0]);
+        let b = (end_mm[1] - center_mm[1]).portable_atan2(end_mm[0] - center_mm[0]);
         let sweep_rad = if convex {
             (b - a).rem_euclid(TAU)
         } else {
@@ -129,7 +129,7 @@ fn actual_twelve_arcs_and_cone_have_distinct_finite_walls_and_bounded_mass() {
         let t = i as f64 * TAU / 720.;
         let radius = drive.radius_at_angle_mm(t).unwrap();
         assert!((1.025 - 1e-12..=1.4 + 1e-12).contains(&radius));
-        let p = [radius * t.cos(), radius * t.sin()];
+        let p = [radius * t.portable_cos(), radius * t.portable_sin()];
         let below = drive.cone().tip_depth_mm - radius * drive.cone().depth_per_radius;
         assert!(drive.contains([p[0] * 0.999, p[1] * 0.999, below * 0.999]));
         assert!(!drive.contains([p[0] * 1.001, p[1] * 1.001, 0.1]));
@@ -308,7 +308,7 @@ fn unresolved_polar_stations_and_mass_enclosures_never_mint_precision() {
 fn a_twice_wound_actual_circular_graph_is_not_a_single_recess() {
     let points: [[f64; 2]; 6] = std::array::from_fn(|i| {
         let t = i as f64 * TAU / 6.;
-        [t.cos(), t.sin()]
+        [t.portable_cos(), t.portable_sin()]
     });
     let arcs: [Arc; 6] = std::array::from_fn(|i| {
         let start = points[i];
@@ -317,11 +317,11 @@ fn a_twice_wound_actual_circular_graph_is_not_a_single_recess() {
         let center = if i.is_multiple_of(2) {
             [0.; 2]
         } else {
-            [2. * middle.cos(), 2. * middle.sin()]
+            [2. * middle.portable_cos(), 2. * middle.portable_sin()]
         };
-        let radius = (start[0] - center[0]).hypot(start[1] - center[1]);
-        let a = (start[1] - center[1]).atan2(start[0] - center[0]);
-        let b = (end[1] - center[1]).atan2(end[0] - center[0]);
+        let radius = (start[0] - center[0]).portable_hypot(start[1] - center[1]);
+        let a = (start[1] - center[1]).portable_atan2(start[0] - center[0]);
+        let b = (end[1] - center[1]).portable_atan2(end[0] - center[0]);
         let sweep = if i.is_multiple_of(2) {
             (b - a).rem_euclid(TAU)
         } else {
@@ -354,7 +354,7 @@ fn retained_rotations_metric_scales_and_transport_keep_actual_circular_sources()
     let baseline = drive().volume_bounds_mm3(1e-7, 100_000).unwrap();
     for scale in [0.001, 1., 1000.] {
         for rotation in [0_f64, 0.63] {
-            let (s, c) = rotation.sin_cos();
+            let (s, c) = rotation.portable_sin_cos();
             let point = |[x, y]: [f64; 2]| [scale * (c * x - s * y), scale * (s * x + c * y)];
             let arcs = fixture().map(|a| Arc {
                 center_mm: point(a.center_mm),
@@ -397,7 +397,7 @@ fn unresolved_near_tangent_ray_and_polar_trims_are_refused_without_radius_clampi
     let mut arcs = fixture();
     let start = 2. * PI / 3. - 1e-9;
     let sweep = 1e-10;
-    let point = |t: f64| [2. + t.cos(), t.sin()];
+    let point = |t: f64| [2. + t.portable_cos(), t.portable_sin()];
     arcs[0] = Arc {
         center_mm: [2., 0.],
         radius_mm: 1.,
@@ -421,23 +421,26 @@ fn unresolved_near_tangent_ray_and_polar_trims_are_refused_without_radius_clampi
     );
     let points: [[f64; 2]; 12] = std::array::from_fn(|i| {
         let t = i as f64 * TAU / 12.;
-        [t.cos(), t.sin()]
+        [t.portable_cos(), t.portable_sin()]
     });
     let mut unresolved = 0;
     for offset in [1e-11, 2e-11, 4e-11] {
         let contour = std::array::from_fn(|i: usize| {
             let middle = (i as f64 + 0.5) * TAU / 12.;
-            let distance = (PI / 12.).cos().recip() + offset;
+            let distance = (PI / 12.).portable_cos().recip() + offset;
             let center = if i.is_multiple_of(2) {
                 [0.; 2]
             } else {
-                [distance * middle.cos(), distance * middle.sin()]
+                [
+                    distance * middle.portable_cos(),
+                    distance * middle.portable_sin(),
+                ]
             };
             let from = points[i];
             let to = points[(i + 1) % 12];
-            let a = (from[1] - center[1]).atan2(from[0] - center[0]);
-            let b = (to[1] - center[1]).atan2(to[0] - center[0]);
-            let radius = (from[0] - center[0]).hypot(from[1] - center[1]);
+            let a = (from[1] - center[1]).portable_atan2(from[0] - center[0]);
+            let b = (to[1] - center[1]).portable_atan2(to[0] - center[0]);
+            let radius = (from[0] - center[0]).portable_hypot(from[1] - center[1]);
             Arc {
                 center_mm: center,
                 radius_mm: radius,
@@ -461,7 +464,7 @@ fn unresolved_near_tangent_ray_and_polar_trims_are_refused_without_radius_clampi
         )
         .unwrap();
         for p in points {
-            let angle = p[1].atan2(p[0]);
+            let angle = p[1].portable_atan2(p[0]);
             if source.radius_at_angle_mm(angle).is_none() {
                 assert_eq!(source.floor_depth_mm(p), None);
                 unresolved += 1;
@@ -492,7 +495,7 @@ fn authored_tangent_authority_is_explicit_and_never_inferred_from_retained_arcs(
             old.start_mm,
             old.end_mm,
         ]) {
-            assert!((a[0] - b[0]).hypot(a[1] - b[1]) < source.source_error_mm());
+            assert!((a[0] - b[0]).portable_hypot(a[1] - b[1]) < source.source_error_mm());
         }
         assert!((arc.radius_mm - old.radius_mm).abs() < source.source_error_mm());
     }

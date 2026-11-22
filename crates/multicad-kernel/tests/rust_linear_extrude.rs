@@ -8,6 +8,7 @@ use multicad_kernel::{
     PlaneFrame, RigidTransform, Solid, project_drawing,
     rust_kernel::{display::DisplayMesh, manufacturing::certify},
 };
+use multicad_precision::PortableMath as _;
 
 fn profile(
     frame: PlaneFrame,
@@ -166,7 +167,7 @@ fn drafted_oblique_sweep_keeps_exact_miter_walls_and_step_geometry() {
         &[[3., 2.], [3., 5.], [6., 5.], [6., 2.]],
     );
     let displacement = [6., 2., 1.];
-    let taper = (0.5 / 41_f64.sqrt()).atan();
+    let taper = (0.5 / 41_f64.sqrt()).portable_atan();
     let rust =
         Solid::rust_extrude_linear_named(&profile, displacement, taper, feature, &origins, policy)
             .unwrap();
@@ -241,7 +242,7 @@ fn negative_oblique_extrusion_to_a_sloped_plane_keeps_hole_and_face_frames() {
         &[[3., 2.], [3., 4.], [5., 4.], [5., 2.]],
     );
     let direction = [0.6, 0., -0.8];
-    let l = 1_f64.hypot(0.2);
+    let l = 1_f64.portable_hypot(0.2);
     let end = PlaneFrame {
         origin: [0., 0., -10.],
         u: [1. / l, 0., 0.2 / l],

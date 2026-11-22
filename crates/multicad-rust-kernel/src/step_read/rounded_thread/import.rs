@@ -189,7 +189,7 @@ pub(in crate::step_read) fn candidate_with_tip_orientation(
     let pitch = rate * TAU;
     let phase = |g: &Grid| {
         let p = chart.local(g.start);
-        (-hand * p[1].atan2(p[0])).rem_euclid(TAU)
+        (-hand * p[1].portable_atan2(p[0])).rem_euclid(TAU)
     };
     grids[1..].sort_by(|a, b| phase(a).total_cmp(&phase(b)));
     require(grids[0].id == crest.id && grids[0].radial_domain[0] == 0.)?;
@@ -200,11 +200,11 @@ pub(in crate::step_read) fn candidate_with_tip_orientation(
         let factor = DEGREE as f64 / g.radial_span;
         let angular =
             (p[0] * (q[1] - p[1]) - p[1] * (q[0] - p[0])) * factor / (p[0] * p[0] + p[1] * p[1]);
-        rate * angular.abs() / g.radial_domain[0].cos()
+        rate * angular.abs() / g.radial_domain[0].portable_cos()
     };
     let rc = circle_radius(&grids[0]);
     let rr = circle_radius(&grids[2]);
-    let depth = pitch / (2. * angle.tan()) - (rc + rr) * (1. / angle.sin() - 1.);
+    let depth = pitch / (2. * angle.portable_tan()) - (rc + rr) * (1. / angle.portable_sin() - 1.);
     let thread = Thread::new(Spec {
         major_radius_mm: major,
         pitch_mm: pitch,

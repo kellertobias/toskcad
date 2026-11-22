@@ -1,6 +1,7 @@
 //! Orthographic visibility from straight B-rep edges and trimmed planar faces.
 
 use crate::round_occlusion::RoundOccluder;
+use multicad_precision::PortableMath as _;
 
 mod loft_faces;
 mod profile;
@@ -145,7 +146,7 @@ struct Line {
 impl Line {
     fn new([a, b]: [Point; 2], tolerance: f64, adjacent: [usize; 2]) -> Option<Self> {
         let delta = sub(b, a);
-        let length = delta[0].hypot(delta[1]);
+        let length = delta[0].portable_hypot(delta[1]);
         (length > tolerance).then(|| Self {
             start: a,
             delta,

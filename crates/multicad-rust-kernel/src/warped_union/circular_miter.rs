@@ -54,7 +54,7 @@ impl PhasedRim {
         let [major, minor] = self.ellipse.semiaxes_mm();
         let a = scale(self.ellipse.major_axis(), major);
         let b = scale(self.ellipse.minor_axis(), minor);
-        let (sin, cos) = self.phase.sin_cos();
+        let (sin, cos) = self.phase.portable_sin_cos();
         [combine(a, cos, b, sin), combine(b, cos, a, -sin)]
     }
 
@@ -187,8 +187,8 @@ fn build(
         // Generator lengths are affine in the shared radial angle. Their
         // global minimum is the center distance less the harmonic amplitude.
         let length = lengths[leg];
-        if length - cosine.hypot(sine) <= tolerance
-            || length3(cross(a, axis)).hypot(length3(cross(b, axis))) > tolerance
+        if length - cosine.portable_hypot(sine) <= tolerance
+            || length3(cross(a, axis)).portable_hypot(length3(cross(b, axis))) > tolerance
         {
             return Err(Error::Unsupported);
         }
@@ -309,7 +309,7 @@ fn rims(
         .map_err(|_| Error::Invalid)?;
         rims.push(PhasedRim {
             ellipse,
-            phase: s.atan2(c),
+            phase: s.portable_atan2(c),
         });
         radial = combine(cross(bend.normal, outgoing), c, bend.normal, s);
     }
@@ -348,7 +348,7 @@ fn separated(a: [Ellipse; 2], b: [Ellipse; 2], axes: [Point; 2], tolerance: f64)
                     let center = dot(sub(rim.center_mm(), origin), axis);
                     let [major, minor] = rim.semiaxes_mm();
                     let extent = (major * dot(rim.major_axis(), axis))
-                        .hypot(minor * dot(rim.minor_axis(), axis));
+                        .portable_hypot(minor * dot(rim.minor_axis(), axis));
                     [lo.min(center - extent), hi.max(center + extent)]
                 })
         });
@@ -406,7 +406,7 @@ impl Shell {
         let path: Vec<_> = rims.iter().map(|rim| rim.ellipse.center_mm()).collect();
         let first = rims[0];
         let [u, v] = first.offsets();
-        let (s, c) = phase.sin_cos();
+        let (s, c) = phase.portable_sin_cos();
         let shifted = circular_miter_chain_from_radial(
             &path,
             first.ellipse.semiaxes_mm()[1],
@@ -474,7 +474,7 @@ fn bounds(ellipses: impl Iterator<Item = Ellipse>) -> [Point; 2] {
         let u = ellipse.major_axis();
         let v = ellipse.minor_axis();
         for i in 0..3 {
-            let extent = (major * u[i]).hypot(minor * v[i]);
+            let extent = (major * u[i]).portable_hypot(minor * v[i]);
             bounds[0][i] = bounds[0][i].min(center[i] - extent);
             bounds[1][i] = bounds[1][i].max(center[i] + extent);
         }

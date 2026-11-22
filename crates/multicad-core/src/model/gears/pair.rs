@@ -317,21 +317,23 @@ impl GearPairParameters {
             }
             // KHK internal-gear equations 4.4 and 4.11–4.12, plus its
             // explicit standard 20-degree tooth-difference >9 condition.
-            let aa1 = (pinion.base_radius_mm / pinion.tip_radius_mm).acos();
-            let aa2 = (ring.base_radius_mm / ring.tip_radius_mm).acos();
+            let aa1 = (pinion.base_radius_mm / pinion.tip_radius_mm).portable_acos();
+            let aa2 = (ring.base_radius_mm / ring.tip_radius_mm).portable_acos();
             let alpha = ring.transverse_pressure_angle_rad;
             let ratio = f64::from(pinion.teeth) / f64::from(ring.teeth);
-            let inv = |angle: f64| angle.tan() - angle;
-            let theta1 = ((1. - (aa1.cos() / aa2.cos()).powi(2)) / (1. - ratio.powi(2)))
+            let inv = |angle: f64| angle.portable_tan() - angle;
+            let theta1 = ((1. - (aa1.portable_cos() / aa2.portable_cos()).powi(2))
+                / (1. - ratio.powi(2)))
+            .sqrt()
+            .portable_asin();
+            let theta2 = (((aa2.portable_cos() / aa1.portable_cos()).powi(2) - 1.)
+                / (ratio.recip().powi(2) - 1.))
                 .sqrt()
-                .asin();
-            let theta2 = (((aa2.cos() / aa1.cos()).powi(2) - 1.) / (ratio.recip().powi(2) - 1.))
-                .sqrt()
-                .asin();
+                .portable_asin();
             if !theta1.is_finite()
                 || !theta2.is_finite()
                 || ring.teeth <= pinion.teeth + 9
-                || ratio < 1. - aa2.tan() / alpha.tan()
+                || ratio < 1. - aa2.portable_tan() / alpha.portable_tan()
                 || theta1 + inv(aa1) - inv(alpha) < (theta2 + inv(aa2) - inv(alpha)) / ratio
             {
                 return Err(invalid(
@@ -381,7 +383,7 @@ impl GearPairParameters {
         };
         let base = self.frame.resolve(evaluated)?;
         let mating = std::array::from_fn(|index| {
-            let (sin, cos) = phases[index].rem_euclid(2. * PI).sin_cos();
+            let (sin, cos) = phases[index].rem_euclid(2. * PI).portable_sin_cos();
             ReferenceFrame {
                 origin_mm: std::array::from_fn(|i| {
                     base.origin[i] + if index == 1 { base.u[i] * center } else { 0. }

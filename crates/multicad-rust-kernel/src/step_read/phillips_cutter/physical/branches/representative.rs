@@ -65,8 +65,8 @@ fn candidate(b: &Boundary) -> std::result::Result<Candidate, PhillipsReadError> 
     cones.sort_by(|a, b| a.2.total_cmp(&b.2));
     let (_, mhalf, alpha) = *cones.first().ok_or(fail)?;
     let (_, floor0, phi) = *cones.last().ok_or(fail)?;
-    let k = alpha.tan();
-    let kc = phi.tan();
+    let k = alpha.portable_tan();
+    let kc = phi.portable_tan();
     // Intersect the two actual meridian cone laws r=a-k*z.
     let floor = (mhalf - floor0) / (k - kc);
     let g = 2. * (mhalf - k * floor);
@@ -84,22 +84,24 @@ fn candidate(b: &Boundary) -> std::result::Result<Candidate, PhillipsReadError> 
         })
         .ok_or(fail)?;
     let cn = vector(unit(caxis.normal));
-    let beta = (-cn[0]).atan2(cn[2]);
+    let beta = (-cn[0]).portable_atan2(cn[2]);
     let theta = b
         .faces()
         .iter()
         .find_map(|f| match f.support {
             Surface::Plane { axis } => {
                 let x = vector(unit(axis.normal));
-                (x[0] > 0. && x[1] < 0. && x[2] > 0.).then(|| x[0].hypot(x[2]).atan2(-x[1]))
+                (x[0] > 0. && x[1] < 0. && x[2] > 0.)
+                    .then(|| x[0].portable_hypot(x[2]).portable_atan2(-x[1]))
             }
             _ => None,
         })
         .ok_or(fail)?;
     // Cylinder center x = b/2 + tan(beta)*(tip-b/(2*kc))
     //                    + inner_radius/cos(beta).
-    let bwidth = 2. * (local(caxis.origin)[0] - tip * beta.tan() - inner / beta.cos())
-        / (1. - beta.tan() / kc);
+    let bwidth = 2.
+        * (local(caxis.origin)[0] - tip * beta.portable_tan() - inner / beta.portable_cos())
+        / (1. - beta.portable_tan() / kc);
     let spec = Spec {
         mouth_diameter_mm: 2. * mhalf,
         mouth_radius_mm: minor,
@@ -107,11 +109,11 @@ fn candidate(b: &Boundary) -> std::result::Result<Candidate, PhillipsReadError> 
         g_diameter_mm: g,
         tilt_angle_deg: beta.to_degrees(),
         outer_flank_angle_deg: alpha.to_degrees(),
-        floor_angle_deg: (1. / kc).atan().to_degrees(),
+        floor_angle_deg: (1. / kc).portable_atan().to_degrees(),
         outer_corner_angle_deg: 2. * theta.to_degrees(),
         inner: Inner::Rounded { radius_mm: inner },
     };
-    let expected_major = mhalf + minor * (1. - alpha.sin()) / alpha.cos();
+    let expected_major = mhalf + minor * (1. - alpha.portable_sin()) / alpha.portable_cos();
     if (expected_major - major).abs() > 1e-8 {
         return Err(fail);
     }

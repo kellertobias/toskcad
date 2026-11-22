@@ -2,6 +2,7 @@
 
 use crate::normal_sweep;
 use crate::revolution::{Sum, cross};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 pub mod clearance;
@@ -194,7 +195,7 @@ impl Tooth {
             (foot_radius - base) * (foot_radius + base) / (base * (tangent + radius))
         };
         let end = ((tip - base) * (tip + base)).sqrt() / base;
-        let tip_half = half - (end - end.atan());
+        let tip_half = half - (end - end.portable_atan());
         if start >= end || tip * tip_half < minimum {
             return Err(Error::InvalidProfile);
         }
@@ -206,7 +207,7 @@ impl Tooth {
         };
         let tangent_angle = start - half;
         let fillet_center = sub(fillet_end, polar(radius, tangent_angle + FRAC_PI_2));
-        let root_half = -fillet_center[1].atan2(fillet_center[0]);
+        let root_half = -fillet_center[1].portable_atan2(fillet_center[0]);
         let root_gap = TAU / f64::from(spec.teeth) - 2. * root_half;
         if root_half <= 0.
             || root_gap * root < minimum
@@ -291,12 +292,12 @@ impl Tooth {
 }
 
 fn polar(radius: f64, angle: f64) -> Point {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     [radius * cos, radius * sin]
 }
 
 fn rotate([x, y]: Point, angle: f64) -> Point {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     [x * cos - y * sin, x * sin + y * cos]
 }
 

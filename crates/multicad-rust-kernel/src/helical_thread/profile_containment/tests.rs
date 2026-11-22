@@ -7,8 +7,8 @@ fn thread(major: f64, rounded: bool, left: bool, starts: u32) -> Thread {
         pitch_mm: 0.7,
         length_mm: 4.2,
         depth_mm: if rounded {
-            (0.7 - 0.1) / (a.tan() + b.tan())
-                - 0.04 * (((b - a) * 0.5).cos() / ((b + a) * 0.5).sin() - 1.)
+            (0.7 - 0.1) / (a.portable_tan() + b.portable_tan())
+                - 0.04 * (((b - a) * 0.5).portable_cos() / ((b + a) * 0.5).portable_sin() - 1.)
         } else {
             0.35
         },

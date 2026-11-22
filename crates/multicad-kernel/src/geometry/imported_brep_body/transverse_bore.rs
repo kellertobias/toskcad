@@ -183,7 +183,7 @@ impl Seg {
         match *self {
             Seg::Line { a, b } => [a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1])],
             Seg::Arc { c, r, .. } => {
-                let (s, co) = self.angle(f).sin_cos();
+                let (s, co) = self.angle(f).portable_sin_cos();
                 [c[0] + r * co, c[1] + r * s]
             }
         }
@@ -249,7 +249,7 @@ impl Seg {
                     .filter(|&dz| {
                         c[1] + dz > z
                             && self
-                                .fraction(dz.atan2(dy))
+                                .fraction(dz.portable_atan2(dy))
                                 .is_some_and(|t| t > 0. && t < 1.)
                     })
                     .count()
@@ -475,10 +475,10 @@ impl Cut {
                     }
                 } else if gap == std::cmp::Ordering::Less {
                     let angles = if axis == 0 {
-                        let base = (offset / r).clamp(-1., 1.).acos();
+                        let base = (offset / r).clamp(-1., 1.).portable_acos();
                         [base, -base]
                     } else {
-                        let base = (offset / r).clamp(-1., 1.).asin();
+                        let base = (offset / r).clamp(-1., 1.).portable_asin();
                         [base, PI - base]
                     };
                     for angle in angles {
@@ -569,7 +569,7 @@ impl Cut {
                         if f <= 0. || f >= 1. {
                             continue;
                         }
-                        let p = [c[0] + r * angle.cos(), c[1]];
+                        let p = [c[0] + r * angle.portable_cos(), c[1]];
                         if let Some(k) = self.band_at(p[1])
                             && p[0].abs() < self.bands[k].r
                             && found.iter().all(|(g, _)| (g - f).abs() > 1e-9)
@@ -718,7 +718,7 @@ impl Cut {
     /// Order the ends of a periodic `theta` curve so that its forward range
     /// passes through `middle`.
     fn periodic_ends(&self, ends: [usize; 2], middle: P) -> [usize; 2] {
-        let angle = |p: P| p[1].atan2(p[0]);
+        let angle = |p: P| p[1].portable_atan2(p[0]);
         let [a, b] = ends.map(|v| angle(self.vertices[v]));
         let m = angle(middle);
         if (m - a).rem_euclid(TAU) < (b - a).rem_euclid(TAU) {
@@ -821,7 +821,7 @@ impl Cut {
         let r = self.bands[k].r;
         if let Some(lobe) = by_tool {
             // Tool angle: x = r cos, y = r sin, z on the profile circle.
-            let (sin, cos) = s.sin_cos();
+            let (sin, cos) = s.portable_sin_cos();
             let y = r * sin;
             let dy = y - c[0];
             let root = (radius * radius - dy * dy).max(0.).sqrt();
@@ -830,7 +830,7 @@ impl Cut {
             ([r * cos, y, z], [-r * sin, r * cos, dz])
         } else {
             // Profile angle: y and z on the circle, x on the tool wall.
-            let (sin, cos) = s.sin_cos();
+            let (sin, cos) = s.portable_sin_cos();
             let y = c[0] + radius * cos;
             let z = c[1] + radius * sin;
             let dy = -radius * sin;
@@ -848,8 +848,8 @@ impl Cut {
             return f64::INFINITY;
         };
         let r = self.bands[k].r;
-        let tool = (p[0].hypot(p[1]) - r).abs();
-        let side = ((p[1] - c[0]).hypot(p[2] - c[1]) - radius).abs();
+        let tool = (p[0].portable_hypot(p[1]) - r).abs();
+        let side = ((p[1] - c[0]).portable_hypot(p[2] - c[1]) - radius).abs();
         tool.max(side)
     }
 
@@ -967,7 +967,7 @@ impl Cut {
                     )
                 } else {
                     let m = dz / dy;
-                    let stretch = m.hypot(1.);
+                    let stretch = m.portable_hypot(1.);
                     let y = [0., 1. / stretch, m / stretch];
                     let ordered = self.periodic_ends(ends, middle);
                     self.add(
@@ -993,7 +993,7 @@ impl Cut {
                     // without a y extreme of the profile circle.
                     let lobe = (middle2[1] - c[1]).signum();
                     let angle = |p: P| {
-                        let t = p[1].atan2(p[0]);
+                        let t = p[1].portable_atan2(p[0]);
                         if branch < 0. { t.rem_euclid(TAU) } else { t }
                     };
                     (Some(lobe), ends.map(|v| angle(self.vertices[v])))
@@ -1207,7 +1207,7 @@ impl Cut {
                 seg @ Seg::Arc { c, .. } => {
                     seg.full()
                         || seg
-                            .fraction((p[2] - c[1]).atan2(p[1] - c[0]))
+                            .fraction((p[2] - c[1]).portable_atan2(p[1] - c[0]))
                             .is_some_and(|t| t > 0. && t < 1.)
                 }
             },
@@ -1220,7 +1220,7 @@ impl Cut {
                 } else {
                     0.
                 };
-                let rho = p[0].hypot(p[1]);
+                let rho = p[0].portable_hypot(p[1]);
                 rho > inner && rho < outer
             }
         }
@@ -1247,7 +1247,7 @@ impl Cut {
                 let local = frame.local(p);
                 let normal =
                     unit(mix(scale(frame.x, local[0]), local[1], frame.y)).unwrap_or(frame.x);
-                (normal, [local[1].atan2(local[0]), local[2]])
+                (normal, [local[1].portable_atan2(local[0]), local[2]])
             }
             _ => unreachable!("transverse bores carry planes and cylinders"),
         }
@@ -1543,7 +1543,10 @@ impl Cut {
                     if dz.abs() < radius {
                         let root = (radius * radius - dz * dz).sqrt();
                         for dy in [root, -root] {
-                            if seg.fraction(dz.atan2(dy)).is_some_and(|t| t > 0. && t < 1.) {
+                            if seg
+                                .fraction(dz.portable_atan2(dy))
+                                .is_some_and(|t| t > 0. && t < 1.)
+                            {
                                 ys.push(c[0] + dy);
                             }
                         }
@@ -1554,7 +1557,7 @@ impl Cut {
         ys.sort_by(f64::total_cmp);
         let g = |y: f64| {
             let y = y.clamp(-r, r);
-            y * ((r - y) * (r + y)).max(0.).sqrt() + r * r * (y / r).asin()
+            y * ((r - y) * (r + y)).max(0.).sqrt() + r * r * (y / r).portable_asin()
         };
         ys.chunks(2)
             .filter(|pair| pair.len() == 2)
@@ -1581,9 +1584,9 @@ fn tanh_sinh(f: &dyn Fn(f64) -> f64, a: f64, b: f64) -> f64 {
         let mut k = 0i64;
         loop {
             let t = k as f64 * h;
-            let u = FRAC_PI_2 * t.sinh();
-            let x = u.tanh();
-            let w = FRAC_PI_2 * t.cosh() / u.cosh().powi(2);
+            let u = FRAC_PI_2 * t.portable_sinh();
+            let x = u.portable_tanh();
+            let w = FRAC_PI_2 * t.portable_cosh() / u.portable_cosh().powi(2);
             if w < 1e-300 || x >= 1. {
                 break;
             }
@@ -1726,7 +1729,7 @@ impl Solid {
                             r,
                             a: pa,
                             b: pb,
-                            start: (pa[1] - c[1]).atan2(pa[0] - c[0]),
+                            start: (pa[1] - c[1]).portable_atan2(pa[0] - c[0]),
                             sweep: edge
                                 .signed_sweep_rad()
                                 .ok_or_else(|| invalid("Degenerate arc"))?,
@@ -1744,7 +1747,7 @@ impl Solid {
                             r: radius_mm,
                             a: start,
                             b: start,
-                            start: (start[1] - c[1]).atan2(start[0] - c[0]),
+                            start: (start[1] - c[1]).portable_atan2(start[0] - c[0]),
                             sweep: if clockwise { -TAU } else { TAU },
                         }
                     }

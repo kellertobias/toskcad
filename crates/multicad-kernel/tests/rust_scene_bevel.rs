@@ -9,24 +9,28 @@ use multicad_kernel::{
     DrawingHatch, DrawingProjection, DrawingSolid, GeometryPolicy, PlaneFrame, ProjectedVector,
     RigidTransform, Solid, SphericalBevelGear, project_drawing, rust_kernel::Rational,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn specification(module: f64, teeth: u32, mate: u32, width: f64, bore: f64) -> SphericalBevelGear {
     let (z, mate) = (f64::from(teeth), f64::from(mate));
     let alpha = 20_f64.to_radians();
-    let delta = 1_f64.atan2(mate / z);
-    let distance = module * z / (2. * delta.sin());
-    let beta = (delta.sin() * alpha.cos()).asin();
+    let delta = 1_f64.portable_atan2(mate / z);
+    let distance = module * z / (2. * delta.portable_sin());
+    let beta = (delta.portable_sin() * alpha.portable_cos()).portable_asin();
     let inv = |g: f64| {
-        let sigma = (g.cos() / beta.cos()).acos();
-        sigma / beta.sin() - sigma.sin().atan2(beta.sin() * sigma.cos())
+        let sigma = (g.portable_cos() / beta.portable_cos()).portable_acos();
+        sigma / beta.portable_sin()
+            - sigma
+                .portable_sin()
+                .portable_atan2(beta.portable_sin() * sigma.portable_cos())
     };
     SphericalBevelGear {
         teeth,
         pitch_cone_angle_rad: delta,
         base_cone_angle_rad: beta,
-        tip_cone_angle_rad: delta + (module / distance).atan(),
-        root_cone_angle_rad: delta - (1.25 * module / distance).atan(),
+        tip_cone_angle_rad: delta + (module / distance).portable_atan(),
+        root_cone_angle_rad: delta - (1.25 * module / distance).portable_atan(),
         outer_cone_distance_mm: distance,
         face_width_mm: width,
         bore_radius_mm: bore,
@@ -52,7 +56,7 @@ fn length(vector: &ProjectedVector) -> f64 {
     vector
         .preview_mm
         .windows(2)
-        .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+        .map(|w| (w[1][0] - w[0][0]).portable_hypot(w[1][1] - w[0][1]))
         .sum()
 }
 
@@ -77,13 +81,13 @@ fn side() -> PlaneFrame {
 /// Meridian points of a gear: the back-cone point at polar angle γ.
 fn meridian(spec: &SphericalBevelGear, toe: bool, gamma: f64) -> [f64; 2] {
     let distance = spec.outer_cone_distance_mm - if toe { spec.face_width_mm } else { 0. };
-    let r = distance / (gamma - spec.pitch_cone_angle_rad).cos();
-    [r * gamma.sin(), r * gamma.cos()]
+    let r = distance / (gamma - spec.pitch_cone_angle_rad).portable_cos();
+    [r * gamma.portable_sin(), r * gamma.portable_cos()]
 }
 
 fn bore_point(spec: &SphericalBevelGear, toe: bool) -> [f64; 2] {
     let distance = spec.outer_cone_distance_mm - if toe { spec.face_width_mm } else { 0. };
-    let (sin, cos) = spec.pitch_cone_angle_rad.sin_cos();
+    let (sin, cos) = spec.pitch_cone_angle_rad.portable_sin_cos();
     [
         spec.bore_radius_mm,
         (distance - spec.bore_radius_mm * sin) / cos,
@@ -142,8 +146,10 @@ fn a_cut_through_the_axis_and_two_tooth_crests_is_two_exact_quadrilaterals() {
         let gap = expected
             .iter()
             .map(|[p, q]| {
-                let direct = (a[0] - p[0]).hypot(a[1] - p[1]) + (b[0] - q[0]).hypot(b[1] - q[1]);
-                let turned = (a[0] - q[0]).hypot(a[1] - q[1]) + (b[0] - p[0]).hypot(b[1] - p[1]);
+                let direct = (a[0] - p[0]).portable_hypot(a[1] - p[1])
+                    + (b[0] - q[0]).portable_hypot(b[1] - q[1]);
+                let turned = (a[0] - q[0]).portable_hypot(a[1] - q[1])
+                    + (b[0] - p[0]).portable_hypot(b[1] - p[1]);
                 direct.min(turned)
             })
             .fold(f64::INFINITY, f64::min);
@@ -166,7 +172,7 @@ fn a_cut_through_the_axis_and_two_tooth_crests_is_two_exact_quadrilaterals() {
     );
     let perimeter: f64 = expected
         .iter()
-        .map(|[p, q]| (p[0] - q[0]).hypot(p[1] - q[1]))
+        .map(|[p, q]| (p[0] - q[0]).portable_hypot(p[1] - q[1]))
         .sum();
     let drawn = total(&near, VectorRole::Section, 0);
     assert!(
@@ -207,7 +213,7 @@ fn the_side_view_silhouette_reaches_the_exact_extents() {
         let top = if spec.bore_radius_mm > 0. {
             bore_point(&spec, false)[1]
         } else {
-            spec.outer_cone_distance_mm / spec.pitch_cone_angle_rad.cos()
+            spec.outer_cone_distance_mm / spec.pitch_cone_angle_rad.portable_cos()
         };
         let bottom = meridian(&spec, true, spec.tip_cone_angle_rad)[1];
         // A tooth crest reaches the widest point only when a tooth lies in
@@ -255,7 +261,7 @@ fn an_oblique_cut_publishes_the_bore_as_exact_ellipse_arcs() {
             conics += 1;
             // A cylinder of radius r cut at 1/√3 to its axis.
             if (minor_mm - 3.).abs() <= 1e-9 && (major_mm - 3. * 3_f64.sqrt()).abs() <= 1e-9 {
-                assert!(center[0].hypot(center[1]) <= 1e-9, "{center:?}");
+                assert!(center[0].portable_hypot(center[1]) <= 1e-9, "{center:?}");
                 bore += 1;
             }
         }

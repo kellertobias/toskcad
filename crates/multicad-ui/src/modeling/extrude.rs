@@ -14,6 +14,7 @@ use multicad_core::{
     project_file::ContentHash,
     sketch_regions::RegionIntent,
 };
+use multicad_precision::PortableMath as _;
 
 /// Availability comes from the installed native provider. Defaults expose no
 /// execution path; registering a ribbon button alone cannot enable geometry.
@@ -363,9 +364,9 @@ impl ExtrudePanel {
         let sign = if draft.reverse { -1. } else { 1. };
         Ok((
             [
-                elevation.cos() * azimuth.cos() * sign,
-                elevation.cos() * azimuth.sin() * sign,
-                elevation.sin() * sign,
+                elevation.portable_cos() * azimuth.portable_cos() * sign,
+                elevation.portable_cos() * azimuth.portable_sin() * sign,
+                elevation.portable_sin() * sign,
             ],
             offset,
         ))

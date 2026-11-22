@@ -1,5 +1,6 @@
 use super::{Error, FRAC_PI_2, Point, TAU, add, rotate, scale, sub};
 use crate::revolution::dot;
+use multicad_precision::PortableMath as _;
 
 const MAX_SPANS: usize = 127;
 
@@ -89,7 +90,7 @@ impl Involute {
         let mut maximum = dot(direction, self.at(a)).max(dot(direction, self.at(b)));
         // The projected derivative is proportional to cos(t - angle).
         // Only its positive-to-negative zero can increase the support.
-        let stationary = (y.atan2(x) + FRAC_PI_2).rem_euclid(TAU);
+        let stationary = (y.portable_atan2(x) + FRAC_PI_2).rem_euclid(TAU);
         if (a.min(b)..=a.max(b)).contains(&stationary) {
             maximum = maximum.max(dot(direction, self.at(stationary)));
         }
@@ -112,7 +113,7 @@ impl Involute {
                 ((b - a).abs() / (a + b)) * h.powi(3) * (1. / 15. + h2 * (-1. / 210. + h2 / 7560.));
             (sinc, extra, transverse)
         } else {
-            let (sin, cos) = h.sin_cos();
+            let (sin, cos) = h.portable_sin_cos();
             let sinc = sin / h;
             let extra = sinc - cos;
             (sinc, extra, (3. * extra - h2 * sinc) / mid)
@@ -128,7 +129,7 @@ impl Involute {
 
     /// Unit tangent along the flank, including the one-sided limit at its base.
     pub fn tangent(self, fraction: f64) -> Point {
-        let (sin, cos) = self.parameter(fraction).sin_cos();
+        let (sin, cos) = self.parameter(fraction).portable_sin_cos();
         let direction = (self.interval[1] - self.interval[0]).signum();
         scale(self.map([cos, sin]), direction)
     }
@@ -150,7 +151,7 @@ impl Involute {
     /// product is r^2 t^2 dt, so the moments have closed-form primitives.
     pub fn first_moment_mm3(self) -> Point {
         let primitive = |t: f64| {
-            let (sin, cos) = t.sin_cos();
+            let (sin, cos) = t.portable_sin_cos();
             let square = t * t;
             [
                 4. * square * sin + 8. * t * cos - 8. * sin - square * t * cos,
@@ -177,8 +178,8 @@ impl Involute {
         // The Hermite remainder is bounded by max |f''''| h^4 / 384.
         // Each coordinate has |f''''| <= r sqrt(9+t^2). Reserve 10% of
         // the budget for evaluation and representation of control points.
-        let fourth = 2_f64.sqrt() * self.base_radius_mm * 3_f64.hypot(furthest);
-        let wanted = (delta / (384. * 0.9 * tolerance_mm / fourth).powf(0.25)).ceil();
+        let fourth = 2_f64.sqrt() * self.base_radius_mm * 3_f64.portable_hypot(furthest);
+        let wanted = (delta / (384. * 0.9 * tolerance_mm / fourth).portable_powf(0.25)).ceil();
         if !wanted.is_finite() || wanted > MAX_SPANS as f64 || roundoff > tolerance_mm * 0.1 {
             return Err(Error::Limit);
         }
@@ -217,12 +218,12 @@ impl Involute {
     }
 
     fn at(self, t: f64) -> Point {
-        let (sin, cos) = t.sin_cos();
+        let (sin, cos) = t.portable_sin_cos();
         self.map(scale([cos + t * sin, sin - t * cos], self.base_radius_mm))
     }
 
     fn derivative(self, t: f64) -> Point {
-        let (sin, cos) = t.sin_cos();
+        let (sin, cos) = t.portable_sin_cos();
         scale(self.map([cos, sin]), self.base_radius_mm * t)
     }
 }

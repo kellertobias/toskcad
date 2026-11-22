@@ -58,7 +58,7 @@ pub(in super::super) fn admission(
     let angle = recess
         .finite_binding()
         .and_then(|b| b.literal_cone_semi_angle_rad())
-        .unwrap_or_else(|| source.cone().depth_per_radius.recip().atan());
+        .unwrap_or_else(|| source.cone().depth_per_radius.recip().portable_atan());
     if angle <= 0. || angle >= std::f64::consts::FRAC_PI_2 {
         return Err(StepError::Unsupported);
     }
@@ -90,7 +90,7 @@ pub(in super::super) fn placement(screw: &Screw, p: &Placement) -> Result<(), St
         [
             x,
             y,
-            z + source.cone().tip_depth_mm - source.cone().depth_per_radius * x.hypot(y),
+            z + source.cone().tip_depth_mm - source.cone().depth_per_radius * x.portable_hypot(y),
         ]
     });
     let vertices = binding.map_or(
@@ -126,7 +126,9 @@ pub(in super::super) fn placement(screw: &Screw, p: &Placement) -> Result<(), St
             |b| b.post_lines()[i],
         );
         let raw_vector = p.vector(post.direction_mm_per_parameter);
-        let magnitude = raw_vector[0].hypot(raw_vector[1]).hypot(raw_vector[2]);
+        let magnitude = raw_vector[0]
+            .portable_hypot(raw_vector[1])
+            .portable_hypot(raw_vector[2]);
         let direction = unit(point(raw_vector))?;
         let vector = direction.map(|v| v * I::new(magnitude.next_down(), magnitude.next_up()));
         zero(cross(vector, n))?;

@@ -3,6 +3,7 @@ use crate::{
     display::{DisplayMesh, Footprint, MeshError, Tessellation},
     revolution::length,
 };
+use multicad_precision::PortableMath as _;
 
 const MAX_EDGE_SEGMENTS: usize = 65_536;
 
@@ -31,7 +32,7 @@ impl Edge {
             ) => {
                 let [x, y] = sub(edge.point(fraction), center);
                 let sign = if clockwise { -1. } else { 1. };
-                scale([-y, x], sign / x.hypot(y))
+                scale([-y, x], sign / x.portable_hypot(y))
             }
             Self::Involute(edge) => edge.tangent(fraction),
         }
@@ -89,7 +90,7 @@ impl Edge {
                 // Linear interpolation on a parameter span h therefore
                 // deviates by at most max|f''| h²/8. Its directed tangent
                 // rotates through exactly h, including the limit at t=0.
-                let second_derivative = edge.base_radius_mm() * a.max(b).hypot(1.);
+                let second_derivative = edge.base_radius_mm() * a.max(b).portable_hypot(1.);
                 let max_span = (8. * options.deflection / second_derivative)
                     .sqrt()
                     .min(options.angle);
@@ -137,7 +138,7 @@ impl Profile {
         let band = radial + (z * self.height_mm).max(0.);
         let support = self.hub.map_or(band, |hub| {
             let [low, high] = self.axial_bounds();
-            band.max(hub.radius_mm * x.hypot(y) + (z * low).max(z * high))
+            band.max(hub.radius_mm * x.portable_hypot(y) + (z * low).max(z * high))
         });
         support * magnitude
     }

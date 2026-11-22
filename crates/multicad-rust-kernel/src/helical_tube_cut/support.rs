@@ -15,8 +15,8 @@ impl Cut {
         max_visits: usize,
     ) -> Result<f64, Error> {
         let [x, y, z] = direction;
-        let xy = x.hypot(y);
-        let length = xy.hypot(z);
+        let xy = x.portable_hypot(y);
+        let length = xy.portable_hypot(z);
         if !length.is_finite() || (length - 1.).abs() > 1e-8 {
             return Err(Error::InvalidInput);
         }
@@ -25,7 +25,7 @@ impl Cut {
         // The bottom disk and the top disk's center survive. Every radial
         // extremum also survives if its top rim point is outside the opening.
         let [a, b] = self.edge_domain(BoundaryEdge::TopRim);
-        if z <= 0. || xy == 0. || (y.atan2(x) - a).rem_euclid(TAU) <= b - a {
+        if z <= 0. || xy == 0. || (y.portable_atan2(x) - a).rem_euclid(TAU) <= b - a {
             return Ok(stock);
         }
 

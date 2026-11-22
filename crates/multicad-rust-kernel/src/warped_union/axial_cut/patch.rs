@@ -111,7 +111,7 @@ fn append_round(
     let middle = levels[0].midpoint(levels[1]);
     for i in 0..4 {
         let next = (i + 1) % 4;
-        let (sin, cos) = ((i as f64 + 0.5) * FRAC_PI_2).sin_cos();
+        let (sin, cos) = ((i as f64 + 0.5) * FRAC_PI_2).portable_sin_cos();
         let center = tube.point(middle);
         let point_mm = std::array::from_fn(|j| center[j] + r * (u[j] * cos + v[j] * sin));
         shell.faces.push(Face {
@@ -207,7 +207,7 @@ fn append_shoulder(
     let sign = if recess.from_entry { -1. } else { 1. };
     let normal = tube.axes[2].map(|x| x * sign);
     let point = recess.polygon[0];
-    let length = point[0].hypot(point[1]);
+    let length = point[0].portable_hypot(point[1]);
     let fraction = length.midpoint(tube.radius) / length;
     shell.faces.push(Face {
         boundary: loop_edges(&wide.edges, !recess.from_entry),

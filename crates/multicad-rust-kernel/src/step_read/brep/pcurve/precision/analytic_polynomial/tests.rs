@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 fn frame() -> RawFrame {
     RawFrame {
         origin: cached([1., -2., 0.5]),
@@ -13,7 +14,10 @@ fn frame() -> RawFrame {
 /// The interpolant is only a TEST INPUT; the proof below never trusts it.
 fn interpolate(n: usize, f: impl Fn(f64) -> f64) -> Vec<f64> {
     let nodes: Vec<f64> = (0..=n)
-        .map(|k| 0.5 - 0.5 * ((2 * k + 1) as f64 * std::f64::consts::PI / (2 * n + 2) as f64).cos())
+        .map(|k| {
+            0.5 - 0.5
+                * ((2 * k + 1) as f64 * std::f64::consts::PI / (2 * n + 2) as f64).portable_cos()
+        })
         .collect();
     let choose = |n: usize, k: usize| (1..=k).fold(1., |a, i| a * (n + 1 - i) as f64 / i as f64);
     let mut m: Vec<Vec<f64>> = nodes
@@ -57,7 +61,7 @@ fn scene(span: f64, slope: f64, b: &mut Budget<'_>) -> (Support, [P; 2], [P; 3])
         let theta = theta0 + span * t;
         let v = height * t;
         let rho = radius + slope * v;
-        let local = [rho * theta.cos(), rho * theta.sin(), v];
+        let local = [rho * theta.portable_cos(), rho * theta.portable_sin(), v];
         f.origin[axis].lo + (0..3).map(|k| f.axes[k][axis].lo * local[k]).sum::<f64>()
     };
     let target = std::array::from_fn(|axis| poly(&interpolate(7, |t| point(t, axis)), b));
@@ -76,7 +80,7 @@ fn strict(tol: f64) -> impl FnMut(&CellProof, &mut Budget<'_>) -> Result<bool> {
 }
 #[test]
 fn short_cylinder_and_cone_arcs_certify_as_one_whole_cell() {
-    for slope in [0., std::f64::consts::FRAC_PI_3.tan()] {
+    for slope in [0., std::f64::consts::FRAC_PI_3.portable_tan()] {
         let mut b = Budget::new(512_000_000, None);
         let (support, uv, target) = scene(0.25, slope, &mut b);
         let mut pieces = 0;
@@ -91,7 +95,7 @@ fn short_cylinder_and_cone_arcs_certify_as_one_whole_cell() {
 #[test]
 fn a_wide_arc_is_proved_only_through_exact_dyadic_pieces() {
     let mut b = Budget::new(512_000_000, None);
-    let (support, uv, target) = scene(1.2, std::f64::consts::FRAC_PI_3.tan(), &mut b);
+    let (support, uv, target) = scene(1.2, std::f64::consts::FRAC_PI_3.portable_tan(), &mut b);
     // The whole cell exceeds the degree-80 algebra at the required order.
     let [theta, v] = [lift(&uv[0]).unwrap(), lift(&uv[1]).unwrap()];
     let target80 = target.each_ref().map(|p| lift(p).unwrap());
@@ -200,7 +204,7 @@ fn an_end_beyond_tolerance_refuses_without_bisecting() {
 fn the_refusal_scan_rejects_a_displaced_target_and_never_rejects_a_true_one() {
     let mut b = Budget::new(512_000_000, None);
     for span in [0.25, 1.2] {
-        let (support, uv, target) = scene(span, std::f64::consts::FRAC_PI_3.tan(), &mut b);
+        let (support, uv, target) = scene(span, std::f64::consts::FRAC_PI_3.portable_tan(), &mut b);
         assert!(scan(&support, &uv, &target, 1e-7, &mut b).unwrap());
         let moved = [
             target[0],

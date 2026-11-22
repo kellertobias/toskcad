@@ -170,9 +170,9 @@ impl Bevel {
         let (k, theta) = self.law(level);
         let sample = self.sample(piece, s);
         let angle = sample.gamma - theta;
-        let r = k / angle.cos();
-        let dr = k * angle.sin() / angle.cos().powi(2);
-        let dgamma = -sample.derivative[2] / sample.gamma.sin();
+        let r = k / angle.portable_cos();
+        let dr = k * angle.portable_sin() / angle.portable_cos().powi(2);
+        let dgamma = -sample.derivative[2] / sample.gamma.portable_sin();
         (
             scale(sample.direction, r),
             std::array::from_fn(|i| r * sample.derivative[i] + dr * dgamma * sample.direction[i]),
@@ -191,14 +191,14 @@ impl Bevel {
         let root = self.spec.root_cone_angle_rad;
         let tip = self.spec.tip_cone_angle_rad;
         let m = (theta - root).abs().max((tip - theta).abs());
-        let (sm, cm) = m.sin_cos();
+        let (sm, cm) = m.portable_sin_cos();
         let k = k.abs();
         let r0 = k / cm;
         let r1 = k * sm / (cm * cm);
         let r2 = k * (1. + sm * sm) / cm.powi(3);
         let (speed, curvature) = match piece {
             Piece::FilletLeft | Piece::FilletRight => (
-                self.arc.abs() * self.rounding.sin(),
+                self.arc.abs() * self.rounding.portable_sin(),
                 self.curvature_bound(piece),
             ),
             _ => {
@@ -206,14 +206,14 @@ impl Bevel {
                 // u' = c sin(bt) (c cos t, c sin t, −b) and
                 // |u''|² = c⁴(sin²(bt) + b² cos²(bt)) + b⁴c² cos²(bt),
                 // with b = sin β, c = cos β and 0 ≤ bt ≤ b·t_tip < π/2.
-                let (b, c) = self.spec.base_cone_angle_rad.sin_cos();
-                let rise = (b * self.tip_t).sin();
+                let (b, c) = self.spec.base_cone_angle_rad.portable_sin_cos();
+                let rise = (b * self.tip_t).portable_sin();
                 let span = self.tip_t - self.touch_t;
                 let second = (c.powi(4) * (rise * rise + b * b) + b.powi(4) * c * c).sqrt();
                 (c * rise * span, second * span * span)
             }
         };
-        let gamma2 = (curvature + speed * speed) / root.sin();
+        let gamma2 = (curvature + speed * speed) / root.portable_sin();
         r2 * speed * speed + r1 * gamma2 + 2. * r1 * speed * speed + r0 * curvature
     }
 
@@ -229,7 +229,7 @@ impl Bevel {
         let width = s1 - s0;
         let second = self.second_bound(piece, level) * width * width;
         let (k, _) = self.law(level);
-        let scale_mm = k.abs() / self.spec.tip_cone_angle_rad.cos();
+        let scale_mm = k.abs() / self.spec.tip_cone_angle_rad.portable_cos();
         let roundoff = 64. * f64::EPSILON * scale_mm;
         let at = |sigma: f64| {
             let (p, d) = self.level_point(level, piece, s0 + width * sigma);
@@ -334,11 +334,11 @@ impl Bevel {
         role: Role,
     ) -> Option<ViewItem> {
         let [s, t] = clip(|s| a[2] + (b[2] - a[2]) * s, slab)?;
-        let radius = |s: f64| (1. - s) * a[0].hypot(a[1]) + s * b[0].hypot(b[1]);
+        let radius = |s: f64| (1. - s) * a[0].portable_hypot(a[1]) + s * b[0].portable_hypot(b[1]);
         Some(ViewItem {
             role,
             curve: ViewCurve::Radial {
-                phi: a[1].atan2(a[0]) + self.sector_angle(sector),
+                phi: a[1].portable_atan2(a[0]) + self.sector_angle(sector),
                 radii: [radius(s), radius(t)],
             },
         })
@@ -405,7 +405,7 @@ impl Bevel {
                     match piece {
                         Piece::RootLeft | Piece::RootRight | Piece::Tip => {
                             let [a, b] = [0., 1.].map(|s| self.sample(piece, s));
-                            let z = self.end_distance_along(end, a.gamma) * a.gamma.cos();
+                            let z = self.end_distance_along(end, a.gamma) * a.gamma.portable_cos();
                             if inside(z) {
                                 items.push(ViewItem {
                                     role,
@@ -444,7 +444,7 @@ impl Bevel {
                 }
                 let sample = self.sample(pair[0], 1.);
                 let ends = [End::Toe, End::Heel].map(|end| {
-                    let t = self.end_distance_mm(end) / (sample.gamma - delta).cos();
+                    let t = self.end_distance_mm(end) / (sample.gamma - delta).portable_cos();
                     scale(sample.direction, t)
                 });
                 items.extend(self.radial(sector, ends, slab, role(false, false)));
@@ -559,14 +559,14 @@ impl Bevel {
         items: &mut Vec<ViewItem>,
         budget: &mut Budget,
     ) -> Result<(), Error> {
-        let (s, c) = self.spec.pitch_cone_angle_rad.sin_cos();
+        let (s, c) = self.spec.pitch_cone_angle_rad.portable_sin_cos();
         let outer = (self.end_distance_mm(End::Heel) - height * c) / s;
         let inner = ((self.end_distance_mm(End::Toe) - height * c) / s)
             .max(self.spec.bore_radius_mm)
             .max(0.);
         let root = self.spec.root_cone_angle_rad;
         let tip = self.spec.tip_cone_angle_rad;
-        if height <= 0. || outer <= inner || inner >= height * tip.tan() {
+        if height <= 0. || outer <= inner || inner >= height * tip.portable_tan() {
             return Ok(());
         }
         // The heel cap faces the heel side; the side faces and toe cap face
@@ -578,7 +578,7 @@ impl Bevel {
         };
         let star = role(false, false);
         let level = Level::Plane(height);
-        let gamma_of = |radius: f64| radius.atan2(height);
+        let gamma_of = |radius: f64| radius.portable_atan2(height);
         let [low, high] = [inner, outer].map(gamma_of);
         let bored = inner == self.spec.bore_radius_mm;
         // Circles of the back cones and bore keep the azimuths where the
@@ -619,7 +619,7 @@ impl Bevel {
                         if within(gamma) {
                             let [a, b] = [0., 1.].map(|s| self.sample(piece, s).phi);
                             items.push(section(ViewCurve::Arc {
-                                radius: height * gamma.tan(),
+                                radius: height * gamma.portable_tan(),
                                 start: a + self.sector_angle(sector),
                                 sweep: b - a,
                             }));
@@ -631,9 +631,9 @@ impl Bevel {
                         };
                         if matches!(piece, Piece::MeridianLeft | Piece::MeridianRight) {
                             let [a, b] = range.map(|s| self.level_point(level, piece, s).0);
-                            let radius = |p: Point| p[0].hypot(p[1]);
+                            let radius = |p: Point| p[0].portable_hypot(p[1]);
                             items.push(section(ViewCurve::Radial {
-                                phi: a[1].atan2(a[0]) + self.sector_angle(sector),
+                                phi: a[1].portable_atan2(a[0]) + self.sector_angle(sector),
                                 radii: [radius(a), radius(b)],
                             }));
                         } else {

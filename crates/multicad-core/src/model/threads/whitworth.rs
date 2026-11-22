@@ -211,8 +211,8 @@ pub fn whitworth_thread_presets() -> Vec<WhitworthThreadPreset> {
 pub(super) fn profile_dimensions(pitch: f64) -> (f64, f64) {
     let angle = 27.5_f64.to_radians();
     (
-        pitch / (3. * angle.tan()),
-        pitch * angle.cos() / (12. * (1. - angle.sin())),
+        pitch / (3. * angle.portable_tan()),
+        pitch * angle.portable_cos() / (12. * (1. - angle.portable_sin())),
     )
 }
 pub(super) fn rounded_preset(

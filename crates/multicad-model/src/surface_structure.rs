@@ -18,6 +18,7 @@ use multicad_kernel::{
     BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryErrorKind, GeometryPolicy,
     NormalReliefMotif, PlaneFrame, Solid,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 
 const MAX_WAVE_SEGMENTS: usize = 24;
@@ -89,7 +90,7 @@ fn motifs(settings: &ResolvedSurfaceStructure, limit: usize) -> Result<Vec<Motif
                     let segments = segments as usize;
                     let x_y = |column: usize, side: f64| {
                         let x = w * column as f64 / segments as f64;
-                        let wave = (TAU * x / (2. * pitch)).sin() * pitch * 0.20;
+                        let wave = (TAU * x / (2. * pitch)).portable_sin() * pitch * 0.20;
                         [x - w / 2., y + wave + side * pitch * 0.15]
                     };
                     let points: Vec<_> = (0..=segments)
@@ -182,7 +183,7 @@ fn window_frame(
     bounds: [[f64; 2]; 2],
     s: &ResolvedSurfaceStructure,
 ) -> PlaneFrame {
-    let (sin, cos) = s.rotation_rad.sin_cos();
+    let (sin, cos) = s.rotation_rad.portable_sin_cos();
     let [u, v] = std::array::from_fn(|i| (bounds[0][i] + bounds[1][i]) / 2. + s.offset_mm[i]);
     PlaneFrame {
         origin: face.point([u, v]),
@@ -356,7 +357,7 @@ impl Builder<'_> {
                 }
             }
         }
-        let (sin, cos) = settings.rotation_rad.sin_cos();
+        let (sin, cos) = settings.rotation_rad.portable_sin_cos();
         let center = std::array::from_fn::<_, 2, _>(|i| {
             (bounds[0][i] + bounds[1][i]) / 2. + settings.offset_mm[i]
         });
@@ -575,7 +576,7 @@ pub(crate) fn build(
             )?;
         }
         if single_face && builder.backend == GeometryBackend::Rust {
-            let (sin, cos) = settings.rotation_rad.sin_cos();
+            let (sin, cos) = settings.rotation_rad.portable_sin_cos();
             let center = std::array::from_fn::<_, 2, _>(|i| {
                 (resolved.bounds_mm[0][i] + resolved.bounds_mm[1][i]) / 2. + settings.offset_mm[i]
             });

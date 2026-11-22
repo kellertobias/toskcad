@@ -7,6 +7,7 @@ use crate::{
     orthogonal_pockets::{self, FacePlane, OrthogonalPocket, interval_gap, limits, roundoff},
     stadium::{Stadium, segments_distance},
 };
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeSet, f64::consts::PI};
 
 pub use crate::circular_pockets::PocketError;
@@ -49,7 +50,9 @@ impl OrthogonalSlot {
     /// Area of a certified opening or floor.
     pub fn area_mm2(self) -> f64 {
         let [a, b] = self.centers_mm;
-        let length = (b[0] - a[0]).hypot(b[1] - a[1]).hypot(b[2] - a[2]);
+        let length = (b[0] - a[0])
+            .portable_hypot(b[1] - a[1])
+            .portable_hypot(b[2] - a[2]);
         (2. * length + PI * self.radius_mm) * self.radius_mm
     }
 }

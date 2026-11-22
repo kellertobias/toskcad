@@ -24,7 +24,12 @@ fn separated_radial_axial_and_diagonal_witnesses_measure_closed_occupied_materia
         near(result.common_volume_mm3, 0.);
         let a = result.witnesses[0][0];
         let b = result.witnesses[0][1];
-        near((a[0] - b[0]).hypot(a[1] - b[1]).hypot(a[2] - b[2]), d);
+        near(
+            (a[0] - b[0])
+                .portable_hypot(a[1] - b[1])
+                .portable_hypot(a[2] - b[2]),
+            d,
+        );
         near(a[0], 2.);
         near(b[0], 3.);
     }
@@ -38,7 +43,7 @@ fn separated_radial_axial_and_diagonal_witnesses_measure_closed_occupied_materia
 #[test]
 fn analytic_area_handles_containment_segments_concavity_and_holes() {
     let c = cylinder(2);
-    let segment = 4. * (0.5_f64).acos() - 3_f64.sqrt();
+    let segment = 4. * (0.5_f64).portable_acos() - 3_f64.sqrt();
     let outer = rectangle([-4., -4.], [4., 4.]);
     let mut hole = rectangle([-1., -1.], [1., 1.]);
     hole.reverse();
@@ -130,7 +135,7 @@ fn axial_interval_roundoff_is_included_in_volume_and_distance_error() {
 fn symmetric_hole_contacts_report_all_feature_directions_with_bounded_witnesses() {
     let mut hole = (0..100)
         .map(|i| {
-            let (s, c) = (std::f64::consts::TAU * i as f64 / 100.).sin_cos();
+            let (s, c) = (std::f64::consts::TAU * i as f64 / 100.).portable_sin_cos();
             [3. * c, 3. * s]
         })
         .collect::<Vec<_>>();
@@ -141,9 +146,12 @@ fn symmetric_hole_contacts_report_all_feature_directions_with_bounded_witnesses(
     assert_eq!(contact.witnesses.len(), 64);
     near(
         contact.distance_mm,
-        3. * (std::f64::consts::PI / 100.).cos() - 2.,
+        3. * (std::f64::consts::PI / 100.).portable_cos() - 2.,
     );
     for [a, b] in contact.witnesses {
-        near((a[0] - b[0]).hypot(a[1] - b[1]), contact.distance_mm);
+        near(
+            (a[0] - b[0]).portable_hypot(a[1] - b[1]),
+            contact.distance_mm,
+        );
     }
 }

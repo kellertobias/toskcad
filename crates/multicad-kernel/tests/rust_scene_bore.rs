@@ -13,6 +13,7 @@ use multicad_kernel::{
     ProjectedVector, Solid, project_drawing,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 type V = [f64; 3];
@@ -129,7 +130,7 @@ fn the_view_along_the_bore_shows_one_exact_circle() {
     let rims = ellipses(&vectors, VectorRole::Visible);
     assert!(!rims.is_empty());
     for (center, major, minor) in rims.iter().chain(&ellipses(&vectors, VectorRole::Hidden)) {
-        assert!(center[0].hypot(center[1]) < 1e-9, "{center:?}");
+        assert!(center[0].portable_hypot(center[1]) < 1e-9, "{center:?}");
         assert!((major - 1.).abs() < 1e-9 && (minor - 1.).abs() < 1e-9);
     }
     // The visible arcs close the circle.
@@ -168,7 +169,7 @@ fn the_top_view_shows_the_mouth_ellipse_and_hidden_wall_outlines() {
         assert!((a - major).abs() < 1e-9 && (b - 1.).abs() < 1e-9, "{a} {b}");
     }
     let along = {
-        let length = axis()[0].hypot(axis()[1]);
+        let length = axis()[0].portable_hypot(axis()[1]);
         [axis()[0] / length, axis()[1] / length]
     };
     let mut offsets: Vec<f64> = vectors
@@ -180,7 +181,7 @@ fn the_top_view_shows_the_mouth_ellipse_and_hidden_wall_outlines() {
         })
         .filter(|[a, b]| {
             let d = [b[0] - a[0], b[1] - a[1]];
-            (d[0] * along[1] - d[1] * along[0]).abs() < 1e-9 * d[0].hypot(d[1])
+            (d[0] * along[1] - d[1] * along[0]).abs() < 1e-9 * d[0].portable_hypot(d[1])
         })
         .map(|[a, _]| (a[0] - CENTER[0]) * along[1] - (a[1] - CENTER[1]) * along[0])
         .collect();
@@ -214,7 +215,7 @@ fn a_retained_cut_across_the_bore_publishes_the_exact_face_and_hatch() {
     let cut = ellipses(&vectors, VectorRole::Section);
     assert!(!cut.is_empty());
     for (center, a, b) in cut {
-        assert!((center[0] - CENTER[0]).hypot(center[1] - CENTER[1]) < 1e-9);
+        assert!((center[0] - CENTER[0]).portable_hypot(center[1] - CENTER[1]) < 1e-9);
         assert!((a - major).abs() < 1e-9 && (b - 1.).abs() < 1e-9);
     }
     let area: f64 = vectors

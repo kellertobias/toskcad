@@ -103,7 +103,7 @@ fn prepare_controlled(
     for start in 0..spec.starts {
         let angle = std::f64::consts::TAU * start as f64 / spec.starts as f64
             * if spec.left_hand { 1. } else { -1. };
-        let [sin, cos] = [angle.sin(), angle.cos()];
+        let [sin, cos] = [angle.portable_sin(), angle.portable_cos()];
         let ai = I::point(std::f64::consts::TAU) * I::point(start as f64)
             / I::point(spec.starts as f64)
             * I::point(if spec.left_hand { 1. } else { -1. });
@@ -359,16 +359,18 @@ fn encode_prepared(
             };
             let a = to_local(ends[0][end].point);
             let b = to_local(ends[1][end].point);
-            let from = a[1].atan2(a[0]);
-            let to = b[1].atan2(b[0]);
+            let from = a[1].portable_atan2(a[0]);
+            let to = b[1].portable_atan2(b[0]);
             let sweep = if spec.left_hand {
                 (to - from).rem_euclid(std::f64::consts::TAU)
             } else {
                 -(from - to).rem_euclid(std::f64::consts::TAU)
             };
             let mid = from + sweep * 0.5;
-            let middle =
-                file.vertex(placement.point_f64([radius * mid.cos(), radius * mid.sin()], z));
+            let middle = file.vertex(placement.point_f64(
+                [radius * mid.portable_cos(), radius * mid.portable_sin()],
+                z,
+            ));
             let c = file.point(center);
             let axis = file.axis(c, placement.normal, placement.u);
             let circle = file.entity(format_args!("CIRCLE('',{axis},{radius:.16E})"));
@@ -414,7 +416,7 @@ fn encode_prepared(
     let cone = if k == 0. {
         file.entity(format_args!("CYLINDRICAL_SURFACE('',{axis},{r:.16E})"))
     } else {
-        let angle = k.abs().atan();
+        let angle = k.abs().portable_atan();
         file.entity(format_args!(
             "CONICAL_SURFACE('',{axis},{r:.16E},{angle:.16E})"
         ))
@@ -642,7 +644,8 @@ mod tests {
             prepared.points.swap(3 + band, 6 + band);
         }
         let turn = |a: Point, b: Point| {
-            (a[1].atan2(a[0]) - b[1].atan2(b[0])).rem_euclid(std::f64::consts::TAU)
+            (a[1].portable_atan2(a[0]) - b[1].portable_atan2(b[0]))
+                .rem_euclid(std::f64::consts::TAU)
         };
         let mut winding = 0.;
         for start in 0..3 {

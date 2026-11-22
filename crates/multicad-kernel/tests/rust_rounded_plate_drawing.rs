@@ -10,6 +10,7 @@ use multicad_kernel::{
     CurvedEdge2d, CurvedProfile, DrawingHatch, DrawingProjection, DrawingSolid, GeometryErrorKind,
     GeometryPolicy, PlaneFrame, ProjectedVector, Solid, project_drawing, rust_kernel::Rational,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::FRAC_1_SQRT_2;
 
 const HOLES: [[f64; 2]; 4] = [[8., 8.], [152., 8.], [8., 92.], [152., 92.]];
@@ -108,7 +109,7 @@ fn project(solids: &[&Solid], options: DrawingProjection) -> Vec<ProjectedVector
 
 fn line_length(v: &ProjectedVector) -> f64 {
     match v.curve {
-        VectorCurve::Line { a, b } => (b[0] - a[0]).hypot(b[1] - a[1]),
+        VectorCurve::Line { a, b } => (b[0] - a[0]).portable_hypot(b[1] - a[1]),
         _ => 0.,
     }
 }
@@ -499,7 +500,7 @@ fn a_finely_hatched_plate_section_stays_within_the_hatch_budget() {
         for t in [0., 0.25, 0.5, 0.75, 1.] {
             let point: [f64; 2] = std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t);
             for center in HOLES {
-                let distance = (point[0] - center[0]).hypot(point[1] - center[1]);
+                let distance = (point[0] - center[0]).portable_hypot(point[1] - center[1]);
                 assert!(
                     distance > 1.6 - TOL,
                     "{point:?} inside the hole at {center:?}"

@@ -173,7 +173,7 @@ fn a_planar_patch_cuts_a_circle_and_trim_tangency_is_refused() {
     };
     for angle in [0., FRAC_PI_2, PI, TAU] {
         let [u, v, z] = circle.point_at(angle);
-        close((u - 0.5).hypot(v - 0.5), 0.25);
+        close((u - 0.5).portable_hypot(v - 0.5), 0.25);
         close(z, 1. / 16.);
     }
     let tangent_trim = Patch::new(heights, [[quarter, ZERO], [ONE; 2]]).unwrap();

@@ -1,5 +1,6 @@
 //! Queries retain the original thread/head union and actual finite cutter.
 use super::*;
+use multicad_precision::PortableMath as _;
 impl PhillipsScrew {
     /// Support of the occupied outer union. Host qualification proves a
     /// positive radial wall and floor, so the finite recess removes none of
@@ -31,7 +32,7 @@ impl PhillipsScrew {
         let [top, end] = [self.profile.top()[1], self.profile.end()[1]];
         let in_profile = local_z >= top - tolerance
             && local_z <= end + tolerance
-            && x.hypot(y)
+            && x.portable_hypot(y)
                 <= self
                     .profile
                     .radius_at(local_z.clamp(top, end))

@@ -327,7 +327,7 @@ pub(crate) fn vector(
         .expect("three axes");
     let height = displacement[axis] / normal[axis];
     let residual: [f64; 3] = std::array::from_fn(|i| displacement[i] - normal[i] * height);
-    let length = |p: [f64; 3]| p[0].hypot(p[1]).hypot(p[2]);
+    let length = |p: [f64; 3]| p[0].portable_hypot(p[1]).portable_hypot(p[2]);
     let roundoff = 64. * f64::EPSILON * length(displacement).max(1.);
     if !height.is_finite() || length(residual) > roundoff.min(policy.linear_tolerance_mm / 64.) {
         // An oblique displacement rules every source curve along the same

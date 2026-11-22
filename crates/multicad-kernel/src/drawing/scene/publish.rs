@@ -1,6 +1,7 @@
 //! Publish exact scene curves as drawing vectors within the output budget.
 use super::arrange::flattened;
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::section_hatch;
 use std::{collections::HashMap, f64::consts::FRAC_PI_2};
 
@@ -120,7 +121,7 @@ impl Output {
                     * (self.options.chord_tolerance_mm / (2. * ellipse.major))
                         .sqrt()
                         .min(1.)
-                        .asin();
+                        .portable_asin();
                 let segments = (((end - start) / step.min(FRAC_PI_2)).ceil() as usize).max(1);
                 if segments >= self.points {
                     return Err(limit());
@@ -173,8 +174,9 @@ impl Output {
             for dx in -1..=1 {
                 for dy in -1..=1 {
                     if let Some(found) = known.get(&[x + dx, y + dy]).and_then(|cell| {
-                        cell.iter()
-                            .find(|other| (other[0] - point[0]).hypot(other[1] - point[1]) <= weld)
+                        cell.iter().find(|other| {
+                            (other[0] - point[0]).portable_hypot(other[1] - point[1]) <= weld
+                        })
                     }) {
                         return *found;
                     }
@@ -229,7 +231,7 @@ impl Output {
             }
         }
         // Longest first, so that each group is anchored on a well-conditioned line.
-        let length = |[a, b]: &[P2; 2]| (b[0] - a[0]).hypot(b[1] - a[1]);
+        let length = |[a, b]: &[P2; 2]| (b[0] - a[0]).portable_hypot(b[1] - a[1]);
         lines.sort_by(|x, y| length(&y.2).total_cmp(&length(&x.2)));
         let mut groups: Vec<Group> = Vec::new();
         for (source, role, [a, b]) in lines {

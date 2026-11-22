@@ -349,7 +349,7 @@ fn world_wall_area_and_moments_agree_with_actual_transformed_tangent_cross_oracl
             let r = b.radius_mm[0] + m * (q - b.phase_mm[0]);
             for j in 0..nz {
                 let z = (j as f64 + 0.5) * dz;
-                let (s, c) = ((z - q) / rate).sin_cos();
+                let (s, c) = ((z - q) / rate).portable_sin_cos();
                 let u = map([m * c + r / rate * s, m * s - r / rate * c, 0.]);
                 let v = map([-r / rate * s, r / rate * c, 1.]);
                 let cross = [

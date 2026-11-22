@@ -77,6 +77,7 @@ mod tests {
         spur_gear::{Spec, clearance::nearest_boundary},
         straight_rack,
     };
+    use multicad_precision::PortableMath as _;
     use std::f64::consts::{FRAC_PI_2, PI};
 
     const TOL: f64 = 1e-7;
@@ -85,7 +86,7 @@ mod tests {
     fn pinion(teeth: u32, thinning: f64) -> Profile {
         let pitch = f64::from(teeth) / 2.;
         let pressure = 20_f64.to_radians();
-        let base = pitch * pressure.cos();
+        let base = pitch * pressure.portable_cos();
         let thickness = PI / 2. - thinning;
         Profile::new(
             Spec {
@@ -95,7 +96,7 @@ mod tests {
                 tip_radius_mm: pitch + 1.,
                 root_radius_mm: pitch - 1.25,
                 root_fillet_radius_mm: 0.2,
-                half_base_angle_rad: thickness / (2. * pitch) + pressure.tan() - pressure,
+                half_base_angle_rad: thickness / (2. * pitch) + pressure.portable_tan() - pressure,
                 face_width_mm: 2.,
                 bore_radius_mm: 0.,
             },
@@ -131,7 +132,7 @@ mod tests {
     fn pose(teeth: u32, drive: f64) -> [Placement; 2] {
         let pitch = f64::from(teeth) / 2.;
         let rotation = -FRAC_PI_2 + drive;
-        let (sin, cos) = rotation.sin_cos();
+        let (sin, cos) = rotation.portable_sin_cos();
         [
             Placement {
                 center_mm: [0., pitch],

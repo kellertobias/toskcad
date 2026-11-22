@@ -115,7 +115,7 @@ impl LeadScrewPreset {
             ResolvedThreadProfile {
                 depth_mm: (major - minor) / 2.,
                 crest_width_mm: self.pitch_mm / 2.
-                    - (major - self.basic_pitch_diameter_mm) * half.to_radians().tan(),
+                    - (major - self.basic_pitch_diameter_mm) * half.to_radians().portable_tan(),
                 lower_flank_deg: half,
                 upper_flank_deg: half,
                 radial_taper: 0.,

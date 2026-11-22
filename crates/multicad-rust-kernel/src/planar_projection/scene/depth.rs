@@ -158,7 +158,7 @@ impl DepthRange {
                 continue;
             }
             let [center, a, b] = [origin[axis], cosine[axis], sine[axis]];
-            let amplitude = a.hypot(b);
+            let amplitude = a.portable_hypot(b);
             let [min, max] = [center - amplitude, center + amplitude];
             if lo > max || hi < min {
                 return Vec::new();
@@ -179,7 +179,7 @@ impl DepthRange {
             return vec![candidate];
         }
         let inside = |t: f64| {
-            let (sin, cos) = t.sin_cos();
+            let (sin, cos) = t.portable_sin_cos();
             active.iter().flatten().all(|(trace, range)| {
                 let [center, a, b] = trace.0;
                 range.contains(&a.mul_add(cos, b.mul_add(sin, center)))

@@ -1,6 +1,7 @@
 //! Distinct degree21 normal coefficients of ORIGINAL degree11 tensors.
 //! Products are formed before restriction, preserving shared helical terms.
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::sync::Arc;
 #[derive(Clone)]
 pub(super) struct Normal {
@@ -106,7 +107,7 @@ impl Normal {
         }
         let steering = [
             ((b / a).clamp(-16., 16.) * 256.).round() / 256.,
-            2f64.powi((c / a).log2().round().clamp(-32., 32.) as i32),
+            2f64.powi((c / a).portable_log2().round().clamp(-32., 32.) as i32),
         ];
         let position_hessian = hessian::Hessian::new(11, &p, Some(source.0.linear), budget)?;
         let hessian = hessian::Hessian::new(21, &coefficients, None, budget)?;

@@ -4,6 +4,7 @@
 //! derivative remainder has been bounded. These curves are not mesh edges.
 pub(crate) use super::interval::I;
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::ops::{Add, Mul, Neg, Sub};
 
 /// A shared polynomial edge and its height pcurve use the same phase domain.
@@ -287,7 +288,7 @@ fn propose(body: &Chamfer, start: u32, segment: super::phase::Segment) -> Result
     let mut surface_u_poles = u_controls.map(|value| value.lo.midpoint(value.hi));
     if let Some(root) = body.tool.root_circle().filter(|_| segment.band == 2) {
         let knots = body.tool.profile_breaks();
-        let [a, b] = [knots[2], knots[3]].map(|q| ((q - root.phase) / root.radius).asin());
+        let [a, b] = [knots[2], knots[3]].map(|q| ((q - root.phase) / root.radius).portable_asin());
         for u in &mut surface_u_poles {
             *u = u.clamp(a, b);
         }
@@ -484,8 +485,8 @@ impl Chamfer {
                 // excess before evaluating asin, without extending its source.
                 let ratio = I::new(ratio.lo.max(-1.), ratio.hi.min(1.));
                 let mut angle = Jet::constant(I::new(
-                    ratio.lo.asin().next_down().next_down(),
-                    ratio.hi.asin().next_up().next_up(),
+                    ratio.lo.portable_asin().next_down().next_down(),
+                    ratio.hi.portable_asin().next_up().next_up(),
                 ));
                 let inverse_h = h.reciprocal()?;
                 for i in 1..5 {
@@ -566,7 +567,7 @@ mod tests {
                             let z = body.seam_station(q);
                             let angle = (z - q - f64::from(trim.start) * source.spec().pitch_mm)
                                 / source.helical_rate();
-                            let (sin, cos) = angle.sin_cos();
+                            let (sin, cos) = angle.portable_sin_cos();
                             let r = source.radius_at_phase(q);
                             let expected = [r * cos, r * sin, z];
                             let point = bezier(trim.poles, t);
@@ -586,7 +587,7 @@ mod tests {
                             assert!((at_angle - angle).abs() <= trim.angle_error_rad + 2e-13);
                             let actual_u = if trim.band == 2 && source.root_circle().is_some() {
                                 let root = source.root_circle().unwrap();
-                                ((q - root.phase) / root.radius).asin()
+                                ((q - root.phase) / root.radius).portable_asin()
                             } else {
                                 q / source.helical_rate().abs()
                             };
@@ -596,8 +597,8 @@ mod tests {
                             let (uq, ur) = if trim.band == 2 && source.root_circle().is_some() {
                                 let root = source.root_circle().unwrap();
                                 (
-                                    root.phase + root.radius * at_u.sin(),
-                                    root.center_radius - root.radius * at_u.cos(),
+                                    root.phase + root.radius * at_u.portable_sin(),
+                                    root.center_radius - root.radius * at_u.portable_cos(),
                                 )
                             } else {
                                 let uq = at_u * h;
@@ -606,8 +607,11 @@ mod tests {
                             let surface_angle =
                                 (height - uq - f64::from(trim.start) * source.spec().pitch_mm)
                                     / source.helical_rate();
-                            let thread_point =
-                                [ur * surface_angle.cos(), ur * surface_angle.sin(), height];
+                            let thread_point = [
+                                ur * surface_angle.portable_cos(),
+                                ur * surface_angle.portable_sin(),
+                                height,
+                            ];
                             let distance = |target: Point| {
                                 target
                                     .into_iter()
@@ -623,8 +627,8 @@ mod tests {
                                         * height;
                                 assert!(
                                     distance([
-                                        radius * at_angle.cos(),
-                                        radius * at_angle.sin(),
+                                        radius * at_angle.portable_cos(),
+                                        radius * at_angle.portable_sin(),
                                         height
                                     ]) <= options.tolerance + 2e-13
                                 );

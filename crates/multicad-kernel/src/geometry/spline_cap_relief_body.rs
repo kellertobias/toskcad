@@ -190,7 +190,7 @@ impl SplineCapReliefBody {
                 span_mm,
                 inward,
             } => {
-                let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+                let length = (b[0] - a[0]).portable_hypot(b[1] - a[1]);
                 Some(ReferenceFrame {
                     origin_mm: position(frame, [a[0], a[1], span_mm[0]]),
                     u: vector(frame, [(b[0] - a[0]) / length, (b[1] - a[1]) / length, 0.]),

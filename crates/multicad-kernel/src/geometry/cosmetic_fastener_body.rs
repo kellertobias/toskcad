@@ -131,7 +131,7 @@ fn reference_frame(surface: &Surface, facet: usize, frame: PlaneFrame) -> Option
     }
     let [p, q] = [facet, facet + 1].map(|corner| ring_point(a, corner));
     let [x, y, _] = std::array::from_fn(|i| q[i] - p[i]);
-    let length = x.hypot(y);
+    let length = x.portable_hypot(y);
     Some(ReferenceFrame {
         origin_mm: position(frame, p),
         u: std::array::from_fn(|i| (x * frame.u[i] + y * frame.v[i]) / length),
@@ -203,7 +203,10 @@ impl CosmeticFastenerBody {
                     )
                 } else {
                     let z = a.z + (b.z - a.z) * (r + 2. * s) / (3. * (r + s));
-                    ([0., 0., z], TAU / 2. * (r + s) * (r - s).hypot(b.z - a.z))
+                    (
+                        [0., 0., z],
+                        TAU / 2. * (r + s) * (r - s).portable_hypot(b.z - a.z),
+                    )
                 };
                 let plane = reference_frame(&surface, facet, frame)
                     .map(|plane| (plane.origin_mm, plane.normal()));

@@ -1,5 +1,6 @@
 //! Camera math is independent of native windows and model ownership.
 use eframe::egui::{Rect, Vec2};
+use multicad_precision::PortableMath as _;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
     pub yaw: f32,
@@ -25,8 +26,8 @@ impl Camera {
         self.pitch = (self.pitch + delta.y * 0.01).clamp(-1.57, 1.57);
     }
     pub fn pan(&mut self, delta: Vec2) {
-        let (s, c) = self.yaw.sin_cos();
-        let (sp, cp) = self.pitch.sin_cos();
+        let (s, c) = self.yaw.portable_sin_cos();
+        let (sp, cp) = self.pitch.portable_sin_cos();
         let x = delta.x / self.scale;
         let up = -delta.y / self.scale;
         self.target[0] -= c * x - s * sp * up;
@@ -51,12 +52,12 @@ impl Camera {
         true
     }
     pub fn zoom(&mut self, scroll: f32) {
-        self.scale = (self.scale * (scroll * 0.002).exp()).clamp(0.02, 100.0);
+        self.scale = (self.scale * (scroll * 0.002).portable_exp()).clamp(0.02, 100.0);
     }
     pub fn project(&self, point: [f32; 3], rect: Rect) -> [f32; 3] {
         let [x, y, z] = std::array::from_fn(|i| point[i] - self.target[i]);
-        let (s, c) = self.yaw.sin_cos();
-        let (sp, cp) = self.pitch.sin_cos();
+        let (s, c) = self.yaw.portable_sin_cos();
+        let (sp, cp) = self.pitch.portable_sin_cos();
         let right = c * x - s * y;
         let up = cp * z - sp * (s * x + c * y);
         let depth = cp * (s * x + c * y) + sp * z;
@@ -75,8 +76,8 @@ impl Camera {
         if !self.scale.is_finite() || self.scale <= 0. || !point.is_finite() || !rect.is_finite() {
             return None;
         }
-        let (s, c) = self.yaw.sin_cos();
-        let (sp, cp) = self.pitch.sin_cos();
+        let (s, c) = self.yaw.portable_sin_cos();
+        let (sp, cp) = self.pitch.portable_sin_cos();
         let right = [c as f64, -s as f64, 0.];
         let up = [(-sp * s) as f64, (-sp * c) as f64, cp as f64];
         let forward = [(cp * s) as f64, (cp * c) as f64, sp as f64];

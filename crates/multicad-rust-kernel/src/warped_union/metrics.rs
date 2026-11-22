@@ -78,7 +78,7 @@ fn moments(band: Band, region: Region, lo: f64, hi: f64) -> Moments {
     let [t0, t1] = [lo, hi].map(|w| band.theta(w));
     let h = 0.5 * (t1 - t0);
     let m = t0.midpoint(t1);
-    let (sh, ch) = h.sin_cos();
+    let (sh, ch) = h.portable_sin_cos();
     let h_minus_sh_ch = if h < 1e-3 {
         let h2 = h * h;
         h * h2 * (2. / 3. + h2 * (-2. / 15. + h2 * (4. / 315.)))
@@ -87,7 +87,7 @@ fn moments(band: Band, region: Region, lo: f64, hi: f64) -> Moments {
     };
     // ∫w dz = r²∫cos²θ dθ. Written to avoid subtracting nearly
     // equal terms at the lower limit of the quarter circle.
-    let first = r * r * (h_minus_sh_ch + 2. * m.cos().powi(2) * sh * ch);
+    let first = r * r * (h_minus_sh_ch + 2. * m.portable_cos().powi(2) * sh * ch);
     // ∫w² dz follows from the antiderivative of cos³θ.
     let second = dz * (0.5 * (lo * lo + hi * hi) + dz * dz / 6.);
     let arc = 2. * r * h;
@@ -148,7 +148,7 @@ pub(super) fn face_metrics(
         ];
         volume.add(0.5 * dot(coefficients, m.z));
         if measure_curve {
-            let scale = normal[0].hypot(normal[1]);
+            let scale = normal[0].portable_hypot(normal[1]);
             let tangent = [-normal[1] / scale, normal[0] / scale];
             let width = |a: XY, b: XY| (b[0] - a[0]) * tangent[0] + (b[1] - a[1]) * tangent[1];
             let [m0, m1] = if matches!(support, Support::Cylinder { .. }) {

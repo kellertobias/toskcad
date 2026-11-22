@@ -33,6 +33,7 @@ mod tests {
         tests::{spec, wheel},
     };
     use super::*;
+    use multicad_precision::PortableMath as _;
 
     #[test]
     fn surface_frames_are_the_section_pieces_and_their_derivatives() {
@@ -51,7 +52,7 @@ mod tests {
                     };
                     let [p, da, dv] = wheel.surface_frame(piece, a, v);
                     let exact = wheel.piece_point(&section, piece, u);
-                    assert!((p[0] - exact[0]).hypot(p[1] - exact[1]) < 1e-12);
+                    assert!((p[0] - exact[0]).portable_hypot(p[1] - exact[1]) < 1e-12);
                     let h = 1e-6;
                     let [ahead, behind] =
                         [h, -h].map(|h| wheel.surface_frame(piece, a + h * (0.5 - u), v)[0]);

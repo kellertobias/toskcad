@@ -1,5 +1,6 @@
 //! Material hatch strokes clipped to straight section boundaries.
 
+use multicad_precision::PortableMath as _;
 use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -88,7 +89,7 @@ pub fn hatch_with_budget(
     } else {
         let (min, max) = bounds(boundary.iter().flatten().copied());
         let center = std::array::from_fn(|i| min[i] + (max[i] - min[i]) * 0.5);
-        let (sin, cos) = options.angle_rad.sin_cos();
+        let (sin, cos) = options.angle_rad.portable_sin_cos();
         let passes = [[[cos, sin], [-sin, cos]], [[-sin, cos], [-cos, -sin]]];
         for axes in passes
             .into_iter()
@@ -140,7 +141,7 @@ fn triangulate_boundary(
         if a.into_iter()
             .chain(b)
             .any(|x| !x.is_finite() || x.abs() > 1e8)
-            || delta[0].hypot(delta[1]) <= tolerance
+            || delta[0].portable_hypot(delta[1]) <= tolerance
         {
             return Err(HatchError::Invalid);
         }
@@ -488,7 +489,7 @@ impl<'a> Clipper<'a> {
             .checked_sub(1)
             .ok_or(HatchError::Limit)?;
         let delta = sub(b, a);
-        let length = delta[0].hypot(delta[1]);
+        let length = delta[0].portable_hypot(delta[1]);
         if length <= self.tolerance {
             return Ok(());
         }

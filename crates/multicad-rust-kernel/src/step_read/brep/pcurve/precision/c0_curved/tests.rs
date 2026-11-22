@@ -1,6 +1,7 @@
 use super::super::c0_trace;
 use super::*;
 use crate::step_read::brep::pcurve::{bindings, edge, trim_surface, uv};
+use multicad_precision::PortableMath as _;
 
 const TOL: f64 = 1e-7;
 
@@ -98,7 +99,10 @@ fn one_casteljau_run_gives_every_low_derivative_and_zero_above_the_degree() {
     let points: Vec<[I; 2]> = (0..12)
         .map(|i| {
             let x = f64::from(i);
-            [I::point((0.3 * x).sin() + 0.1 * x * x), I::point(x.sqrt())]
+            [
+                I::point((0.3 * x).portable_sin() + 0.1 * x * x),
+                I::point(x.sqrt()),
+            ]
         })
         .collect();
     for t in [0., 0.25, 0.5, 0.875, 1.] {

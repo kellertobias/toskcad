@@ -7,6 +7,7 @@ use multicad_core::{
 };
 use multicad_kernel::MeshOptions;
 use multicad_model::{Compiler, GeometryBackend, imports::read_step_file_with_backend};
+use multicad_precision::PortableMath as _;
 fn stock(
     quarter: bool,
 ) -> multicad_kernel::rust_kernel::axial_pipe_thread::authored::StockClipPlan {
@@ -200,7 +201,11 @@ fn actual_literal_npt_import_compiles_displays_and_reopens_without_external_sour
         let a = 37f64.to_radians();
         assert!(
             moved
-                .rust_literal_npt_contains([11. + 2. * a.sin(), -5., 3. + 2. * a.cos()])
+                .rust_literal_npt_contains([
+                    11. + 2. * a.portable_sin(),
+                    -5.,
+                    3. + 2. * a.portable_cos()
+                ])
                 .unwrap()
         );
         assert!(!moved.rust_literal_npt_contains([111., -5., 3.]).unwrap());

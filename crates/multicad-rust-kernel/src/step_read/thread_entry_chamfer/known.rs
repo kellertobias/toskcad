@@ -110,7 +110,7 @@ impl Verify<'_> {
         let r = self.body.entry_radius_mm();
         let k =
             (self.body.source_thread().spec().major_radius_mm - r) / self.body.entry_length_mm();
-        require(*radius == r && *angle == k.atan())?;
+        require(*radius == r && *angle == k.portable_atan())?;
         require(
             frame::Frame::read(shell, reference(axis)?)?.support_error(
                 &frame::Frame::expected(self.frame),
@@ -188,7 +188,7 @@ impl Verify<'_> {
         let source = self.body.source_thread();
         let rate = source.helical_rate();
         let f = self.body.material_length_mm();
-        let spin = [(f / rate).cos(), (f / rate).sin()];
+        let spin = [(f / rate).portable_cos(), (f / rate).portable_sin()];
         for i in 0..count {
             let face = &graph.faces[i];
             require(face.forward == source.spec().left_hand && face.wires.len() == 1)?;
@@ -635,7 +635,7 @@ mod tests {
         let axis = "#10=CARTESIAN_POINT('',(1.,0.,0.));#11=DIRECTION('',(0.,0.,1.));#12=DIRECTION('',(1.,0.,0.));#13=AXIS2_PLACEMENT_3D('',#10,#11,#12);";
         let angle = ((body.source_thread().spec().major_radius_mm - body.entry_radius_mm())
             / body.entry_length_mm())
-        .atan();
+        .portable_atan();
         with_shell(
             &format!(
                 "{axis}#1=CONICAL_SURFACE('',#13,{:.16E},{angle:.16E});",

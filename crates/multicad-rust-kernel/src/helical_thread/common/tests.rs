@@ -1,5 +1,6 @@
 use super::*;
 use crate::helical_thread::Spec;
+use multicad_precision::PortableMath as _;
 
 fn thread(major: f64, depth: f64, crest: f64, root: Option<f64>) -> Thread {
     Thread::new(Spec {
@@ -133,7 +134,8 @@ fn contacts_vertex_crossings_rounded_roots_and_mismatched_laws_are_refused() {
     // A cavity whose minor crest reaches a rounded external root. The
     // root depth follows from the flank intersection and fillet radius.
     let (radius, half) = (0.04, 30_f64.to_radians());
-    let depth = (0.5 - 0.06) / (2. * half.tan()) - radius * (1. / half.sin() - 1.);
+    let depth =
+        (0.5 - 0.06) / (2. * half.portable_tan()) - radius * (1. / half.portable_sin() - 1.);
     let rounded = thread(1.48, depth, 0.06, Some(radius));
     let deep = thread(1.53, 0.43, 0.003, None);
     assert!(rounded.radius_at_phase(0.25) > deep.radius_at_phase(0.25));

@@ -96,7 +96,7 @@ impl StockChart<'_> {
         [a, b]: [f64; 2],
         z: f64,
     ) -> Entity {
-        let (sin, cos) = a.sin_cos();
+        let (sin, cos) = a.portable_sin_cos();
         let axis = file.axis(
             center,
             self.placement.normal,
@@ -162,7 +162,7 @@ pub(super) fn spline(
     for (index, vertex) in [(0, from), (spline.poles_mm.len() - 1, to)] {
         let expected = world(spline.poles_mm[index]);
         let [x, y, z] = std::array::from_fn(|i| expected[i] - vertex.point[i]);
-        if x.hypot(y).hypot(z) > endpoint_tolerance {
+        if x.portable_hypot(y).portable_hypot(z) > endpoint_tolerance {
             return Err(StepError::InvalidGeometry);
         }
     }

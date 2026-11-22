@@ -39,6 +39,7 @@ use multicad_model::{
     imports::{KicadOptions, read_kicad_file_with_backend, read_step_file_with_backend},
     schedules::{BomOptions, Schedule, bend_schedule, bom_schedule},
 };
+use multicad_precision::PortableMath as _;
 use std::{
     collections::BTreeMap,
     io::Write,
@@ -275,7 +276,7 @@ pub fn board_drive(document: &Document, board: EntityId) -> Result<Vec<Derived>,
             continue;
         };
         let fp = &c.footprint;
-        let (s, co) = fp.rotation_deg.to_radians().sin_cos();
+        let (s, co) = fp.rotation_deg.to_radians().portable_sin_cos();
         let [lo, hi] = fp.envelope;
         let corners = [
             [lo[0], lo[1]],
@@ -464,7 +465,7 @@ impl Scenario {
                        want: Option<([f64; 2], String)>| {
             match (have, want) {
                 (Some((h, hs)), Some((w, ws))) => {
-                    let moved = (h[0] - w[0]).hypot(h[1] - w[1]);
+                    let moved = (h[0] - w[0]).portable_hypot(h[1] - w[1]);
                     let (hs, ws) = if hs.is_empty() {
                         (hs, ws)
                     } else {

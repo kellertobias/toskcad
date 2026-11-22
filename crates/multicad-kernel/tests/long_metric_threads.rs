@@ -3,6 +3,7 @@ use multicad_kernel::{
     BooleanOperation, GeometryErrorKind, GeometryPolicy, HelicalThread, PlaneFrame, RigidTransform,
     Solid,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 fn m8(length_mm: f64) -> HelicalThread {
@@ -26,7 +27,7 @@ fn analytic_volume(spec: HelicalThread) -> f64 {
     // fractional final turn, so its area times the exact authored length is V.
     let major = spec.major_radius_mm;
     let root = major - spec.depth_mm;
-    let flank_sum = 2. * 30_f64.to_radians().tan();
+    let flank_sum = 2. * 30_f64.to_radians().portable_tan();
     let ridge = spec.crest_width_mm * (major * major - root * root) / 2.
         + flank_sum
             * (major * (major * major - root * root) / 2. - (major.powi(3) - root.powi(3)) / 3.);
@@ -92,7 +93,7 @@ fn assert_extent_and_profile(solid: &Solid, spec: HelicalThread) {
         spec.length_mm - 0.75 * spec.pitch_mm,
     ] {
         let phase = TAU * z / spec.pitch_mm;
-        let (sin, cos) = phase.sin_cos();
+        let (sin, cos) = phase.portable_sin_cos();
         assert_material(
             solid,
             [crest_probe_radius * cos, crest_probe_radius * sin, z],

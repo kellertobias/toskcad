@@ -11,11 +11,11 @@ fn gear(teeth: u32) -> Profile {
         Spec {
             teeth,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * pressure.cos(),
+            base_radius_mm: pitch * pressure.portable_cos(),
             tip_radius_mm: pitch + 2.,
             root_radius_mm: pitch - 2.5,
             root_fillet_radius_mm: 0.4,
-            half_base_angle_rad: (PI - 0.05) / (2. * pitch) + pressure.tan() - pressure,
+            half_base_angle_rad: (PI - 0.05) / (2. * pitch) + pressure.portable_tan() - pressure,
             face_width_mm: 5.,
             bore_radius_mm: 4.,
         },
@@ -26,7 +26,7 @@ fn gear(teeth: u32) -> Profile {
 }
 
 fn place(x: f64, theta: f64) -> Placement {
-    let (sin, cos) = theta.sin_cos();
+    let (sin, cos) = theta.portable_sin_cos();
     Placement {
         center_mm: [x, 0.],
         axes: [[cos, sin], [-sin, cos]],

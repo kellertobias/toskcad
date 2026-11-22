@@ -65,7 +65,7 @@ impl AnalyticFace {
         {
             return Err(ProjectionError::Invalid);
         }
-        let projected = axis[0].hypot(axis[1]);
+        let projected = axis[0].portable_hypot(axis[1]);
         let axis = if projected <= ANGULAR {
             [0., 0., 1.]
         } else if axis[2].abs() <= ANGULAR {
@@ -73,8 +73,9 @@ impl AnalyticFace {
         } else {
             unit(axis)
         };
-        let extent: Point =
-            std::array::from_fn(|i| major * axis[(i + 1) % 3].hypot(axis[(i + 2) % 3]) + minor);
+        let extent: Point = std::array::from_fn(|i| {
+            major * axis[(i + 1) % 3].portable_hypot(axis[(i + 2) % 3]) + minor
+        });
         Ok(Self {
             surface: Surface::Torus(Torus {
                 center,
@@ -159,7 +160,7 @@ impl Torus {
             |t| {
                 let [u, v] = [u.at(t), v.at(t)];
                 let radial_offset = if axial {
-                    (u.hypot(v) - self.major).abs()
+                    (u.portable_hypot(v) - self.major).abs()
                 } else {
                     v.abs()
                 };
@@ -227,10 +228,10 @@ fn torus_events(traces: [Trace; 3], major: f64, minor: f64, [lo, hi]: Span, cuts
             let [a, b, c] = trace.coefficients;
             [a + sign * b, 2. * sign * c, a - sign * b]
         });
-        let domain = [start, end].map(|angle| ((angle - phase) / 2.).tan());
+        let domain = [start, end].map(|angle| ((angle - phase) / 2.).portable_tan());
         cuts.extend(
             solve(numerators, [1., 0., 1.], domain)
-                .map(|t| phase + 2. * t.atan())
+                .map(|t| phase + 2. * t.portable_atan())
                 .filter(|&t| t > start && t < end),
         );
         if end < hi {

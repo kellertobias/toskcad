@@ -4,6 +4,7 @@ use multicad_core::{
     exchange::{Layers, LengthUnit},
     manufacturing::{PlanarContours, PlanarEdge, PlanarLoop},
 };
+use multicad_precision::PortableMath as _;
 use std::fmt::Write;
 
 pub const MAX_DXF_BYTES: usize = 16 * 1024 * 1024;
@@ -59,7 +60,7 @@ pub(crate) fn vertices(wire: &PlanarLoop) -> Vec<Vertex> {
             } => {
                 if sweep_rad.abs() > std::f64::consts::PI + 1e-12 {
                     let half = sweep_rad * 0.5;
-                    let (sin, cos) = half.sin_cos();
+                    let (sin, cos) = half.portable_sin_cos();
                     let d = [a[0] - center[0], a[1] - center[1]];
                     let mid = if (sweep_rad.abs() - std::f64::consts::TAU).abs() < 1e-10 {
                         [2. * center[0] - a[0], 2. * center[1] - a[1]]
@@ -69,13 +70,13 @@ pub(crate) fn vertices(wire: &PlanarLoop) -> Vec<Vertex> {
                             center[1] + d[0] * sin + d[1] * cos,
                         ]
                     };
-                    let bulge = (half * 0.25).tan();
+                    let bulge = (half * 0.25).portable_tan();
                     result.push(Vertex { p: a, bulge });
                     result.push(Vertex { p: mid, bulge });
                 } else {
                     result.push(Vertex {
                         p: a,
-                        bulge: (sweep_rad * 0.25).tan(),
+                        bulge: (sweep_rad * 0.25).portable_tan(),
                     });
                 }
             }
@@ -90,7 +91,7 @@ fn circular_center(wire: &PlanarLoop, tolerance: f64) -> Option<[f64; 2]> {
     let PlanarEdge::Arc { a, center, .. } = *wire.edges.first()? else {
         return None;
     };
-    let radius = (a[0] - center[0]).hypot(a[1] - center[1]);
+    let radius = (a[0] - center[0]).portable_hypot(a[1] - center[1]);
     let mut sweep = 0.;
     for edge in &wire.edges {
         let PlanarEdge::Arc {
@@ -102,8 +103,8 @@ fn circular_center(wire: &PlanarLoop, tolerance: f64) -> Option<[f64; 2]> {
         else {
             return None;
         };
-        if (c[0] - center[0]).hypot(c[1] - center[1]) > tolerance
-            || ((a[0] - c[0]).hypot(a[1] - c[1]) - radius).abs() > tolerance
+        if (c[0] - center[0]).portable_hypot(c[1] - center[1]) > tolerance
+            || ((a[0] - c[0]).portable_hypot(a[1] - c[1]) - radius).abs() > tolerance
         {
             return None;
         }

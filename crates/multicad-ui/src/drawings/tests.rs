@@ -1,5 +1,6 @@
 use super::*;
 use multicad_core::document::Document;
+use multicad_precision::PortableMath as _;
 fn session() -> Session {
     Session::new(Document::new("Drawing UI").unwrap()).unwrap()
 }
@@ -1038,7 +1039,7 @@ fn sheet_annotations_add_edit_move_copy_and_apply_as_one_page_edit() {
         else {
             unreachable!()
         };
-        assert!(((b[0] - a[0]).hypot(b[1] - a[1]) - 30.).abs() < 1e-9);
+        assert!(((b[0] - a[0]).portable_hypot(b[1] - a[1]) - 30.).abs() < 1e-9);
     }
     editor.remove_selected().unwrap();
     assert_eq!(editor.draft.as_ref().unwrap().annotations.len(), 8);

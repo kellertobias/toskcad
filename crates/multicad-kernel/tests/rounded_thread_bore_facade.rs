@@ -6,15 +6,16 @@ use multicad_kernel::{
     GeometryPolicy, MeshOptions, PlaneFrame, RigidTransform, Solid,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder, rounded_thread::Spec},
 };
+use multicad_precision::PortableMath as _;
 fn spec(left_hand: bool) -> Spec {
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     Spec {
         major_radius_mm: 3.175,
         pitch_mm: p,
         length_mm: 4.7,
-        depth_mm: p / (3. * a.tan()),
+        depth_mm: p / (3. * a.portable_tan()),
         crest_radius_mm: r,
         root_radius_mm: r,
         flank_angle_deg: 27.5,
@@ -201,7 +202,7 @@ fn unsupported_depth_tilt_wall_and_numeric_failures_leave_source_unchanged() {
     );
     let tilt = 1e-6_f64;
     let request = PlaneFrame {
-        u: [tilt.cos(), 0., tilt.sin()],
+        u: [tilt.portable_cos(), 0., tilt.portable_sin()],
         ..Default::default()
     };
     assert!(
@@ -429,7 +430,7 @@ fn clocked_receivers_preserve_original_cap_attachment_charts_in_small_noisy_and_
             let source_id = EntityId::new();
             let source = stock(frame, source_id);
             let before = source.topology_snapshot(source_id, 1).unwrap();
-            let (sin, cos) = 0.7_f64.sin_cos();
+            let (sin, cos) = 0.7_f64.portable_sin_cos();
             let sign = if reversed { -1. } else { 1. };
             let request = PlaneFrame {
                 origin: world(frame, [0., 0., if reversed { 4.7 } else { 0. }]),

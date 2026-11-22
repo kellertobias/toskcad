@@ -37,7 +37,7 @@ impl Boundary {
         for p in [start, end] {
             policy.point([p[0], p[1], 0.])?;
         }
-        policy.length((end[0] - start[0]).hypot(end[1] - start[1]))?;
+        policy.length((end[0] - start[0]).portable_hypot(end[1] - start[1]))?;
         let [dx, dy] = std::array::from_fn(|i| Interval::point(end[i]) - Interval::point(start[i]));
         Ok(Self {
             start,
@@ -99,7 +99,7 @@ impl Search<'_> {
             || self
                 .points
                 .iter()
-                .any(|other| (point[0] - other[0]).hypot(point[1] - other[1]) <= tolerance)
+                .any(|other| (point[0] - other[0]).portable_hypot(point[1] - other[1]) <= tolerance)
         {
             return Err(unresolved_contact());
         }

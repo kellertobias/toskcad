@@ -10,6 +10,7 @@ use super::{
 };
 use crate::trim_curve::{Ellipse, EllipseArc};
 use crate::warped_union::{Curve as SectionCurve, SectionEdge};
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
@@ -257,7 +258,7 @@ fn conic(surface: &Surface, (origin, normal): (Point, Point)) -> Option<Ellipse>
             radius,
             half_angle,
         } => {
-            let slope = half_angle.tan();
+            let slope = half_angle.portable_tan();
             (
                 sub(frame.origin, scale(frame.z, radius / slope)),
                 outer(frame.z, 1. + slope * slope),
@@ -297,8 +298,8 @@ fn conic(surface: &Surface, (origin, normal): (Point, Point)) -> Option<Ellipse>
     // The major axis is the eigenvector of the smaller eigenvalue, a
     // quarter turn from the principal angle of the larger one. Semiaxes
     // that are not positive and finite are refused by the ellipse.
-    let angle = 0.5 * (2. * b).atan2(a - c);
-    let direction = [-angle.sin(), angle.cos()];
+    let angle = 0.5 * (2. * b).portable_atan2(a - c);
+    let direction = [-angle.portable_sin(), angle.portable_cos()];
     let major = add(scale(e1, direction[0]), scale(e2, direction[1]));
     let centre = add(origin, add(scale(e1, y0[0]), scale(e2, y0[1])));
     Ellipse::new(centre, normal, major, [(h / low).sqrt(), (h / high).sqrt()]).ok()
@@ -315,8 +316,8 @@ fn arc(
     let mut angles: Vec<f64> = Vec::with_capacity(run.len());
     for &p in run {
         let d = sub(p, ellipse.center_mm());
-        let mut t =
-            (dot(d, ellipse.minor_axis()) / minor).atan2(dot(d, ellipse.major_axis()) / major);
+        let mut t = (dot(d, ellipse.minor_axis()) / minor)
+            .portable_atan2(dot(d, ellipse.major_axis()) / major);
         (distance(ellipse.point_at(t), p) <= near(p)).then_some(())?;
         if let Some(&previous) = angles.last() {
             t = previous + (t - previous + PI).rem_euclid(TAU) - PI;

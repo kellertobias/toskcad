@@ -32,7 +32,7 @@ pub(super) fn encode(
     }
     let angle = revolution.angle_rad();
     let turn = angle.signum();
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     let axis = placement.normal;
     let [u, v] = [placement.u, placement.v];
     // The radial direction of the end section, and the sweep direction there.

@@ -4,6 +4,7 @@
 //! records measure those solids.
 use super::*;
 use crate::{model::common::number, parameters::EvaluatedParameters};
+use multicad_precision::PortableMath as _;
 
 const EPS: f64 = 1e-6;
 
@@ -500,7 +501,7 @@ pub fn resolve_carcass(
             [w - t - gap, end, z + thickness],
         ));
     }
-    let (s, c) = rotation_rad.sin_cos();
+    let (s, c) = rotation_rad.portable_sin_cos();
     let rotate = |a: [f64; 3]| [a[0] * c - a[1] * s, a[0] * s + a[1] * c, a[2]];
     let place = |a: [f64; 3]| {
         let r = rotate(a);

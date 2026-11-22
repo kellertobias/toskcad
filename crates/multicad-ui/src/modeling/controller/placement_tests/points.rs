@@ -12,6 +12,7 @@ use multicad_core::{
     model::PrimitiveFrame,
     project_file::{self, ProjectFile},
 };
+use multicad_precision::PortableMath as _;
 
 struct Fixture {
     session: Session,
@@ -29,7 +30,10 @@ fn fixture() -> Fixture {
             frame: Default::default(),
         },
     );
-    let (c, s) = (30_f64.to_radians().cos(), 30_f64.to_radians().sin());
+    let (c, s) = (
+        30_f64.to_radians().portable_cos(),
+        30_f64.to_radians().portable_sin(),
+    );
     let other = PrimitiveRequest::new(
         "Rotated panel",
         PrimitiveParameters::Box {
@@ -193,7 +197,10 @@ fn point_to_point_move_aligns_a_rotated_stage_to_a_rotated_panel_and_commits_onc
     ));
 
     // The far bottom corner of the rotated panel along its u direction.
-    let (cos, sin) = (30_f64.to_radians().cos(), 30_f64.to_radians().sin());
+    let (cos, sin) = (
+        30_f64.to_radians().portable_cos(),
+        30_f64.to_radians().portable_sin(),
+    );
     let target = [50. + 30. * cos, 30. * sin, 0.];
     let message = click(&mut c, &mut f.session, Some(&scene), screen(target)).unwrap();
     assert!(message.unwrap().contains("staged"));

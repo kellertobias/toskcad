@@ -180,9 +180,9 @@ impl Path {
                 clockwise,
             } => {
                 let [x, y] = [a[0] - center[0], a[1] - center[1]];
-                let radius = x.hypot(y);
-                let start = y.atan2(x);
-                let end = (b[1] - center[1]).atan2(b[0] - center[0]);
+                let radius = x.portable_hypot(y);
+                let start = y.portable_atan2(x);
+                let end = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
                 let (v, start, sweep) = if *clockwise {
                     (
                         scale(frame.v, -radius),
@@ -273,7 +273,7 @@ impl Path {
                 axes,
                 range,
             } => range.map(|t| {
-                let (sin, cos) = t.sin_cos();
+                let (sin, cos) = t.portable_sin_cos();
                 add(*center, add(scale(axes[0], cos), scale(axes[1], sin)))
             }),
             Self::Spline { .. } => {
@@ -332,8 +332,8 @@ fn conic(center: P, [a, b]: [P; 2]) -> Result<Curve, GeometryError> {
             radius,
         });
     }
-    let phase = 0.5 * (2. * ab).atan2(aa - bb);
-    let (sin, cos) = phase.sin_cos();
+    let phase = 0.5 * (2. * ab).portable_atan2(aa - bb);
+    let (sin, cos) = phase.portable_sin_cos();
     let major = add(scale(a, cos), scale(b, sin));
     let minor = add(scale(a, -sin), scale(b, cos));
     let x = unit(major)?;
@@ -361,17 +361,17 @@ fn twice_signed_area(edge: &CurvedEdge2d, policy: GeometryPolicy) -> Result<f64,
             clockwise,
         } => {
             let [x, y] = [a[0] - center[0], a[1] - center[1]];
-            let radius = x.hypot(y);
-            let start = y.atan2(x);
-            let end = (b[1] - center[1]).atan2(b[0] - center[0]);
+            let radius = x.portable_hypot(y);
+            let start = y.portable_atan2(x);
+            let end = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
             let sweep = if *clockwise {
                 -(start - end).rem_euclid(TAU)
             } else {
                 (end - start).rem_euclid(TAU)
             };
             let finish = start + sweep;
-            radius * center[0] * (finish.sin() - start.sin())
-                - radius * center[1] * (finish.cos() - start.cos())
+            radius * center[0] * (finish.portable_sin() - start.portable_sin())
+                - radius * center[1] * (finish.portable_cos() - start.portable_cos())
                 + radius * radius * sweep
         }
         CurvedEdge2d::BSpline(spline) => {
@@ -431,7 +431,7 @@ fn linear_range(
                 include(value(*b));
             }
             CurvedEdge2d::Circle { center, radius_mm } => {
-                let reach = radius_mm * g[0].hypot(g[1]);
+                let reach = radius_mm * g[0].portable_hypot(g[1]);
                 include(value(*center) - reach);
                 include(value(*center) + reach);
             }
@@ -448,10 +448,13 @@ fn linear_range(
                     dot([g[0], g[1], 0.], axes[0]),
                     dot([g[0], g[1], 0.], axes[1]),
                 ];
-                for extremum in [along[1].atan2(along[0]), (-along[1]).atan2(-along[0])] {
+                for extremum in [
+                    along[1].portable_atan2(along[0]),
+                    (-along[1]).portable_atan2(-along[0]),
+                ] {
                     let travel = (extremum - span[0]).rem_euclid(TAU);
                     if travel <= span[1] - span[0] {
-                        let (sin, cos) = extremum.sin_cos();
+                        let (sin, cos) = extremum.portable_sin_cos();
                         include(value(*center) + along[0] * cos + along[1] * sin);
                     }
                 }
@@ -829,7 +832,7 @@ impl Sweep<'_> {
                                 z,
                             },
                             radius,
-                            half_angle: (growth / height).atan(),
+                            half_angle: (growth / height).portable_atan(),
                         },
                         ring.outer,
                         None,

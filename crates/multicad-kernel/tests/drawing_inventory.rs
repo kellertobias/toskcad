@@ -20,6 +20,7 @@ use multicad_kernel::{
         rounded_thread::Spec as RoundedThreadSpec,
     },
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn spur(sweep: GearSweep, twist: f64) -> InvoluteGear {
@@ -29,11 +30,11 @@ fn spur(sweep: GearSweep, twist: f64) -> InvoluteGear {
         hub: None,
         teeth: 24,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * a.cos(),
+        base_radius_mm: pitch * a.portable_cos(),
         tip_radius_mm: pitch + 1.,
         root_radius_mm: pitch - 1.25,
         root_fillet_radius_mm: 0.2,
-        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.portable_tan() - a,
         face_width_mm: 4.,
         bore_radius_mm: 3.,
         twist_rad_per_mm: twist,
@@ -48,7 +49,7 @@ fn iso_thread(starts: u32) -> HelicalThread {
         major_radius_mm: 3.,
         pitch_mm: 1.,
         length_mm: 6.6,
-        depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+        depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().portable_tan()) - root,
         crest_width_mm: 0.125,
         lower_flank_deg: 30.,
         upper_flank_deg: 30.,
@@ -65,11 +66,11 @@ fn ring() -> InvoluteGear {
         hub: None,
         teeth: 48,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * a.cos(),
+        base_radius_mm: pitch * a.portable_cos(),
         tip_radius_mm: pitch - 1.,
         root_radius_mm: pitch + 1.25,
         root_fillet_radius_mm: 0.2,
-        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.tan() + a,
+        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.portable_tan() + a,
         face_width_mm: 2.,
         bore_radius_mm: 0.,
         twist_rad_per_mm: 0.,
@@ -83,19 +84,22 @@ fn bevel() -> SphericalBevelGear {
     let (module, teeth, mate) = (2., 20_u32, 30_u32);
     let (z, mate) = (f64::from(teeth), f64::from(mate));
     let alpha = 20_f64.to_radians();
-    let delta = 1_f64.atan2(mate / z);
-    let distance = module * z / (2. * delta.sin());
-    let beta = (delta.sin() * alpha.cos()).asin();
+    let delta = 1_f64.portable_atan2(mate / z);
+    let distance = module * z / (2. * delta.portable_sin());
+    let beta = (delta.portable_sin() * alpha.portable_cos()).portable_asin();
     let inv = |g: f64| {
-        let sigma = (g.cos() / beta.cos()).acos();
-        sigma / beta.sin() - sigma.sin().atan2(beta.sin() * sigma.cos())
+        let sigma = (g.portable_cos() / beta.portable_cos()).portable_acos();
+        sigma / beta.portable_sin()
+            - sigma
+                .portable_sin()
+                .portable_atan2(beta.portable_sin() * sigma.portable_cos())
     };
     SphericalBevelGear {
         teeth,
         pitch_cone_angle_rad: delta,
         base_cone_angle_rad: beta,
-        tip_cone_angle_rad: delta + (module / distance).atan(),
-        root_cone_angle_rad: delta - (1.25 * module / distance).atan(),
+        tip_cone_angle_rad: delta + (module / distance).portable_atan(),
+        root_cone_angle_rad: delta - (1.25 * module / distance).portable_atan(),
         outer_cone_distance_mm: distance,
         face_width_mm: 8.,
         bore_radius_mm: 3.,
@@ -1340,7 +1344,7 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
         (
             "helical gear",
             Solid::rust_helical_gear_named(
-                spur(GearSweep::Helical, 15_f64.to_radians().tan() / 12.),
+                spur(GearSweep::Helical, 15_f64.to_radians().portable_tan() / 12.),
                 id(),
                 policy,
             ),
@@ -1348,7 +1352,7 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
         (
             "herringbone gear",
             Solid::rust_herringbone_named(
-                spur(GearSweep::Chevron, 15_f64.to_radians().tan() / 12.),
+                spur(GearSweep::Chevron, 15_f64.to_radians().portable_tan() / 12.),
                 id(),
                 policy,
             ),
@@ -1358,7 +1362,7 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
             Solid::rust_double_helical_named(
                 spur(
                     GearSweep::GappedChevron { gap_mm: 1. },
-                    15_f64.to_radians().tan() / 12.,
+                    15_f64.to_radians().portable_tan() / 12.,
                 ),
                 id(),
                 policy,
@@ -1375,7 +1379,7 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
                     major_radius_mm: 3.,
                     pitch_mm: 1.,
                     length_mm: 6.6,
-                    depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan())
+                    depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().portable_tan())
                         - 1. / (4. * 3_f64.sqrt()),
                     crest_width_mm: 0.125,
                     lower_flank_deg: 30.,
@@ -1395,13 +1399,13 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
         ("rounded thread", {
             let p = 1.27;
             let a = 27.5_f64.to_radians();
-            let r = p * a.cos() / (12. * (1. - a.sin()));
+            let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
             Solid::rust_rounded_thread(
                 RoundedThreadSpec {
                     major_radius_mm: 3.175,
                     pitch_mm: p,
                     length_mm: 3.7 * p,
-                    depth_mm: p / (3. * a.tan()),
+                    depth_mm: p / (3. * a.portable_tan()),
                     crest_radius_mm: r,
                     root_radius_mm: r,
                     flank_angle_deg: 27.5,
@@ -1430,7 +1434,7 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
                     pitch_mm: 0.5,
                     length_mm: 6.6,
                     crest_width_mm: 0.0625,
-                    depth_mm: (0.5 - 0.0625) / (2. * 30_f64.to_radians().tan())
+                    depth_mm: (0.5 - 0.0625) / (2. * 30_f64.to_radians().portable_tan())
                         - 0.5 / (4. * 3_f64.sqrt()),
                     ..iso_thread(2)
                 },
@@ -1473,13 +1477,13 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
         ("rounded thread bore", {
             let p = 1.27;
             let a = 27.5_f64.to_radians();
-            let r = p * a.cos() / (12. * (1. - a.sin()));
+            let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
             Solid::rust_rounded_thread_bore(
                 RoundedThreadSpec {
                     major_radius_mm: 3.175,
                     pitch_mm: p,
                     length_mm: 3.7 * p,
-                    depth_mm: p / (3. * a.tan()),
+                    depth_mm: p / (3. * a.portable_tan()),
                     crest_radius_mm: r,
                     root_radius_mm: r,
                     flank_angle_deg: 27.5,
@@ -1501,7 +1505,7 @@ pub fn families() -> Vec<(&'static str, Result<Solid, GeometryError>)> {
                     length_mm: 6.5,
                     radial_taper: 1. / 32.,
                     section: PipeSection::BsptRounded {
-                        depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
+                        depth_mm: p / (3. * 27.5_f64.to_radians().portable_tan()),
                     },
                     crest_radius_limit_mm: None,
                 },

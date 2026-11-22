@@ -3,6 +3,7 @@ use multicad_core::{
     document::Document,
     model::*,
 };
+use multicad_precision::PortableMath as _;
 fn angle(v: f64) -> multicad_core::constraint_sketch::Dimension {
     multicad_core::constraint_sketch::Dimension::Literal {
         value: v,
@@ -368,7 +369,9 @@ fn every_new_dimension_binds_with_its_actual_unit_and_h0_has_no_dormant_v() {
     else {
         unreachable!()
     };
-    assert!((profile.derived_e_width_mm() - 0.6 * 46_f64.to_radians().cos()).abs() < 1e-15);
+    assert!(
+        (profile.derived_e_width_mm() - 0.6 * 46_f64.to_radians().portable_cos()).abs() < 1e-15
+    );
     let json = serde_json::to_value(phillips(true)).unwrap();
     assert!(json["profile"]["inner"].get("angle").is_none());
     assert!(json["profile"]["inner"].get("e_width").is_none());

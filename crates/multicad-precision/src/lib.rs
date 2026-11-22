@@ -1,6 +1,9 @@
 //! Bounded exact arithmetic shared by document and geometry evaluation.
 use std::cmp::Ordering;
 
+pub mod portable;
+pub use portable::PortableMath;
+
 const MAX_COMPONENT: i128 = 1_000_000_000_000_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

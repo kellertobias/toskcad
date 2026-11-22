@@ -10,7 +10,7 @@ impl RoundedThreadBody {
         let q = self.geometry.helical_rate();
         let breaks = self.geometry.profile_breaks();
         let max_world = frame.origin.into_iter().map(f64::abs).fold(0., f64::max);
-        let slope = 1. / s.flank_angle_deg.to_radians().tan();
+        let slope = 1. / s.flank_angle_deg.to_radians().portable_tan();
         let error = 256.
             * f64::EPSILON
             * (1. + slope)
@@ -34,7 +34,7 @@ impl RoundedThreadBody {
                 )
             } else if let Some(c) = self.geometry.profile_circle(band) {
                 let range = [breaks[band], breaks[band + 1]]
-                    .map(|p| ((p - c.center_phase_mm) / c.radius_mm).asin());
+                    .map(|p| ((p - c.center_phase_mm) / c.radius_mm).portable_asin());
                 let amp = c.radius_mm / q.abs();
                 (
                     range[0],
@@ -73,7 +73,7 @@ impl RoundedThreadBody {
                         let phase = self
                             .geometry
                             .profile_circle(band)
-                            .map_or(t, |c| c.center_phase_mm + c.radius_mm * t.sin());
+                            .map_or(t, |c| c.center_phase_mm + c.radius_mm * t.portable_sin());
                         (phase, (cap - 1) as f64 * s.length_mm)
                     };
                     position(frame, self.point(phase, z))

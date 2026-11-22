@@ -85,7 +85,7 @@ impl Plan {
         }
         let angle = |p: Point| {
             let d = sub(p, tool.base_mm);
-            dot(d, e2).atan2(dot(d, e1))
+            dot(d, e2).portable_atan2(dot(d, e1))
         };
         let scale = bore
             .vertices()
@@ -321,7 +321,8 @@ impl Plan {
                 let lens = curve.map_or(0., |arc| {
                     let sweep = arc.sweep_rad;
                     let sign = if forward { 1. } else { -1. };
-                    sign * (sweep - sweep.sin()) / 2. * dot(normal, cross(arc.cos_mm, arc.sin_mm))
+                    sign * (sweep - sweep.portable_sin()) / 2.
+                        * dot(normal, cross(arc.cos_mm, arc.sin_mm))
                 });
                 chord + lens
             })
@@ -427,7 +428,7 @@ pub(super) fn encode(
                     // the patch does not reach.
                     _ => plan.free_angle(ring).ok_or(StepError::Unsupported)?,
                 };
-                let (sin, cos) = theta.sin_cos();
+                let (sin, cos) = theta.portable_sin_cos();
                 let reference: Point = std::array::from_fn(|i| cos * e1[i] + sin * e2[i]);
                 let entity = bound(file, ring, true);
                 let center = file.point(place(&placement, tool.base_mm));

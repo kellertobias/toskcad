@@ -9,6 +9,7 @@ use multicad_kernel::{
     project_drawing,
 };
 use multicad_model::{Compiler, GeometryBackend, drawing_preview_sources};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_1_SQRT_2, PI, TAU};
 
 const OBLIQUE_V: [f64; 3] = [0., FRAC_1_SQRT_2, FRAC_1_SQRT_2];
@@ -154,7 +155,7 @@ fn rim_intervals<'a>(
             continue;
         };
         if actual != role
-            || (center[0] - expected_center[0]).hypot(center[1] - expected_center[1]) > TOL
+            || (center[0] - expected_center[0]).portable_hypot(center[1] - expected_center[1]) > TOL
             || (major_mm - radius).abs() > TOL
             || (minor_mm - radius * FRAC_1_SQRT_2).abs() > TOL
         {

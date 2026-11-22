@@ -67,7 +67,7 @@ impl Rim {
                     },
                 ) => {
                     let [x, y] = std::array::from_fn(|i| a[i] - center[i]);
-                    let radius = x.hypot(y);
+                    let radius = x.portable_hypot(y);
                     let reference = placement.vector([x / radius, y / radius, 0.]);
                     let normal = placement.normal.map(|n| if *clockwise { -n } else { n });
                     let center = placement.point_f64(*center, z);
@@ -231,7 +231,7 @@ pub(super) fn encode_rings_with_trims<'a>(
             ) = (edge, &low.supports[i])
             {
                 let [x, y] = std::array::from_fn(|j| a[j] - center[j]);
-                let radius = x.hypot(y);
+                let radius = x.portable_hypot(y);
                 // Cylinder support always follows the sweep axis. The
                 // circular edge itself may run clockwise around this axis.
                 let axis = if *clockwise {

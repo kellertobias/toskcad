@@ -4,6 +4,7 @@ use crate::{
     hexalobular_drive::{Cone, Drive, Error, FiniteBinding},
     tapered_thread::interval::I,
 };
+use multicad_precision::PortableMath as _;
 use std::sync::Arc;
 #[cfg(test)]
 mod tests;
@@ -197,8 +198,8 @@ impl Recess {
             return Some(false);
         }
         let [x, y, z] = point;
-        let radius = x.hypot(y);
-        let angle = y.atan2(x);
+        let radius = x.portable_hypot(y);
+        let angle = y.portable_atan2(x);
         let (rim, depth) = match self {
             Self::FlatHex(h) => (
                 h.contour.radius_at_angle_mm(angle),

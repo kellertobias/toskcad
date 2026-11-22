@@ -344,7 +344,7 @@ impl EntryChamferBody {
         let p = rows.map(|r| dot(r, delta) / det);
         p[2] >= 0.
             && p[2] <= self.geometry.full_length_mm()
-            && p[0].hypot(p[1]) <= self.geometry.radius(p[1].atan2(p[0]), p[2])
+            && p[0].portable_hypot(p[1]) <= self.geometry.radius(p[1].portable_atan2(p[0]), p[2])
     }
     pub(super) fn mesh(
         &self,

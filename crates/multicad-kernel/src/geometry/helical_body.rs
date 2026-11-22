@@ -539,7 +539,7 @@ impl Solid {
         let requested_end = position(frame, [0., 0., spec.length_mm]);
         let distance = |a: Point, b: Point| {
             let [x, y, z] = std::array::from_fn(|i| a[i] - b[i]);
-            x.hypot(y).hypot(z)
+            x.portable_hypot(y).portable_hypot(z)
         };
         if self.policy != policy
             || policy.boolean_fuzzy_mm != 0.
@@ -590,7 +590,7 @@ impl Solid {
         // makes a transpose projection or world-axis normalization lossy.
         let chart = stock_frame::Chart::new(stock_frame);
         let [x, y, _] = chart.vector(frame.u);
-        let length = x.hypot(y);
+        let length = x.portable_hypot(y);
         let [c, s] = [x / length, y / length];
         let sign = if reversed { -1. } else { 1. };
         let placed = PlaneFrame {
@@ -955,7 +955,7 @@ impl HelicalBody {
         };
         let visible_height = height - start;
         let half_twist = visible_height / (2. * rate);
-        let spin_average = half_twist.sin() / half_twist;
+        let spin_average = half_twist.portable_sin() / half_twist;
         let mut cap_moment = [0.; 2];
         let mut walls = vec![[0.; 3]; 4 * spec.starts as usize];
         for period in 0..i64::from(spec.starts) {
@@ -963,8 +963,8 @@ impl HelicalBody {
             for (band, pair) in breaks.windows(2).enumerate() {
                 let [area, x, y, cap_x, cap_y] = integral(pair[0], pair[1], |phase| {
                     let [r, slope] = geometry.radius_and_slope_at_phase(phase);
-                    let area = r.hypot(slope * r.hypot(rate));
-                    let (sin, cos) = (-(shift + phase) / rate).sin_cos();
+                    let area = r.portable_hypot(slope * r.portable_hypot(rate));
+                    let (sin, cos) = (-(shift + phase) / rate).portable_sin_cos();
                     [
                         area,
                         area * r * cos,
@@ -988,10 +988,10 @@ impl HelicalBody {
                 1.
             };
             let [x, y] = cap_moment.map(|moment| sign * moment / (3. * rate.abs() * cap_area));
-            let (sin, cos) = (z / rate).sin_cos();
+            let (sin, cos) = (z / rate).portable_sin_cos();
             [x * cos - y * sin, x * sin + y * cos, z]
         };
-        let (sin, cos) = ((height + start) / (2. * rate)).sin_cos();
+        let (sin, cos) = ((height + start) / (2. * rate)).portable_sin_cos();
         let partial =
             matches!(&form,HelicalForm::Bore(stock) if stock.receiver(geometry).is_some());
         let end_cap = if partial {
@@ -1259,20 +1259,24 @@ impl HelicalBody {
                 return stock.contains(local, tolerance)
                     && (z >= length - tolerance
                         || z < -tolerance
-                        || x.hypot(y)
-                            >= stock.cut_radius(self.geometry, y.atan2(x), z, tolerance)
+                        || x.portable_hypot(y)
+                            >= stock.cut_radius(self.geometry, y.portable_atan2(x), z, tolerance)
                                 - tolerance);
             }
             HelicalForm::Bore(stock) => stock,
         };
         let [x, y, z] = local;
         let length = self.geometry.spec().length_mm;
-        let radius = x.hypot(y);
+        let radius = x.portable_hypot(y);
         z >= -tolerance
             && z <= stock.length() + tolerance
             && radius <= stock.radius() + tolerance
             && ((stock.length() > length && z >= length - tolerance)
-                || radius >= self.geometry.radius(y.atan2(x), z.clamp(0., length)) - tolerance)
+                || radius
+                    >= self
+                        .geometry
+                        .radius(y.portable_atan2(x), z.clamp(0., length))
+                        - tolerance)
     }
 
     pub(super) fn bounds(&self, frame: PlaneFrame) -> Bounds {
@@ -1290,7 +1294,7 @@ impl HelicalBody {
                 HelicalForm::EndRelief(relief) => relief.support(direction),
                 HelicalForm::External(stock) => stock.support(self.geometry, direction),
                 HelicalForm::Bore(stock) => {
-                    stock.radius() * frame.u[i].hypot(frame.v[i])
+                    stock.radius() * frame.u[i].portable_hypot(frame.v[i])
                         + (sign * normal[i] * stock.length()).max(0.)
                 }
                 HelicalForm::Screw(screw) => screw.support(direction),
@@ -1452,7 +1456,7 @@ impl HelicalBody {
     }
 
     fn point(&self, phase: f64, z: f64) -> Point {
-        let (sin, cos) = ((z - phase) / self.geometry.helical_rate()).sin_cos();
+        let (sin, cos) = ((z - phase) / self.geometry.helical_rate()).portable_sin_cos();
         let r = self.geometry.radius_at_phase(phase);
         [r * cos, r * sin, z]
     }
@@ -1683,9 +1687,9 @@ impl HelicalBody {
         let spec = self.geometry.spec();
         let rate = self.geometry.helical_rate().abs();
         let slope = self.geometry.maximum_profile_slope();
-        let second = spec
-            .root_radius_mm
-            .map_or(0., |rounding| (1. + slope * slope).powf(1.5) / rounding);
+        let second = spec.root_radius_mm.map_or(0., |rounding| {
+            (1. + slope * slope).portable_powf(1.5) / rounding
+        });
         let cap_curvature_bound = spec.major_radius_mm + 2. * rate * slope + rate * rate * second;
         let step =
             |second_derivative: f64| (8. * deflection / second_derivative).sqrt().min(TAU / 8.);

@@ -9,6 +9,7 @@ use multicad_kernel::{
         Circle, Rational, cylinder::AxialCylinder, display::DisplayMesh, manufacturing::certify,
     },
 };
+use multicad_precision::PortableMath as _;
 
 fn n(value: i64) -> Rational {
     Rational::new(value, 1).unwrap()
@@ -89,7 +90,7 @@ fn rust_cylinder_manufacturing_respects_chord_quality_after_rigid_placement() {
         for (a, b) in [(a, b), (b, c), (c, a)] {
             if a[2] == b[2] {
                 rim_edges += 1;
-                let midpoint_radius = ((a[0] + b[0]) / 2.).hypot((a[1] + b[1]) / 2.);
+                let midpoint_radius = ((a[0] + b[0]) / 2.).portable_hypot((a[1] + b[1]) / 2.);
                 assert!(radius - midpoint_radius <= 0.01 + 1e-12);
             }
         }
@@ -284,8 +285,8 @@ fn rust_step_rebuilds_placed_orthogonal_stock_with_blind_and_through_cuts() {
         .unwrap()
         .unwrap();
     let [a, b] = [0.37_f64, -0.61_f64];
-    let (sa, ca) = a.sin_cos();
-    let (sb, cb) = b.sin_cos();
+    let (sa, ca) = a.portable_sin_cos();
+    let (sb, cb) = b.portable_sin_cos();
     let placement = RigidTransform {
         rotation: [
             [ca * cb, -sa, ca * sb],

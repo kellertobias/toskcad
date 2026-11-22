@@ -98,7 +98,8 @@ pub(super) fn read_member(
     {
         return Err(ReadError::Invalid);
     }
-    let extent: Point = std::array::from_fn(|i| major * frame.u[i].hypot(frame.v[i]) + minor);
+    let extent: Point =
+        std::array::from_fn(|i| major * frame.u[i].portable_hypot(frame.v[i]) + minor);
     let bounds_mm =
         [-1., 1.].map(|sign| std::array::from_fn(|i| frame.origin[i] + sign * extent[i]));
     if bounds_mm[0]

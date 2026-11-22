@@ -16,6 +16,7 @@ path = "src/main.rs"
 default = []
 
 [dependencies]
+multicad-precision.workspace = true
 multicad-core.workspace = true
 multicad-kernel.workspace = true
 multicad-solver.workspace = true

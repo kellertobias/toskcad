@@ -3,6 +3,7 @@ use multicad_kernel::{
     BooleanOperation, GeometryPolicy, HelicalThread, PlaneFrame, RigidTransform,
     RootRoundedHelicalThread, Solid,
 };
+use multicad_precision::PortableMath as _;
 fn material(solid: &Solid, point: [f64; 3]) -> f64 {
     // On a 3-degree flank a radial displacement has a small normal
     // component. Keep the probe wholly on its intended side of that plane.
@@ -31,12 +32,12 @@ fn spec(left_hand: bool, reverse: bool) -> RootRoundedHelicalThread {
     };
     let lo = lower.to_radians();
     let hi = upper.to_radians();
-    let sum = lo.tan() + hi.tan();
+    let sum = lo.portable_tan() + hi.portable_tan();
     let width = (0.5 - 0.375 * sum) * pitch;
     let intersection = (pitch - width) / sum;
     let half = (lo + hi) / 2.;
     let tilt = (hi - lo) / 2.;
-    let depth = intersection - radius * (tilt.cos() / half.sin() - 1.);
+    let depth = intersection - radius * (tilt.portable_cos() / half.portable_sin() - 1.);
     RootRoundedHelicalThread {
         profile: HelicalThread {
             major_radius_mm: major,
@@ -63,11 +64,14 @@ fn asymmetric_root_is_a_true_tangent_circle_for_each_hand_and_axial_orientation(
             let r = spec.root_radius_mm;
             let lo = p.lower_flank_deg.to_radians();
             let hi = p.upper_flank_deg.to_radians();
-            let intersection = (p.pitch_mm - p.crest_width_mm) / (lo.tan() + hi.tan());
+            let intersection =
+                (p.pitch_mm - p.crest_width_mm) / (lo.portable_tan() + hi.portable_tan());
             let half = (lo + hi) / 2.;
             let tilt = (hi - lo) / 2.;
-            let cz = p.crest_width_mm / 2. + intersection * hi.tan() - r * tilt.sin() / half.sin();
-            let cr = p.major_radius_mm - intersection + r * tilt.cos() / half.sin();
+            let cz = p.crest_width_mm / 2. + intersection * hi.portable_tan()
+                - r * tilt.portable_sin() / half.portable_sin();
+            let cr =
+                p.major_radius_mm - intersection + r * tilt.portable_cos() / half.portable_sin();
             let feature = EntityId::new();
             let solid = Solid::rust_helical_thread(
                 spec.profile,
@@ -119,12 +123,15 @@ fn asymmetric_root_is_a_true_tangent_circle_for_each_hand_and_axial_orientation(
                     right_angle * 0.4,
                     right_angle * 0.8,
                 ] {
-                    let relative = cz + r * angle.sin();
-                    let boundary = cr - r * angle.cos();
+                    let relative = cz + r * angle.portable_sin();
+                    let boundary = cr - r * angle.portable_cos();
                     let phi = hand * std::f64::consts::TAU * (z - relative) / p.pitch_mm;
                     for (offset, inside) in [(-0.001, true), (0.001, false)] {
                         let radius = boundary + offset;
-                        let fraction = material(shape, [radius * phi.cos(), radius * phi.sin(), z]);
+                        let fraction = material(
+                            shape,
+                            [radius * phi.portable_cos(), radius * phi.portable_sin(), z],
+                        );
                         assert!(
                             if inside {
                                 fraction > 0.999
@@ -137,13 +144,16 @@ fn asymmetric_root_is_a_true_tangent_circle_for_each_hand_and_axial_orientation(
                 }
                 for (direction, angle) in [(-1., lo), (1., hi)] {
                     for drop in [0.2 * p.pitch_mm, 0.5 * p.pitch_mm] {
-                        let relative = direction * (p.crest_width_mm / 2. + drop * angle.tan());
+                        let relative =
+                            direction * (p.crest_width_mm / 2. + drop * angle.portable_tan());
                         let boundary = p.major_radius_mm - drop;
                         let phi = hand * std::f64::consts::TAU * (z - relative) / p.pitch_mm;
                         for (offset, inside) in [(-0.001, true), (0.001, false)] {
                             let radius = boundary + offset;
-                            let fraction =
-                                material(shape, [radius * phi.cos(), radius * phi.sin(), z]);
+                            let fraction = material(
+                                shape,
+                                [radius * phi.portable_cos(), radius * phi.portable_sin(), z],
+                            );
                             assert!(if inside {
                                 fraction > 0.999
                             } else {
@@ -154,20 +164,20 @@ fn asymmetric_root_is_a_true_tangent_circle_for_each_hand_and_axial_orientation(
                 }
             }
             // Independent phase integral of the actual external radial boundary.
-            let x0 = r * left_angle.sin();
-            let x1 = r * right_angle.sin();
+            let x0 = r * left_angle.portable_sin();
+            let x1 = r * right_angle.portable_sin();
             let primitive = |x: f64| {
                 (cr * cr + r * r) * x
                     - x.powi(3) / 3.
-                    - cr * (x * (r * r - x * x).sqrt() + r * r * (x / r).asin())
+                    - cr * (x * (r * r - x * x).sqrt() + r * r * (x / r).portable_asin())
             };
-            let rb = cr - r * hi.sin();
-            let rt = cr - r * lo.sin();
+            let rb = cr - r * hi.portable_sin();
+            let rt = cr - r * lo.portable_sin();
             let squared = p.crest_width_mm * p.major_radius_mm.powi(2)
-                + hi.tan() * (p.major_radius_mm.powi(3) - rb.powi(3)) / 3.
+                + hi.portable_tan() * (p.major_radius_mm.powi(3) - rb.powi(3)) / 3.
                 + primitive(x1)
                 - primitive(x0)
-                + lo.tan() * (p.major_radius_mm.powi(3) - rt.powi(3)) / 3.;
+                + lo.portable_tan() * (p.major_radius_mm.powi(3) - rt.powi(3)) / 3.;
             let expected = std::f64::consts::PI * p.length_mm * squared / p.pitch_mm;
             let area: f64 = solid.faces().unwrap().iter().map(|f| f.area_mm2).sum();
             let budget = GeometryPolicy::default().linear_tolerance_mm * area + 1e-7 * expected;

@@ -28,7 +28,7 @@ fn budget_error() -> GeometryError {
 }
 
 fn length([x, y, z]: [f64; 3]) -> f64 {
-    x.hypot(y).hypot(z)
+    x.portable_hypot(y).portable_hypot(z)
 }
 
 pub(super) fn pocket_error(cause: PocketError) -> GeometryError {

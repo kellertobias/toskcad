@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 fn body() -> Chamfer {
     let source = crate::helical_thread::Thread::new(crate::helical_thread::Spec {
         length_mm: 2.6,
@@ -198,8 +199,8 @@ fn a_circle_turn_at_the_existing_face_boundary_does_not_create_a_spurious_sliver
     for rounded in [false, true] {
         let radius = 0.25;
         let depth = if rounded {
-            0.875 / (2. * 45_f64.to_radians().tan())
-                - radius * (1. / 45_f64.to_radians().sin() - 1.)
+            0.875 / (2. * 45_f64.to_radians().portable_tan())
+                - radius * (1. / 45_f64.to_radians().portable_sin() - 1.)
         } else {
             0.2
         };
@@ -297,7 +298,7 @@ fn unresolved_subprecision_root_contact_cannot_be_promoted_to_a_trimmed_boundary
     spec.major_radius_mm = 1e7;
     let radius = 2_f64.powi(-40);
     spec.root_radius_mm = Some(radius);
-    spec.depth_mm = 0.875 / (2. * 30_f64.to_radians().tan()) - radius;
+    spec.depth_mm = 0.875 / (2. * 30_f64.to_radians().portable_tan()) - radius;
     let source = crate::helical_thread::Thread::new(spec).unwrap();
     let root = source.root_circle().unwrap();
     let body = Chamfer::from_material(source, root.center_radius, 0.3, None).unwrap();

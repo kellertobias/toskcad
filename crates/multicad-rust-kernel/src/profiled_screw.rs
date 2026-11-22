@@ -5,6 +5,7 @@ use crate::{
     hex_drive::HexDrive,
     screw_recess::Recess,
 };
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spec {
@@ -321,7 +322,7 @@ impl Screw {
         let [x, y, z] = point;
         let local_z = z + self.spec.shank_length_mm;
         let [top, end] = [self.profile.top()[1], self.profile.end()[1]];
-        let radius = x.hypot(y);
+        let radius = x.portable_hypot(y);
         let in_profile = local_z >= top - tolerance
             && local_z <= end + tolerance
             && radius

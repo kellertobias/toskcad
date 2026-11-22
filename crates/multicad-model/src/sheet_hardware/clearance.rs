@@ -11,6 +11,7 @@ use multicad_core::model::{
     CutoutFace, HardwareItem, HardwareSide, ResolvedPattern, ResolvedPreset,
 };
 use multicad_kernel::CurvedEdge2d;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 
 type Point = [f64; 3];
@@ -49,7 +50,9 @@ fn edge_support(edge: &CurvedEdge2d, d: [f64; 2]) -> f64 {
     let at = |p: [f64; 2]| p[0] * d[0] + p[1] * d[1];
     match *edge {
         CurvedEdge2d::Line { a, b } => at(a).max(at(b)),
-        CurvedEdge2d::Circle { center, radius_mm } => at(center) + radius_mm * d[0].hypot(d[1]),
+        CurvedEdge2d::Circle { center, radius_mm } => {
+            at(center) + radius_mm * d[0].portable_hypot(d[1])
+        }
         CurvedEdge2d::Arc {
             center,
             a,
@@ -58,12 +61,12 @@ fn edge_support(edge: &CurvedEdge2d, d: [f64; 2]) -> f64 {
         } => {
             let ends = at(a).max(at(b));
             let (from, to) = if clockwise { (b, a) } else { (a, b) };
-            let angle = |p: [f64; 2]| (p[1] - center[1]).atan2(p[0] - center[0]);
+            let angle = |p: [f64; 2]| (p[1] - center[1]).portable_atan2(p[0] - center[0]);
             let sweep = (angle(to) - angle(from)).rem_euclid(TAU);
-            let toward = (d[1].atan2(d[0]) - angle(from)).rem_euclid(TAU);
-            let radius = (a[0] - center[0]).hypot(a[1] - center[1]);
+            let toward = (d[1].portable_atan2(d[0]) - angle(from)).rem_euclid(TAU);
+            let radius = (a[0] - center[0]).portable_hypot(a[1] - center[1]);
             if toward <= sweep {
-                ends.max(at(center) + radius * d[0].hypot(d[1]))
+                ends.max(at(center) + radius * d[0].portable_hypot(d[1]))
             } else {
                 ends
             }

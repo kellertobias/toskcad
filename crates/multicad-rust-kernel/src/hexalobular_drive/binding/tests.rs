@@ -212,7 +212,7 @@ fn finite_graph_rejects_retracing_and_multiple_winding_even_inside_a_large_posit
     let mut twice = vertices;
     twice.floor_mm = std::array::from_fn(|i| {
         let t = i as f64 * TAU / 6.;
-        [t.cos(), t.sin(), 1.]
+        [t.portable_cos(), t.portable_sin(), 1.]
     });
     let curves = std::array::from_fn(|i| {
         let a = twice.floor_mm[i];
@@ -420,7 +420,8 @@ fn literal_cone_angle_keeps_its_bits_and_adds_conversion_error_to_spatial_and_ma
     let error = actual.cone_angle_conversion_error();
     assert!(error.numeric_conversion_mm > 0. && error.arithmetic_mm > 0.);
     let difference = actual.source().maximum_radius_bound_mm()
-        * (actual.source().cone().depth_per_radius - angle.cos() / angle.sin()).abs();
+        * (actual.source().cone().depth_per_radius - angle.portable_cos() / angle.portable_sin())
+            .abs();
     assert!(error.arithmetic_mm >= difference);
     assert!(
         actual.spatial_source_error_bound_mm()

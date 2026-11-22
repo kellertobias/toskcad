@@ -316,7 +316,7 @@ pub fn external_npt_head(
         let b = input.vertices[start + (i + 1) % 6];
         let dx = b[0] - a[0];
         let dy = b[1] - a[1];
-        let norm = dx.hypot(dy);
+        let norm = dx.portable_hypot(dy);
         let surface = input.surfaces.len();
         input.surfaces.push(Surface::Plane(Axis {
             origin: a,
@@ -572,7 +572,7 @@ mod tests {
         let base = b.input().vertices.len();
         for (i, angle) in [0., 130., 260., 30., 160., 290.].into_iter().enumerate() {
             let angle: f64 = angle;
-            let (sin, cos) = angle.to_radians().sin_cos();
+            let (sin, cos) = angle.to_radians().portable_sin_cos();
             for z in [0, 6] {
                 star.vertices[base + z + i][0] = 20. * cos;
                 star.vertices[base + z + i][1] = 20. * sin;
@@ -583,7 +583,7 @@ mod tests {
             let q = star.vertices[base + (i + 1) % 6];
             let dx = q[0] - a[0];
             let dy = q[1] - a[1];
-            let norm = dx.hypot(dy);
+            let norm = dx.portable_hypot(dy);
             let surface = star.faces[6 + i].surface;
             star.surfaces[surface] = Surface::Plane(Axis {
                 origin: a,

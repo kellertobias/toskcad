@@ -93,7 +93,7 @@ impl<'a> CubicTrim<'a> {
         let last = placement.point_f64(self.points[end], z);
         let discrepancy = |a: Point, b: Point| {
             let [x, y, z] = std::array::from_fn(|i| a[i] - b[i]);
-            x.hypot(y).hypot(z)
+            x.portable_hypot(y).portable_hypot(z)
         };
         let endpoint_error = discrepancy(from.point, first).max(discrepancy(to.point, last));
         let scale = self

@@ -5,6 +5,7 @@ use crate::{
     linear_sweep::Sweep,
     revolution::{Sum, edges, inside},
 };
+use multicad_precision::PortableMath as _;
 
 type Point = [f64; 2];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,7 +35,7 @@ fn sub(a: Point, b: Point) -> Point {
     [a[0] - b[0], a[1] - b[1]]
 }
 fn norm(a: Point) -> f64 {
-    a[0].hypot(a[1])
+    a[0].portable_hypot(a[1])
 }
 
 /// All coordinates use the cylinder's lower-cap chart. The section is already
@@ -114,7 +115,7 @@ pub fn measure(cylinder: &AxialCylinder, prism: &Sweep, bottom_mm: f64) -> Resul
         (z, z)
     };
     let xy = norm(sub(circle_xy, polygon_xy));
-    let distance = xy.hypot(cylinder_z - prism_z);
+    let distance = xy.portable_hypot(cylinder_z - prism_z);
     let overlap_height = (height.min(top_mm) - bottom_mm.max(0.)).max(0.);
     let (area, area_error) = if nearest_distance > radius || overlap_height == 0. {
         (0., 0.)
@@ -182,7 +183,7 @@ fn intersection_area(rings: &[Vec<Point>], radius: f64, extent: f64) -> Result<(
                 area.add(if norm(midpoint) < radius {
                     cross(p, q) / 2.
                 } else {
-                    radius * radius * cross(p, q).atan2(dot(p, q)) / 2.
+                    radius * radius * cross(p, q).portable_atan2(dot(p, q)) / 2.
                 });
                 terms += 1;
             }

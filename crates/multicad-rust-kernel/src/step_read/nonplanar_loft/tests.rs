@@ -5,7 +5,7 @@ const TOL: f64 = 1e-7;
 
 fn fixture(clockwise: bool) -> (NonplanarLoft, String) {
     let low = [[-2., -1.], [2., -1.], [2., 1.], [-2., 1.]];
-    let (sin, cos) = std::f64::consts::FRAC_PI_6.sin_cos();
+    let (sin, cos) = std::f64::consts::FRAC_PI_6.portable_sin_cos();
     let high = low.map(|[x, y]| [cos * x - sin * y + 1., sin * x + cos * y + 0.5]);
     let mut rings = [low, high];
     if clockwise {

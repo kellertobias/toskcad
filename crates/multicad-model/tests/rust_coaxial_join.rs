@@ -1,4 +1,5 @@
 use multicad_core::{model, project_file};
+use multicad_precision::PortableMath as _;
 
 #[path = "support/axis_solids.rs"]
 mod axis_solids;
@@ -127,7 +128,7 @@ fn saved_front_panel_button_union_matches_the_analytic_solid() {
         assert!((independent_bounds.min[axis] - expected_bounds.min[axis]).abs() < 1e-6);
         assert!((independent_bounds.max[axis] - expected_bounds.max[axis]).abs() < 1e-6);
     }
-    let (sin, cos) = 0.57_f64.sin_cos();
+    let (sin, cos) = 0.57_f64.portable_sin_cos();
     let oblique = actual
         .transformed(RigidTransform {
             rotation: [[cos, -sin, 0.], [sin, cos, 0.], [0., 0., 1.]],

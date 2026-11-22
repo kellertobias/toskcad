@@ -1,5 +1,6 @@
 use super::*;
 use crate::helical_thread::{Spec as LegacySpec, Thread};
+use multicad_precision::PortableMath as _;
 use std::cell::Cell;
 fn source(left: bool, nb: bool, large: bool) -> (Spec, Thread) {
     let (p, major, pd) = if large {
@@ -128,8 +129,8 @@ fn whole_boxes_follow_the_new_continuous_law_and_retain_boundary_uncertainty() {
             Ok(Outside)
         );
         for [x, y] in [[1_f64, 0.2], [-1., 0.2], [-1., -0.2], [0., 1.], [0., -1.]] {
-            let theta = y.atan2(x);
-            let norm = x.hypot(y);
+            let theta = y.portable_atan2(x);
+            let norm = x.portable_hypot(y);
             let z = 1.13;
             let rate = (if left { -1. } else { 1. }) * spec.pitch_mm / std::f64::consts::TAU;
             let q = (z - rate * theta).rem_euclid(spec.pitch_mm);
@@ -303,7 +304,7 @@ fn actual_regular_normal_correspondence_is_bounded_without_claiming_old_closure_
                 let z = 1.23;
                 let normal = |q: f64, r: f64, m: f64, rate: f64| {
                     let theta = (z - q) / rate;
-                    let (s, c) = theta.sin_cos();
+                    let (s, c) = theta.portable_sin_cos();
                     let beta = rate * m / r;
                     let v = [c - beta * s, s + beta * c, -m];
                     let l = v.into_iter().map(|x| x * x).sum::<f64>().sqrt();
@@ -419,7 +420,8 @@ fn extreme_aspect_analytic_support_transfer_refuses_unproved_accuracy_and_bounds
         let ro = old.radius_at_phase(qo);
         let tn = (spec.length_mm - qn) / a.rate().midpoint();
         let to = (spec.length_mm - qo) / old.helical_rate();
-        let distance = (rn * tn.cos() - ro * to.cos()).hypot(rn * tn.sin() - ro * to.sin());
+        let distance = (rn * tn.portable_cos() - ro * to.portable_cos())
+            .portable_hypot(rn * tn.portable_sin() - ro * to.portable_sin());
         assert!(distance < proof.bands[band].position_error_mm);
     }
 }

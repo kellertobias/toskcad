@@ -1,5 +1,6 @@
 //! Independent generic cone semantics beside source-known full readback.
 use super::*;
+use multicad_precision::PortableMath as _;
 const TOL: f64 = 1e-7;
 fn body(left: bool) -> crate::thread_entry_chamfer::Chamfer {
     let tool = crate::helical_thread::Thread::new(crate::helical_thread::Spec {
@@ -182,7 +183,7 @@ fn former_slant_height_cannot_be_repaired_by_reparameterizing_a_constant_height_
             panic!()
         };
         let [x, z] = uv_point(values);
-        let old_slant = z / std::f64::consts::FRAC_PI_4.cos();
+        let old_slant = z / std::f64::consts::FRAC_PI_4.portable_cos();
         let replacement = format!("CARTESIAN_POINT('',({x:.16E},{old_slant:.16E}))");
         let offset = original.as_ptr() as usize - text.as_ptr() as usize;
         edits.push((offset, original.len(), replacement));

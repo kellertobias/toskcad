@@ -35,7 +35,7 @@ impl Cut {
         } else if t == 3. * FRAC_PI_2 {
             (-1., 0.)
         } else {
-            t.sin_cos()
+            t.portable_sin_cos()
         };
         match branch {
             Branch::Tube(sign) => [
@@ -45,7 +45,7 @@ impl Cut {
             Branch::Merged => {
                 let extent = self.across(self.outer());
                 let x = extent * sin;
-                let radial = x.hypot(self.offset);
+                let radial = x.portable_hypot(self.offset);
                 let ratio = (radial - self.inner()).max(0.) / (self.outer() + radial);
                 [x, extent * cos * ratio.sqrt()]
             }
@@ -57,13 +57,13 @@ impl Cut {
         // the radial coordinate and, on a tube branch, |sin(t)|.
         let [a, b] = ends;
         let xmin = a[0].abs().min(b[0].abs());
-        let radial = xmin.hypot(self.offset);
+        let radial = xmin.portable_hypot(self.offset);
         match branch {
             Branch::Tube(_) => {
                 let axial = a[1].abs().max(b[1].abs());
                 let curvature =
                     self.offset.powi(2) * axial.powi(2) / xmin.powi(3) + self.minor * radial / xmin;
-                curvature.hypot(self.minor)
+                curvature.portable_hypot(self.minor)
             }
             Branch::Merged => {
                 let extent = self.across(self.outer());
@@ -77,13 +77,13 @@ impl Cut {
                 let f_prime = g_prime / (2. * f);
                 let f_second = g_second / (2. * f) + g_prime.powi(2) / (4. * f.powi(3));
                 let xmax = a[0].abs().max(b[0].abs());
-                let radial_prime = (xmax / xmax.hypot(self.offset)) * extent;
+                let radial_prime = (xmax / xmax.portable_hypot(self.offset)) * extent;
                 let radial_second = (extent.powi(2) + xmax.powi(2)) / radial;
                 let y_second = extent
                     * (1.
                         + f_prime * (2. * radial_prime + radial_second)
                         + f_second * radial_prime.powi(2));
-                extent.hypot(y_second)
+                extent.portable_hypot(y_second)
             }
         }
     }
@@ -118,7 +118,7 @@ fn append_chords(
         )];
         while let Some(([lo, hi], ends)) = pending.pop() {
             let [du, dv] = std::array::from_fn(|axis| (ends[1][axis] - ends[0][axis]).abs());
-            let length = du.hypot(dv);
+            let length = du.portable_hypot(dv);
             let box_error = if length > 0. { du * dv / length } else { 0. };
             let second_error = cut.second_derivative(branch, ends) * (hi - lo).powi(2) / 8.;
             // Either the monotone rectangle or the interpolation remainder
@@ -178,7 +178,7 @@ pub(super) fn project(
     } else {
         let mut stations = quarters.to_vec();
         if offset < major {
-            let angle = (cut.across(major) / cut.across(cut.outer())).asin();
+            let angle = (cut.across(major) / cut.across(cut.outer())).portable_asin();
             stations = vec![
                 0.,
                 angle,

@@ -159,9 +159,9 @@ impl GearParameters {
         let radius = fillet * module;
         // Outward normal of x+y*tan(alpha)=physical/2 points into the gap.
         let cy = -dedendum + radius;
-        let cx = physical / 2. + radius / pressure.cos() - cy * pressure.tan();
-        let tangent_y = cy - radius * pressure.sin();
-        let tip = physical - 2. * addendum * pressure.tan();
+        let cx = physical / 2. + radius / pressure.portable_cos() - cy * pressure.portable_tan();
+        let tangent_y = cy - radius * pressure.portable_sin();
+        let tip = physical - 2. * addendum * pressure.portable_tan();
         let root_flat = pitch - 2. * cx;
         if physical <= 0. || tip <= 1e-5 || root_flat <= 1e-5 || tangent_y >= addendum {
             return Err(invalid(
@@ -272,7 +272,7 @@ impl GearPairParameters {
         phases[pinion_index] = pinion_phase;
         let base = self.frame.resolve(evaluated)?;
         let mating = std::array::from_fn(|index| {
-            let (sin, cos) = phases[index].rem_euclid(2. * PI).sin_cos();
+            let (sin, cos) = phases[index].rem_euclid(2. * PI).portable_sin_cos();
             crate::references::ReferenceFrame {
                 origin_mm: std::array::from_fn(|i| {
                     base.origin[i]

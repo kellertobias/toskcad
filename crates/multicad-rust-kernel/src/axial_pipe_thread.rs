@@ -3,6 +3,7 @@
 //! This source is not an admission certificate for a manufacturing boundary.
 pub use crate::tapered_thread::Error;
 use crate::tapered_thread::interval::I;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 pub mod authored;
 #[cfg(test)]
@@ -204,8 +205,8 @@ impl Thread {
                 ..
             } => {
                 let angle = 27.5_f64.to_radians();
-                let (sin, cos) = angle.sin_cos();
-                let m = 1. / angle.tan();
+                let (sin, cos) = angle.portable_sin_cos();
+                let m = 1. / angle.portable_tan();
                 let q = (1. + k * k).sqrt();
                 let fundamental = p * (m * m - k * k) / (2. * m);
                 let expected = fundamental - 2. * cr * (1. / sin - q);

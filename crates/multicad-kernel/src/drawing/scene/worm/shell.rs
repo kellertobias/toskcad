@@ -8,6 +8,7 @@
 //! at one height is the section boundary and `∂S/∂u × ∂S/∂z` points out of
 //! the material.
 use super::V3;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::worm_gear::{
     Wheel, Worm,
     wheel::{PIECES, Piece},
@@ -157,7 +158,7 @@ impl Shell for Screw {
         // The profile is affine between its breaks.
         let r = r0 + (r1 - r0) * u;
         let theta = (z + self.half - s) / self.rate + self.turn;
-        let (sin, cos) = theta.sin_cos();
+        let (sin, cos) = theta.portable_sin_cos();
         let spin = -(s1 - s0) / self.rate;
         let dr = r1 - r0;
         Jet3 {
@@ -337,7 +338,7 @@ impl Teeth {
                     let v = teeth.half * (f64::from(j) / 8. - 1.);
                     let [p, du, dv] = teeth.piece(&teeth.station(v), piece, u);
                     let turn = cross2(p, du);
-                    let r = p[0].hypot(p[1]);
+                    let r = p[0].portable_hypot(p[1]);
                     bounds[0] = bounds[0].max((r * dot2(p, du) / turn).abs());
                     bounds[1] = bounds[1]
                         .max(((dot2(p, dv) - dot2(p, du) * cross2(p, dv) / turn) / r).abs());
@@ -392,7 +393,7 @@ impl Teeth {
                     let u = f64::from(i) / 64.;
                     let [p, du, dv] = self.piece(&station, patch, u);
                     let turn = cross2(p, du);
-                    let r = p[0].hypot(p[1]);
+                    let r = p[0].portable_hypot(p[1]);
                     let [ru, rv] = [dot2(p, du) / r, dot2(p, dv) / r];
                     let reach = (ru.abs() * du_step + rv.abs() * dv_step) / 2.;
                     below.push((
@@ -415,7 +416,7 @@ impl Teeth {
                         ],
                     ));
                     let side = usize::from(patch > 3);
-                    let angle = p[1].atan2(p[0]);
+                    let angle = p[1].portable_atan2(p[0]);
                     let pad = tu.abs() * du_step + tv.abs() * dv_step;
                     extents[side] = [
                         extents[side][0].min(angle - pad),
@@ -528,7 +529,7 @@ impl Teeth {
             }
             self.wheel.surface_frame(edge, u, v)
         };
-        p[1].atan2(p[0])
+        p[1].portable_atan2(p[0])
     }
 
     /// The exit of a flank from the blank.
@@ -540,7 +541,7 @@ impl Teeth {
         Exit {
             radius: a,
             slope,
-            angle: p[1].atan2(p[0]),
+            angle: p[1].portable_atan2(p[0]),
             turn: cross2(p, rise) / dot2(p, p),
         }
     }
@@ -562,7 +563,7 @@ impl Teeth {
         station.joints[5] = exits[1].angle;
         for joint in 1..5 {
             let [p, ..] = self.piece(&station, joint + 1, 0.);
-            station.joints[joint] = p[1].atan2(p[0]);
+            station.joints[joint] = p[1].portable_atan2(p[0]);
         }
         *last = Some(station);
         station
@@ -601,7 +602,7 @@ impl Teeth {
             _ => return self.piece(station, patch, u),
         };
         let angle = from + (to - from) * u;
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let tangent = [-self.blank * sin, self.blank * cos];
         let turn = from_turn + (to_turn - from_turn) * u;
         [
@@ -631,8 +632,8 @@ impl Teeth {
         let mut radius = self.blank;
         for _ in 0..80 {
             let [p, du, _] = self.piece(station, patch, u);
-            radius = p[0].hypot(p[1]);
-            let f = p[1].atan2(p[0]) - angle;
+            radius = p[0].portable_hypot(p[1]);
+            let f = p[1].portable_atan2(p[0]) - angle;
             if f < 0. {
                 lo = u;
             } else {
@@ -646,7 +647,7 @@ impl Teeth {
             };
             if (next - u).abs() <= 4. * f64::EPSILON || hi - lo <= 4. * f64::EPSILON {
                 let [p, ..] = self.piece(station, patch, next);
-                return p[0].hypot(p[1]);
+                return p[0].portable_hypot(p[1]);
             }
             u = next;
         }
@@ -670,7 +671,7 @@ impl Shell for Teeth {
     fn eval(&self, patch: usize, u: f64, z: f64) -> Jet3 {
         let station = self.station(z / self.m);
         let [p, du, dv] = self.chain(&station, patch % CHAIN, u);
-        let (sin, cos) = self.sector(patch).sin_cos();
+        let (sin, cos) = self.sector(patch).portable_sin_cos();
         let turn = |[x, y]: [f64; 2], scale: f64, z: f64| {
             [scale * (cos * x - sin * y), scale * (sin * x + cos * y), z]
         };
@@ -699,11 +700,11 @@ impl Shell for Teeth {
         }
         let station = self.station(z / self.m);
         let [a, b] = [0., 1.].map(|u| self.chain(&station, chain, u)[0]);
-        let from = a[1].atan2(a[0]);
+        let from = a[1].portable_atan2(a[0]);
         Some([
-            self.m * a[0].hypot(a[1]),
+            self.m * a[0].portable_hypot(a[1]),
             from + self.sector(patch),
-            b[1].atan2(b[0]) - from,
+            b[1].portable_atan2(b[0]) - from,
         ])
     }
 
@@ -723,7 +724,7 @@ impl Shell for Teeth {
     fn annulus(&self) -> [f64; 2] {
         // The throat of the root lies at the mid plane.
         let [p, ..] = self.wheel.surface_frame(Piece::Torus, 0.5, 0.);
-        [self.m * p[0].hypot(p[1]), self.m * self.blank]
+        [self.m * p[0].portable_hypot(p[1]), self.m * self.blank]
     }
 
     fn lipschitz(&self) -> [f64; 2] {

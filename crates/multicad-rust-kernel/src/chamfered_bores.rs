@@ -4,6 +4,7 @@ use crate::{
     circular_pockets::{PocketError, ring_contains_clear_disk},
     polygon::PolygonPrism,
 };
+use multicad_precision::PortableMath as _;
 use std::{f64::consts::PI, sync::Arc};
 mod counterbores;
 pub use counterbores::{Counterbore, Countersink};
@@ -248,7 +249,7 @@ fn check_clearance(
             // reaches its maximum on one of the two caps.
             let [other_start, other_end] = cap_radii(other);
             let [dx, dy] = std::array::from_fn(|i| stack.center_mm[i] - other.center_mm[i]);
-            if dx.hypot(dy) <= (start + other_start).max(end + other_end) + guard {
+            if dx.portable_hypot(dy) <= (start + other_start).max(end + other_end) + guard {
                 return Err(UnresolvedBoundary);
             }
         }

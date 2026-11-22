@@ -16,6 +16,7 @@ use multicad_core::{
     parameters::{EvaluatedParameters, Unit},
     sketch::Frame,
 };
+use multicad_precision::PortableMath as _;
 
 /// What the outline becomes. A wall path may stay open; a slab outline is
 /// always a closed polygon.
@@ -120,7 +121,7 @@ fn cross(a: [f64; 2], b: [f64; 2]) -> f64 {
     a[0] * b[1] - a[1] * b[0]
 }
 fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 /// Distance from `p` to segment `a`-`b`.
 fn segment_distance(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
@@ -694,7 +695,7 @@ impl OutlineEditor {
             && let Some(r) = reference
         {
             let d = sub(raw, r);
-            let angle = d[1].atan2(d[0]).to_degrees().rem_euclid(90.);
+            let angle = d[1].portable_atan2(d[0]).to_degrees().rem_euclid(90.);
             if angle.min(90. - angle) <= ORTHO_DEG && dist(raw, r) > 1e-6 {
                 let horizontal = d[0].abs() >= d[1].abs();
                 let point = if horizontal {
@@ -915,7 +916,7 @@ impl OutlineEditor {
         if !(distance > 0. && distance.is_finite()) {
             return Err("Segment length must be positive".into());
         }
-        let (s, c) = angle_deg.to_radians().sin_cos();
+        let (s, c) = angle_deg.to_radians().portable_sin_cos();
         if self.corners.len() >= corner_limit(self.kind) {
             return Err(format!(
                 "This path supports at most {} corners",
@@ -1431,7 +1432,7 @@ impl OutlineEditor {
                         view.painter.text(
                             to_screen(p) + egui::vec2(10., 10.),
                             egui::Align2::LEFT_TOP,
-                            format!("{:.1}°", d[1].atan2(d[0]).to_degrees()),
+                            format!("{:.1}°", d[1].portable_atan2(d[0]).to_degrees()),
                             font.clone(),
                             pending,
                         );

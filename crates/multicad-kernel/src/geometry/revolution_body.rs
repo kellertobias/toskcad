@@ -45,7 +45,7 @@ fn difference(a: Point, b: Point) -> Point {
 }
 
 fn norm([x, y, z]: Point) -> f64 {
-    x.hypot(y).hypot(z)
+    x.portable_hypot(y).portable_hypot(z)
 }
 
 fn unit(vector: Point) -> Point {
@@ -54,7 +54,7 @@ fn unit(vector: Point) -> Point {
 }
 
 fn spun([r, z]: MeridianPoint, angle: f64) -> Point {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     [r * cos, r * sin, z]
 }
 
@@ -177,7 +177,7 @@ impl Solid {
                         profile, axis, angle_rad, feature, origins, policy,
                     );
                 };
-                if (b[0] - next[0]).hypot(b[1] - next[1]) > policy.linear_tolerance_mm {
+                if (b[0] - next[0]).portable_hypot(b[1] - next[1]) > policy.linear_tolerance_mm {
                     return Err(input(
                         "Revolution profile edges must form ordered closed wires",
                     ));
@@ -495,7 +495,7 @@ impl RevolutionBody {
         let mean_angular = if self.geometry.is_full() {
             0.
         } else {
-            (sweep / 2.).sin() / (sweep / 2.)
+            (sweep / 2.).portable_sin() / (sweep / 2.)
         };
         for (ring, points) in self.geometry.rings().iter().enumerate() {
             for (edge, (&[a, z0], &[b, z1])) in
@@ -517,7 +517,7 @@ impl RevolutionBody {
                         frame,
                         spun([center_r * mean_angular, center_z], sweep / 2.),
                     ),
-                    area_mm2: sweep.abs() * (a - b).hypot(z1 - z0) * radius_sum / 2.,
+                    area_mm2: sweep.abs() * (a - b).portable_hypot(z1 - z0) * radius_sum / 2.,
                 });
             }
         }

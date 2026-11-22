@@ -3,6 +3,7 @@ use multicad_core::{
     references::{Attachment, GeometryIntent, Origin, Resolution, TopologyKind, resolve},
 };
 use multicad_kernel::*;
+use multicad_precision::PortableMath as _;
 fn policy() -> GeometryPolicy {
     Default::default()
 }
@@ -58,7 +59,7 @@ fn prism(feature: EntityId, curves: &[Origin], height: f64) -> Solid {
     .unwrap()
 }
 fn target(height: f64, slope: f64) -> PlaneFrame {
-    let l = 1_f64.hypot(slope);
+    let l = 1_f64.portable_hypot(slope);
     PlaneFrame {
         origin: [0., 0., height],
         u: [1. / l, 0., slope / l],

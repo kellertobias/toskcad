@@ -35,8 +35,13 @@ pub(crate) fn edge_ends(shape: Shape, point: impl Fn(Curve, f64) -> Point) -> [P
             radius_mm,
             start_rad,
             sweep_rad,
-        } => [start_rad, start_rad + sweep_rad]
-            .map(|t| [radius_mm * t.cos(), radius_mm * t.sin(), z_mm]),
+        } => [start_rad, start_rad + sweep_rad].map(|t| {
+            [
+                radius_mm * t.portable_cos(),
+                radius_mm * t.portable_sin(),
+                z_mm,
+            ]
+        }),
         Shape::Sampled(curve) => [0., 1.].map(|t| point(curve, t)),
     }
 }
@@ -122,7 +127,7 @@ fn wheels_mesh_watertight_with_exact_volume_areas_and_roles() {
 fn wheel_classification_follows_spaces_teeth_bore_and_ends() {
     let wheel = wheel(spec(1., 40, 1.5, 4., 0.05));
     let tooth = wheel.span();
-    let at = |r: f64, angle: f64, z: f64| [r * angle.cos(), r * angle.sin(), z];
+    let at = |r: f64, angle: f64, z: f64| [r * angle.portable_cos(), r * angle.portable_sin(), z];
     assert_eq!(wheel.classify(at(20., 0., 0.), 1e-6), Containment::Outside);
     assert_eq!(
         wheel.classify(at(20., tooth, 0.), 1e-6),

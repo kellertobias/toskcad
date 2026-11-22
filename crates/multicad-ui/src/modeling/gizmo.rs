@@ -1,5 +1,6 @@
 //! Display handles produce typed rigid-placement controls. They never edit a
 //! mesh or commit a document; the controller requires a complete native receipt.
+use multicad_precision::PortableMath as _;
 pub(crate) mod math;
 use crate::{camera::Camera, egui, viewport::Scene};
 use egui::{Color32, Pos2, Rect, Stroke};
@@ -205,8 +206,8 @@ fn shapes(camera: Camera, rect: Rect, origin: Point, basis: GizmoBasis) -> Vec<H
                     camera,
                     rect,
                     add(
-                        add(origin, mul(basis.axes[a], t.cos() * length * 0.74)),
-                        mul(basis.axes[b], t.sin() * length * 0.74),
+                        add(origin, mul(basis.axes[a], t.portable_cos() * length * 0.74)),
+                        mul(basis.axes[b], t.portable_sin() * length * 0.74),
                     ),
                 )
             })
@@ -339,7 +340,7 @@ impl Drag {
                 if dot(b, b) < 1e-12 {
                     return Ok(None);
                 }
-                let angle = dot(self.basis.axes[i], cross(a, b)).atan2(dot(a, b));
+                let angle = dot(self.basis.axes[i], cross(a, b)).portable_atan2(dot(a, b));
                 let mut delta = angle - self.last_angle;
                 while delta > std::f64::consts::PI {
                     delta -= std::f64::consts::TAU;

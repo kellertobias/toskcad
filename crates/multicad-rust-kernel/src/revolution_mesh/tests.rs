@@ -41,11 +41,11 @@ fn full_cone_closes_with_one_index_per_pole_and_no_axis_walls() {
         assert!(
             vertices[2..]
                 .iter()
-                .all(|&[x, y, z]| { z == 0. && (x.hypot(y) - 3.).abs() < 1e-13 })
+                .all(|&[x, y, z]| { z == 0. && (x.portable_hypot(y) - 3.).abs() < 1e-13 })
         );
         let step = TAU / (vertices.len() - 2) as f64;
-        assert!((proof.signed_volume_mm3 - 15. * PI * step.sin() / step).abs() < 1e-12);
-        assert!(3. * (1. - (step / 2.).cos()) <= OPTIONS.deflection);
+        assert!((proof.signed_volume_mm3 - 15. * PI * step.portable_sin() / step).abs() < 1e-12);
+        assert!(3. * (1. - (step / 2.).portable_cos()) <= OPTIONS.deflection);
         assert!(step <= OPTIONS.angle);
     }
 }
@@ -89,11 +89,11 @@ fn partial_caps_and_full_cavity_keep_their_material_and_winding() {
         let (vertices, _) = mesh.vertices.as_chunks::<3>();
         let stations = vertices.len() / 8;
         let step = angle.abs() / (stations - usize::from(!shape.is_full())) as f64;
-        let expected = 93. * angle.abs() * step.sin() / step;
+        let expected = 93. * angle.abs() * step.portable_sin() / step;
         assert!((proof.signed_volume_mm3 - expected).abs() < 2e-12);
         if !shape.is_full() {
             for (cap, theta) in [0., angle].into_iter().enumerate() {
-                let [sin, cos] = [theta.sin(), theta.cos()];
+                let [sin, cos] = [theta.portable_sin(), theta.portable_cos()];
                 let area: f64 = mesh
                     .indices
                     .as_chunks::<3>()

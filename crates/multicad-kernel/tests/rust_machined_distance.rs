@@ -4,6 +4,7 @@ use multicad_kernel::{
     RigidTransform, Solid,
     rust_kernel::{Circle, Rational, polygon::PolygonPrism},
 };
+use multicad_precision::PortableMath as _;
 
 fn panel() -> Solid {
     let owner = EntityId::new();
@@ -117,7 +118,7 @@ fn separated_curved_stock_preserves_finite_witnesses_under_both_query_orders_and
                 assert!(!result.inner_solution);
                 for witness in result.witnesses {
                     let d: [f64; 3] = std::array::from_fn(|i| witness.a_mm[i] - witness.b_mm[i]);
-                    assert!((d[0].hypot(d[1]).hypot(d[2]) - 4.).abs() < 1e-7);
+                    assert!((d[0].portable_hypot(d[1]).portable_hypot(d[2]) - 4.).abs() < 1e-7);
                 }
             }
         }

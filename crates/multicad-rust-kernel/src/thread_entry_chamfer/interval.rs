@@ -1,5 +1,6 @@
 //! Outward finite arithmetic for source-coordinate material certificates.
 use super::Error;
+use multicad_precision::PortableMath as _;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct I {
@@ -129,7 +130,13 @@ impl I {
         if self.width() >= std::f64::consts::TAU.next_down() || self.magnitude() > 1_000_000. {
             return Self::new(-1., 1.);
         }
-        let f = |x: f64| if cosine { x.cos() } else { x.sin() };
+        let f = |x: f64| {
+            if cosine {
+                x.portable_cos()
+            } else {
+                x.portable_sin()
+            }
+        };
         let [a, b] = [f(self.lo), f(self.hi)];
         let mut out = Self::new(
             a.min(b).next_down().next_down().max(-1.),

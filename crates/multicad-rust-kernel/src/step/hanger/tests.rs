@@ -1,5 +1,6 @@
 use super::*;
 use crate::authored_metric_thread::Spec;
+use multicad_precision::PortableMath as _;
 fn source(pitch: f64, left_hand: bool) -> AuthoredMetricThread {
     AuthoredMetricThread::new(Spec {
         major_radius_mm: 3. * pitch,
@@ -87,7 +88,11 @@ fn actual_rounded_root_tensor_retains_original_source_and_certifies_both_hands_f
                     let r = profile[1].midpoint();
                     let turn = -0.625 + 24.25 * v;
                     let theta = std::f64::consts::TAU * turn * if left { -1. } else { 1. };
-                    let expected = [r * theta.cos(), r * theta.sin(), q + pitch * turn];
+                    let expected = [
+                        r * theta.portable_cos(),
+                        r * theta.portable_sin(),
+                        q + pitch * turn,
+                    ];
                     let actual = actual(&surface, u, v);
                     let error = (0..3).map(|i| (actual[i] - expected[i]).abs()).sum::<f64>();
                     assert!(

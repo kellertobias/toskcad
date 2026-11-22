@@ -5,6 +5,7 @@ use multicad_core::{
     project_file::{self, ProjectFile},
     symbols::{self, SymbolAuthorRequest, SymbolKind},
 };
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -135,8 +136,8 @@ fn exact_rounded_profile_uses_feasible_three_diameter_intersection_for_every_mod
             };
             let r = p.resolve(s.parameters(), mode).unwrap();
             let a = 27.5_f64.to_radians();
-            let depth = preset.pitch_mm / (3. * a.tan());
-            let radius = preset.pitch_mm * a.cos() / (12. * (1. - a.sin()));
+            let depth = preset.pitch_mm / (3. * a.portable_tan());
+            let radius = preset.pitch_mm * a.portable_cos() / (12. * (1. - a.portable_sin()));
             assert!((r.profile.depth_mm - depth).abs() < 1e-12);
             assert!((r.profile.rounding_radius_mm.unwrap() - radius).abs() < 1e-12);
             assert_eq!(r.profile.crest_width_mm, 0.);

@@ -1,6 +1,7 @@
 //! Exact axial views of a rectangular panel with certified parallel blind cuts.
 use super::*;
 use multicad_core::references::{AnalyticGeometry, TopologyKind};
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::curved_projection::{Curve, Edge, Ellipse};
 use std::{collections::BTreeMap, f64::consts::TAU};
 
@@ -26,7 +27,7 @@ pub(super) fn project_spur_gear(
     let (body, frame) = input.solid.spur_gear_body()?;
     let [u, v, toward_viewer] = planar::view_axes(options.frame);
     let axis = frame.normal();
-    if dot(axis, u).hypot(dot(axis, v)) > 32. * f64::EPSILON || options.detail.is_some() {
+    if dot(axis, u).portable_hypot(dot(axis, v)) > 32. * f64::EPSILON || options.detail.is_some() {
         return Some(Err(err(
             GeometryErrorKind::Unsupported,
             "Rust spur gear drawing currently requires an uncropped axial view",
@@ -66,7 +67,7 @@ pub(super) fn project_internal_ring(
     let (body, frame) = input.solid.internal_ring_body()?;
     let [u, v, toward_viewer] = planar::view_axes(options.frame);
     let axis = frame.normal();
-    if dot(axis, u).hypot(dot(axis, v)) > 32. * f64::EPSILON || options.detail.is_some() {
+    if dot(axis, u).portable_hypot(dot(axis, v)) > 32. * f64::EPSILON || options.detail.is_some() {
         return Some(Err(err(
             GeometryErrorKind::Unsupported,
             "Rust internal ring drawing currently requires an uncropped axial view",
@@ -100,7 +101,9 @@ pub(super) fn section_herringbone(
     }
     let [u, v, toward_viewer] = planar::view_axes(options.frame);
     let normal = placement.normal();
-    if dot(normal, u).hypot(dot(normal, v)) > 64. * f64::EPSILON || options.detail.is_some() {
+    if dot(normal, u).portable_hypot(dot(normal, v)) > 64. * f64::EPSILON
+        || options.detail.is_some()
+    {
         return Some(Err(err(
             GeometryErrorKind::Unsupported,
             "Rust herringbone sections require a plane perpendicular to the gear axis",
@@ -436,10 +439,10 @@ impl Screen {
                 } else {
                     start_rad
                 };
-                let (sin, cos) = start.sin_cos();
+                let (sin, cos) = start.portable_sin_cos();
                 let direction = std::array::from_fn(|i| cos * frame.u[i] + sin * frame.v[i]);
                 let [x, y] = self.axes.map(|axis| dot(axis, direction));
-                let length = x.hypot(y);
+                let length = x.portable_hypot(y);
                 let u = [x / length, y / length];
                 Ok(Curve::Ellipse(Ellipse {
                     center: self.point(frame.origin_mm),
@@ -549,7 +552,9 @@ pub(super) fn section_straight_gear(
         };
     let [u, v, toward_viewer] = planar::view_axes(options.frame);
     let normal = placement.normal();
-    if dot(normal, u).hypot(dot(normal, v)) > 64. * f64::EPSILON || options.detail.is_some() {
+    if dot(normal, u).portable_hypot(dot(normal, v)) > 64. * f64::EPSILON
+        || options.detail.is_some()
+    {
         return Some(Err(err(
             GeometryErrorKind::Unsupported,
             "Rust spur and internal ring sections require an uncropped plane perpendicular to the gear axis",

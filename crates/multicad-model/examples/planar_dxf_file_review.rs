@@ -5,6 +5,7 @@ use multicad_core::{
     exchange::{Layers, RecipeOutput, WrittenFile, read},
     project_file::{self, ContentHash},
 };
+use multicad_precision::PortableMath as _;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
@@ -84,7 +85,7 @@ fn inspect(
                     )?;
                     let dx = b[0] - a[0];
                     let dy = b[1] - a[1];
-                    let chord = dx.hypot(dy);
+                    let chord = dx.portable_hypot(dy);
                     require(chord > 1e-7, "Duplicate or zero-length cut segment")?;
                     include(&mut bounds, [a[0], a[1]]);
                     signed_area += (a[0] * b[1] - a[1] * b[0]) * 0.5;
@@ -94,14 +95,14 @@ fn inspect(
                         continue;
                     }
                     // Recover the exact arc independently from the imported bulge.
-                    let theta = 4. * a[2].atan();
+                    let theta = 4. * a[2].portable_atan();
                     let factor = (1. - a[2] * a[2]) / (4. * a[2]);
                     let center = [
                         (a[0] + b[0]) * 0.5 - dy * factor,
                         (a[1] + b[1]) * 0.5 + dx * factor,
                     ];
                     let radius = chord * (1. + a[2] * a[2]) / (4. * a[2].abs());
-                    signed_area += radius * radius * (theta - theta.sin()) * 0.5;
+                    signed_area += radius * radius * (theta - theta.portable_sin()) * 0.5;
                     sweep_sum += theta;
                     if let Some((old, r)) = circle {
                         circular &=
@@ -109,7 +110,7 @@ fn inspect(
                     } else {
                         circle = Some((center, radius));
                     }
-                    let start = (a[1] - center[1]).atan2(a[0] - center[0]);
+                    let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
                     for cardinal in 0..4 {
                         let angle = cardinal as f64 * std::f64::consts::FRAC_PI_2;
                         let distance = if theta > 0. {
@@ -122,8 +123,8 @@ fn inspect(
                             include(
                                 &mut bounds,
                                 [
-                                    center[0] + radius * angle.cos(),
-                                    center[1] + radius * angle.sin(),
+                                    center[0] + radius * angle.portable_cos(),
+                                    center[1] + radius * angle.portable_sin(),
                                 ],
                             );
                         }

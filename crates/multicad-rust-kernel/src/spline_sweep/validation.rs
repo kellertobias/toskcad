@@ -1,6 +1,7 @@
 //! Shared source-rim proof for authored and decoded spline sweeps.
 use super::{ConstructionError, Edge};
 use crate::normal_sweep;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 mod roundoff;
 type Point2 = [f64; 2];
@@ -139,7 +140,7 @@ pub(crate) fn clear_disk(
     let closest = std::array::from_fn(|i| center[i].clamp(a[i], b[i]));
     if norm(sub2(closest, center)) > radius {
         let [a, b] = piece.endpoints().map(|p| sub2(p, center));
-        return Ok(cross2(a, b).atan2(dot2(a, b)));
+        return Ok(cross2(a, b).portable_atan2(dot2(a, b)));
     }
     if depth == MAX_DEPTH || diameter([a, b]) <= radius * 1e-8 {
         return Err(ConstructionError::Unresolved);
@@ -306,7 +307,7 @@ impl Piece {
         match self {
             Self::Line(_) => true,
             Self::Arc(arc) => {
-                let worst = axis[1].atan2(axis[0]) + arc.sweep.signum() * FRAC_PI_2;
+                let worst = axis[1].portable_atan2(axis[0]) + arc.sweep.signum() * FRAC_PI_2;
                 !arc.contains(worst)
                     && [arc.start, arc.start + arc.sweep]
                         .into_iter()
@@ -325,14 +326,14 @@ impl Piece {
 
 impl Arc {
     fn point(self, angle: f64) -> Point2 {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         [
             self.radius.mul_add(c, self.center[0]),
             self.radius.mul_add(s, self.center[1]),
         ]
     }
     fn tangent(self, angle: f64) -> Point2 {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         let sense = self.sweep.signum();
         [-s * sense, c * sense]
     }
@@ -348,7 +349,7 @@ pub(crate) fn cross2(a: Point2, b: Point2) -> f64 {
     a[0] * b[1] - a[1] * b[0]
 }
 pub(crate) fn norm(a: Point2) -> f64 {
-    a[0].hypot(a[1])
+    a[0].portable_hypot(a[1])
 }
 pub(crate) fn unit2(a: Point2) -> Option<Point2> {
     let n = norm(a);
@@ -464,7 +465,7 @@ fn boundaries_with_refinement(
                 vec![Piece::Arc(Arc {
                     center: *center,
                     radius,
-                    start: (a[1] - center[1]).atan2(a[0] - center[0]),
+                    start: (a[1] - center[1]).portable_atan2(a[0] - center[0]),
                     sweep: edge.signed_sweep_rad().ok_or(ConstructionError::Invalid)?,
                 })]
             }

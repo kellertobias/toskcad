@@ -258,7 +258,7 @@ fn independent_root_integral(source: Hanger, frame: PlaneFrame, nq: usize, nz: u
             for layer in 0..nz {
                 for (v, wv) in GAUSS {
                     let z = spec.length_mm * (layer as f64 + (v + 1.) / 2.) / nz as f64;
-                    let (sn, cs) = ((z - q) / s).sin_cos();
+                    let (sn, cs) = ((z - q) / s).portable_sin_cos();
                     let a = placed([slope * cs + r * sn / s, slope * sn - r * cs / s, 0.]);
                     let b = placed([-r * sn / s, r * cs / s, 1.]);
                     let cross = [

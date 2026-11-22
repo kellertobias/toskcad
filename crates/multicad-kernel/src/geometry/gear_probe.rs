@@ -113,7 +113,7 @@ fn slabs(solid: &Solid) -> Option<(Vec<Slab<'_>>, PlaneFrame)> {
 /// The local probe box `[x, y]` as a disc about its center.
 fn disc([x, y]: [[f64; 2]; 2]) -> ([f64; 2], f64) {
     let center = [(x[0] + x[1]) / 2., (y[0] + y[1]) / 2.];
-    let radius = ((x[1] - x[0]) / 2.).hypot((y[1] - y[0]) / 2.);
+    let radius = ((x[1] - x[0]) / 2.).portable_hypot((y[1] - y[0]) / 2.);
     // Enclose the rounding of the midpoint and the half diagonal.
     let guard = 8. * f64::EPSILON * (center[0].abs() + center[1].abs() + radius).max(1.);
     (center, radius + guard)
@@ -136,12 +136,12 @@ fn section_side(
             // most its radius times half the phase range.
             let middle = (z[0] + z[1]) / 2.;
             let swing = gear.twist_rad_per_mm().abs() * (z[1] - z[0]) / 2.;
-            let (sin, cos) = (-gear.phase_at(middle)).sin_cos();
+            let (sin, cos) = (-gear.phase_at(middle)).portable_sin_cos();
             let rotated = [
                 cos * center[0] - sin * center[1],
                 sin * center[0] + cos * center[1],
             ];
-            let reach = center[0].hypot(center[1]) + radius;
+            let reach = center[0].portable_hypot(center[1]) + radius;
             let radius = radius * (1. + 4. * f64::EPSILON) + reach * swing * (1. + 1e-12);
             clearance::classify_spur_disc(gear.profile(), rotated, radius, tolerance)
         }
@@ -175,7 +175,7 @@ fn worm_boolean(
             let radius = bounds
                 .map(|[lo, hi]| (hi - lo) / 2.)
                 .into_iter()
-                .fold(0., f64::hypot)
+                .fold(0., f64::portable_hypot)
                 * (1. + 1e-12);
             match multicad_rust_kernel::worm_gear::clearance::classify_wheel_ball(
                 wheel, center, radius,

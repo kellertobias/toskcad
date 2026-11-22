@@ -8,6 +8,7 @@
 //! packages are read back by readers written here, independent of the
 //! writers; and an external MCP client changes the rail pitch through
 //! review with Undo and attributed activity.
+use multicad_precision::PortableMath as _;
 #[path = "../examples/tool_case_review.rs"]
 #[allow(dead_code)]
 mod review;
@@ -676,13 +677,13 @@ fn deliverables_are_validated_by_independent_readers() {
             continue;
         }
         let [x1, y1, x2, y2] = [10, 20, 11, 21].map(|c| get(c).parse::<f64>().unwrap());
-        if (x2 - x1).hypot(y2 - y1) >= 1. {
+        if (x2 - x1).portable_hypot(y2 - y1) >= 1. {
             continue;
         }
         let mid = [(x1 + x2) / 2., (y1 + y2) / 2.];
         match clusters
             .iter_mut()
-            .find(|c| (c[0][0] - mid[0]).hypot(c[0][1] - mid[1]) < 2.)
+            .find(|c| (c[0][0] - mid[0]).portable_hypot(c[0][1] - mid[1]) < 2.)
         {
             Some(c) => c.extend([[x1, y1], [x2, y2]]),
             None => clusters.push(vec![mid, [x1, y1], [x2, y2]]),
@@ -698,7 +699,11 @@ fn deliverables_are_validated_by_independent_readers() {
                 points.iter().map(|p| p[1]).sum::<f64>() / n,
             ];
             for p in points {
-                near((p[0] - center[0]).hypot(p[1] - center[1]), 0.75, 1e-3);
+                near(
+                    (p[0] - center[0]).portable_hypot(p[1] - center[1]),
+                    0.75,
+                    1e-3,
+                );
             }
             center
         })

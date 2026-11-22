@@ -1,5 +1,6 @@
 //! Exact orthographic profiles and bounded previews for isolated round solids.
 
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 type Point = [f64; 2];
@@ -53,7 +54,7 @@ pub(crate) struct Rim {
 
 impl Rim {
     pub(crate) fn point(self, angle: f64) -> Point3 {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let [u, v] = self.ellipse.point_with_trig(sin, cos);
         let depth = self
             .depth_cosine
@@ -194,7 +195,7 @@ pub(crate) fn project_in_depth(
     {
         return Err(Error::Invalid);
     }
-    let projected = x.hypot(y);
+    let projected = x.portable_hypot(y);
     let top = shift(base, [x, y], height);
     let top_depth = depth.mul_add(height, base_depth);
     let cap_depths = [base_depth, top_depth];
@@ -225,7 +226,7 @@ pub(crate) fn project_in_depth(
                     let projected = line.map(|[u, v, _]| [u, v]);
                     if let Some(clipped) = line_in_detail(projected, detail) {
                         let delta = difference(projected[1], projected[0]);
-                        let length = delta[0].hypot(delta[1]);
+                        let length = delta[0].portable_hypot(delta[1]);
                         let direction = delta.map(|v| v / length);
                         let clipped = clipped.map(|[u, v]| {
                             let t = dot(difference([u, v], projected[0]), direction) / length;
@@ -369,7 +370,7 @@ pub(crate) fn project_in_depth(
             // gives sin(t) >= the ratio below.
             let ratio = height * projected / (2. * inner * depth.abs());
             if ratio < 1. {
-                let start = ratio.asin();
+                let start = ratio.portable_asin();
                 let end = PI - start;
                 for (trim, hidden) in [
                     ([0., start], true),
@@ -389,7 +390,7 @@ pub(crate) fn project_in_depth(
 fn line_in_detail(line: [Point; 2], detail: Detail) -> Option<[Point; 2]> {
     let [a, b] = line;
     let delta = difference(b, a);
-    let length = delta[0].hypot(delta[1]);
+    let length = delta[0].portable_hypot(delta[1]);
     if length == 0. {
         return None;
     }
@@ -407,7 +408,7 @@ fn line_in_detail(line: [Point; 2], detail: Detail) -> Option<[Point; 2]> {
 
 impl Ellipse {
     pub fn point(self, angle: f64) -> Point {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         self.point_with_trig(sin, cos)
     }
 
@@ -426,8 +427,8 @@ impl Ellipse {
         let scale = x.abs().max(y.abs()).max(self.major).max(detail.radius);
         let [x, y, a, b, r] = [x, y, self.major, self.minor, detail.radius].map(|v| v / scale);
         let inside = |angle: f64| {
-            let (sin, cos) = angle.sin_cos();
-            a.mul_add(cos, x).hypot(b.mul_add(sin, y)) <= r
+            let (sin, cos) = angle.portable_sin_cos();
+            a.mul_add(cos, x).portable_hypot(b.mul_add(sin, y)) <= r
         };
         // Three bounded tan-half-angle charts cover a full turn without a
         // pole. The disk boundary equation is a quartic in each chart.
@@ -438,11 +439,11 @@ impl Ellipse {
             if start >= end {
                 continue;
             }
-            let [lo, hi] = [start, end].map(|angle| ((angle - phase) / 2.).tan());
+            let [lo, hi] = [start, end].map(|angle| ((angle - phase) / 2.).portable_tan());
             let [c, d] = [x + a * sign, x - a * sign];
             let e = 2. * b * sign;
             let radial = |x: f64| {
-                let h = x.hypot(y);
+                let h = x.portable_hypot(y);
                 (h - r) * (h + r)
             };
             let polynomial = [
@@ -457,7 +458,7 @@ impl Ellipse {
                 roots(&polynomial, [lo, hi])
                     .into_iter()
                     .chain(roots(&derivative(&polynomial), [lo, hi]))
-                    .map(|t| phase + 2. * t.atan())
+                    .map(|t| phase + 2. * t.portable_atan())
                     .filter(|angle| *angle > start && *angle < end),
             );
             cuts.sort_unstable_by(f64::total_cmp);
@@ -561,7 +562,11 @@ impl Curve {
             return Err(Error::Invalid);
         }
         // Stable even when 1 - tolerance/major would round to one.
-        let step = 4. * (tolerance / (2. * ellipse.major)).sqrt().min(1.).asin();
+        let step = 4.
+            * (tolerance / (2. * ellipse.major))
+                .sqrt()
+                .min(1.)
+                .portable_asin();
         let segments = ((end - start) / step.min(FRAC_PI_2)).ceil() as usize;
         let Some(count) = segments
             .checked_add(1)

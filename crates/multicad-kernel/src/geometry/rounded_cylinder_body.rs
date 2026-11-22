@@ -279,7 +279,7 @@ impl Solid {
             let anchors = if let Some((center, normal)) = cap {
                 // A deterministic outward world chart prevents datum rotation
                 // when an equivalent STEP record reverses its cylinder axis.
-                let norm = |v: Point| v[0].hypot(v[1]).hypot(v[2]);
+                let norm = |v: Point| v[0].portable_hypot(v[1]).portable_hypot(v[2]);
                 let normal = normal.map(|v| v / norm(normal));
                 let basis = (0..3)
                     .min_by(|&a, &b| normal[a].abs().total_cmp(&normal[b].abs()))
@@ -484,7 +484,7 @@ impl RoundedCylinderBody {
                 let [a, b, c] = triangle.map(|i| points[i as usize]);
                 let delta = |a: Point, b: Point| std::array::from_fn(|i| a[i] - b[i]);
                 let [ab, ac, bc] = [delta(b, a), delta(c, a), delta(c, b)];
-                let norm = |p: Point| p[0].hypot(p[1]).hypot(p[2]);
+                let norm = |p: Point| p[0].portable_hypot(p[1]).portable_hypot(p[2]);
                 let n = [
                     ab[1] * ac[2] - ab[2] * ac[1],
                     ab[2] * ac[0] - ab[0] * ac[2],

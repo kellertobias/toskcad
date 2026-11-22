@@ -6,6 +6,7 @@ use multicad_core::{
     materials::Appearance,
 };
 use multicad_kernel::{MeshOptions, Solid};
+use multicad_precision::PortableMath as _;
 use std::{
     collections::{BTreeSet, HashMap},
     fmt::Write,
@@ -562,7 +563,7 @@ pub fn linear(channel: u8) -> f64 {
     if c <= 0.04045 {
         c / 12.92
     } else {
-        ((c + 0.055) / 1.055).powf(2.4)
+        ((c + 0.055) / 1.055).portable_powf(2.4)
     }
 }
 /// glTF 2.0 binary. glTF is defined in meters with +Y up: geometry and

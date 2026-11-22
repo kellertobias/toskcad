@@ -14,7 +14,7 @@ pub fn sleeve_segments(radius_mm: f64, tessellation: Tessellation) -> Result<usi
         return Err(Error::Invalid);
     }
     let ratio = (tessellation.deflection / radius_mm).min(1.);
-    let chord = (1. - ratio).acos();
+    let chord = (1. - ratio).portable_acos();
     let by_sagitta = if chord > 0. {
         (std::f64::consts::PI / chord).ceil()
     } else {

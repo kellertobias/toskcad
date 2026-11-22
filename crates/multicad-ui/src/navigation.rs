@@ -4,6 +4,7 @@ use crate::{
     icons::{self, Icon},
 };
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
+use multicad_precision::PortableMath as _;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayStyle {
     Wire,
@@ -94,7 +95,7 @@ impl Camera {
             self.pitch = z * std::f32::consts::FRAC_PI_2;
         } else {
             self.pitch = 0.0;
-            self.yaw = x.atan2(y);
+            self.yaw = x.portable_atan2(y);
         }
     }
 }

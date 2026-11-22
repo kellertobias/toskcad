@@ -72,9 +72,10 @@ fn shifted_actual_contour_has_nonzero_centers_and_independent_wall_integrals() {
         let dt = arc.sweep_rad.abs() / f64::from(n);
         for i in 0..n {
             let t = arc.start_angle_rad + arc.sweep_rad * (f64::from(i) + 0.5) / f64::from(n);
-            let x = arc.center_mm[0] + arc.radius_mm * t.cos();
-            let y = arc.center_mm[1] + arc.radius_mm * t.sin();
-            let depth = source.cone.tip_depth_mm - source.cone.depth_per_radius * x.hypot(y);
+            let x = arc.center_mm[0] + arc.radius_mm * t.portable_cos();
+            let y = arc.center_mm[1] + arc.radius_mm * t.portable_sin();
+            let depth =
+                source.cone.tip_depth_mm - source.cone.depth_per_radius * x.portable_hypot(y);
             let da = arc.radius_mm * depth * dt;
             area += da;
             moments[0] += da * x;

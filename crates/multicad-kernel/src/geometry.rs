@@ -5,6 +5,7 @@ use multicad_core::{
     document::EntityId,
     references::{Origin, ReferenceFrame, TopologySnapshot},
 };
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     Circle, Rational, cylinder::AxialCylinder, polygon::PolygonPrism, prism::Prism,
 };
@@ -361,7 +362,7 @@ impl PlaneFrame {
         policy: GeometryPolicy,
     ) -> Result<(), GeometryError> {
         self.checked(policy)?;
-        let norm = |p: [f64; 3]| p[0].hypot(p[1]).hypot(p[2]);
+        let norm = |p: [f64; 3]| p[0].portable_hypot(p[1]).portable_hypot(p[2]);
         let unit = |p: [f64; 3]| {
             let n = norm(p);
             p.map(|x| x / n)
@@ -485,7 +486,7 @@ pub enum ProfileEdge {
     },
 }
 fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 impl ProfileEdge {
     fn ends(&self) -> ([f64; 2], [f64; 2]) {
@@ -506,8 +507,8 @@ impl ProfileEdge {
         } = *self
         {
             let r = distance(a, center);
-            let start = (a[1] - center[1]).atan2(a[0] - center[0]);
-            let end = (b[1] - center[1]).atan2(b[0] - center[0]);
+            let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
+            let end = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
             let sweep = if clockwise {
                 -((start - end).rem_euclid(std::f64::consts::TAU))
             } else {
@@ -581,7 +582,10 @@ impl ProfileEdge {
                     return Err(input("Arc endpoints/radius are inconsistent or degenerate"));
                 }
                 let mid = start + sweep * 0.5;
-                let mid = [center[0] + r * mid.cos(), center[1] + r * mid.sin()];
+                let mid = [
+                    center[0] + r * mid.portable_cos(),
+                    center[1] + r * mid.portable_sin(),
+                ];
                 policy.point(frame.point(mid))?;
                 edge.kind = 1;
                 edge.mid = point(frame.point(mid));
@@ -2454,7 +2458,8 @@ impl Solid {
             let radius = cylinder.circle().radius().as_f64();
             let height = cylinder.height().as_f64();
             let axis = frame.normal();
-            let extent: [f64; 3] = std::array::from_fn(|i| radius * frame.u[i].hypot(frame.v[i]));
+            let extent: [f64; 3] =
+                std::array::from_fn(|i| radius * frame.u[i].portable_hypot(frame.v[i]));
             return Ok(Bounds {
                 min: std::array::from_fn(|i| {
                     frame.origin[i] + (height * axis[i]).min(0.) - extent[i]
@@ -2477,7 +2482,7 @@ impl Solid {
                 let rectangle = (u * length).max(0.) + (v * width).max(0.);
                 let cap = prism.rounded_end().map_or(rectangle, |circle| {
                     let radius = circle.radius().as_f64();
-                    let arc = u * length + v * radius + radius * u.max(0.).hypot(v);
+                    let arc = u * length + v * radius + radius * u.max(0.).portable_hypot(v);
                     rectangle.max(arc)
                 });
                 cap + (n * height).max(0.)

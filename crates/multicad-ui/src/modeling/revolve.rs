@@ -9,6 +9,7 @@ use multicad_core::{
     model::{RevolveParameters, RevolveRequest},
     parameters::Unit,
 };
+use multicad_precision::PortableMath as _;
 
 pub(super) struct RevolvePanel {
     request: RevolveRequest,
@@ -65,10 +66,10 @@ impl RevolvePanel {
     }
     pub(crate) fn set_axis_line(&mut self, a: [f64; 2], b: [f64; 2]) -> Result<(), String> {
         let d = [b[0] - a[0], b[1] - a[1]];
-        if !(d[0].is_finite() && d[1].is_finite()) || d[0].hypot(d[1]) < 1e-9 {
+        if !(d[0].is_finite() && d[1].is_finite()) || d[0].portable_hypot(d[1]) < 1e-9 {
             return Err("A revolution axis needs a straight line with two distinct ends".into());
         }
-        self.set_axis(a, d[1].atan2(d[0]).to_degrees());
+        self.set_axis(a, d[1].portable_atan2(d[0]).to_degrees());
         Ok(())
     }
     /// Axis origin (mm, sketch U/V) and bearing (rad) once confirmed.

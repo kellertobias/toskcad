@@ -32,7 +32,9 @@ fn edge_within(rectangle: &Rectangle, edge: &Edge) -> bool {
     };
     match *edge {
         Edge::Line { a, b } => closed(a, 0.) && closed(b, 0.),
-        Edge::Arc { center, a, .. } => closed(center, (a[0] - center[0]).hypot(a[1] - center[1])),
+        Edge::Arc { center, a, .. } => {
+            closed(center, (a[0] - center[0]).portable_hypot(a[1] - center[1]))
+        }
         Edge::Circle {
             center, radius_mm, ..
         } => closed(center, radius_mm),
@@ -116,8 +118,8 @@ impl Solid {
         let b = project(side(i));
         let c = project(std::array::from_fn(|n| side(i)[n] + side(j)[n]));
         let d = project(side(j));
-        let length = (b[0] - a[0]).hypot(b[1] - a[1]);
-        let width = (d[0] - a[0]).hypot(d[1] - a[1]);
+        let length = (b[0] - a[0]).portable_hypot(b[1] - a[1]);
+        let width = (d[0] - a[0]).portable_hypot(d[1] - a[1]);
         if !(length > 2. * margin && width > 2. * margin) {
             return None;
         }

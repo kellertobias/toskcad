@@ -2,6 +2,7 @@ use super::*;
 use crate::authored_hanger_bolt::{Error, Hanger};
 use crate::authored_internal_treatment::{FaceKey as ThreadFace, ThreadBandRole};
 use crate::tapered_thread::interval::I;
+use multicad_precision::PortableMath as _;
 fn interval(e: Enclosure) -> I {
     I::new(e.lower, e.upper)
 }
@@ -362,7 +363,7 @@ fn rounded_and_flat_flank_face_measures_match_independent_two_dimensional_tangen
                 for j in 0..=nv {
                     let v = j as f64 / nv as f64;
                     let phi = rate * spec.length_mm * v;
-                    let (sn, cs) = phi.sin_cos();
+                    let (sn, cs) = phi.portable_sin_cos();
                     let point = [
                         cs * p[0] - sn * p[1],
                         sn * p[0] + cs * p[1],

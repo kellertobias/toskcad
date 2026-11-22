@@ -5,6 +5,7 @@ use multicad_core::{
 };
 use multicad_kernel::{GeometryPolicy, PlaneFrame, RigidTransform, Solid, rust_kernel::Rational};
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 
 const BACKEND: GeometryBackend = GeometryBackend::Rust;
 
@@ -409,7 +410,7 @@ fn saved_compound_boxes_drive_linked_plan_and_section_after_edit_and_reopen() {
             vector
                 .preview_mm
                 .iter()
-                .any(|p| (p[0] - point[0]).hypot(p[1] - point[1]) < 1e-3)
+                .any(|p| (p[0] - point[0]).portable_hypot(p[1] - point[1]) < 1e-3)
         })
     };
     assert!(has_corner(&vectors(&session, &view, &[]), [1900., 2800.]));
@@ -603,7 +604,7 @@ fn disconnected_off_target_and_partial_slab_cuts_fail_native_preview_without_sou
 
 /// Plan corners of a counter-clockwise rotated rectangle, counter-clockwise.
 fn plan_corners(center: [f64; 2], width: f64, depth: f64, rotation_deg: f64) -> Vec<[f64; 2]> {
-    let (s, c) = rotation_deg.to_radians().sin_cos();
+    let (s, c) = rotation_deg.to_radians().portable_sin_cos();
     [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]]
         .into_iter()
         .map(|[x, y]| {
@@ -664,7 +665,7 @@ fn inside_length(a: [f64; 2], b: [f64; 2], convex: &[[f64; 2]]) -> f64 {
             }
         }
     }
-    (high - low).max(0.) * (b[0] - a[0]).hypot(b[1] - a[1])
+    (high - low).max(0.) * (b[0] - a[0]).portable_hypot(b[1] - a[1])
 }
 /// Area and boundary length of the union of plan rectangles in which only
 /// the first two may overlap (and never along a shared edge).
@@ -680,7 +681,7 @@ fn union_area_and_perimeter(rectangles: &[Vec<[f64; 2]>]) -> (f64, f64) {
                 1 => inside_length(a, b, &rectangles[0]),
                 _ => 0.,
             };
-            perimeter += (b[0] - a[0]).hypot(b[1] - a[1]) - hidden;
+            perimeter += (b[0] - a[0]).portable_hypot(b[1] - a[1]) - hidden;
         }
     }
     (area, perimeter)
@@ -759,7 +760,7 @@ fn rotated_compound_cutouts_match_native_and_rebuild_chained_receivers() {
     // 200 mm thick: its faces are both pierced caps plus the outline and
     // opening walls.
     let outline = [[0., 0.], [6000., 0.], [6200., 4000.], [0., 4000.]];
-    let outline_perimeter = 6000. + 200_f64.hypot(4000.) + 6200. + 4000.;
+    let outline_perimeter = 6000. + 200_f64.portable_hypot(4000.) + 6200. + 4000.;
     let measure =
         |session: &Session, receivers: &[CompoundCutoutReceiver], openings: &[Vec<[f64; 2]>]| {
             let rust = compiler

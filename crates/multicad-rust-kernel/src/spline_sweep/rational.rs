@@ -6,6 +6,7 @@
 
 use super::{Error, Point};
 use crate::revolution::{Sum, cross, distance_to_segment, dot, length, sub};
+use multicad_precision::PortableMath as _;
 
 const MAX_DEPTH: usize = 32;
 const MAX_LENGTH_SPLITS: usize = 100_000;
@@ -194,7 +195,14 @@ impl Rational {
         limit: usize,
     ) -> Result<Vec<Point>, crate::display::MeshError> {
         let mut points = vec![self.endpoints()[0]];
-        flatten(self.span(), deflection, angle.tan(), 0, limit, &mut points)?;
+        flatten(
+            self.span(),
+            deflection,
+            angle.portable_tan(),
+            0,
+            limit,
+            &mut points,
+        )?;
         Ok(points)
     }
 }
@@ -380,7 +388,7 @@ mod tests {
         let arc = quarter();
         for i in 0..=16 {
             let [x, y] = arc.point(i as f64 / 16.);
-            assert!((x.hypot(y) - 10.).abs() < 1e-12);
+            assert!((x.portable_hypot(y) - 10.).abs() < 1e-12);
         }
         // Quarter disk: the arc plus the two radii through the origin.
         let [area, mx, my] = arc.moments([0., 0.]);
@@ -411,7 +419,7 @@ mod tests {
         assert!(
             samples
                 .iter()
-                .all(|[x, y]| (x.hypot(*y) - 10.).abs() < 1e-3)
+                .all(|[x, y]| (x.portable_hypot(*y) - 10.).abs() < 1e-3)
         );
         // Reversed area flips sign.
         assert!((arc.moments([0., 0.])[0] + 25. * PI).abs() < 1e-11);

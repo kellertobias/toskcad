@@ -10,6 +10,7 @@ use multicad_core::{
     model::{self, ResolvedScale, ScaleParameters},
     parameters::EvaluatedParameters,
 };
+use multicad_precision::PortableMath as _;
 pub struct ScaleViewport<'a> {
     pub scene: Option<&'a Scene>,
     pub camera: Camera,
@@ -253,7 +254,7 @@ impl Drag {
         let mut ratios = [1.; 3];
         if self.handle == Handle::Uniform {
             let delta = pointer - self.press;
-            ratios.fill(((delta.x - delta.y) as f64 / 100.).exp());
+            ratios.fill(((delta.x - delta.y) as f64 / 100.).portable_exp());
         } else {
             let ray = self
                 .camera
@@ -738,7 +739,7 @@ mod tests {
             ..Default::default()
         };
         let start = h.handle(&source, Handle::Uniform);
-        let end = start + egui::vec2(100. * 1.37_f32.ln(), 0.);
+        let end = start + egui::vec2(100. * 1.37_f32.portable_ln(), 0.);
         let snapped = [1.25, 2.5, 3.75];
         let check = |values: [f64; 3], ratio: f64| {
             for (index, factor) in values.into_iter().enumerate() {

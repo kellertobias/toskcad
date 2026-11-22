@@ -71,7 +71,7 @@ fn ray_angle(ci: I, si: I, scale: I) -> R<(f64, f64)> {
     let ci = finite(ci)?;
     let si = finite(si)?;
     let scale = positive(scale)?;
-    let angle = si.midpoint().atan2(ci.midpoint());
+    let angle = si.midpoint().portable_atan2(ci.midpoint());
     let ray = [ci / scale, si / scale];
     let unit = [ip(angle).cos(), ip(angle).sin()];
     let chord = finite(ip((ray[0] - unit[0]).magnitude()) + ip((ray[1] - unit[1]).magnitude()))?;

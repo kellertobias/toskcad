@@ -16,6 +16,7 @@ use super::{
     Curve, Interrupt, Point, Result, Solid, Surface, checkpoint, cross, crosses_ray, dot, mesh,
     norm, point_triangle, sub,
 };
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoxSide {
@@ -47,7 +48,7 @@ impl Probe {
     fn box_gap(&self, lo: Point, hi: Point) -> f64 {
         (0..3)
             .map(|i| gap([self.lo[i], self.hi[i]], [lo[i], hi[i]]))
-            .fold(0., f64::hypot)
+            .fold(0., f64::portable_hypot)
     }
 }
 
@@ -225,8 +226,8 @@ fn extrusion_clearance(
         let guard = 64. * f64::EPSILON * scale;
         let distance = (0..2)
             .map(|i| gap(probe2[i], [range[i][0] - guard, range[i][1] + guard]))
-            .fold(0., f64::hypot);
-        let width = (range[0][1] - range[0][0]).hypot(range[1][1] - range[1][0]);
+            .fold(0., f64::portable_hypot);
+        let width = (range[0][1] - range[0][0]).portable_hypot(range[1][1] - range[1][0]);
         if distance > margin && (4. * width <= distance || depth >= MAX_DEPTH) {
             least = least.min(distance);
             continue;
@@ -243,7 +244,7 @@ fn extrusion_clearance(
 
 /// The box of a whole ellipse, with a rounding guard.
 fn conic_box(frame: &super::Frame, [a, b]: [f64; 2]) -> (Point, Point) {
-    let reach: Point = std::array::from_fn(|i| (a * frame.x[i]).hypot(b * frame.y[i]));
+    let reach: Point = std::array::from_fn(|i| (a * frame.x[i]).portable_hypot(b * frame.y[i]));
     let scale = frame
         .origin
         .iter()
@@ -357,7 +358,7 @@ fn surface_clearance(
         Surface::Plane(frame) => lipschitz(frame.local(c)[2].abs()),
         Surface::Cylinder { frame, radius } => {
             let l = frame.local(c);
-            lipschitz((l[0].hypot(l[1]) - radius).abs())
+            lipschitz((l[0].portable_hypot(l[1]) - radius).abs())
         }
         Surface::Cone {
             frame,
@@ -367,9 +368,9 @@ fn surface_clearance(
             // Both generating lines of the double cone in the meridian
             // half-plane; the surface lies on their union.
             let l = frame.local(c);
-            let (rho, z) = (l[0].hypot(l[1]), l[2]);
-            let t = half_angle.tan();
-            let scale = t.hypot(1.);
+            let (rho, z) = (l[0].portable_hypot(l[1]), l[2]);
+            let t = half_angle.portable_tan();
+            let scale = t.portable_hypot(1.);
             let first = (rho - radius - t * z).abs() / scale;
             let second = (rho + radius + t * z).abs() / scale;
             lipschitz(first.min(second))
@@ -381,7 +382,7 @@ fn surface_clearance(
             minor,
         } => {
             let l = frame.local(c);
-            lipschitz(((l[0].hypot(l[1]) - major).hypot(l[2]) - minor).abs())
+            lipschitz(((l[0].portable_hypot(l[1]) - major).portable_hypot(l[2]) - minor).abs())
         }
         Surface::Extrusion { curve, direction } => match curve {
             Curve::Line {
@@ -402,7 +403,7 @@ fn surface_clearance(
                     return None;
                 }
                 let l = frame.local(c);
-                lipschitz((l[0].hypot(l[1]) - radius).abs())
+                lipschitz((l[0].portable_hypot(l[1]) - radius).abs())
             }
             Curve::Nurbs { curve, .. } => {
                 extrusion_clearance(curve.bezier()?, *direction, probe, margin, budget)

@@ -8,6 +8,7 @@ use multicad_core::{
     project_file::{self, ProjectFile},
 };
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -138,7 +139,9 @@ fn sourced_lead_and_asymmetric_root_pairs_keep_geometry_phase_history_and_step()
                     let drop = r.profile.depth_mm * fraction;
                     let z = 2. * r.pitch_mm
                         + phase
-                        + sign * (r.profile.crest_width_mm / 2. + drop * angle.to_radians().tan());
+                        + sign
+                            * (r.profile.crest_width_mm / 2.
+                                + drop * angle.to_radians().portable_tan());
                     for (offset, in_profile) in [(-0.001, true), (0.001, false)] {
                         let point = [r.major_radius_mm - drop + offset, 0., z];
 
@@ -153,9 +156,11 @@ fn sourced_lead_and_asymmetric_root_pairs_keep_geometry_phase_history_and_step()
             if let Some(circle) = r.buttress.as_ref().and_then(|b| b.root_circle.as_ref()) {
                 assert!(!internal);
                 for angle in [-0.5_f64, 0.5] {
-                    let z =
-                        2. * r.pitch_mm + circle.center_axial_mm + circle.radius_mm * angle.sin();
-                    let boundary = circle.center_radius_mm - circle.radius_mm * angle.cos();
+                    let z = 2. * r.pitch_mm
+                        + circle.center_axial_mm
+                        + circle.radius_mm * angle.portable_sin();
+                    let boundary =
+                        circle.center_radius_mm - circle.radius_mm * angle.portable_cos();
 
                     assert!(
                         solid

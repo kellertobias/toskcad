@@ -1,4 +1,5 @@
 //! Thread solids and receiving cuts use the same versioned source for UI/MCP.
+use multicad_precision::PortableMath as _;
 mod cosmetic;
 mod end_treatments;
 mod internal;
@@ -43,7 +44,7 @@ fn envelope(
     Solid::extrude_curved_profile_vector_tapered_named(
         &profile,
         resolved.frame.n.map(|n| n * resolved.length_mm),
-        resolved.profile.radial_taper.atan(),
+        resolved.profile.radial_taper.portable_atan(),
         feature,
         &[Origin {
             source: feature,
@@ -522,7 +523,7 @@ fn rust_profile_geometry(
         .buttress
         .as_ref()
         .map_or(0., |buttress| buttress.phase_rotation_rad);
-    let (sin, cos) = phase.sin_cos();
+    let (sin, cos) = phase.portable_sin_cos();
     Ok((
         helical_spec(thread),
         thread
@@ -624,7 +625,7 @@ pub(crate) fn build_resolved(
             .buttress
             .as_ref()
             .map_or(0., |b| b.phase_rotation_rad);
-        let (sin, cos) = phase.sin_cos();
+        let (sin, cos) = phase.portable_sin_cos();
         local
             .transformed(RigidTransform {
                 rotation: std::array::from_fn(|i| {

@@ -16,11 +16,11 @@ fn gear(helical: bool, hand: f64, bore: f64) -> Herringbone {
     let spec = Spec {
         teeth: 12,
         pitch_radius_mm: 12.,
-        base_radius_mm: 12. * pressure.cos(),
+        base_radius_mm: 12. * pressure.portable_cos(),
         tip_radius_mm: 14.,
         root_radius_mm: 9.5,
         root_fillet_radius_mm: 0.4,
-        half_base_angle_rad: (PI - 0.05) / 24. + pressure.tan() - pressure,
+        half_base_angle_rad: (PI - 0.05) / 24. + pressure.portable_tan() - pressure,
         face_width_mm: 4.,
         bore_radius_mm: bore,
     };

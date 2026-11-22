@@ -4,6 +4,7 @@ use multicad_core::{
     project_file,
 };
 use multicad_model::Model;
+use multicad_precision::PortableMath as _;
 type Error = Box<dyn std::error::Error>;
 /// Definitions have no placed physical leaves. Render a deterministic temporary
 /// occurrence; the saved Library source and its pin remain untouched.
@@ -79,11 +80,11 @@ fn render_preview_filtered(
     // View basis: looking from the front left, slightly above.
     let yaw: f64 = (-35f64).to_radians();
     let pitch: f64 = 20f64.to_radians();
-    let right = [yaw.cos(), yaw.sin(), 0.];
+    let right = [yaw.portable_cos(), yaw.portable_sin(), 0.];
     let fwd = [
-        -yaw.sin() * pitch.cos(),
-        yaw.cos() * pitch.cos(),
-        -pitch.sin(),
+        -yaw.portable_sin() * pitch.portable_cos(),
+        yaw.portable_cos() * pitch.portable_cos(),
+        -pitch.portable_sin(),
     ];
     let up = [
         right[1] * fwd[2] - right[2] * fwd[1],

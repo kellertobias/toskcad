@@ -6,6 +6,7 @@ use multicad_core::{
     document::EntityId,
     references::{Origin, ReferenceFrame},
 };
+use multicad_precision::PortableMath as _;
 
 pub const MAX_SPLINE_POLES: usize = 256;
 pub const MAX_CURVED_PROFILE_EDGES: usize = 64;
@@ -58,8 +59,8 @@ fn empty_spline() -> ffi::SplineData {
     }
 }
 pub(crate) fn arc_sweep(center: [f64; 2], a: [f64; 2], b: [f64; 2], clockwise: bool) -> f64 {
-    let first = (a[1] - center[1]).atan2(a[0] - center[0]);
-    let last = (b[1] - center[1]).atan2(b[0] - center[0]);
+    let first = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
+    let last = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
     (if clockwise {
         first - last
     } else {
@@ -97,7 +98,8 @@ impl BSpline2d {
             policy.point([point[0], point[1], 0.])?;
         }
         if self.poles.iter().all(|p| {
-            (p[0] - self.poles[0][0]).hypot(p[1] - self.poles[0][1]) < policy.minimum_feature_mm
+            (p[0] - self.poles[0][0]).portable_hypot(p[1] - self.poles[0][1])
+                < policy.minimum_feature_mm
         }) {
             return Err(input("Spline control polygon is degenerate"));
         }
@@ -169,7 +171,7 @@ impl CurvedEdge2d {
     pub fn domain(&self, policy: GeometryPolicy) -> Result<[f64; 2], GeometryError> {
         self.data(policy, 0)?;
         Ok(match self {
-            Self::Line { a, b } => [0., (b[0] - a[0]).hypot(b[1] - a[1])],
+            Self::Line { a, b } => [0., (b[0] - a[0]).portable_hypot(b[1] - a[1])],
             Self::Arc {
                 center,
                 a,
@@ -191,7 +193,7 @@ impl CurvedEdge2d {
                 for point in [a, b] {
                     policy.point([point[0], point[1], 0.])?;
                 }
-                policy.length((a[0] - b[0]).hypot(a[1] - b[1]))?;
+                policy.length((a[0] - b[0]).portable_hypot(a[1] - b[1]))?;
                 ffi::CurvedEdgeData {
                     kind: 0,
                     a: p(*a),
@@ -225,11 +227,11 @@ impl CurvedEdge2d {
                 for point in [center, a, b] {
                     policy.point([point[0], point[1], 0.])?;
                 }
-                let radius = (a[0] - center[0]).hypot(a[1] - center[1]);
+                let radius = (a[0] - center[0]).portable_hypot(a[1] - center[1]);
                 policy.length(radius)?;
-                if (radius - (b[0] - center[0]).hypot(b[1] - center[1])).abs()
+                if (radius - (b[0] - center[0]).portable_hypot(b[1] - center[1])).abs()
                     > policy.linear_tolerance_mm
-                    || (a[0] - b[0]).hypot(a[1] - b[1]) < policy.minimum_feature_mm
+                    || (a[0] - b[0]).portable_hypot(a[1] - b[1]) < policy.minimum_feature_mm
                 {
                     return Err(input(
                         "Arc endpoints must be distinct and lie on the same authored circle",
@@ -422,13 +424,14 @@ impl CurvedProfile {
                     CurvedEdge2d::Arc { center, .. } | CurvedEdge2d::Circle { center, .. } => {
                         let radius = match curve {
                             CurvedEdge2d::Arc { a, .. } => {
-                                (a[0] - center[0]).hypot(a[1] - center[1])
+                                (a[0] - center[0]).portable_hypot(a[1] - center[1])
                             }
                             CurvedEdge2d::Circle { radius_mm, .. } => *radius_mm,
                             _ => unreachable!(),
                         };
                         for axis in 0..3 {
-                            let extent = radius * self.frame.u[axis].hypot(self.frame.v[axis]);
+                            let extent =
+                                radius * self.frame.u[axis].portable_hypot(self.frame.v[axis]);
                             let position = self.frame.point(*center)[axis];
                             if !position.is_finite()
                                 || position.abs() + extent > policy.maximum_coordinate_mm

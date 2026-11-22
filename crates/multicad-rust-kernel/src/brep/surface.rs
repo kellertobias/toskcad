@@ -1,6 +1,7 @@
 //! Face support surfaces in their exchange parameterisation.
 use super::curve::{PANEL, uniform};
 use super::{Curve, NurbsSurface, Point, add, cross, distance, dot, nearest, norm, scale, sub};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 /// A right-handed orthonormal placement.
@@ -33,7 +34,7 @@ impl Frame {
     }
 
     fn radial(&self, u: f64) -> (Point, Point) {
-        let (sin, cos) = u.sin_cos();
+        let (sin, cos) = u.portable_sin_cos();
         (
             add(scale(self.x, cos), scale(self.y, sin)),
             add(scale(self.x, -sin), scale(self.y, cos)),
@@ -122,7 +123,7 @@ impl Surface {
                 half_angle,
             } => {
                 let (r, t) = frame.radial(u);
-                let slope = half_angle.tan();
+                let slope = half_angle.portable_tan();
                 let rho = radius + v * slope;
                 (
                     add(frame.origin, add(scale(r, rho), scale(frame.z, v))),
@@ -131,7 +132,7 @@ impl Surface {
             }
             Self::Sphere { frame, radius } => {
                 let (r, t) = frame.radial(u);
-                let (sin, cos) = v.sin_cos();
+                let (sin, cos) = v.portable_sin_cos();
                 (
                     add(
                         frame.origin,
@@ -149,7 +150,7 @@ impl Surface {
                 minor,
             } => {
                 let (r, t) = frame.radial(u);
-                let (sin, cos) = v.sin_cos();
+                let (sin, cos) = v.portable_sin_cos();
                 let rho = major + minor * cos;
                 (
                     add(
@@ -172,7 +173,7 @@ impl Surface {
                 axis,
             } => {
                 let (p, d) = curve.evaluate(v);
-                let (sin, cos) = u.sin_cos();
+                let (sin, cos) = u.portable_sin_cos();
                 let turn = |q: Point| {
                     let along = scale(*axis, dot(q, *axis));
                     let radial = sub(q, along);
@@ -253,12 +254,12 @@ impl Surface {
         let free = seed.map_or(0., |seed| seed[0]);
         let angle = |frame: &Frame, flip: bool| {
             let l = frame.local(point);
-            if l[0].hypot(l[1]) <= 1e-12 * (1. + norm(l)) {
+            if l[0].portable_hypot(l[1]) <= 1e-12 * (1. + norm(l)) {
                 free
             } else if flip {
-                (-l[1]).atan2(-l[0]).rem_euclid(TAU)
+                (-l[1]).portable_atan2(-l[0]).rem_euclid(TAU)
             } else {
-                l[1].atan2(l[0]).rem_euclid(TAU)
+                l[1].portable_atan2(l[0]).rem_euclid(TAU)
             }
         };
         let uv = match self {
@@ -273,17 +274,21 @@ impl Surface {
                 half_angle,
             } => {
                 let v = frame.local(point)[2];
-                [angle(frame, radius + v * half_angle.tan() < 0.), v]
+                [angle(frame, radius + v * half_angle.portable_tan() < 0.), v]
             }
             Self::Sphere { frame, .. } => {
                 let l = frame.local(point);
-                [angle(frame, false), l[2].atan2(l[0].hypot(l[1]))]
+                [
+                    angle(frame, false),
+                    l[2].portable_atan2(l[0].portable_hypot(l[1])),
+                ]
             }
             Self::Torus { frame, major, .. } => {
                 let l = frame.local(point);
                 [
                     angle(frame, false),
-                    l[2].atan2(l[0].hypot(l[1]) - major).rem_euclid(TAU),
+                    l[2].portable_atan2(l[0].portable_hypot(l[1]) - major)
+                        .rem_euclid(TAU),
                 ]
             }
             _ => self.closest(point, seed),
@@ -314,7 +319,8 @@ impl Surface {
                     .into_iter()
                     .map(|v| {
                         let source = radial(sub(curve.evaluate(v).0, *origin));
-                        let u = dot(cross(source, target), *axis).atan2(dot(source, target));
+                        let u =
+                            dot(cross(source, target), *axis).portable_atan2(dot(source, target));
                         [u.rem_euclid(TAU), v]
                     })
                     .collect()
@@ -440,7 +446,7 @@ impl Surface {
             Self::Cone {
                 radius, half_angle, ..
             } => {
-                let slope = half_angle.tan();
+                let slope = half_angle.portable_tan();
                 ((slope < 0.) == upper).then_some(-radius / slope)
             }
             Self::Torus { major, minor, .. } if major == minor => {

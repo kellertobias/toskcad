@@ -8,6 +8,7 @@ use multicad_core::{
 };
 use multicad_kernel::{GeometryPolicy, Solid};
 use multicad_model::Compiler;
+use multicad_precision::PortableMath as _;
 
 #[test]
 fn rust_straight_rack_preserves_placement_tooth_origins_and_step_exchange() {
@@ -58,12 +59,15 @@ fn rust_straight_rack_preserves_placement_tooth_origins_and_step_exchange() {
     let r = geometry.rack().unwrap();
     let alpha = r.pressure_angle_rad;
     let corner = r.root_fillet_radius_mm.powi(2)
-        * (1. / alpha.cos() - alpha.tan() - (std::f64::consts::FRAC_PI_2 - alpha) / 2.);
+        * (1. / alpha.portable_cos()
+            - alpha.portable_tan()
+            - (std::f64::consts::FRAC_PI_2 - alpha) / 2.);
     let expected_volume = f64::from(r.teeth)
         * r.face_width_mm
         * (r.pitch_mm * r.backing_thickness_mm
             + (r.addendum_mm + r.dedendum_mm)
-                * (r.physical_tooth_thickness_mm + (r.dedendum_mm - r.addendum_mm) * alpha.tan())
+                * (r.physical_tooth_thickness_mm
+                    + (r.dedendum_mm - r.addendum_mm) * alpha.portable_tan())
             + 2. * corner);
     // Local rack X runs along frame u, the pitch-line normal Y along v and the
     // face width along u x v = +X from the placed origin (10, 20, 30).
@@ -327,7 +331,8 @@ fn every_supported_family_builds_in_its_canonical_frame_and_survives_step_readba
             assert!((bounds.min[0] - (10. + cone.toe_tip_axial_mm)).abs() < 1e-4);
             assert!(
                 (bounds.max[0]
-                    - (10. + cone.outer_cone_distance_mm / cone.pitch_cone_angle_rad.cos()))
+                    - (10.
+                        + cone.outer_cone_distance_mm / cone.pitch_cone_angle_rad.portable_cos()))
                 .abs()
                     < 1e-4
             );

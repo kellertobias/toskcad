@@ -1,6 +1,7 @@
 //! Complete coaxial circular edges, with a bounded representative witness.
 use super::*;
 use multicad_core::references::{AnalyticGeometry, ReferenceFrame, TopologyKind};
+use multicad_precision::PortableMath as _;
 type Point = [f64; 3];
 struct Ring {
     frame: ReferenceFrame,
@@ -10,7 +11,7 @@ fn dot(a: Point, b: Point) -> f64 {
     a.into_iter().zip(b).map(|(a, b)| a * b).sum()
 }
 fn norm(a: Point) -> f64 {
-    a[0].hypot(a[1]).hypot(a[2])
+    a[0].portable_hypot(a[1]).portable_hypot(a[2])
 }
 fn sub(a: Point, b: Point) -> Point {
     std::array::from_fn(|i| a[i] - b[i])

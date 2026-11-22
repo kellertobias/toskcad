@@ -10,7 +10,7 @@ fn spec(rounded: bool, external: bool, quarter: bool) -> AuthoredSpec {
             radial_taper: k,
             section:
                 multicad_rust_kernel::axial_pipe_thread::authored::AuthoredSection::BsptRounded {
-                    depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
+                    depth_mm: p / (3. * 27.5_f64.to_radians().portable_tan()),
                 },
             crest_radius_limit_mm: None,
         }
@@ -560,7 +560,7 @@ fn cap_green_oracle(
             Curve::Circle { axis, radius_mm } => {
                 assert!(axis.normal[0] == 0. && axis.normal[1] == 0. && axis.normal[2].abs() == 1.);
                 assert_eq!(axis.reference[2], 0.);
-                let norm = axis.reference[0].hypot(axis.reference[1]);
+                let norm = axis.reference[0].portable_hypot(axis.reference[1]);
                 let u = [axis.reference[0] / norm, axis.reference[1] / norm, 0.];
                 let v = [-axis.normal[2] * u[1], axis.normal[2] * u[0], 0.];
                 let [a, b] = if direction {
@@ -572,7 +572,7 @@ fn cap_green_oracle(
                     let p = input.vertices[index];
                     let x = p[0] - axis.origin[0];
                     let y = p[1] - axis.origin[1];
-                    (x * v[0] + y * v[1]).atan2(x * u[0] + y * u[1])
+                    (x * v[0] + y * v[1]).portable_atan2(x * u[0] + y * u[1])
                 };
                 let start = phase(a);
                 let positive = (phase(b) - start).rem_euclid(std::f64::consts::TAU);
@@ -585,10 +585,14 @@ fn cap_green_oracle(
                     let angle = start + sweep * t;
                     (
                         std::array::from_fn(|k| {
-                            axis.origin[k] + radius_mm * (u[k] * angle.cos() + v[k] * angle.sin())
+                            axis.origin[k]
+                                + radius_mm
+                                    * (u[k] * angle.portable_cos() + v[k] * angle.portable_sin())
                         }),
                         std::array::from_fn(|k| {
-                            radius_mm * sweep * (-u[k] * angle.sin() + v[k] * angle.cos())
+                            radius_mm
+                                * sweep
+                                * (-u[k] * angle.portable_sin() + v[k] * angle.portable_cos())
                         }),
                     )
                 });
@@ -701,8 +705,8 @@ fn actual_external_pipe_head_lazy_ready_descriptors_match_independent_cap_and_he
         let angles = [i as f64, (i + 1) as f64].map(|i| i * std::f64::consts::PI / 3.);
         let radius = across / 3_f64.sqrt();
         let expected = [
-            radius * (angles[0].cos() + angles[1].cos()) / 2.,
-            -radius * (angles[0].sin() + angles[1].sin()) / 2.,
+            radius * (angles[0].portable_cos() + angles[1].portable_cos()) / 2.,
+            -radius * (angles[0].portable_sin() + angles[1].portable_sin()) / 2.,
             -height / 2.,
         ];
         for (actual, expected) in face.center_mm.into_iter().zip(expected) {

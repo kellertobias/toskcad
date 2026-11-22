@@ -8,6 +8,7 @@ use multicad_core::sketch_regions::{
     AnalyticQueries, CurveHits, CurveProjection, Edge, ExactCurve, PointLocation, QueryError,
     QueryErrorKind, Region, RegionQueries, SplineContinuation,
 };
+use multicad_precision::PortableMath as _;
 
 mod linear_spline;
 pub(crate) mod spline_regions;
@@ -272,7 +273,7 @@ impl NativeRegionQueries {
                     let (center, radius) = match round {
                         ExactCurve::Circle { center, radius_mm } => (*center, *radius_mm),
                         ExactCurve::Arc { center, a, .. } => {
-                            (*center, (a[0] - center[0]).hypot(a[1] - center[1]))
+                            (*center, (a[0] - center[0]).portable_hypot(a[1] - center[1]))
                         }
                         _ => unreachable!(),
                     };
@@ -363,14 +364,14 @@ impl NativeRegionQueries {
         let [first, last] = curve.domain(policy).map_err(error)?;
         let a = curve.evaluate(first, policy).map_err(error)?.point;
         let b = curve.evaluate(last, policy).map_err(error)?.point;
-        let closed = (a[0] - b[0]).hypot(a[1] - b[1]) <= tolerance_mm;
+        let closed = (a[0] - b[0]).portable_hypot(a[1] - b[1]) <= tolerance_mm;
         let parameter_tolerance = (last - first) * 1e-12;
         let points = hits
             .points
             .into_iter()
             .filter(|h| {
                 let seam = closed
-                    && (h.point[0] - a[0]).hypot(h.point[1] - a[1]) <= tolerance_mm
+                    && (h.point[0] - a[0]).portable_hypot(h.point[1] - a[1]) <= tolerance_mm
                     && (((h.first_parameter - first).abs() <= parameter_tolerance
                         && (h.second_parameter - last).abs() <= parameter_tolerance)
                         || ((h.second_parameter - first).abs() <= parameter_tolerance
@@ -749,7 +750,9 @@ mod tests {
         );
         let contacts = queries.intersections(&spline, &circle, tolerance).unwrap();
         assert_eq!(contacts.points.len(), 1);
-        assert!((contacts.points[0][0].hypot(contacts.points[0][1]) - 4.).abs() < tolerance);
+        assert!(
+            (contacts.points[0][0].portable_hypot(contacts.points[0][1]) - 4.).abs() < tolerance
+        );
         assert_eq!(
             queries.self_intersections(&spline, tolerance).unwrap(),
             CurveHits::default()

@@ -324,7 +324,8 @@ impl Scene<'_> {
             if hidden && !self.options.hidden_lines {
                 return Ok(());
             }
-            if matches!(curve, Curve::Line([a, b]) if (a[0]-b[0]).hypot(a[1]-b[1]) <= tolerance) {
+            if matches!(curve, Curve::Line([a, b]) if (a[0]-b[0]).portable_hypot(a[1]-b[1]) <= tolerance)
+            {
                 return Ok(());
             }
             if output.edges.len() == output.limit {
@@ -374,11 +375,11 @@ impl Scene<'_> {
 }
 
 fn trimmed_rim_bounds([origin, cosine, sine]: [Point; 3], extent: Point, trim: Span) -> Bounds {
-    let trigonometry = trim.map(f64::sin_cos);
+    let trigonometry = trim.map(f64::portable_sin_cos);
     let ranges = std::array::from_fn::<_, 3, _>(|i| {
         let [a, b] =
             trigonometry.map(|(sin, cos)| cosine[i].mul_add(cos, sine[i].mul_add(sin, origin[i])));
-        let phase = sine[i].atan2(cosine[i]).rem_euclid(TAU);
+        let phase = sine[i].portable_atan2(cosine[i]).rem_euclid(TAU);
         let antipode = (phase + PI).rem_euclid(TAU);
         let range = trim[0]..=trim[1];
         let min = if range.contains(&antipode) {
@@ -410,7 +411,7 @@ fn hide_rim(
 ) -> Result<(), ProjectionError> {
     work.hidden.clear();
     let [origin, cos, sin] = rim.basis();
-    let extent: Point = std::array::from_fn(|i| cos[i].hypot(sin[i]));
+    let extent: Point = std::array::from_fn(|i| cos[i].portable_hypot(sin[i]));
     let full_bounds = Bounds {
         min: std::array::from_fn(|i| origin[i] - extent[i]),
         max: std::array::from_fn(|i| origin[i] + extent[i]),
@@ -473,7 +474,7 @@ impl TrimmedPlane {
             * (16. * f64::EPSILON);
         let threshold = (self.normal[2] * work.tolerance).max(roundoff);
         let [depth, cosine, sine] = depths.0;
-        if depth + cosine.hypot(sine) <= threshold {
+        if depth + cosine.portable_hypot(sine) <= threshold {
             return Ok(());
         }
         let trim = rim.ellipse.trim;
@@ -513,7 +514,7 @@ impl TrimmedPlane {
         for &[a, b] in &self.boundary {
             let [x, y] = sub(b, a);
             let [u, v] = sub(point, a);
-            let length = x.hypot(y);
+            let length = x.portable_hypot(y);
             let threshold = length * tolerance;
             let cross = x.mul_add(v, -y * u);
             let along = x.mul_add(u, y * v);

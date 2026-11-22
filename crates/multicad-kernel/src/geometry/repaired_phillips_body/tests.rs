@@ -22,8 +22,9 @@ fn source_text(scale: f64, left: bool, posed: bool) -> String {
             radius_mm: 0.25 * scale,
         },
     };
-    let tip = (spec.mouth_diameter_mm - spec.g_diameter_mm) / (2. * 26.5_f64.to_radians().tan())
-        + spec.g_diameter_mm / 2. * 28_f64.to_radians().tan();
+    let tip = (spec.mouth_diameter_mm - spec.g_diameter_mm)
+        / (2. * 26.5_f64.to_radians().portable_tan())
+        + spec.g_diameter_mm / 2. * 28_f64.to_radians().portable_tan();
     let cutter = Cutter::new(
         spec,
         Domain {

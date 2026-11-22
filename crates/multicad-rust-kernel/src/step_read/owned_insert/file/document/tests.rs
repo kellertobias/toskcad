@@ -3,6 +3,7 @@ use crate::step::{
     Writer,
     insert::{CurveOptions, DomainOptions, DomainPlan, SurfacePlan, TopologyPlan},
 };
+use multicad_precision::PortableMath as _;
 pub(super) fn mixed(left: bool) -> String {
     let body = crate::step_read::owned_insert::tests::graph(left, 4.);
     let d = DomainPlan::prepare(&body, DomainOptions::default(), None).unwrap();
@@ -85,24 +86,24 @@ fn actual_twenty_four_tooth_compound_has_a_separate_global_and_selected_budget()
 }
 fn gear() -> crate::spur_gear::herringbone::Herringbone {
     let beta = 15_f64.to_radians();
-    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let module = 2. / beta.cos();
+    let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let module = 2. / beta.portable_cos();
     let pitch = module * 24. / 2.;
     crate::spur_gear::herringbone::Herringbone::new_helical(
         crate::spur_gear::Spec {
             teeth: 24,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * pressure.cos(),
+            base_radius_mm: pitch * pressure.portable_cos(),
             tip_radius_mm: pitch + 2.,
             root_radius_mm: pitch - 2.5,
             root_fillet_radius_mm: 0.4,
             half_base_angle_rad: (std::f64::consts::PI * module / 2. - 0.05) / (2. * pitch)
-                + pressure.tan()
+                + pressure.portable_tan()
                 - pressure,
             face_width_mm: 4.,
             bore_radius_mm: 4.,
         },
-        beta.tan() / pitch,
+        beta.portable_tan() / pitch,
         1e-5,
         1e7,
     )

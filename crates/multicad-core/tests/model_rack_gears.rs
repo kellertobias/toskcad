@@ -7,6 +7,7 @@ use multicad_core::{
     project_file::{self, ProjectFile},
     symbols::{self, SymbolAuthorRequest, SymbolKind},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
@@ -82,16 +83,16 @@ fn straight_rack_dimensions_use_independent_thinning_and_tangent_custom_root_cir
     close(r.physical_tooth_thickness_mm, PI / 2. - 0.13);
     close(
         r.tip_width_mm,
-        PI / 2. - 0.13 - 2. * 20_f64.to_radians().tan(),
+        PI / 2. - 0.13 - 2. * 20_f64.to_radians().portable_tan(),
     );
     let a = r.pressure_angle_rad;
     let f = r.root_fillet_radius_mm;
-    let x = r.fillet_center_x_mm - f * a.cos();
-    let y = r.fillet_center_y_mm - f * a.sin();
+    let x = r.fillet_center_x_mm - f * a.portable_cos();
+    let y = r.fillet_center_y_mm - f * a.portable_sin();
     // Independent line and circle equations at the shared tangent point.
-    close(x + y * a.tan(), r.physical_tooth_thickness_mm / 2.);
+    close(x + y * a.portable_tan(), r.physical_tooth_thickness_mm / 2.);
     close(
-        (x - r.fillet_center_x_mm).hypot(y - r.fillet_center_y_mm),
+        (x - r.fillet_center_x_mm).portable_hypot(y - r.fillet_center_y_mm),
         f,
     );
     close(r.fillet_center_y_mm - f, -r.dedendum_mm);

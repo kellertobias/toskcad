@@ -7,6 +7,7 @@ use crate::{
     helical_thread::Thread,
     hex_nut::Nut,
 };
+use multicad_precision::PortableMath as _;
 use std::{
     cell::Cell,
     collections::HashMap,
@@ -190,8 +191,11 @@ fn hex_side(angle: f64) -> u32 {
 /// over the full angle and length.
 pub fn volume_error_bound(thread: &Thread, options: Tessellation) -> f64 {
     let spec = thread.spec();
-    let min_radius = thread.root_radius_mm() * (options.angle * 0.5).cos();
-    let angular_error = 2. * (options.deflection / (2. * min_radius)).min(1.).asin();
+    let min_radius = thread.root_radius_mm() * (options.angle * 0.5).portable_cos();
+    let angular_error = 2.
+        * (options.deflection / (2. * min_radius))
+            .min(1.)
+            .portable_asin();
     let max_slope = thread.maximum_profile_slope();
     let radial_error = options.deflection + thread.helical_rate().abs() * max_slope * angular_error;
     TAU * spec.major_radius_mm * spec.length_mm * radial_error
@@ -230,7 +234,7 @@ fn phase_strips_counted(
     let spec = thread.spec();
     let root = thread.root_radius_mm();
     let rate = thread.helical_rate().abs();
-    let normal_scale = (rate / root).hypot(1.);
+    let normal_scale = (rate / root).portable_hypot(1.);
     let mut strips = Vec::new();
     for (band, bounds) in thread.profile_breaks().windows(2).enumerate() {
         let mut pending = vec![[bounds[0], bounds[1]]];
@@ -243,7 +247,7 @@ fn phase_strips_counted(
             let slope = a.abs().max(b.abs());
             let curvature = if band == 2 {
                 spec.root_radius_mm
-                    .map_or(0., |radius| slope.hypot(1.).powi(3) / radius)
+                    .map_or(0., |radius| slope.portable_hypot(1.).powi(3) / radius)
             } else {
                 0.
             };
@@ -257,8 +261,8 @@ fn phase_strips_counted(
             // At fixed θ the unit normal is parallel to
             // (1, (lead/TAU) r'/r, -r') in the radial basis. The slope
             // is monotone within each band and |Δr|≤max|r'|Δs.
-            let normal =
-                normal_scale * (b.atan() - a.atan()).abs() + rate * slope * width / (root * root);
+            let normal = normal_scale * (b.portable_atan() - a.portable_atan()).abs()
+                + rate * slope * width / (root * root);
             if chord <= options.deflection && theta + normal <= options.angle {
                 if strips.len() == options.triangle_limit {
                     return Err(MeshError::BudgetExceeded);
@@ -544,17 +548,17 @@ impl<'a> Builder<'a> {
             let lo = TAU * self.fraction(column);
             let hi = TAU * self.fraction(column + 1);
             let middle = (lo + hi) * 0.5;
-            let half_chord_cos = ((hi - lo) * 0.5).cos();
+            let half_chord_cos = ((hi - lo) * 0.5).portable_cos();
             for &(angle, _) in &ring[first..end] {
                 // The inner and outer vertices share the same radial ray.
                 // Hex corners divide columns, so every segment is planar.
                 let radial = match exterior {
                     BoreExterior::Cylinder(radius) => {
-                        radius * half_chord_cos / (angle - middle).cos()
+                        radius * half_chord_cos / (angle - middle).portable_cos()
                     }
                     BoreExterior::Hex(nut) => nut.outer_radius(angle),
                 };
-                let (sin, cos) = angle.sin_cos();
+                let (sin, cos) = angle.portable_sin_cos();
                 outer.push(self.mesh.vertices.len() as u32 / 3);
                 self.mesh.vertices.extend([radial * cos, radial * sin, z]);
             }
@@ -690,7 +694,7 @@ impl<'a> Builder<'a> {
                 )
             }
         };
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let id = self.mesh.vertices.len() as u32 / 3;
         self.mesh.vertices.extend([radius * cos, radius * sin, z]);
         self.vertex_ids.insert(key, id);

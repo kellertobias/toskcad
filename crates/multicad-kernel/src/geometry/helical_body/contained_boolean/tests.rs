@@ -462,8 +462,8 @@ fn rounded_root_probes_retain_the_actual_circle_for_both_hands_and_poses() {
             let frame = frame(posed);
             let mut parameters = spec(left);
             parameters.upper_flank_deg = 30.;
-            parameters.depth_mm = (0.7 - 0.1) / (2. * 30_f64.to_radians().tan())
-                - 0.06 * (1. / 30_f64.to_radians().sin() - 1.);
+            parameters.depth_mm = (0.7 - 0.1) / (2. * 30_f64.to_radians().portable_tan())
+                - 0.06 * (1. / 30_f64.to_radians().portable_sin() - 1.);
             let thread =
                 Solid::rust_helical_thread(parameters, Some(0.06), EntityId::new(), frame, policy)
                     .unwrap();
@@ -556,7 +556,7 @@ fn unrelated_families_curved_proposals_and_fuzzy_or_mismatched_policies_keep_the
 }
 
 fn turned(frame: PlaneFrame, angle: f64, along: f64) -> PlaneFrame {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     PlaneFrame {
         origin: position(frame, [0., 0., along]),
         u: std::array::from_fn(|i| cos * frame.u[i] + sin * frame.v[i]),
@@ -704,7 +704,7 @@ fn half_turned_nuts_intersect_in_the_actual_screw_sweep_of_their_profile_lenses(
                         let axis = [frame.u, frame.v, frame.normal()][i];
                         (0..3).map(|j| (point[j] - frame.origin[j]) * axis[j]).sum()
                     });
-                    let radius = local[0].hypot(local[1]);
+                    let radius = local[0].portable_hypot(local[1]);
                     assert!(local[2] > 0.7 - 1e-4 && local[2] < 2.8 + 1e-4);
                     assert!(radius > 1.85 - 1e-4 && radius < 2. + 1e-4);
                 }

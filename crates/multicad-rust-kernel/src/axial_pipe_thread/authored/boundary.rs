@@ -89,7 +89,7 @@ fn fit(
     let m = whole.map(|v| v.c[10].magnitude());
     let bound = m.into_iter().fold(0., f64::max);
     let estimate = (bound * length.powi(10) / (1024. * budget))
-        .powf(0.1)
+        .portable_powf(0.1)
         .ceil()
         .max(1.);
     if !estimate.is_finite() || estimate > 256. {
@@ -383,11 +383,15 @@ impl AuthoredThread {
             let radius = (root + I::point(self.spec.radial_taper) * I::point(z)).midpoint();
             let a = graph.0.vertices[corners[3][end]];
             let b = graph.0.vertices[corners[0][end]];
-            let from = a[1].atan2(a[0]);
-            let to = b[1].atan2(b[0]);
+            let from = a[1].portable_atan2(a[0]);
+            let to = b[1].portable_atan2(b[0]);
             let sweep = -(from - to).rem_euclid(TAU);
             let angle = from + sweep / 2.;
-            let middle = graph.vertex([radius * angle.cos(), radius * angle.sin(), z]);
+            let middle = graph.vertex([
+                radius * angle.portable_cos(),
+                radius * angle.portable_sin(),
+                z,
+            ]);
             let ids = [corners[3][end], middle, corners[0][end]];
             for pair in ids.windows(2) {
                 gap[end].push(graph.edge(
@@ -421,7 +425,7 @@ impl AuthoredThread {
             0.
         };
         let radius = (root + I::point(self.spec.radial_taper) * I::point(z)).midpoint();
-        let semi = self.spec.radial_taper.abs().atan();
+        let semi = self.spec.radial_taper.abs().portable_atan();
         let tangent = I::point(semi).sin() / I::point(semi).cos();
         let analytic_error =
             (I::point((tangent - I::point(self.spec.radial_taper.abs())).magnitude())

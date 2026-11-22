@@ -1,5 +1,6 @@
 //! Exact axial and transverse torus silhouettes and principal plane cuts.
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     curved_projection::{Curve, Detail, Edge, Ellipse},
     planar_projection::{AnalyticFace, SpatialRimCandidate},
@@ -29,7 +30,7 @@ pub(super) fn drawing_frame(torus: PlaneFrame, view: PlaneFrame) -> ([f64; 3], [
 
 pub(super) fn axial_center(torus: PlaneFrame, view: PlaneFrame) -> Result<[f64; 3], GeometryError> {
     let (center, [a, b, _]) = drawing_frame(torus, view);
-    if a.hypot(b) > ANGULAR {
+    if a.portable_hypot(b) > ANGULAR {
         return Err(unsupported());
     }
     Ok(center)
@@ -61,7 +62,7 @@ pub(super) fn scene_member(
     let [x, y, depth] = center;
     let center = [x, y];
     let [a, b, facing] = axis;
-    let projected = a.hypot(b);
+    let projected = a.portable_hypot(b);
     if projected > ANGULAR && facing.abs() > ANGULAR {
         return Err(unsupported());
     }
@@ -112,7 +113,7 @@ pub(super) fn project(
 ) -> Result<Vec<ProjectedVector>, GeometryError> {
     let ([x, y, z], [a, b, facing]) = drawing_frame(torus, options.frame);
     let center = [x, y];
-    let axial = a.hypot(b) <= ANGULAR;
+    let axial = a.portable_hypot(b) <= ANGULAR;
     if let Some(depth) = options.section_offset_mm {
         if options.detail.is_some() {
             return Err(unsupported());
@@ -129,7 +130,7 @@ pub(super) fn project(
                 return Ok(Vec::new());
             }
             let roundoff = ANGULAR * z.abs().max(depth.abs()).max(major);
-            let length = a.hypot(b);
+            let length = a.portable_hypot(b);
             let across = [-b / length, a / length];
             if delta.abs() <= roundoff {
                 return diametral_cut(input, center, across, [major, minor], options);

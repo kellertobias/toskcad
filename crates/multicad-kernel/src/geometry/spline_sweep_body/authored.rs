@@ -283,7 +283,7 @@ impl Solid {
                 if hits.overlap
                     || hits.points.iter().any(|point| {
                         !joins.iter().any(|join| {
-                            (point[0] - join[0]).hypot(point[1] - join[1])
+                            (point[0] - join[0]).portable_hypot(point[1] - join[1])
                                 <= policy.linear_tolerance_mm * 0.5
                         })
                     })
@@ -401,7 +401,7 @@ impl Solid {
                             for pair in spline.poles.windows(2) {
                                 let [a, b] = [reflect(pair[0]), reflect(pair[1])];
                                 let delta = [b[0] - a[0], b[1] - a[1]];
-                                let length = delta[0].hypot(delta[1]);
+                                let length = delta[0].portable_hypot(delta[1]);
                                 policy.length(length)?;
                                 ring_edges.push(AuthoredEdge {
                                     edge: Edge::Analytic(AnalyticEdge::Line { a, b }),
@@ -419,7 +419,7 @@ impl Solid {
                         CurvedEdge2d::Line { a, b } => {
                             let [a, b] = [reflect(*a), reflect(*b)];
                             let delta = [b[0] - a[0], b[1] - a[1]];
-                            let length = delta[0].hypot(delta[1]);
+                            let length = delta[0].portable_hypot(delta[1]);
                             policy.length(length)?;
                             ring_edges.push(AuthoredEdge {
                                 edge: Edge::Analytic(AnalyticEdge::Line { a, b }),

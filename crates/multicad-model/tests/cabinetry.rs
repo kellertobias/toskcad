@@ -22,6 +22,7 @@ use multicad_core::{
 };
 use multicad_kernel::{GeometryPolicy, MeshOptions, PlaneFrame, Solid};
 use multicad_model::{Compiler, CutRecord, GeometryBackend, Model};
+use multicad_precision::PortableMath as _;
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -1253,7 +1254,8 @@ fn prism_removal(prism: &model::CutPrism, blank: &model::PanelBox) -> f64 {
         assert!(center[1] - radius >= b[0] - 1e-9 && center[1] + radius <= b[1] + 1e-9);
         std::f64::consts::PI * radius * radius
     } else if let Some((p, q, radius)) = prism.slot {
-        2. * radius * (q[0] - p[0]).hypot(q[1] - p[1]) + std::f64::consts::PI * radius * radius
+        2. * radius * (q[0] - p[0]).portable_hypot(q[1] - p[1])
+            + std::f64::consts::PI * radius * radius
     } else {
         polygon_area(&clip_rect(&prism.polygon, [a[0], a[1], b[0], b[1]]))
     };
@@ -1638,7 +1640,7 @@ fn cylinder_bounds(
     let mut max = [0.; 3];
     for i in 0..3 {
         let ends = [frame.origin[i], frame.origin[i] + height * frame.n[i]];
-        let rim = radius * frame.u[i].hypot(frame.v[i]);
+        let rim = radius * frame.u[i].portable_hypot(frame.v[i]);
         min[i] = ends[0].min(ends[1]) - rim;
         max[i] = ends[0].max(ends[1]) + rim;
     }
@@ -1692,7 +1694,7 @@ fn crossing_cylinders(a: f64, big: f64) -> f64 {
     (0..n)
         .map(|k| {
             let t = -std::f64::consts::FRAC_PI_2 + (f64::from(k) + 0.5) * step;
-            t.cos().powi(2) * (big * big - a * a * t.sin().powi(2)).sqrt()
+            t.portable_cos().powi(2) * (big * big - a * a * t.portable_sin().powi(2)).sqrt()
         })
         .sum::<f64>()
         * step
@@ -2135,7 +2137,7 @@ fn rust_rebuilds_the_whole_bundled_cabinet_with_exact_tenon_inserts_and_mortises
             );
             for i in 0..3 {
                 let ends = [frame.origin[i], frame.origin[i] + height_mm * frame.n[i]];
-                let rim = radius_mm * frame.u[i].hypot(frame.v[i]);
+                let rim = radius_mm * frame.u[i].portable_hypot(frame.v[i]);
                 near(shape.bounds.min[i], ends[0].min(ends[1]) - rim);
                 near(shape.bounds.max[i], ends[0].max(ends[1]) + rim);
             }
@@ -2176,7 +2178,7 @@ fn rust_rebuilds_the_whole_bundled_cabinet_with_exact_tenon_inserts_and_mortises
         let mut removed = 0.;
         for (tool, recess) in tools.iter().zip(recesses) {
             let (a, b, radius) = tool.slot.unwrap();
-            let area = stadium_area((b[0] - a[0]).hypot(b[1] - a[1]), radius);
+            let area = stadium_area((b[0] - a[0]).portable_hypot(b[1] - a[1]), radius);
             removed += area * recess.depth_mm;
             let center: [f64; 3] = std::array::from_fn(|i| {
                 tool.origin[i]

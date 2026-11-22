@@ -65,7 +65,7 @@ fn gauss() -> &'static [(f64, f64); 16] {
         const N: usize = 16;
         let mut nodes = [(0., 0.); N];
         for (i, node) in nodes.iter_mut().enumerate() {
-            let mut x = (PI * (i as f64 + 0.75) / (N as f64 + 0.5)).cos();
+            let mut x = (PI * (i as f64 + 0.75) / (N as f64 + 0.5)).portable_cos();
             let mut derivative = 1.;
             for _ in 0..32 {
                 let (mut p0, mut p1) = (1., x);
@@ -193,7 +193,7 @@ impl<'a> Pair<'a> {
         if axis[2].abs() > 1e-9 || thread.root_circle().is_some() {
             return Err(Error::Invalid);
         }
-        let length = axis[0].hypot(axis[1]);
+        let length = axis[0].portable_hypot(axis[1]);
         let normal = [axis[0] / length, axis[1] / length];
         let origin = worm_at.local(wheel_at.origin_mm);
         let spec = thread.spec();
@@ -265,7 +265,7 @@ impl<'a> Pair<'a> {
 
     fn in_wheel(&self, plane: &Plane, section: &Section, st: [f64; 2]) -> bool {
         let [x, y] = self.wheel_point(plane, st);
-        let radius = x.hypot(y);
+        let radius = x.portable_hypot(y);
         let bore = self.wheel.bore_radius_mm().unwrap_or(0.) / self.m;
         radius > bore
             && radius < self.wheel.blank()
@@ -274,11 +274,12 @@ impl<'a> Pair<'a> {
 
     /// Thread angle along the plane line through `s`.
     fn theta(&self, plane: &Plane, s: f64) -> f64 {
-        plane.normal[1].atan2(plane.normal[0]) - self.worm.phase_rad() + s.atan2(plane.c)
+        plane.normal[1].portable_atan2(plane.normal[0]) - self.worm.phase_rad()
+            + s.portable_atan2(plane.c)
     }
 
     fn graph(&self, plane: &Plane, graph: Graph, s: f64) -> f64 {
-        let r = s.hypot(plane.c);
+        let r = s.portable_hypot(plane.c);
         let lift = self.rate * self.theta(plane, s) - self.half;
         match graph {
             Graph::Rise(n) => {
@@ -294,12 +295,12 @@ impl<'a> Pair<'a> {
     /// Worm margins of the end slab, the thread and the bore at `(s, t)`.
     fn worm_margins(&self, plane: &Plane, st: [f64; 2]) -> [f64; 3] {
         let p = self.worm_point(plane, st);
-        let r = p[0].hypot(p[1]);
+        let r = p[0].portable_hypot(p[1]);
         let q = self.worm.to_thread(p);
         let height = q[2].clamp(0., 2. * self.half);
         [
             self.half - st[1].abs(),
-            self.worm.thread().radius(q[1].atan2(q[0]), height) - r,
+            self.worm.thread().radius(q[1].portable_atan2(q[0]), height) - r,
             r - self.bore,
         ]
     }
@@ -326,7 +327,7 @@ impl<'a> Pair<'a> {
     ) -> ([f64; 2], [f64; 2]) {
         let [x, y] = match boundary {
             Boundary::Arc { radius, from, to } => {
-                let (sin, cos) = (from + (to - from) * u).sin_cos();
+                let (sin, cos) = (from + (to - from) * u).portable_sin_cos();
                 let sweep = radius * (to - from);
                 [
                     Jet {
@@ -367,7 +368,7 @@ impl<'a> Pair<'a> {
             origin[0].clamp(-reach, reach),
             origin[1].clamp(-self.half, self.half),
         ];
-        let closest = (nearest[0] - origin[0]).hypot(nearest[1] - origin[1]) / self.m;
+        let closest = (nearest[0] - origin[0]).portable_hypot(nearest[1] - origin[1]) / self.m;
         let bore = self.wheel.bore_radius_mm().unwrap_or(0.) / self.m;
         let with_bore = bore > 0. && closest < bore;
         if closest >= self.wheel.blank() {
@@ -379,9 +380,9 @@ impl<'a> Pair<'a> {
         let [cx, cy] = corners
             .iter()
             .fold([0., 0.], |acc, c| [acc[0] + c[0] / 4., acc[1] + c[1] / 4.]);
-        let center = cy.atan2(cx);
+        let center = cy.portable_atan2(cx);
         let wrap = |a: f64| (a + PI).rem_euclid(2. * PI) - PI;
-        let offsets = corners.map(|[x, y]| wrap(y.atan2(x) - center));
+        let offsets = corners.map(|[x, y]| wrap(y.portable_atan2(x) - center));
         let low = offsets.iter().copied().fold(f64::INFINITY, f64::min) - span;
         let high = offsets.iter().copied().fold(f64::NEG_INFINITY, f64::max) + span;
         let chosen = (0..teeth)
@@ -666,9 +667,9 @@ mod tests {
     /// distance `(teeth/2 + 5) m`, the wheel turned by `extra` from mesh.
     fn pose(teeth: u32, drive: f64, extra: f64) -> [Placement; 2] {
         let center = f64::from(teeth) / 2. + 5.;
-        let (sw, cw) = drive.sin_cos();
+        let (sw, cw) = drive.portable_sin_cos();
         let turn = -drive / f64::from(teeth) + extra;
-        let (s, c) = turn.sin_cos();
+        let (s, c) = turn.portable_sin_cos();
         [
             Placement {
                 origin_mm: [center, 0., 0.],
@@ -741,7 +742,7 @@ mod tests {
         );
         let rigid = |p: Point| {
             let q = rotate_z(p, 0.7);
-            let (s, c) = 0.3_f64.sin_cos();
+            let (s, c) = 0.3_f64.portable_sin_cos();
             [
                 q[0] + 3.,
                 c * q[1] - s * q[2] - 2.,

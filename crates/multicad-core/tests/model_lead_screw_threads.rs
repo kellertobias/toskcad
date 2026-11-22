@@ -5,6 +5,7 @@ use multicad_core::{
     project_file::{self, ProjectFile},
     symbols::{self, SymbolAuthorRequest, SymbolKind},
 };
+use multicad_precision::PortableMath as _;
 fn session() -> Session {
     Session::new(Document::new("Basic lead screws").unwrap()).unwrap()
 }
@@ -76,7 +77,7 @@ fn distinct_sourced_axial_profiles_keep_shared_basic_pitch_and_mode_specific_cle
                     (r.profile.crest_width_mm
                         - (row.pitch_mm / 2.
                             - (major - row.basic_pitch_diameter_mm)
-                                * (angle / 2.).to_radians().tan()))
+                                * (angle / 2.).to_radians().portable_tan()))
                     .abs()
                         < 1e-12
                 );
@@ -112,7 +113,9 @@ fn fabrication_allowances_change_actual_pitch_diameter_without_rewriting_source_
                 -1.
             };
             let expected = row.basic_pitch_diameter_mm
-                + sign * (2. * radial + axial / (row.included_angle_deg / 2.).to_radians().tan());
+                + sign
+                    * (2. * radial
+                        + axial / (row.included_angle_deg / 2.).to_radians().portable_tan());
             assert!((r.actual_pitch_diameter_mm.unwrap() - expected).abs() < 1e-12);
             assert_eq!(r.lead_screw, basic.lead_screw);
             assert_eq!(r.nominal_pitch_diameter_mm, basic.nominal_pitch_diameter_mm);

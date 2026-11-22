@@ -213,7 +213,7 @@ fn profile_end_cap_keeps_actual_asymmetric_centroid_without_circle_inference() {
     assert_eq!(faces.len(), data.material.face_count() as usize);
     assert_eq!(faces.iter().filter(|f| f.plane.is_some()).count(), 2);
     let face = &faces[1];
-    assert!(face.center_mm[0].hypot(face.center_mm[1]) > 1e-4);
+    assert!(face.center_mm[0].portable_hypot(face.center_mm[1]) > 1e-4);
     assert_eq!(face.plane.unwrap().0[2], 4.);
     assert!((face.center_mm[2] - 4.).abs() <= GeometryPolicy::default().linear_tolerance_mm);
 }

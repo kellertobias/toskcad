@@ -6,6 +6,7 @@ use super::flank::rotate;
 use super::solve::{Search, isolate};
 use super::trace::trace;
 use super::{EndFace, Gear, Level, Patch, Region, Traced};
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::spur_gear::Edge;
 use std::f64::consts::TAU;
 
@@ -99,7 +100,7 @@ fn coaxial(
     let tangent = patch.flank.tangent(0.5);
     let sign = (tangent[1] * probe[0] - tangent[0] * probe[1]).signum();
     let normal_at = |theta: f64| {
-        let (sin, cos) = theta.sin_cos();
+        let (sin, cos) = theta.portable_sin_cos();
         gear.frame.vector([sign * cos, sign * sin, 0.])
     };
     if gear.edge_on() {
@@ -110,7 +111,7 @@ fn coaxial(
             return Ok(());
         }
         for side in [1., -1.] {
-            let theta = azimuth + side * ratio.acos();
+            let theta = azimuth + side * ratio.portable_acos();
             // phase(z) = theta - profile is linear in z; the covered
             // profile angles give z intervals, at most two per turn.
             let profile = |z: f64| theta - band.phase_at(z);
@@ -123,7 +124,7 @@ fn coaxial(
                     let z =
                         [a, b].map(|angle| band.z[0] + (theta - angle - band.phase) / band.twist);
                     let at = |z: f64| {
-                        let (sin, cos) = theta.sin_cos();
+                        let (sin, cos) = theta.portable_sin_cos();
                         gear.frame.place([radius * cos, radius * sin, z])
                     };
                     let mut path = Segment(at(z[0]), at(z[1]));
@@ -138,13 +139,13 @@ fn coaxial(
         return Ok(());
     }
     // On the ellipse, z(theta) = (offset - slope radius cos(theta - azimuth)) / rise.
-    let height = |theta: f64| (offset - slope * radius * (theta - azimuth).cos()) / rise;
+    let height = |theta: f64| (offset - slope * radius * (theta - azimuth).portable_cos()) / rise;
     // Angles at which the ellipse crosses the band's two levels.
     let mut cuts: Vec<f64> = Vec::new();
     for z in band.z {
         let cosine = (offset - rise * z) / (slope * radius);
         if cosine.abs() < 1. {
-            let angle = cosine.acos();
+            let angle = cosine.portable_acos();
             cuts.extend([azimuth + angle, azimuth - angle]);
         }
     }
@@ -302,7 +303,7 @@ pub(super) fn section(gear: &Gear, depth: f64) -> Result<Vec<Loop>, GeometryErro
     }
     for (radius, z, outward) in cylinders {
         let normal_at = |angle: f64| {
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = angle.portable_sin_cos();
             gear.frame.vector([outward * cos, outward * sin, 0.])
         };
         if gear.edge_on() {
@@ -315,7 +316,7 @@ pub(super) fn section(gear: &Gear, depth: f64) -> Result<Vec<Loop>, GeometryErro
                 let [x, y] = [0, 1].map(|i| line * along[i] + reach * across[i]);
                 let [a, b] = z.map(|z| gear.frame.place([x, y, z]));
                 let mut path = Segment(a, b);
-                if !leftward(&path, normal_at(y.atan2(x))) {
+                if !leftward(&path, normal_at(y.portable_atan2(x))) {
                     path = Segment(b, a);
                 }
                 output.push(Arc::new(path));
@@ -340,7 +341,7 @@ pub(super) fn section(gear: &Gear, depth: f64) -> Result<Vec<Loop>, GeometryErro
             ),
         };
         for side in [1., -1.] {
-            let angles = [hi.acos(), lo.acos()].map(|a| gear.azimuth + side * a);
+            let angles = [hi.portable_acos(), lo.portable_acos()].map(|a| gear.azimuth + side * a);
             let mut path = ProfilePath {
                 edge: Gear::circle(radius, false),
                 range: angles.map(|a| a / TAU),
@@ -367,7 +368,7 @@ pub(super) fn section(gear: &Gear, depth: f64) -> Result<Vec<Loop>, GeometryErro
         let base = [line * along[0], line * along[1], z];
         let direction = [across[0], across[1], 0.];
         let inside = |p: P3| {
-            let radius = p[0].hypot(p[1]);
+            let radius = p[0].portable_hypot(p[1]);
             radius > inner
                 && match phase {
                     Some(phase) => gear.contains_profile(rotate([p[0], p[1]], -phase)),

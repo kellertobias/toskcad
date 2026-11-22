@@ -3,6 +3,7 @@ use multicad_core::{
     references::{Attachment, GeometryIntent, Origin, Resolution, TopologyKind, resolve},
 };
 use multicad_kernel::*;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 fn p() -> GeometryPolicy {
     Default::default()
@@ -33,7 +34,7 @@ fn profile() -> CurvedProfile {
 }
 /// z = height + slope*x, including genuine orthonormal in-plane axes.
 fn target(height: f64, slope: f64) -> PlaneFrame {
-    let l = 1_f64.hypot(slope);
+    let l = 1_f64.portable_hypot(slope);
     PlaneFrame {
         origin: [0., 0., height],
         u: [1. / l, 0., slope / l],
@@ -473,7 +474,7 @@ fn native_spline_support_uses_actual_curve_extrema_and_bounds_oversized_work() {
         ],
         holes: vec![],
     };
-    let l = 1_f64.hypot(0.2);
+    let l = 1_f64.portable_hypot(0.2);
     let t = PlaneFrame {
         origin: [0., 0., 1.5],
         u: [1., 0., 0.],

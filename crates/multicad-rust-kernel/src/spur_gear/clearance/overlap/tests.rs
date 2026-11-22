@@ -3,6 +3,7 @@ use crate::spur_gear::{
     PI, Spec, TAU,
     internal::{Ring, RingSpec},
 };
+use multicad_precision::PortableMath as _;
 
 const TOL: f64 = 1e-7;
 
@@ -13,11 +14,11 @@ fn spur(teeth: u32, bore: f64) -> Profile {
         Spec {
             teeth,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * a.cos(),
+            base_radius_mm: pitch * a.portable_cos(),
             tip_radius_mm: pitch + 1.,
             root_radius_mm: pitch - 1.25,
             root_fillet_radius_mm: 0.2,
-            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.portable_tan() - a,
             face_width_mm: 2.,
             bore_radius_mm: bore,
         },
@@ -34,11 +35,11 @@ fn ring(teeth: u32) -> Ring {
         RingSpec {
             teeth,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * a.cos(),
+            base_radius_mm: pitch * a.portable_cos(),
             tip_radius_mm: pitch - 1.,
             root_radius_mm: pitch + 1.25,
             root_fillet_radius_mm: 0.2,
-            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.tan() + a,
+            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.portable_tan() + a,
             face_width_mm: 2.,
             outer_radius_mm: pitch + 4.,
         },
@@ -50,7 +51,7 @@ fn ring(teeth: u32) -> Ring {
 }
 
 fn place(x: f64, theta: f64) -> Placement {
-    let (sin, cos) = theta.sin_cos();
+    let (sin, cos) = theta.portable_sin_cos();
     Placement {
         center_mm: [x, 0.],
         axes: [[cos, sin], [-sin, cos]],
@@ -214,17 +215,17 @@ fn a_sliver_thinner_than_the_disc_tube_is_classified_by_its_crossings() {
     // flanks lies within the disc proof's chord tube of both boundaries.
     let beta = 20_f64.to_radians();
     let normal = |teeth: u32| {
-        let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
-        let pitch = f64::from(teeth) / beta.cos();
+        let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+        let pitch = f64::from(teeth) / beta.portable_cos();
         let profile = Profile::new(
             Spec {
                 teeth,
                 pitch_radius_mm: pitch,
-                base_radius_mm: pitch * pressure.cos(),
+                base_radius_mm: pitch * pressure.portable_cos(),
                 tip_radius_mm: pitch + 2.,
                 root_radius_mm: pitch - 2.5,
                 root_fillet_radius_mm: 0.4,
-                half_base_angle_rad: PI / (2. * f64::from(teeth)) + pressure.tan()
+                half_base_angle_rad: PI / (2. * f64::from(teeth)) + pressure.portable_tan()
                     - pressure
                     - 0.05 / (2. * pitch),
                 face_width_mm: 8.,
@@ -234,10 +235,10 @@ fn a_sliver_thinner_than_the_disc_tube_is_classified_by_its_crossings() {
             1e7,
         )
         .unwrap();
-        (profile, beta.tan() / pitch)
+        (profile, beta.portable_tan() / pitch)
     };
     let ((a, rate_a), (b, rate_b)) = (normal(20), normal(30));
-    let center = (20. + 30.) / beta.cos();
+    let center = (20. + 30.) / beta.portable_cos();
     let area = |z: f64| {
         let placements = [place(0., rate_a * z), place(center, PI - rate_b * z)];
         let regions = intersect_sections(

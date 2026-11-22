@@ -11,6 +11,7 @@ use multicad_mcp::{
     tools::{Call, dispatch},
 };
 use multicad_model::GeometryBackend;
+use multicad_precision::PortableMath as _;
 use serde_json::{Value, json};
 use std::sync::{Arc, atomic::AtomicBool};
 
@@ -74,7 +75,7 @@ fn rust_mcp_certifies_curved_tab_overlap_and_rejects_invalid_edits_atomically() 
     let aid = &report["aids"][0];
     assert_eq!(aid["target"]["relation"], "overlapping");
     let volume = aid["target"]["common_volume_mm3"].as_f64().unwrap();
-    let expected = (2. * 96_f64.sqrt() + 100. * 0.2_f64.asin() - 36.) * 0.4;
+    let expected = (2. * 96_f64.sqrt() + 100. * 0.2_f64.portable_asin() - 36.) * 0.4;
     assert!((volume - expected).abs() < 1e-7, "{volume} != {expected}");
     let before = host.document();
     let error = run(

@@ -150,8 +150,9 @@ fn actual_left_handed_posed_packet_qualifies_and_distinct_unsupported_laws_refus
         if let Some(r) = root {
             let a = spec.lower_flank_deg.to_radians();
             let b = spec.upper_flank_deg.to_radians();
-            spec.depth_mm = (spec.pitch_mm - spec.crest_width_mm) / (a.tan() + b.tan())
-                - r * (((b - a) * 0.5).cos() / ((a + b) * 0.5).sin() - 1.);
+            spec.depth_mm = (spec.pitch_mm - spec.crest_width_mm)
+                / (a.portable_tan() + b.portable_tan())
+                - r * (((b - a) * 0.5).portable_cos() / ((a + b) * 0.5).portable_sin() - 1.);
         }
         let source = PhillipsScrew::new(
             Thread::new(spec).unwrap(),

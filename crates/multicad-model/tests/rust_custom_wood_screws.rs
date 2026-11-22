@@ -10,6 +10,7 @@ use multicad_core::{
 };
 use multicad_kernel::{GeometryPolicy, Solid};
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 #[test]
@@ -93,8 +94,8 @@ fn custom_authored_wood_threads_keep_their_exact_start_frame_and_physical_geomet
         assert_eq!(actual.thread().spec().left_hand, left);
         let r = source.major_radius_mm;
         let root = r - source.profile.depth_mm;
-        let slopes = source.profile.lower_flank_deg.to_radians().tan()
-            + source.profile.upper_flank_deg.to_radians().tan();
+        let slopes = source.profile.lower_flank_deg.to_radians().portable_tan()
+            + source.profile.upper_flank_deg.to_radians().portable_tan();
         let crest = source.profile.crest_width_mm;
         let root_width = source.pitch_mm - crest - (r - root) * slopes;
         let thread_volume = PI

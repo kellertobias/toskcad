@@ -7,6 +7,7 @@ use crate::{
     materials::ProfileShape, model::common::number, parameters::EvaluatedParameters,
     references::ReferenceFrame,
 };
+use multicad_precision::PortableMath as _;
 
 pub(crate) const PATH_TOLERANCE_MM: f64 = 1e-3;
 
@@ -474,13 +475,13 @@ fn reference_up(axis: [f64; 3], reference: Option<[f64; 3]>) -> [f64; 3] {
     if let Some(up) = reference.and_then(project) {
         return up;
     }
-    let vertical = axis[0].hypot(axis[1]) < 1e-9;
+    let vertical = axis[0].portable_hypot(axis[1]) < 1e-9;
     project(if vertical { [0., 1., 0.] } else { [0., 0., 1.] }).unwrap_or([0., 1., 0.])
 }
 pub fn member_frame(axis: [f64; 3], reference: Option<[f64; 3]>, rotation_rad: f64) -> MemberFrame {
     let y0 = reference_up(axis, reference);
     let x0 = cross(y0, axis);
-    let (s, c) = rotation_rad.sin_cos();
+    let (s, c) = rotation_rad.portable_sin_cos();
     MemberFrame {
         axis,
         x: add(scale(x0, c), scale(y0, s)),

@@ -71,16 +71,16 @@ fn actual_shared_max_cavity_retains_full_source_and_common_band_seams() {
                     let radius = source.radius_mm(theta, z);
                     assert!(source.contains_void(
                         [
-                            radius * theta.cos() * 0.999,
-                            radius * theta.sin() * 0.999,
+                            radius * theta.portable_cos() * 0.999,
+                            radius * theta.portable_sin() * 0.999,
                             z
                         ],
                         0.
                     ));
                     assert!(!source.contains_void(
                         [
-                            radius * theta.cos() * 1.001,
-                            radius * theta.sin() * 1.001,
+                            radius * theta.portable_cos() * 1.001,
+                            radius * theta.portable_sin() * 1.001,
                             z
                         ],
                         0.

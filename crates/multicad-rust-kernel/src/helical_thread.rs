@@ -1,5 +1,6 @@
 //! Analytic external helical material with a periodic axial thread profile.
 
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 mod classify;
@@ -89,16 +90,19 @@ impl Thread {
             return Err(ThreadError::Limit);
         }
         let [lower, upper] = [lower_deg, upper_deg].map(f64::to_radians);
-        let [lower_run, upper_run] = [lower.tan(), upper.tan()];
+        let [lower_run, upper_run] = [lower.portable_tan(), upper.portable_tan()];
         let half_crest = crest * 0.5;
         let lower_start = pitch - half_crest;
         let (upper_end, lower_end, root) = if let Some(radius) = root_radius_mm {
             let intersection = (pitch - crest) / (lower_run + upper_run);
             let half = (lower + upper) * 0.5;
             let tilt = (upper - lower) * 0.5;
-            let phase = half_crest + intersection * upper_run - radius * tilt.sin() / half.sin();
-            let center_radius = major - intersection + radius * tilt.cos() / half.sin();
-            let expected_depth = intersection - radius * (tilt.cos() / half.sin() - 1.);
+            let phase = half_crest + intersection * upper_run
+                - radius * tilt.portable_sin() / half.portable_sin();
+            let center_radius =
+                major - intersection + radius * tilt.portable_cos() / half.portable_sin();
+            let expected_depth =
+                intersection - radius * (tilt.portable_cos() / half.portable_sin() - 1.);
             if (depth - expected_depth).abs() > 1e-12 * depth.max(intersection) {
                 return Err(ThreadError::Invalid);
             }
@@ -107,8 +111,8 @@ impl Thread {
                 center_radius,
                 radius,
             };
-            let a = phase - radius * upper.cos();
-            let b = phase + radius * lower.cos();
+            let a = phase - radius * upper.portable_cos();
+            let b = phase + radius * lower.portable_cos();
             if center_radius <= radius || ![a, b].into_iter().all(|s| root.height(s - phase) > 0.) {
                 return Err(ThreadError::Invalid);
             }
@@ -271,7 +275,8 @@ impl Thread {
             && z <= self.spec.length_mm + tolerance
             && x.is_finite()
             && y.is_finite()
-            && x.hypot(y) <= self.radius(y.atan2(x), z.clamp(0., self.spec.length_mm)) + tolerance
+            && x.portable_hypot(y)
+                <= self.radius(y.portable_atan2(x), z.clamp(0., self.spec.length_mm)) + tolerance
     }
 
     pub fn volume_mm3(&self) -> f64 {
@@ -286,7 +291,9 @@ impl Thread {
                     let r = root.radius;
                     let c = root.center_radius;
                     let height = root.height(x);
-                    (c * c + r * r) * x - x.powi(3) / 3. - c * (x * height + r * r * (x / r).asin())
+                    (c * c + r * r) * x
+                        - x.powi(3) / 3.
+                        - c * (x * height + r * r * (x / r).portable_asin())
                 };
                 primitive(b) - primitive(a)
             } else {
@@ -309,13 +316,13 @@ impl Thread {
             return 0.;
         }
         let [x, y, z] = direction.map(|v| v / scale);
-        let radial = x.hypot(y);
+        let radial = x.portable_hypot(y);
         let axial = (z * self.spec.length_mm).max(0.);
         if radial == 0. || (z == 0. && self.spec.length_mm >= self.spec.pitch_mm) {
             // Every angle meets a crest over the at-least-one-pitch trim.
             return scale * (radial * self.spec.major_radius_mm + axial);
         }
-        let angle = y.atan2(x);
+        let angle = y.portable_atan2(x);
         let rate = self.helical_rate();
         let spec = self.spec;
         let allowance = 1e-9 + 32. * f64::EPSILON * (spec.length_mm + spec.major_radius_mm).max(1.);
@@ -332,9 +339,9 @@ impl Thread {
             let end = trim[1].min(FRAC_PI_2);
             if start <= end {
                 let radius = radial * self.radius_at_phase(phase);
-                let stationary = (z * rate / radius).clamp(-1., 1.).asin();
+                let stationary = (z * rate / radius).clamp(-1., 1.).portable_asin();
                 let t = stationary.clamp(start, end);
-                best = best.max(radius * t.cos() + z * rate.mul_add(t, base));
+                best = best.max(radius * t.portable_cos() + z * rate.mul_add(t, base));
             }
         }
         let curvature =
@@ -342,7 +349,7 @@ impl Thread {
         for depth in [0., spec.length_mm] {
             let sample = |theta: f64| {
                 let phase = (-rate).mul_add(theta, depth - relative);
-                radial * self.radius_at_phase(phase) * theta.cos() + z * depth
+                radial * self.radius_at_phase(phase) * theta.portable_cos() + z * depth
             };
             let mut cuts: Vec<_> = self
                 .periodic_breaks(depth - relative - reach, depth - relative + reach)

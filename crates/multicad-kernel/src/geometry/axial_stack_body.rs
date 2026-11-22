@@ -291,16 +291,16 @@ impl AxialStackBody {
                 continue;
             };
             let a = self.geometry.vertices()[edge.vertices[0]];
-            let phase = (a[1] - center_mm[1]).atan2(a[0] - center_mm[0]);
+            let phase = (a[1] - center_mm[1]).portable_atan2(a[0] - center_mm[0]);
             for i in 0..3 {
-                let phase_max = frame.v[i].atan2(frame.u[i]);
+                let phase_max = frame.v[i].portable_atan2(frame.u[i]);
                 for angle in [phase_max, phase_max + std::f64::consts::PI] {
                     let progress =
                         ((angle - phase) * sweep_rad.signum()).rem_euclid(std::f64::consts::TAU);
                     if progress <= sweep_rad.abs() {
                         include([
-                            center_mm[0] + radius_mm * angle.cos(),
-                            center_mm[1] + radius_mm * angle.sin(),
+                            center_mm[0] + radius_mm * angle.portable_cos(),
+                            center_mm[1] + radius_mm * angle.portable_sin(),
                             center_mm[2],
                         ]);
                     }

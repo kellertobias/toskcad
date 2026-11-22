@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 const TOL: f64 = 1e-7;
 fn block(a: Point, b: Point) -> ConvexPiece {
     ConvexPiece::from_box(a, b, TOL).unwrap()
@@ -134,7 +135,7 @@ fn indexed_map_preserves_shape_work_limits_for_large_certified_face_loops() {
         .flat_map(|z| {
             (0..count).map(move |i| {
                 let angle = std::f64::consts::TAU * i as f64 / count as f64;
-                [10. * angle.cos(), 10. * angle.sin(), z]
+                [10. * angle.portable_cos(), 10. * angle.portable_sin(), z]
             })
         })
         .collect();

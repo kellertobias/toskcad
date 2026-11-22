@@ -8,6 +8,7 @@ use multicad_kernel::{
     GeometryPolicy, PlaneFrame, ProjectedVector, RoundedSlotTool, Solid, project_drawing,
     rust_kernel::Rational,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 fn stock() -> Solid {
@@ -112,7 +113,8 @@ fn parallel_bores_and_mortise_publish_exact_rims_and_no_floor_duplicates() {
             assert_eq!(v, [-u[1], u[0]]);
             for point in &vector.preview_mm {
                 assert!(
-                    ((point[0] - center[0]).hypot(point[1] - center[1]) - major_mm).abs() < 1e-12
+                    ((point[0] - center[0]).portable_hypot(point[1] - center[1]) - major_mm).abs()
+                        < 1e-12
                 );
             }
             if major_mm == 2. {
@@ -257,7 +259,7 @@ fn unsupported_view_types_and_output_limits_keep_typed_failures() {
             panic!("{vector:?}");
         };
         for (point, corner) in [(a, corners[index]), (b, corners[(index + 1) % 4])] {
-            assert!((point[0] - corner[0]).hypot(point[1] - corner[1]) < 1e-12);
+            assert!((point[0] - corner[0]).portable_hypot(point[1] - corner[1]) < 1e-12);
         }
     }
     assert_eq!(
@@ -337,8 +339,8 @@ fn exact_section_retains_both_recess_profiles_and_hatches_only_material() {
         hatches += 1;
         for t in [0., 0.25, 0.5, 0.75, 1.] {
             let [x, y] = std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t);
-            assert!((x - x.clamp(5., 9.)).hypot(y - 6.) >= 2. - 1e-6);
-            assert!((x - 14.).hypot(y - 7.) >= 1. - 1e-6);
+            assert!((x - x.clamp(5., 9.)).portable_hypot(y - 6.) >= 2. - 1e-6);
+            assert!((x - 14.).portable_hypot(y - 7.) >= 1. - 1e-6);
         }
     }
     assert!(hatches > 16);

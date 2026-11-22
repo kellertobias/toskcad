@@ -11,6 +11,7 @@ use multicad_core::{
     project_file::{self, ProjectFile},
 };
 use multicad_model::Compiler;
+use multicad_precision::PortableMath as _;
 use std::{
     collections::BTreeSet,
     sync::atomic::{AtomicBool, Ordering},
@@ -146,7 +147,7 @@ impl Harness {
     fn uniform(&self, c: &mut ModelToolController, s: &mut Session, ratio: f64, alt: bool) {
         let pivot = parameters(c, s).resolve(s.parameters()).unwrap().pivot_mm;
         let start = self.point(pivot);
-        let end = start + egui::vec2((ratio.ln() * 100.) as f32, 0.);
+        let end = start + egui::vec2((ratio.portable_ln() * 100.) as f32, 0.);
         let r = self
             .frame(
                 c,

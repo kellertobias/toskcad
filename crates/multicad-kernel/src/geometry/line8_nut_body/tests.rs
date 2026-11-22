@@ -216,7 +216,7 @@ fn actual_resolved_m8_nut_allowances_phase_and_minimum_wall_are_retained() {
         starts: resolved.starts,
         left_hand: false,
     };
-    let (s, c) = 0.317_f64.sin_cos();
+    let (s, c) = 0.317_f64.portable_sin_cos();
     let cut = Line8NutCut {
         profile,
         frame: PlaneFrame {
@@ -276,11 +276,11 @@ fn actual_builder_m8_screw_mates_original_line8_stock_and_relief_without_generic
     let seat = 4.5;
     let station: f64 = seat - external_start;
     let angle = std::f64::consts::TAU * station.rem_euclid(pitch) / pitch;
-    let (s, c) = angle.sin_cos();
-    let raw = s.atan2(c);
+    let (s, c) = angle.portable_sin_cos();
+    let raw = s.portable_atan2(c);
     let roll = (raw + std::f64::consts::TAU / 2.).rem_euclid(std::f64::consts::TAU)
         - std::f64::consts::TAU / 2.;
-    let (s, c) = roll.sin_cos();
+    let (s, c) = roll.portable_sin_cos();
     let external = HelicalThread {
         major_radius_mm: 4. - 0.08,
         pitch_mm: pitch,

@@ -77,7 +77,7 @@ mod tests {
             major_radius_mm: 5.,
             pitch_mm: 1.,
             length_mm: 4.,
-            depth_mm: 1. / (2. * angle.tan()) - 0.274 * (1. / angle.sin() - 1.),
+            depth_mm: 1. / (2. * angle.portable_tan()) - 0.274 * (1. / angle.portable_sin() - 1.),
             crest_radius_mm: 0.137,
             root_radius_mm: 0.137,
             flank_angle_deg: 27.5,

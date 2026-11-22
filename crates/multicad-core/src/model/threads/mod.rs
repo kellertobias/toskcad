@@ -1,5 +1,6 @@
 //! Versioned thread intent and transactions. Native receipts must still prove
 //! receiving geometry and manufactured solids before the UI enables Apply.
+use multicad_precision::PortableMath as _;
 mod buttress;
 mod end_treatments;
 mod lead_screw;
@@ -576,8 +577,8 @@ impl ThreadParameters {
             profile.rounding_radius_mm = Some(rounding);
         }
         let true_rounded = profile.rounding_radius_mm.is_some();
-        let slopes =
-            profile.lower_flank_deg.to_radians().tan() + profile.upper_flank_deg.to_radians().tan();
+        let slopes = profile.lower_flank_deg.to_radians().portable_tan()
+            + profile.upper_flank_deg.to_radians().portable_tan();
         let pitch_drop = if let Some(round) = &round {
             (round.nominal_construction_major_diameter_mm - round.nominal_pitch_diameter_mm) / 2.
         } else if true_rounded || npt.is_some() {

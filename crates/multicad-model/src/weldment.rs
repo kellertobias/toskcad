@@ -17,6 +17,7 @@ use multicad_kernel::{
     BooleanOperation, CopedTube, CopedTubeNames, CurvedEdge2d, CurvedProfile, GeometryErrorKind,
     GeometryPolicy, PlaneFrame, RigidTransform, Solid,
 };
+use multicad_precision::PortableMath as _;
 use multicad_solver::SketchEvaluationContext;
 use std::collections::BTreeMap;
 
@@ -262,7 +263,7 @@ pub(crate) fn joints(
     Ok(out)
 }
 fn diagonal(m: &ResolvedMember) -> f64 {
-    m.section.width_mm.hypot(m.section.height_mm)
+    m.section.width_mm.portable_hypot(m.section.height_mm)
 }
 fn plane_frame(point: [f64; 3], normal: [f64; 3]) -> PlaneFrame {
     let seed = if normal[0].abs() < 0.9 {
@@ -418,7 +419,7 @@ fn cut_stock_extent(member: &ResolvedMember, joints: &[Joint]) -> (f64, f64, f64
     let mut to = from + member.length_mm();
     let mut size = member.length_mm() + diagonal(member);
     for joint in joints {
-        let sin = (joint.resolved.angle_deg.to_radians().sin()).max(0.25);
+        let sin = (joint.resolved.angle_deg.to_radians().portable_sin()).max(0.25);
         let margin = 2. * (diagonal(member) + diagonal(&joint.partner_member)) / sin
             + joint.resolved.gap_mm
             + 1.;
@@ -772,7 +773,7 @@ impl LongPoint {
         let along = dot(normal, frame.axis);
         let q = [0, 1, 2].map(|i| normal[i] - along * frame.axis[i]);
         let length = dot(q, q).sqrt();
-        if length < 0.01_f64.to_radians().sin() {
+        if length < 0.01_f64.to_radians().portable_sin() {
             return None;
         }
         let direction = q.map(|c| c / length);

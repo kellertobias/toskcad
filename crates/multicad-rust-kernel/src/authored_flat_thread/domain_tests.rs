@@ -71,7 +71,7 @@ fn exact_finite_domain_preserves_original_law_and_independent_radial_end_witness
                                 let a = Q::from_float(b.radius_mm[0]).unwrap();
                                 let dr = Q::from_float(b.radius_mm[1]).unwrap() - &a;
                                 let radius = a + dr * Q::from_float(u).unwrap();
-                                let norm = sample.point_mm[0].hypot(sample.point_mm[1]);
+                                let norm = sample.point_mm[0].portable_hypot(sample.point_mm[1]);
                                 // Independent exact affine radius, with outward sample/trig
                                 // rounding enclosure rather than another source evaluator.
                                 let low = (norm - sample.error_mm).next_down();

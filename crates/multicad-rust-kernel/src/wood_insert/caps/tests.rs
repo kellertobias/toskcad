@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::cell::Cell;
 fn options() -> CapOptions {
     CapOptions {
@@ -61,8 +62,8 @@ fn actual_source_knots_remain_independent_and_cells_cover_complete_annulus() {
                         let r = source.bands()[usize::from(knot.source_boundary)].radius_mm[0];
                         let theta = std::f64::consts::TAU * turn;
                         assert!(
-                            (point.point_mm[0] - r * theta.cos()).abs()
-                                + (point.point_mm[1] - r * theta.sin()).abs()
+                            (point.point_mm[0] - r * theta.portable_cos()).abs()
+                                + (point.point_mm[1] - r * theta.portable_sin()).abs()
                                 < point.error_mm + 5e-13
                         );
                     }

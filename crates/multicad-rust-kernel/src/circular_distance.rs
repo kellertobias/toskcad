@@ -1,4 +1,5 @@
 //! Exact coaxial circle distance with a finite representative of its family.
+use multicad_precision::PortableMath as _;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CoaxialDistance {
     pub distance_mm: f64,
@@ -12,7 +13,7 @@ pub fn coaxial_circles(a: f64, b: f64, axial_offset: f64) -> Option<CoaxialDista
     if !a.is_finite() || !b.is_finite() || !axial_offset.is_finite() || a <= 0. || b <= 0. {
         return None;
     }
-    let distance_mm = (a - b).hypot(axial_offset);
+    let distance_mm = (a - b).portable_hypot(axial_offset);
     distance_mm.is_finite().then_some(CoaxialDistance {
         distance_mm,
         a_mm: [a, 0., 0.],
@@ -37,7 +38,7 @@ mod tests {
             assert_eq!(result.a_mm, [a, 0., 0.]);
             assert_eq!(result.b_mm, [b, 0., dz]);
             assert_eq!(
-                (result.a_mm[0] - result.b_mm[0]).hypot(result.a_mm[2] - result.b_mm[2]),
+                (result.a_mm[0] - result.b_mm[0]).portable_hypot(result.a_mm[2] - result.b_mm[2]),
                 expected
             );
         }

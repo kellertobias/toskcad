@@ -7,6 +7,7 @@ use multicad_core::{
     document::EntityId,
     references::{Origin, ReferenceFrame},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -51,7 +52,7 @@ fn point(v: [f64; 3]) -> ffi::Point3 {
 }
 impl RevolutionAxis {
     fn rotate_vector(self, v: [f64; 3], angle: f64) -> [f64; 3] {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         let n = cross(self.direction, v);
         let d = dot(self.direction, v);
         std::array::from_fn(|i| v[i] * c + n[i] * s + self.direction[i] * d * (1. - c))
@@ -109,7 +110,7 @@ impl RevolutionAxis {
                     }
                 }
                 CurvedEdge2d::Circle { center, radius_mm } => {
-                    let r = radius_mm * au.hypot(av);
+                    let r = radius_mm * au.portable_hypot(av);
                     add(signed(*center) - r);
                     add(signed(*center) + r);
                 }
@@ -121,14 +122,15 @@ impl RevolutionAxis {
                 } => {
                     add(signed(*a));
                     add(signed(*b));
-                    let start = (a[1] - center[1]).atan2(a[0] - center[0]);
-                    let end = (b[1] - center[1]).atan2(b[0] - center[0]);
+                    let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
+                    let end = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
                     let sweep = if *clockwise { start - end } else { end - start }.rem_euclid(TAU);
-                    let r = (a[0] - center[0]).hypot(a[1] - center[1]);
-                    for t in [av.atan2(au), av.atan2(au) + PI] {
+                    let r = (a[0] - center[0]).portable_hypot(a[1] - center[1]);
+                    for t in [av.portable_atan2(au), av.portable_atan2(au) + PI] {
                         let delta = if *clockwise { start - t } else { t - start }.rem_euclid(TAU);
                         if delta <= sweep {
-                            add(signed(*center) + r * (au * t.cos() + av * t.sin()));
+                            add(signed(*center)
+                                + r * (au * t.portable_cos() + av * t.portable_sin()));
                         }
                     }
                 }

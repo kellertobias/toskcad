@@ -4,6 +4,7 @@ use multicad_core::{
     project_file::ContentHash,
     sketch_trim::*,
 };
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeSet, f64::consts::PI};
 fn source() -> Source {
     Source {
@@ -107,7 +108,10 @@ fn endpoints(s: &Source, id: EntityId) -> ([[f64; 2]; 2], bool) {
     )
 }
 fn near(a: [f64; 2], b: [f64; 2]) {
-    assert!((a[0] - b[0]).hypot(a[1] - b[1]) < 1e-7, "{a:?} != {b:?}");
+    assert!(
+        (a[0] - b[0]).portable_hypot(a[1] - b[1]) < 1e-7,
+        "{a:?} != {b:?}"
+    );
 }
 fn reject(s: &Source, r: &TrimRequest, kind: TrimErrorKind) -> TrimError {
     let original = s.clone();

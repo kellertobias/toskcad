@@ -185,7 +185,7 @@ pub(super) fn extend_boundary(screw: &Screw, add: &mut Boundary<'_, ScrewFace>) 
             [
                 x,
                 y,
-                source.cone().tip_depth_mm - x.hypot(y) * source.cone().depth_per_radius,
+                source.cone().tip_depth_mm - x.portable_hypot(y) * source.cone().depth_per_radius,
             ],
         ];
         let [a, b] = binding
@@ -298,7 +298,8 @@ mod tests {
             [
                 x,
                 y,
-                drive.cone().tip_depth_mm - drive.cone().depth_per_radius * x.hypot(y) + 1e-9,
+                drive.cone().tip_depth_mm - drive.cone().depth_per_radius * x.portable_hypot(y)
+                    + 1e-9,
             ]
         });
         let mut carriers =

@@ -21,7 +21,7 @@ pub(super) fn verify(
     let [_, start, _, _, crest, _] = thread.profile_breaks();
     let rate = thread.helical_rate();
     let radius = spec.major_radius_mm;
-    let (sin, cos) = (-start / rate).sin_cos();
+    let (sin, cos) = (-start / rate).portable_sin_cos();
     let reference = std::array::from_fn(|i| cos * u[i] + sin * v[i]);
     let arc_axis = axis.map(|n| if spec.left_hand { n } else { -n });
     let [first, last] = joint.corners;
@@ -116,7 +116,7 @@ pub(super) fn arc(
     require(
         proof.equal(axis.origin, center) && length(sub(axis.normal, normal)) < proof.angular(),
     )?;
-    let (sin, cos) = sweep.sin_cos();
+    let (sin, cos) = sweep.portable_sin_cos();
     let expected = [
         std::array::from_fn(|i| center[i] + radius * axis.u[i]),
         std::array::from_fn(|i| center[i] + radius * (cos * axis.u[i] + sin * axis.v[i])),

@@ -8,6 +8,7 @@ use multicad_core::{
     sketch::Datum,
     sketch_regions,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn add_sketch(
@@ -986,7 +987,9 @@ fn mixed_miter_keeps_a_stadium_profile_and_its_authored_walls_after_reopen() {
                 near(minor_mm, 1.);
                 arc_span += (end_rad - start_rad).abs();
             }
-            VectorCurve::Line { a, b } => straight_span += (b[0] - a[0]).hypot(b[1] - a[1]),
+            VectorCurve::Line { a, b } => {
+                straight_span += (b[0] - a[0]).portable_hypot(b[1] - a[1])
+            }
             ref other => panic!("Expected exact stadium section edges, got {other:?}"),
         }
     }
@@ -1012,7 +1015,7 @@ fn mixed_miter_keeps_a_stadium_profile_and_its_authored_walls_after_reopen() {
     };
     let check_joint = |solid: &Solid| {
         let exact = project_drawing(&[DrawingSolid { solid, hatch: None }], joint_view).unwrap();
-        let at_joint = |p: [f64; 2]| p[0].hypot(p[1]) < 1e-7;
+        let at_joint = |p: [f64; 2]| p[0].portable_hypot(p[1]) < 1e-7;
         let mut touching = [0; 2];
         for vector in exact
             .iter()
@@ -1030,7 +1033,7 @@ fn mixed_miter_keeps_a_stadium_profile_and_its_authored_walls_after_reopen() {
                     end_rad,
                 } => {
                     let ends = [start_rad, end_rad].map(|angle| {
-                        let (sin, cos) = angle.sin_cos();
+                        let (sin, cos) = angle.portable_sin_cos();
                         std::array::from_fn(|i| {
                             center[i] + major_mm * cos * u[i] + minor_mm * sin * v[i]
                         })
@@ -1185,8 +1188,8 @@ fn ruled_circular_loft_rebuilds_every_band_and_preserves_step_geometry() {
             .filter_map(|face| face.plane.is_none().then_some(face.area_mm2))
             .collect();
         let mut expected = [
-            PI * (2. + radius) * 7_f64.hypot(radius - 2.),
-            PI * (radius + 5.) * 13_f64.hypot(5. - radius),
+            PI * (2. + radius) * 7_f64.portable_hypot(radius - 2.),
+            PI * (radius + 5.) * 13_f64.portable_hypot(5. - radius),
         ];
         actual.sort_unstable_by(f64::total_cmp);
         expected.sort_unstable_by(f64::total_cmp);
@@ -1518,7 +1521,7 @@ fn smooth_coaxial_loft_keeps_the_exact_cone_and_all_section_origins() {
     );
     commit(&mut session, &request);
     let volume = 20. * PI * (4. + 10. + 25.) / 3.;
-    let area = PI * (4. + 25. + 7. * 20_f64.hypot(3.));
+    let area = PI * (4. + 25. + 7. * 20_f64.portable_hypot(3.));
     let check = |model: &multicad_model::Model| {
         let solid = model.solid(request.body).unwrap();
         near(solid.volume_mm3().unwrap(), volume);
@@ -1626,7 +1629,7 @@ fn twisted_polygon_loft_rebuilds_and_reopens_from_embedded_step() {
 
     let (mut session, _) = fixture();
     let bottom = [[-2., -1.], [2., -1.], [2., 1.], [-2., 1.]];
-    let (sin, cos) = std::f64::consts::FRAC_PI_6.sin_cos();
+    let (sin, cos) = std::f64::consts::FRAC_PI_6.portable_sin_cos();
     let top = bottom.map(|[x, y]| [cos * x - sin * y + 1., sin * x + cos * y + 0.5]);
     let [(first, start), (last, end)] = [
         ("Bottom rectangle", 0., bottom),
@@ -1678,7 +1681,7 @@ fn twisted_polygon_loft_rebuilds_and_reopens_from_embedded_step() {
     };
     let topology = &model.snapshot().shapes[&request.feature].topology;
     let intent = GeometryIntent::capture(topology, wall_key(&model)).unwrap();
-    let (sin, cos) = (40. * PI / 180.).sin_cos();
+    let (sin, cos) = (40. * PI / 180.).portable_sin_cos();
     let mut upper = Source::read(session.document(), last.sketch).unwrap().0;
     for (point, [x, y]) in upper.sketch.points.iter_mut().zip(bottom) {
         point.position_mm = [cos * x - sin * y + 1., sin * x + cos * y + 0.5];
@@ -1832,7 +1835,7 @@ fn verify_twisted_loft_assembly_sections(loft: &multicad_kernel::Solid) {
     // It meets the stock's y = 0 plane at depth 4/3 and the loft's left
     // wall at the station obtained by converting that point back to model Z.
     let station = (0.6 + 0.8 * (4. / 3.)) / 6.;
-    let (sin, cos) = std::f64::consts::FRAC_PI_6.sin_cos();
+    let (sin, cos) = std::f64::consts::FRAC_PI_6.portable_sin_cos();
     let wall = [[-2., -1.], [-2., 1.]].map(|[x, y]| {
         let top = [cos * x - sin * y + 1., sin * x + cos * y + 0.5];
         [x + station * (top[0] - x), y + station * (top[1] - y)]
@@ -1926,7 +1929,7 @@ fn verify_twisted_loft_scene(loft: &multicad_kernel::Solid) {
         detail
             .iter()
             .flat_map(|v| &v.preview_mm)
-            .all(|[u, v]| u.hypot(*v) < 1.250001)
+            .all(|[u, v]| u.portable_hypot(*v) < 1.250001)
     );
 }
 
@@ -2039,7 +2042,7 @@ fn verify_twisted_loft_round_scene(loft: &multicad_kernel::Solid) {
         cropped
             .iter()
             .flat_map(|v| &v.preview_mm)
-            .all(|[x, y]| { (x - 1.).hypot(y - 4.8) <= 0.750001 })
+            .all(|[x, y]| { (x - 1.).portable_hypot(y - 4.8) <= 0.750001 })
     );
 
     let retained = |loft, ring, options| {
@@ -2257,7 +2260,7 @@ fn verify_twisted_loft_sections(solid: &multicad_kernel::Solid) {
         detail
             .iter()
             .flat_map(|v| &v.preview_mm)
-            .all(|p| { (p[0] - center[0]).hypot(p[1] - center[1]) <= radius + 1e-7 })
+            .all(|p| { (p[0] - center[0]).portable_hypot(p[1] - center[1]) <= radius + 1e-7 })
     );
     let rust = project(solid, options, None).unwrap();
     assert_eq!(rust.len(), 4);
@@ -2347,7 +2350,7 @@ fn verify_twisted_loft_sections(solid: &multicad_kernel::Solid) {
         .sum();
     near(
         twice_area.abs() / 2.,
-        4. * (1. + std::f64::consts::FRAC_PI_6.cos()),
+        4. * (1. + std::f64::consts::FRAC_PI_6.portable_cos()),
     );
     assert!(
         project(

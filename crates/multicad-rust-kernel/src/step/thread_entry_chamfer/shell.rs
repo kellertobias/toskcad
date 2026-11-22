@@ -132,7 +132,7 @@ impl Shell<'_> {
         } else {
             let theta = -(q + f64::from(start) * self.body.source_thread().spec().pitch_mm)
                 / self.body.source_thread().helical_rate();
-            let (sin, cos) = theta.sin_cos();
+            let (sin, cos) = theta.portable_sin_cos();
             self.file.vertex(self.placement.point_f64(
                 [
                     self.body.entry_radius_mm() * cos,
@@ -275,7 +275,7 @@ impl Shell<'_> {
         } else {
             -(q + f64::from(start) * self.body.source_thread().spec().pitch_mm) / rate
         };
-        let rotation = [theta.cos(), theta.sin()];
+        let rotation = [theta.portable_cos(), theta.portable_sin()];
         let domain = [0., d[2] / h];
         let radii = [r0, r0 + k * d[2]];
         let hand = rate.signum();
@@ -334,7 +334,7 @@ impl Shell<'_> {
         }
         let f = self.body.material_length_mm();
         let rate = self.body.source_thread().helical_rate();
-        let spin = [(f / rate).cos(), (f / rate).sin()];
+        let spin = [(f / rate).portable_cos(), (f / rate).portable_sin()];
         let top = plan
             .source
             .bands

@@ -15,6 +15,7 @@ use crate::{
     document::{Definition, Document, DocumentError, Entity, EntityData, EntityId, Link, Mutation},
     parameters::{EvaluatedParameters, Unit},
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -600,7 +601,7 @@ fn cross(a: [f64; 2], b: [f64; 2]) -> f64 {
     a[0] * b[1] - a[1] * b[0]
 }
 fn length(a: [f64; 2]) -> f64 {
-    a[0].hypot(a[1])
+    a[0].portable_hypot(a[1])
 }
 
 /// One straight wall segment: start, unit direction, left normal, length.
@@ -1104,7 +1105,7 @@ impl ResolvedWall {
                     let open = at(pivot_along, face + sign * o.width_mm);
                     let closed = at(free_along, face);
                     out.lines.push([pivot, open]);
-                    let angle = |p: [f64; 2]| (p[1] - pivot[1]).atan2(p[0] - pivot[0]);
+                    let angle = |p: [f64; 2]| (p[1] - pivot[1]).portable_atan2(p[0] - pivot[0]);
                     let (s, mut e) = (angle(closed), angle(open));
                     // The swing is the quarter turn between closed and open.
                     while e - s > std::f64::consts::PI {

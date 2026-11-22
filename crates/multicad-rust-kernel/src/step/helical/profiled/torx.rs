@@ -32,7 +32,7 @@ pub(super) fn encode(
     let tolerance = tolerance.min(MAX_ERROR_MM);
     let half_angle = binding
         .and_then(|b| b.literal_cone_semi_angle_rad())
-        .unwrap_or_else(|| source.cone().depth_per_radius.recip().atan());
+        .unwrap_or_else(|| source.cone().depth_per_radius.recip().portable_atan());
     if half_angle <= 0. || half_angle >= std::f64::consts::FRAC_PI_2 {
         return Err(StepError::Unsupported);
     }
@@ -57,7 +57,7 @@ pub(super) fn encode(
             [
                 x,
                 y,
-                source.cone().tip_depth_mm - source.cone().depth_per_radius * x.hypot(y),
+                source.cone().tip_depth_mm - source.cone().depth_per_radius * x.portable_hypot(y),
             ]
         });
         (
@@ -97,7 +97,7 @@ pub(super) fn encode(
     let apex_point = placed(vertices.apex_mm);
     let apex_cartesian = file.point(apex_point);
     let [x, y] = std::array::from_fn(|i| vertices.floor_mm[0][i] - vertices.apex_mm[i]);
-    let radius = x.hypot(y);
+    let radius = x.portable_hypot(y);
     let axis = file.axis(
         apex_cartesian,
         p.normal.map(|x| -x),
@@ -120,7 +120,11 @@ pub(super) fn encode(
             [mouth[i], mouth[next]],
             center,
             p.normal.map(|x| x * arc.sweep_rad.signum()),
-            p.vector([arc.start_angle_rad.cos(), arc.start_angle_rad.sin(), 0.]),
+            p.vector([
+                arc.start_angle_rad.portable_cos(),
+                arc.start_angle_rad.portable_sin(),
+                0.,
+            ]),
             arc.radius_mm,
             arc.sweep_rad.abs(),
         )?;
@@ -211,7 +215,9 @@ fn post_edge(
     top: f64,
 ) -> Result<Entity, StepError> {
     let vector = p.vector(post.direction_mm_per_parameter);
-    let magnitude = vector[0].hypot(vector[1]).hypot(vector[2]);
+    let magnitude = vector[0]
+        .portable_hypot(vector[1])
+        .portable_hypot(vector[2]);
     if from.point == to.point || !magnitude.is_finite() || magnitude <= 0. {
         return Err(StepError::InvalidGeometry);
     }

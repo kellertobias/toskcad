@@ -13,6 +13,7 @@ use multicad_kernel::{
     project_drawing,
     rust_kernel::spur_gear::{Edge, Profile, Spec},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 const TEETH: u32 = 24;
@@ -26,11 +27,11 @@ fn spec() -> InvoluteGear {
         hub: None,
         teeth: TEETH,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * a.cos(),
+        base_radius_mm: pitch * a.portable_cos(),
         tip_radius_mm: pitch + 1.,
         root_radius_mm: pitch - 1.25,
         root_fillet_radius_mm: 0.2,
-        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.portable_tan() - a,
         face_width_mm: WIDTH,
         bore_radius_mm: BORE,
         twist_rad_per_mm: 0.,
@@ -334,7 +335,7 @@ fn side_sections_are_the_exact_profile_chords_and_hatch_only_material() {
 #[test]
 fn oblique_section_area_is_the_profile_area_over_the_cosine() {
     let tilt = 0.12_f64;
-    let (sin, cos) = tilt.sin_cos();
+    let (sin, cos) = tilt.portable_sin_cos();
     let solid = gear(None);
     let vectors = project_drawing(
         &[DrawingSolid {
@@ -439,7 +440,7 @@ fn hub_sections_cut_the_hub_ring_in_front_of_the_tooth_band() {
     assert!(circles(VectorRole::Hidden).is_empty());
     for vector in vectors.iter().filter(|v| v.role == VectorRole::Hatch) {
         let [a, b] = line(vector).unwrap();
-        let r = (0.5 * (a[0] + b[0])).hypot(0.5 * (a[1] + b[1]));
+        let r = (0.5 * (a[0] + b[0])).portable_hypot(0.5 * (a[1] + b[1]));
         assert!(r > 3. - 1e-6 && r < 6. + 1e-6);
     }
 }
@@ -498,7 +499,7 @@ fn a_box_in_front_hides_generators_up_to_its_top_and_crops_bound_the_drawing() {
     );
     assert!(!cropped.is_empty());
     for p in cropped.iter().flat_map(|vector| &vector.preview_mm) {
-        assert!((p[0] - detail.0[0]).hypot(p[1] - detail.0[1]) <= detail.1 + 1e-9);
+        assert!((p[0] - detail.0[0]).portable_hypot(p[1] - detail.0[1]) <= detail.1 + 1e-9);
     }
     let window = draw(
         &[&solid],
@@ -686,7 +687,7 @@ fn edge_on_caps_are_single_lines_and_tilted_placements_draw_identically() {
     // A proper rotation (about (1, 2, 3) by 0.7 rad) and a translation.
     let n = 14_f64.sqrt();
     let k = [1. / n, 2. / n, 3. / n];
-    let (sin, cos) = 0.7_f64.sin_cos();
+    let (sin, cos) = 0.7_f64.portable_sin_cos();
     let rotation: [[f64; 3]; 3] = std::array::from_fn(|i| {
         std::array::from_fn(|j| {
             let cross = [[0., -k[2], k[1]], [k[2], 0., -k[0]], [-k[1], k[0], 0.]][i][j];
@@ -753,7 +754,8 @@ fn edge_on_caps_are_single_lines_and_tilted_placements_draw_identically() {
                                 let along = (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1])
                                     / (d[0] * d[0] + d[1] * d[1]).max(1e-300))
                                 .clamp(0., 1.);
-                                (p[0] - a[0] - along * d[0]).hypot(p[1] - a[1] - along * d[1])
+                                (p[0] - a[0] - along * d[0])
+                                    .portable_hypot(p[1] - a[1] - along * d[1])
                             })
                             .fold(f64::INFINITY, f64::min);
                         assert!(

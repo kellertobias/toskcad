@@ -230,7 +230,9 @@ impl OrthogonalSeatBody {
                     as u32,
                 plane: None,
                 center_mm: std::array::from_fn(|i| center[i] - normal[i] * cone_center),
-                area_mm2: PI * (seat.radius_mm + bore.radius_mm) * seat.depth_mm.hypot(radial),
+                area_mm2: PI
+                    * (seat.radius_mm + bore.radius_mm)
+                    * seat.depth_mm.portable_hypot(radial),
             });
         }
         self.world_faces(faces, frame)

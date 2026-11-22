@@ -8,6 +8,7 @@ use multicad_core::{
 };
 use multicad_kernel::{BRepSelection, GeometryPolicy, Solid};
 use multicad_model::{Compiler, EvaluationCache};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 fn actor() -> Actor {
@@ -85,7 +86,7 @@ fn volume_budget(s: &Solid) -> f64 {
 fn expected_worm_volume() -> f64 {
     // Independent radial integration of axial trapezoid occupancy. The
     // constant signed-lead rotation preserves this area for fractional turns.
-    let k = 20_f64.to_radians().tan() * 1.01_f64.sqrt();
+    let k = 20_f64.to_radians().portable_tan() * 1.01_f64.sqrt();
     let crest = PI / 2. - 0.05 - 2. * k;
     let integral =
         (crest + 12. * k) * (36. - 3.75_f64.powi(2)) / 2. - 2. * k * (216. - 3.75_f64.powi(3)) / 3.;

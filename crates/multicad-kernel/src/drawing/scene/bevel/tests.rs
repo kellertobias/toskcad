@@ -9,19 +9,22 @@ use multicad_core::document::EntityId;
 fn specification(module: f64, teeth: u32, mate: u32, width: f64, bore: f64) -> SphericalBevelGear {
     let (z, mate) = (f64::from(teeth), f64::from(mate));
     let alpha = 20_f64.to_radians();
-    let delta = 1_f64.atan2(mate / z);
-    let distance = module * z / (2. * delta.sin());
-    let beta = (delta.sin() * alpha.cos()).asin();
+    let delta = 1_f64.portable_atan2(mate / z);
+    let distance = module * z / (2. * delta.portable_sin());
+    let beta = (delta.portable_sin() * alpha.portable_cos()).portable_asin();
     let inv = |g: f64| {
-        let sigma = (g.cos() / beta.cos()).acos();
-        sigma / beta.sin() - sigma.sin().atan2(beta.sin() * sigma.cos())
+        let sigma = (g.portable_cos() / beta.portable_cos()).portable_acos();
+        sigma / beta.portable_sin()
+            - sigma
+                .portable_sin()
+                .portable_atan2(beta.portable_sin() * sigma.portable_cos())
     };
     SphericalBevelGear {
         teeth,
         pitch_cone_angle_rad: delta,
         base_cone_angle_rad: beta,
-        tip_cone_angle_rad: delta + (module / distance).atan(),
-        root_cone_angle_rad: delta - (1.25 * module / distance).atan(),
+        tip_cone_angle_rad: delta + (module / distance).portable_atan(),
+        root_cone_angle_rad: delta - (1.25 * module / distance).portable_atan(),
         outer_cone_distance_mm: distance,
         face_width_mm: width,
         bore_radius_mm: bore,
@@ -250,8 +253,8 @@ fn candidates_lie_on_the_boundary_and_outlines_graze() {
                 }
                 if let Some(Curve::Line([a, b])) = candidate.path.paper([0., 1.]) {
                     let [p, q] = [0., 1.].map(|t| candidate.path.point(t));
-                    assert!((a[0] - p[0]).hypot(a[1] - p[1]) < 1e-12);
-                    assert!((b[0] - q[0]).hypot(b[1] - q[1]) < 1e-12);
+                    assert!((a[0] - p[0]).portable_hypot(a[1] - p[1]) < 1e-12);
+                    assert!((b[0] - q[0]).portable_hypot(b[1] - q[1]) < 1e-12);
                 }
                 if candidate.kind == Kind::Outline {
                     outlines += 1;
@@ -350,7 +353,10 @@ fn every_turn_of_a_face_normal_has_an_outline() {
             for end in End::BOTH {
                 let facing = |i: usize| {
                     let phi = TAU * (i as f64 + 0.5) / steps as f64;
-                    (dot3(d, [sin * phi.cos(), sin * phi.sin(), cos]), phi)
+                    (
+                        dot3(d, [sin * phi.portable_cos(), sin * phi.portable_sin(), cos]),
+                        phi,
+                    )
                 };
                 for i in 0..steps {
                     let [(before, phi), (after, _)] = [facing(i), facing(i + 1)];
@@ -358,9 +364,13 @@ fn every_turn_of_a_face_normal_has_an_outline() {
                     let bottom = core.bottom(end, phi);
                     let point = add(
                         bottom,
-                        [cos * phi.cos() * 1e-3, cos * phi.sin() * 1e-3, -sin * 1e-3],
+                        [
+                            cos * phi.portable_cos() * 1e-3,
+                            cos * phi.portable_sin() * 1e-3,
+                            -sin * 1e-3,
+                        ],
                     );
-                    let radius = bottom[0].hypot(bottom[1]) + 1e-3;
+                    let radius = bottom[0].portable_hypot(bottom[1]) + 1e-3;
                     check(
                         before,
                         after,
@@ -373,7 +383,7 @@ fn every_turn_of_a_face_normal_has_an_outline() {
             if let Some(bore) = core.bore {
                 let facing = |i: usize| {
                     let phi = TAU * (i as f64 + 0.5) / steps as f64;
-                    (d[0] * phi.cos() + d[1] * phi.sin(), phi)
+                    (d[0] * phi.portable_cos() + d[1] * phi.portable_sin(), phi)
                 };
                 for i in 0..steps {
                     let [(before, phi), (after, _)] = [facing(i), facing(i + 1)];
@@ -454,7 +464,7 @@ fn loop_area(name: &str, gear: &Gear, depth: f64, loops: &[Loop]) -> f64 {
                 Some(Curve::Ellipse(ellipse)) => {
                     let [first, last] = ellipse.trim.map(|angle| ellipse.point(angle));
                     let [p, q] = [0., 1.].map(|t| path.point(t));
-                    let gap = |a: P2, b: P3| (a[0] - b[0]).hypot(a[1] - b[1]);
+                    let gap = |a: P2, b: P3| (a[0] - b[0]).portable_hypot(a[1] - b[1]);
                     assert!(
                         (gap(first, p) + gap(last, q)).min(gap(first, q) + gap(last, p)) <= 1e-9,
                         "{name}: ellipse ends"
@@ -467,10 +477,10 @@ fn loop_area(name: &str, gear: &Gear, depth: f64, loops: &[Loop]) -> f64 {
                         let y =
                             (offset[0] * ellipse.v[0] + offset[1] * ellipse.v[1]) / ellipse.minor;
                         assert!(
-                            (x.hypot(y) - 1.).abs() * ellipse.minor <= 1e-8,
+                            (x.portable_hypot(y) - 1.).abs() * ellipse.minor <= 1e-8,
                             "{name}: point off its ellipse"
                         );
-                        let angle = (y.atan2(x) - ellipse.trim[0]).rem_euclid(TAU);
+                        let angle = (y.portable_atan2(x) - ellipse.trim[0]).rem_euclid(TAU);
                         let span = ellipse.trim[1] - ellipse.trim[0];
                         assert!(
                             angle <= span + 1e-7 || angle >= TAU - 1e-7,
@@ -485,7 +495,7 @@ fn loop_area(name: &str, gear: &Gear, depth: f64, loops: &[Loop]) -> f64 {
                         let chord = [b[0] - a[0], b[1] - a[1]];
                         let off = ((point[0] - a[0]) * chord[1] - (point[1] - a[1]) * chord[0])
                             .abs()
-                            / chord[0].hypot(chord[1]).max(1e-300);
+                            / chord[0].portable_hypot(chord[1]).max(1e-300);
                         assert!(off <= 1e-9, "{name}: point off its line");
                     }
                 }
@@ -496,7 +506,7 @@ fn loop_area(name: &str, gear: &Gear, depth: f64, loops: &[Loop]) -> f64 {
                 // Material on the left, as the viewer sees the loop.
                 let [a, m, b] = [0.37 - 1e-4, 0.37, 0.37 + 1e-4].map(|t| path.point(t));
                 let tangent = sub(b, a);
-                let size = tangent[0].hypot(tangent[1]);
+                let size = tangent[0].portable_hypot(tangent[1]);
                 let left = [-tangent[1] / size, tangent[0] / size, 0.];
                 let probe =
                     |sign: f64| core.inside(core.to_local(add(m, scaled(left, sign * 1e-5))));
@@ -666,7 +676,7 @@ fn gear_in(solid: &Solid, frame: PlaneFrame) -> Gear {
 /// depend on the rounding of a point lying on a meridian face.
 fn interior(core: &Core, local: P3) -> bool {
     [-1e-9, 0., 1e-9].into_iter().all(|turn: f64| {
-        let (sin, cos) = turn.sin_cos();
+        let (sin, cos) = turn.portable_sin_cos();
         let p = [
             cos * local[0] - sin * local[1],
             sin * local[0] + cos * local[1],
@@ -756,7 +766,7 @@ fn winding(loops: &[Loop], point: P2) -> i32 {
             for pair in stops.windows(2) {
                 let [a, b] = [pair[0], pair[1]].map(|t| {
                     let p = path.point(t);
-                    (p[1] - point[1]).atan2(p[0] - point[0])
+                    (p[1] - point[1]).portable_atan2(p[0] - point[0])
                 });
                 angle += (b - a + PI).rem_euclid(TAU) - PI;
             }

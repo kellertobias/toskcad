@@ -92,7 +92,7 @@ fn positive_wide_sweep_support_matches_an_independent_angular_search() {
     ] {
         let mut sampled = f64::NEG_INFINITY;
         for i in 0..=16384 {
-            let (sin, cos) = (angle * f64::from(i) / 16384.).sin_cos();
+            let (sin, cos) = (angle * f64::from(i) / 16384.).portable_sin_cos();
             for &[radius, axial] in &ring {
                 sampled = sampled.max(radius * (x * cos + y * sin) + z * axial);
             }

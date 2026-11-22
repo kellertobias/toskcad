@@ -3,6 +3,7 @@ use crate::{
     display::{DisplayMesh, MeshError, Tessellation},
     headed_screw::{ScrewHead, hex_area, hex_radius, hex_support},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_6, PI, TAU};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -39,7 +40,7 @@ impl Section {
     fn support(self, xy: [f64; 2]) -> f64 {
         match self {
             Self::Hexagon(across_flats) => hex_support(across_flats, xy),
-            other => other.outer_radius() * xy[0].hypot(xy[1]),
+            other => other.outer_radius() * xy[0].portable_hypot(xy[1]),
         }
     }
 }
@@ -193,7 +194,7 @@ impl Fastener {
         {
             return None;
         }
-        let cone = (head - shaft) / (angle / 2.).to_radians().tan();
+        let cone = (head - shaft) / (angle / 2.).to_radians().portable_tan();
         let rim = height - cone;
         let top = -height;
         let land = head - chamfer;
@@ -313,7 +314,7 @@ impl Fastener {
                 } else {
                     for i in 0..stations {
                         let theta = angle(i);
-                        let (sin, cos) = theta.sin_cos();
+                        let (sin, cos) = theta.portable_sin_cos();
                         let r = ring.section.radius(theta);
                         mesh.vertices.extend([r * cos, r * sin, ring.z]);
                     }
@@ -418,11 +419,11 @@ mod tests {
         };
         let mut no_rim = SPEC;
         no_rim.head_height_mm = (SPEC.head_radius_mm - SPEC.shaft_radius_mm)
-            / (SPEC.included_angle_deg / 2.).to_radians().tan()
+            / (SPEC.included_angle_deg / 2.).to_radians().portable_tan()
             + SPEC.edge_chamfer_mm;
         no_rim.edge_chamfer_mm = no_rim.head_height_mm
             - (SPEC.head_radius_mm - SPEC.shaft_radius_mm)
-                / (SPEC.included_angle_deg / 2.).to_radians().tan();
+                / (SPEC.included_angle_deg / 2.).to_radians().portable_tan();
         for spec in [no_chamfer, no_rim] {
             let fastener = Fastener::countersunk(spec, MINIMUM).unwrap();
             assert!(

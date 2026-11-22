@@ -53,7 +53,9 @@ fn cavity_cap_keeps_the_complete_parameter_interval_and_rail_endpoints() {
                 let [u, v] = evaluate(poles, t);
                 let [x, y, z] = point(cut.spec(), u, v);
                 let exact = cut.edge_point(BoundaryEdge::TopCavity, alpha);
-                let error = (x - exact[0]).hypot(y - exact[1]).hypot(z - exact[2]);
+                let error = (x - exact[0])
+                    .portable_hypot(y - exact[1])
+                    .portable_hypot(z - exact[2]);
                 assert!(error <= bound, "{error} exceeds {bound}");
             }
         }
@@ -73,16 +75,16 @@ fn evaluate(mut poles: [[f64; 2]; DEGREE + 1], t: f64) -> [f64; 2] {
 
 fn point(spec: Spec, alpha: f64, t: f64) -> [f64; 3] {
     let rise = spec.pitch_mm / TAU;
-    let length = spec.stock_radius_mm.hypot(rise);
-    let radial = spec.stock_radius_mm + spec.tube_radius_mm * alpha.cos();
-    let offset = rise / length * spec.tube_radius_mm * alpha.sin();
-    let radius = radial.hypot(offset);
-    let angle = spec.start_angle_rad + t + offset.atan2(radial);
+    let length = spec.stock_radius_mm.portable_hypot(rise);
+    let radial = spec.stock_radius_mm + spec.tube_radius_mm * alpha.portable_cos();
+    let offset = rise / length * spec.tube_radius_mm * alpha.portable_sin();
+    let radius = radial.portable_hypot(offset);
+    let angle = spec.start_angle_rad + t + offset.portable_atan2(radial);
     [
-        radius * angle.cos(),
-        radius * angle.sin(),
+        radius * angle.portable_cos(),
+        radius * angle.portable_sin(),
         spec.start_height_mm + rise * t
-            - spec.stock_radius_mm / length * spec.tube_radius_mm * alpha.sin(),
+            - spec.stock_radius_mm / length * spec.tube_radius_mm * alpha.portable_sin(),
     ]
 }
 

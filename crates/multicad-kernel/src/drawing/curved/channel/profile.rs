@@ -5,6 +5,7 @@
 //! the remaining straight boundary, leaving rectangles (channel walls) and
 //! other simple polygons (the body of a rounded plate). Circular and
 //! rounded-slot hole rings must each lie clear inside one such piece.
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::normal_sweep::Edge;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
@@ -239,7 +240,9 @@ fn corner(edge: Edge, tolerance: f64) -> Option<(Bend, Segment)> {
     } else {
         [b[0], a[1]]
     };
-    let radii = [a, b].map(|p| sub(p, snapped)).map(|[x, y]| x.hypot(y));
+    let radii = [a, b]
+        .map(|p| sub(p, snapped))
+        .map(|[x, y]| x.portable_hypot(y));
     let quarter = radii[0].midpoint(radii[1]);
     if radii.iter().any(|&r| r <= tolerance) {
         return None;
@@ -247,11 +250,11 @@ fn corner(edge: Edge, tolerance: f64) -> Option<(Bend, Segment)> {
     // Distances from the snapped centre to the authored circle are extreme
     // at the endpoints or along the line through both centres.
     let offset = sub(center, snapped);
-    let distance = offset[0].hypot(offset[1]);
-    let start = (a[1] - center[1]).atan2(a[0] - center[0]);
+    let distance = offset[0].portable_hypot(offset[1]);
+    let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
     let mut deviation = radii.iter().map(|r| (r - quarter).abs()).fold(0., f64::max);
     if distance > 0. {
-        let toward = offset[1].atan2(offset[0]);
+        let toward = offset[1].portable_atan2(offset[0]);
         for (angle, reach) in [
             (toward, radius + distance),
             (toward + PI, radius - distance),
@@ -293,7 +296,7 @@ fn slot(ring: &[Edge], tolerance: f64) -> Option<([Point; 2], f64)> {
     let [(c0, r0, s0), (c1, r1, s1)] = [round(first)?, round(second)?];
     let radius = r0.midpoint(r1);
     let spine = sub(c1, c0);
-    let length = spine[0].hypot(spine[1]);
+    let length = spine[0].portable_hypot(spine[1]);
     if (r0 - r1).abs() > tolerance
         || radius <= tolerance
         || length <= tolerance
@@ -324,7 +327,7 @@ fn slot(ring: &[Edge], tolerance: f64) -> Option<([Point; 2], f64)> {
             })?;
         for (p, center) in ends {
             let [x, y] = sub(p, center);
-            if (x.hypot(y) - radius).abs() > tolerance {
+            if (x.portable_hypot(y) - radius).abs() > tolerance {
                 return None;
             }
         }
@@ -375,7 +378,7 @@ fn point_segment_distance(p: Point, [a, b]: Segment) -> f64 {
         (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / length).clamp(0., 1.)
     };
     let [x, y] = sub(p, [a[0] + t * d[0], a[1] + t * d[1]]);
-    x.hypot(y)
+    x.portable_hypot(y)
 }
 
 /// Distance between two closed segments, either possibly degenerate.

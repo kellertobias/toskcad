@@ -1,6 +1,7 @@
 //! Scalar events along analytic drawing rims.
 
 use crate::curved_projection::{derivative, roots};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 type Span = [f64; 2];
@@ -10,7 +11,7 @@ pub(crate) struct Harmonic(pub [f64; 3]);
 
 impl Harmonic {
     pub(crate) fn at(self, angle: f64) -> f64 {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         self.0[1].mul_add(cos, self.0[2].mul_add(sin, self.0[0]))
     }
 
@@ -31,13 +32,13 @@ impl Harmonic {
 
     pub(crate) fn level(self, value: f64, trim: Span, cuts: &mut Vec<f64>) {
         let [a, b, c] = self.0;
-        let radius = b.hypot(c);
+        let radius = b.portable_hypot(c);
         let distance = value - a;
         if radius == 0. || distance.abs() > radius {
             return;
         }
-        let phase = c.atan2(b);
-        let separation = (distance / radius).acos();
+        let phase = c.portable_atan2(b);
+        let separation = (distance / radius).portable_acos();
         for angle in [phase - separation, phase + separation] {
             let angle = angle.rem_euclid(TAU);
             push_cut(cuts, angle, trim);
@@ -99,7 +100,7 @@ pub(crate) fn norm<const N: usize>(
                     });
             }
         }
-        let chart = [start, end].map(|angle| ((angle - phase) / 2.).tan());
+        let chart = [start, end].map(|angle| ((angle - phase) / 2.).portable_tan());
         // Retain repeated-root candidates and chart boundaries so an isolated
         // tangent never becomes the midpoint for its surrounding interval.
         push_cut(cuts, end, trim);
@@ -107,7 +108,7 @@ pub(crate) fn norm<const N: usize>(
             roots(&polynomial, chart)
                 .into_iter()
                 .chain(roots(&derivative(&polynomial), chart))
-                .map(|t| phase + 2. * t.atan())
+                .map(|t| phase + 2. * t.portable_atan())
                 .filter(|&t| t > start && t < end),
         );
     }
@@ -148,6 +149,6 @@ mod tests {
         assert!(cuts.is_empty());
         circle(Harmonic([0., 1., 0.]), zero, 0.8, [0.1, 0.8], &mut cuts);
         assert_eq!(cuts.len(), 1);
-        assert!((cuts[0] - 0.8_f64.acos()).abs() < 1e-12);
+        assert!((cuts[0] - 0.8_f64.portable_acos()).abs() < 1e-12);
     }
 }

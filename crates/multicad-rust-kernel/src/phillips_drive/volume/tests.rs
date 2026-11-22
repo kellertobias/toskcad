@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 #[test]
 fn benchmark_actual_h1_policy_budget() {
     for index in 1..=5 {
@@ -38,29 +39,29 @@ fn oracle(s: Spec) -> f64 {
     let m = s.mouth_diameter_mm;
     let r = s.mouth_radius_mm;
     let b = s.b_width_mm;
-    let tg = (m - s.g_diameter_mm) / (2. * a.tan());
-    let total = tg + s.g_diameter_mm / 2. * c.tan();
-    let tb = tg + (s.g_diameter_mm - b) / 2. * c.tan();
-    let join = r * (1. - a.sin());
-    let entry = m / 2. + r * (1. - a.sin()) / a.cos();
-    let de = e / (2. * alpha.tan() * beta.cos());
-    let first = 1. / (alpha.tan() * beta.cos());
-    let second = 1. / (theta.tan() * beta.cos());
+    let tg = (m - s.g_diameter_mm) / (2. * a.portable_tan());
+    let total = tg + s.g_diameter_mm / 2. * c.portable_tan();
+    let tb = tg + (s.g_diameter_mm - b) / 2. * c.portable_tan();
+    let join = r * (1. - a.portable_sin());
+    let entry = m / 2. + r * (1. - a.portable_sin()) / a.portable_cos();
+    let de = e / (2. * alpha.portable_tan() * beta.portable_cos());
+    let first = 1. / (alpha.portable_tan() * beta.portable_cos());
+    let second = 1. / (theta.portable_tan() * beta.portable_cos());
     let area = |d: f64| {
         let rr = if d <= join {
             entry - (r * r - (d - r).powi(2)).max(0.).sqrt()
         } else if d <= tg {
-            m / 2. - d * a.tan()
+            m / 2. - d * a.portable_tan()
         } else {
-            (total - d).max(0.) / c.tan()
+            (total - d).max(0.) / c.portable_tan()
         };
         if rr == 0. {
             return 0.;
         }
-        let rb = b / 2. + (tb - d) * beta.tan();
+        let rb = b / 2. + (tb - d) * beta.portable_tan();
         let primitive = |y: f64| {
             let y = y.clamp(0., rr);
-            (y * (rr * rr - y * y).max(0.).sqrt() + rr * rr * (y / rr).asin()) / 2.
+            (y * (rr * rr - y * y).max(0.).sqrt() + rr * rr * (y / rr).portable_asin()) / 2.
         };
         let part = |aa: f64, bb: f64, lo: f64, upper: f64| {
             let disc = rr * rr * (1. + bb * bb) - aa * aa;
@@ -270,36 +271,37 @@ fn rounded_oracle_section(s: Spec, depth: f64) -> f64 {
     let theta = (s.outer_corner_angle_deg / 2.).to_radians();
     let a = s.outer_flank_angle_deg.to_radians();
     let c = s.floor_angle_deg.to_radians();
-    let flank = (s.mouth_diameter_mm - s.g_diameter_mm) / (2. * a.tan());
-    let tip = flank + s.g_diameter_mm / 2. * c.tan();
-    let join = s.mouth_radius_mm * (1. - a.sin());
-    let entry = s.mouth_diameter_mm / 2. + s.mouth_radius_mm * (1. - a.sin()) / a.cos();
+    let flank = (s.mouth_diameter_mm - s.g_diameter_mm) / (2. * a.portable_tan());
+    let tip = flank + s.g_diameter_mm / 2. * c.portable_tan();
+    let join = s.mouth_radius_mm * (1. - a.portable_sin());
+    let entry =
+        s.mouth_diameter_mm / 2. + s.mouth_radius_mm * (1. - a.portable_sin()) / a.portable_cos();
     let rr = if depth <= join {
         entry
             - (s.mouth_radius_mm.powi(2) - (depth - s.mouth_radius_mm).powi(2))
                 .max(0.)
                 .sqrt()
     } else if depth <= flank {
-        s.mouth_diameter_mm / 2. - depth * a.tan()
+        s.mouth_diameter_mm / 2. - depth * a.portable_tan()
     } else {
-        (tip - depth).max(0.) / c.tan()
+        (tip - depth).max(0.) / c.portable_tan()
     };
     if rr == 0. {
         return 0.;
     }
-    let tb = flank + (s.g_diameter_mm - s.b_width_mm) / 2. * c.tan();
-    let rb = s.b_width_mm / 2. + (tb - depth) * beta.tan();
+    let tb = flank + (s.g_diameter_mm - s.b_width_mm) / 2. * c.portable_tan();
+    let rb = s.b_width_mm / 2. + (tb - depth) * beta.portable_tan();
     if rr <= rb {
         return PI * rr * rr;
     }
-    let js = radius * (1. - theta.sin());
-    let jy = radius * theta.cos();
-    let slope = 1. / (theta.tan() * beta.cos());
+    let js = radius * (1. - theta.portable_sin());
+    let jy = radius * theta.portable_cos();
+    let slope = 1. / (theta.portable_tan() * beta.portable_cos());
     let front = |y: f64| {
         rb + if y <= jy {
-            (radius - (radius * radius - y * y).max(0.).sqrt()) / beta.cos()
+            (radius - (radius * radius - y * y).max(0.).sqrt()) / beta.portable_cos()
         } else {
-            (js + (y - jy) / theta.tan()) / beta.cos()
+            (js + (y - jy) / theta.portable_tan()) / beta.portable_cos()
         }
     };
     let (mut lo, mut hi) = (0., rr);
@@ -314,14 +316,15 @@ fn rounded_oracle_section(s: Spec, depth: f64) -> f64 {
     let crossing = (lo + hi) / 2.;
     let upper = crossing.min(jy);
     let primitive = |rad: f64, y: f64| {
-        0.5 * (y * (rad * rad - y * y).max(0.).sqrt() + rad * rad * (y / rad).clamp(-1., 1.).asin())
+        0.5 * (y * (rad * rad - y * y).max(0.).sqrt()
+            + rad * rad * (y / rad).clamp(-1., 1.).portable_asin())
     };
-    let inner = primitive(rr, upper) - (rb + radius / beta.cos()) * upper
-        + primitive(radius, upper) / beta.cos();
+    let inner = primitive(rr, upper) - (rb + radius / beta.portable_cos()) * upper
+        + primitive(radius, upper) / beta.portable_cos();
     let outer = if crossing > jy {
         primitive(rr, crossing)
             - primitive(rr, jy)
-            - (rb + (js - jy / theta.tan()) / beta.cos()) * (crossing - jy)
+            - (rb + (js - jy / theta.portable_tan()) / beta.portable_cos()) * (crossing - jy)
             - slope * (crossing * crossing - jy * jy) / 2.
     } else {
         0.
@@ -331,9 +334,9 @@ fn rounded_oracle_section(s: Spec, depth: f64) -> f64 {
 fn rounded_oracle_volume(s: Spec) -> f64 {
     let a = s.outer_flank_angle_deg.to_radians();
     let floor = s.floor_angle_deg.to_radians();
-    let flank = (s.mouth_diameter_mm - s.g_diameter_mm) / (2. * a.tan());
-    let tip = flank + s.g_diameter_mm / 2. * floor.tan();
-    [0., s.mouth_radius_mm * (1. - a.sin()), flank, tip]
+    let flank = (s.mouth_diameter_mm - s.g_diameter_mm) / (2. * a.portable_tan());
+    let tip = flank + s.g_diameter_mm / 2. * floor.portable_tan();
+    [0., s.mouth_radius_mm * (1. - a.portable_sin()), flank, tip]
         .windows(2)
         .map(|w| integral(&|d| rounded_oracle_section(s, d), w[0], w[1], 1e-12, 34))
         .sum()

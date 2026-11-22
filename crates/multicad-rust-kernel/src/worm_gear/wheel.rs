@@ -174,7 +174,7 @@ impl Wheel {
                     .map(|i| {
                         let r = WORM_ROOT + (CUTTER_TIP - WORM_ROOT) * f64::from(i) / 32.;
                         let [x, y] = self.flank(r, v, side);
-                        x.hypot(y)
+                        x.portable_hypot(y)
                     })
                     .collect();
                 valid &=
@@ -187,9 +187,11 @@ impl Wheel {
                 for i in 0..=32 {
                     let u = Jet::variable(f64::from(i) / 32., 0);
                     let [x, y] = self.piece_point(&section, piece, u);
-                    let angle = y.value.atan2(x.value);
+                    let angle = y.value.portable_atan2(x.value);
                     let rate = x.value * y.d[0] - y.value * x.d[0];
-                    valid &= rate > 0. && angle >= last - 1e-12 && x.value.hypot(y.value) > bore;
+                    valid &= rate > 0.
+                        && angle >= last - 1e-12
+                        && x.value.portable_hypot(y.value) > bore;
                     last = angle;
                 }
             }
@@ -295,7 +297,7 @@ impl Wheel {
         for _ in 0..64 {
             let r = (lo + hi) / 2.;
             let [x, y] = self.flank(r, v, side);
-            if x.hypot(y) > self.blank() {
+            if x.portable_hypot(y) > self.blank() {
                 lo = r;
             } else {
                 hi = r;
@@ -308,7 +310,7 @@ impl Wheel {
         let crossing = [self.crossing(v, 1.), self.crossing(v, -1.)];
         let exit = [0, 1].map(|i| {
             let [x, y] = self.flank(crossing[i], v, [1., -1.][i]);
-            y.atan2(x)
+            y.portable_atan2(x)
         });
         Section { v, crossing, exit }
     }
@@ -423,8 +425,8 @@ impl Wheel {
             let r3 = radius.powi(3) / 3.;
             [
                 radius * radius * (b - a) / 2.,
-                r3 * (b.sin() - a.sin()),
-                r3 * (a.cos() - b.cos()),
+                r3 * (b.portable_sin() - a.portable_sin()),
+                r3 * (a.portable_cos() - b.portable_cos()),
             ]
         };
         let mut total = [0.; 3];
@@ -490,8 +492,8 @@ impl Wheel {
                         let (a, b) = bounds(v);
                         [
                             blank * (b - a),
-                            blank * blank * (b.sin() - a.sin()),
-                            blank * blank * (a.cos() - b.cos()),
+                            blank * blank * (b.portable_sin() - a.portable_sin()),
+                            blank * blank * (a.portable_cos() - b.portable_cos()),
                             blank * (b - a) * v,
                         ][k]
                     },
@@ -516,17 +518,17 @@ impl Wheel {
 
     /// `space_margin` at an already trimmed section.
     pub(super) fn section_space_margin(&self, section: &Section, x: f64, y: f64) -> f64 {
-        let theta = y.atan2(x);
+        let theta = y.portable_atan2(x);
         let pitch = 2. * self.span;
         let local = theta - (theta / pitch).round() * pitch;
-        let radius = x.hypot(y);
+        let radius = x.portable_hypot(y);
         let [low, high] = section.exit;
         if local <= low || local >= high {
             return self.blank() - radius;
         }
         let angle = |piece: Piece, u: f64| {
             let [x, y] = self.piece_point(section, piece, u);
-            y.atan2(x)
+            y.portable_atan2(x)
         };
         // The exit angle bounds the last piece.
         let piece = PIECES
@@ -544,14 +546,14 @@ impl Wheel {
                 }
             }
             let [px, py] = self.piece_point(section, piece, (lo + hi) / 2.);
-            px.hypot(py) - radius
+            px.portable_hypot(py) - radius
         }
     }
 
     /// Signed material margin of a local point in mm.
     pub(crate) fn margin(&self, [x, y, z]: Point) -> f64 {
         let m = self.spec.axial_module_mm;
-        let radius = x.hypot(y);
+        let radius = x.portable_hypot(y);
         let mut margin = (self.spec.face_width_mm / 2. - z.abs()).min(self.blank() * m - radius);
         if let Some(bore) = self.bore_radius_mm() {
             margin = margin.min(radius - bore);
@@ -576,15 +578,15 @@ impl Wheel {
     /// Maximum of `direction · p` over one section, in module units.
     fn section_support(&self, v: f64, [dx, dy]: [f64; 2]) -> f64 {
         let section = self.section(v);
-        let reach = dx.hypot(dy);
-        let phi = dy.atan2(dx);
+        let reach = dx.portable_hypot(dy);
+        let phi = dy.portable_atan2(dx);
         let blank = self.blank();
         let arc = |a: f64, b: f64| {
             let offset = (phi - a).rem_euclid(TAU);
             if offset <= b - a {
                 1_f64
             } else {
-                (a - phi).cos().max((b - phi).cos())
+                (a - phi).portable_cos().max((b - phi).portable_cos())
             }
         };
         let [low, high] = section.exit;
@@ -603,7 +605,7 @@ impl Wheel {
             for piece in PIECES {
                 let value = |u: f64| {
                     let [x, y] = self.piece_point(&section, piece, u);
-                    let (s, c) = turn.sin_cos();
+                    let (s, c) = turn.portable_sin_cos();
                     dx * (c * x - s * y) + dy * (s * x + c * y)
                 };
                 best = best.max(maximize(value, 0., 1.));
@@ -638,8 +640,8 @@ impl Wheel {
     pub(crate) fn joint(&self, section: &Section, joint: usize) -> [f64; 2] {
         match joint {
             0 => [
-                self.blank() * self.span.cos(),
-                -self.blank() * self.span.sin(),
+                self.blank() * self.span.portable_cos(),
+                -self.blank() * self.span.portable_sin(),
             ],
             6 => self.piece_point(section, Piece::FlankPlus, 1.),
             j => self.piece_point(section, PIECES[j - 1], 0.),
@@ -694,21 +696,21 @@ pub(crate) mod tests {
             let section = wheel.section(v);
             for side in 0..2 {
                 let [x, y] = wheel.flank(section.crossing[side], v, [1., -1.][side]);
-                assert!((x.hypot(y) - wheel.blank()).abs() < 1e-12);
+                assert!((x.portable_hypot(y) - wheel.blank()).abs() < 1e-12);
             }
             let mut previous = wheel.joint(&section, 1);
             for (j, piece) in PIECES.into_iter().enumerate() {
                 let start = wheel.piece_point(&section, piece, 0.);
                 assert!(
-                    (start[0] - previous[0]).hypot(start[1] - previous[1]) < 1e-12,
+                    (start[0] - previous[0]).portable_hypot(start[1] - previous[1]) < 1e-12,
                     "{j}"
                 );
                 previous = wheel.piece_point(&section, piece, 1.);
             }
             let root = wheel.piece_point(&section, Piece::Torus, 0.3);
-            assert!((root[0].hypot(root[1]) - wheel.root_radius(v)).abs() < 1e-12);
+            assert!((root[0].portable_hypot(root[1]) - wheel.root_radius(v)).abs() < 1e-12);
             let tip = wheel.joint(&section, 0);
-            assert!((tip[0].hypot(tip[1]) - wheel.blank()).abs() < 1e-12);
+            assert!((tip[0].portable_hypot(tip[1]) - wheel.blank()).abs() < 1e-12);
         }
         assert_eq!(Piece::Torus.role(), "root.torus");
         assert_eq!(wheel.teeth(), 40);
@@ -735,7 +737,7 @@ pub(crate) mod tests {
             let span = wheel.span();
             for i in 0..=n {
                 let t = span - 2. * span * i as f64 / n as f64;
-                points.push([bore * t.cos(), bore * t.sin()]);
+                points.push([bore * t.portable_cos(), bore * t.portable_sin()]);
             }
             let area: f64 = (0..points.len())
                 .map(|i| {

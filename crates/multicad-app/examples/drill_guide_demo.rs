@@ -1,4 +1,5 @@
 //! Editable printed drill guide with metal bushings and an adjustable edge fence.
+use multicad_precision::PortableMath as _;
 #[path = "workbench_demo.rs"]
 #[allow(dead_code)]
 mod workbench;
@@ -452,13 +453,13 @@ pub fn build() -> Result<Scenario, Error> {
         for n in 0..8 {
             let angle = n as f64 * std::f64::consts::TAU / 8.;
             let cx = if index == 0 {
-                format!("={} mm", 12. + 9. * angle.cos())
+                format!("={} mm", 12. + 9. * angle.portable_cos())
             } else {
-                format!("=$guide_width - {} mm", 12. - 9. * angle.cos())
+                format!("=$guide_width - {} mm", 12. - 9. * angle.portable_cos())
             };
             let cy = format!(
                 "=$guide_depth - {} mm - $edge_distance",
-                32. - 9. * angle.sin()
+                32. - 9. * angle.portable_sin()
             );
             ribs.push(cylinder(
                 &mut session,

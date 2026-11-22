@@ -7,6 +7,7 @@
 //! tenons together.
 use super::*;
 use crate::{document::Mutation, model::common::number, parameters::EvaluatedParameters};
+use multicad_precision::PortableMath as _;
 
 pub const LOOSE_TENON_TYPE: &str = "cabinetry.loose_tenon";
 pub const LOOSE_TENON_SCHEMA: u32 = 1;
@@ -345,7 +346,7 @@ fn mortise(a: [f64; 2], b: [f64; 2], r: f64, depth: f64) -> ResolvedRecess {
     for (center, start) in [(b, -0.5), (a, 0.5)] {
         for k in 0..=8 {
             let phi = std::f64::consts::PI * (start + k as f64 / 8.);
-            let (s, c) = phi.sin_cos();
+            let (s, c) = phi.portable_sin_cos();
             outline.push([
                 center[0] + r * (c * dir[0] + s * n[0]),
                 center[1] + r * (c * dir[1] + s * n[1]),

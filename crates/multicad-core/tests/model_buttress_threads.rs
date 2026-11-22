@@ -3,6 +3,7 @@ use multicad_core::{
     document::{Document, EntityData, Mutation},
     model::*,
 };
+use multicad_precision::PortableMath as _;
 fn session() -> Session {
     Session::new(Document::new("Named buttress").unwrap()).unwrap()
 }
@@ -56,7 +57,7 @@ fn named_buttress_preserves_source_root_and_distinct_internal_clearance_for_both
                 (true, -1., external.profile.lower_flank_deg),
                 (false, 1., external.profile.upper_flank_deg),
             ] {
-                let t = angle.to_radians().tan();
+                let t = angle.to_radians().portable_tan();
                 let drop = 10. - 8.5;
                 let male = direction * (a.crest_width_mm / 2. + drop * t);
                 let female =

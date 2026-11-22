@@ -4,6 +4,7 @@
 //! `(minor + c, 0)` and `(minor, c)` endpoints. The terminal cylinder enlarges
 //! the cavity over its last authored interval; neither is an external mask.
 use crate::helical_thread::Thread;
+use multicad_precision::PortableMath as _;
 #[cfg(test)]
 mod tests;
 mod volume;
@@ -215,6 +216,7 @@ impl Cavity {
         if z < -tolerance || z > self.full_length_mm() + tolerance {
             return false;
         }
-        x.hypot(y) <= self.radius_mm(y.atan2(x), z.clamp(0., self.full_length_mm())) + tolerance
+        x.portable_hypot(y)
+            <= self.radius_mm(y.portable_atan2(x), z.clamp(0., self.full_length_mm())) + tolerance
     }
 }

@@ -343,7 +343,7 @@ fn assembly_host_nested_member_anchor_pick_uses_its_native_source_not_outer_copy
         &BTreeSet::from([outer.instance]),
     )
     .unwrap();
-    assert!((basis.basis.axes[0][0] - 30_f64.to_radians().cos()).abs() < 1e-10);
+    assert!((basis.basis.axes[0][0] - 30_f64.to_radians().portable_cos()).abs() < 1e-10);
     assert!((basis.basis.axes[0][1] - 0.5).abs() < 1e-10);
     let baseline = h.session.document().clone();
     for mode in [

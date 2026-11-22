@@ -3,6 +3,7 @@ use multicad_core::document::EntityId;
 use multicad_kernel::{
     BlindThreadCut, GeometryPolicy, HelicalThread, PlaneFrame, Solid, rust_kernel::Rational,
 };
+use multicad_precision::PortableMath as _;
 #[test]
 fn shallow_wide_blind_thread_cannot_project_a_proper_tilted_tool_to_the_stock_cap() {
     let policy = GeometryPolicy::default();
@@ -38,7 +39,7 @@ fn shallow_wide_blind_thread_cannot_project_a_proper_tilted_tool_to_the_stock_ca
         profile,
         entry: PlaneFrame {
             origin: [2_000_000., 2_000_000., 0.],
-            u: [tilt.cos(), 0., tilt.sin()],
+            u: [tilt.portable_cos(), 0., tilt.portable_sin()],
             v: [0., 1., 0.],
         },
         receiving_radius_mm: 1000.,
@@ -91,7 +92,7 @@ fn full_tool_frame_guard_keeps_exact_and_resolvable_near_cardinal_sources() {
                     profile,
                     entry: PlaneFrame {
                         origin: [2_000_000., 2_000_000., 0.],
-                        u: [tilt.cos(), 0., tilt.sin()],
+                        u: [tilt.portable_cos(), 0., tilt.portable_sin()],
                         v: [0., 1., 0.],
                     },
                     receiving_radius_mm: 1000.,

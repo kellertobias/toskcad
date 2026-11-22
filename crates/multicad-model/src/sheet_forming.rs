@@ -14,6 +14,7 @@ use multicad_core::{
 use multicad_kernel::{
     BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, Solid,
 };
+use multicad_precision::PortableMath as _;
 
 const EPS: f64 = 1e-9;
 
@@ -24,7 +25,7 @@ fn mul(a: [f64; 2], s: f64) -> [f64; 2] {
     [a[0] * s, a[1] * s]
 }
 fn rotate(a: [f64; 2], angle: f64) -> [f64; 2] {
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     [a[0] * c - a[1] * s, a[0] * s + a[1] * c]
 }
 fn about(p: [f64; 2], center: [f64; 2], angle: f64) -> [f64; 2] {

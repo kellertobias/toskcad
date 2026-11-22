@@ -207,7 +207,7 @@ fn meridian(s: Segment, t: I) -> FResult<[I; 2]> {
             // This cached atan2 is the proposal's defining constant. Its
             // mathematical trigonometric evaluation is enclosed separately;
             // the observed producer output is compared with this enclosure.
-            let start = (s.start[1] - center[1]).atan2(s.start[0] - center[0]);
+            let start = (s.start[1] - center[1]).portable_atan2(s.start[0] - center[0]);
             let cs = crate::head_profile::proposal_rotation(I::point(start) + t * I::point(sweep))
                 .map_err(
                     crate::step_read::phillips_cutter::physical::body::closed_head::repaired_error,

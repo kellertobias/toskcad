@@ -7,6 +7,7 @@ use multicad_kernel::{
     DrawingHatch, DrawingProjection, DrawingSolid, GeometryErrorKind, PlaneFrame, Solid,
     project_drawing,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 
 fn sphere() -> Solid {
@@ -66,8 +67,8 @@ fn sphere_views_publish_one_exact_silhouette_and_clip_details() {
     .unwrap();
     assert_eq!(detail.len(), 2);
     assert!(detail.iter().flat_map(|v| &v.preview_mm).all(|p| {
-        ((p[0] - 7.).hypot(p[1] - 5.) - 5.).abs() < 1e-10
-            && (p[0] - 12.).hypot(p[1] - 5.) <= 2. + 1e-10
+        ((p[0] - 7.).portable_hypot(p[1] - 5.) - 5.).abs() < 1e-10
+            && (p[0] - 12.).portable_hypot(p[1] - 5.) <= 2. + 1e-10
     }));
 }
 
@@ -117,7 +118,7 @@ fn sphere_sections_publish_the_cut_disk_and_any_larger_retained_silhouette() {
         hatches
             .iter()
             .flat_map(|v| &v.preview_mm)
-            .all(|p| (p[0] - 7.).hypot(p[1] + 2.) <= 4. + 1e-10)
+            .all(|p| (p[0] - 7.).portable_hypot(p[1] + 2.) <= 4. + 1e-10)
     );
 
     let half = project_drawing(
@@ -235,7 +236,7 @@ fn sphere_and_stock_hide_each_others_edges_without_losing_their_sources() {
         detail
             .iter()
             .flat_map(|v| &v.preview_mm)
-            .all(|p| (p[0] - 2.).hypot(p[1] + 2.) < 2.000001)
+            .all(|p| (p[0] - 2.).portable_hypot(p[1] + 2.) < 2.000001)
     );
 }
 

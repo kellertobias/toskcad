@@ -20,6 +20,7 @@ use multicad_kernel::{
     GeometryPolicy, Line8NutCut, OrthogonalCountersink, PlaneFrame, RevolutionAxis, RigidTransform,
     Solid, TransverseBoreTool, TreatmentEdge,
 };
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeMap, f64::consts::TAU};
 
 const SHEET_MM: f64 = 5.0;
@@ -54,7 +55,7 @@ fn dot(a: Point, b: Point) -> f64 {
     a.into_iter().zip(b).map(|(a, b)| a * b).sum()
 }
 fn magnitude([x, y, z]: Point) -> f64 {
-    x.hypot(y).hypot(z)
+    x.portable_hypot(y).portable_hypot(z)
 }
 fn shift(frame: ReferenceFrame, distance: f64) -> ReferenceFrame {
     ReferenceFrame {
@@ -84,7 +85,7 @@ fn polygon(points: &[[f64; 2]]) -> Vec<CurvedEdge2d> {
         .collect()
 }
 fn rotated(frame: ReferenceFrame, angle: f64) -> ReferenceFrame {
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     ReferenceFrame {
         u: add(scale(frame.u, c), scale(frame.v, s)),
         v: add(scale(frame.u, -s), scale(frame.v, c)),
@@ -849,7 +850,7 @@ impl Builder<'_> {
             n: inner.normal(),
         };
         if backend == GeometryBackend::Rust {
-            let (sin, cos) = phase.roll_rad.sin_cos();
+            let (sin, cos) = phase.roll_rad.portable_sin_cos();
             internal.frame = multicad_core::sketch::Frame {
                 origin: [0.; 3],
                 u: [cos, sin, 0.],

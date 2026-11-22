@@ -1,5 +1,6 @@
 //! Publish the exact line and conic intersections of a trimmed analytic shell.
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     curved_projection::{Curve, Edge, Ellipse},
     warped_union::{
@@ -186,7 +187,7 @@ impl Frame {
         let [u, v] = [ellipse.major_axis(), ellipse.minor_axis()].map(|axis| self.vector(axis));
         let sweep = arc.sweep_rad().abs();
         if major == minor {
-            let (sin, cos) = arc.start_rad().sin_cos();
+            let (sin, cos) = arc.start_rad().portable_sin_cos();
             return Ellipse {
                 center: self.point(ellipse.center_mm()),
                 u: std::array::from_fn(|i| u[i] * cos + v[i] * sin),
@@ -254,7 +255,10 @@ impl Frame {
                     let arc = self.ellipse(trim);
                     let clockwise = arc.u[0] * arc.v[1] - arc.u[1] * arc.v[0] < 0.;
                     let radius = arc.major;
-                    let target = 4. * (deflection / (4. * (radius + deflection))).sqrt().asin();
+                    let target = 4.
+                        * (deflection / (4. * (radius + deflection)))
+                            .sqrt()
+                            .portable_asin();
                     let sweep = trim.sweep_rad().abs();
                     let count = (sweep / target.min(FRAC_PI_2)).ceil() as usize;
                     if count > (LIMIT - boundary.len()) / (1 + usize::from(clockwise)) {
@@ -270,7 +274,8 @@ impl Frame {
                             // the published fill on the material side.
                             let midpoint = at((i as f64 - 0.5) * step);
                             let tip = std::array::from_fn(|i| {
-                                arc.center[i] + (midpoint[i] - arc.center[i]) / (step / 2.).cos()
+                                arc.center[i]
+                                    + (midpoint[i] - arc.center[i]) / (step / 2.).portable_cos()
                             });
                             boundary.push([previous, tip]);
                             previous = tip;

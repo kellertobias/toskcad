@@ -1,6 +1,7 @@
 //! Exact circular stock with one or two convex quarter-toroidal rim fillets.
 //! The analytic patches are authoritative; meshes only approximate their boundary.
 use crate::normal_sweep::Edge;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 mod mesh;
@@ -314,12 +315,12 @@ impl RoundedCylinder {
             return 0.;
         }
         let [x, y, z] = direction.map(|x| x / magnitude);
-        let radial = x.hypot(y);
+        let radial = x.portable_hypot(y);
         let f = self.fillets_mm[usize::from(z >= 0.)].unwrap_or(0.);
         // Maximize the exact quarter-circle meridian in the radial/axial
         // direction. Radius inference from far endpoint subtraction is avoided.
         (radial * self.radius_mm + (z * self.height_mm).max(0.)
-            - f * (radial + z.abs() - radial.hypot(z)))
+            - f * (radial + z.abs() - radial.portable_hypot(z)))
             * magnitude
     }
 
@@ -330,7 +331,7 @@ impl RoundedCylinder {
             return false;
         }
         let [x, y, z] = point;
-        let rho = x.hypot(y);
+        let rho = x.portable_hypot(y);
         if !rho.is_finite()
             || z < -tolerance_mm
             || z > self.height_mm + tolerance_mm
@@ -342,7 +343,10 @@ impl RoundedCylinder {
             if let Some(f) = f {
                 let axial = if i == 0 { z } else { self.height_mm - z };
                 let major = self.radius_mm - f;
-                if axial < f && rho > major && (rho - major).hypot(axial - f) > f + tolerance_mm {
+                if axial < f
+                    && rho > major
+                    && (rho - major).portable_hypot(axial - f) > f + tolerance_mm
+                {
                     return false;
                 }
             }

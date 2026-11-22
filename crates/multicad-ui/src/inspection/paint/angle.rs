@@ -8,6 +8,7 @@ use multicad_core::{
     references::{AnalyticGeometry, TopologyKey, TopologyKind},
     sketch::dot,
 };
+use multicad_precision::PortableMath as _;
 
 #[derive(Default)]
 pub(super) struct AngleMarker {
@@ -100,7 +101,7 @@ fn project(
     let cosine = dot(a, b);
     // The native angle is unoriented and acute. Refuse a guide if the exact
     // current plane directions do not agree with that measurement receipt.
-    if (cosine.abs() - radians.cos()).abs() > 1e-9 {
+    if (cosine.abs() - radians.portable_cos()).abs() > 1e-9 {
         return None;
     }
     if cosine < -1e-10 {
@@ -140,7 +141,7 @@ fn project(
         std::array::from_fn(|i| origin[i] + direction[i] * radius)
     };
     let sweep = |angle: f64| {
-        let (sine, cosine) = angle.sin_cos();
+        let (sine, cosine) = angle.portable_sin_cos();
         std::array::from_fn(|i| a[i] * cosine + across[i] * sine)
     };
     let steps = (radians * 24. / std::f64::consts::FRAC_PI_2).ceil() as i32;
@@ -327,7 +328,10 @@ mod tests {
     #[test]
     fn square_on_world_guides_use_the_exact_acute_angle_in_both_projections() {
         let angle = std::f64::consts::FRAC_PI_3;
-        let normals = [[1., 0., 0.], [angle.cos(), 0., angle.sin()]];
+        let normals = [
+            [1., 0., 0.],
+            [angle.portable_cos(), 0., angle.portable_sin()],
+        ];
         for perspective in [false, true] {
             for scale in [0.15, 2.4, 35.] {
                 let marker = project(
@@ -348,7 +352,7 @@ mod tests {
                     assert!((50. ..=65.).contains(&start.distance(end)));
                     (end - start).normalized()
                 });
-                assert!((f64::from(a.dot(b).acos()) - angle).abs() < 1e-6);
+                assert!((f64::from(a.dot(b).portable_acos()) - angle).abs() < 1e-6);
                 let arc_start = marker.arc[0][0];
                 let arc_end = marker.arc.last().unwrap()[1];
                 assert!((arc_start - rect().center()).normalized().dot(a) > 0.9999);
@@ -360,7 +364,10 @@ mod tests {
     #[test]
     fn a_small_nonparallel_angle_keeps_its_world_arc() {
         let angle = 3_f64.to_radians();
-        let normals = [[1., 0., 0.], [angle.cos(), 0., angle.sin()]];
+        let normals = [
+            [1., 0., 0.],
+            [angle.portable_cos(), 0., angle.portable_sin()],
+        ];
         let marker = project([0.; 3], normals, angle, camera(false), rect(), None).unwrap();
         assert!(!marker.arc.is_empty());
         assert!(marker.rays.iter().all(Option::is_some));

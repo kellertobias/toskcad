@@ -8,6 +8,7 @@
 //! Thickness comes from the stock. The inside bend radius and K-factor come
 //! from the stock unless the part overrides them; both values stay separate
 //! editable inputs and are never universal constants.
+use multicad_precision::PortableMath as _;
 mod developed_sketch;
 mod edges;
 mod hardware;
@@ -275,7 +276,7 @@ fn validate_loops(loops: &[PlanarLoop]) -> Result<(), DocumentError> {
             let next = &l.edges[(i + 1) % l.edges.len()];
             let (_, end) = e.ends();
             let (start, _) = next.ends();
-            if (end[0] - start[0]).hypot(end[1] - start[1]) > 1e-6 {
+            if (end[0] - start[0]).portable_hypot(end[1] - start[1]) > 1e-6 {
                 return Err(invalid("A captured sheet loop is open"));
             }
         }

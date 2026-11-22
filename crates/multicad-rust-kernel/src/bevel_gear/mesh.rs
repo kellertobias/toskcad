@@ -79,10 +79,14 @@ impl Builder<'_> {
         let center: Point = std::array::from_fn(|i| {
             (self.position(a)[i] + self.position(b)[i] + self.position(c)[i]) / 3.
         });
-        let (sp, cp) = self.gear.spec.pitch_cone_angle_rad.sin_cos();
-        let phi = center[1].atan2(center[0]);
+        let (sp, cp) = self.gear.spec.pitch_cone_angle_rad.portable_sin_cos();
+        let phi = center[1].portable_atan2(center[0]);
         let sign = if end == End::Heel { 1. } else { -1. };
-        [sign * sp * phi.cos(), sign * sp * phi.sin(), sign * cp]
+        [
+            sign * sp * phi.portable_cos(),
+            sign * sp * phi.portable_sin(),
+            sign * cp,
+        ]
     }
 
     fn cap_triangle(&mut self, triangle: [u32; 3], face: u32, end: End) -> Result<(), MeshError> {
@@ -146,7 +150,7 @@ impl Bevel {
             let a = sub(w[1], w[0]);
             let b = sub(w[2], w[1]);
             second = second.max(norm(sub(b, a)) / (h * h));
-            turning += norm(cross(a, b)).atan2(dot(a, b));
+            turning += norm(cross(a, b)).portable_atan2(dot(a, b));
         }
         // Twice the sampled second derivative bounds the chord sagitta.
         let count = (2. * second / (8. * options.deflection))

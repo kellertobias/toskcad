@@ -6,6 +6,7 @@ use multicad_core::{
     references::TopologyKind,
 };
 use multicad_model::{Compiler, GeometryBackend, Model};
+use multicad_precision::PortableMath as _;
 
 fn apartment() -> Session {
     let mut bytes = include_bytes!("../../../examples/apartment.tcd").as_slice();
@@ -322,7 +323,7 @@ fn edited_diagonal_wall_matches_the_analytic_volume_and_boundary() {
     assert!(resolved.junctions.is_empty());
     assert_eq!(resolved.justification, model::Justification::Center);
     let [a, b] = [resolved.points[0], resolved.points[1]];
-    let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+    let length = (b[0] - a[0]).portable_hypot(b[1] - a[1]);
     let normal = [(a[1] - b[1]) / length, (b[0] - a[0]) / length];
     let half = resolved.thickness_mm / 2.;
     let corners = [a, b].into_iter().flat_map(|p| {

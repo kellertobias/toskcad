@@ -5,6 +5,7 @@ use multicad_core::{
 };
 use multicad_kernel::{BooleanOperation, RigidTransform, Solid};
 use multicad_model::Compiler;
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -137,12 +138,12 @@ fn metric_fitted_native_root_circles_mating_and_step_are_real_for_both_sizes_and
                 let budget = multicad_kernel::GeometryPolicy::default().linear_tolerance_mm * area
                     + 1e-7 * volume;
                 let delta = (back.volume_mm3().unwrap() - volume).abs();
-                let x = radius * (std::f64::consts::PI / 3.).sin();
+                let x = radius * (std::f64::consts::PI / 3.).portable_sin();
                 let primitive = |x: f64| {
                     (cr * cr + radius * radius) * x
                         - x.powi(3) / 3.
                         - cr * (x * (radius * radius - x * x).sqrt()
-                            + radius * radius * (x / radius).asin())
+                            + radius * radius * (x / radius).portable_asin())
                 };
                 let tangent = cr - radius / 2.;
                 let squared = r.profile.crest_width_mm * r.major_radius_mm.powi(2)
@@ -176,16 +177,18 @@ fn metric_fitted_native_root_circles_mating_and_step_are_real_for_both_sizes_and
                 for shape in [a, &back] {
                     for angle in [-0.8_f64, -0.4, 0., 0.4, 0.8] {
                         let z = 2.37 * row.pitch_mm;
-                        let relative = row.pitch_mm / 2. + radius * angle.sin();
-                        let boundary = cr - radius * angle.cos();
+                        let relative = row.pitch_mm / 2. + radius * angle.portable_sin();
+                        let boundary = cr - radius * angle.portable_cos();
                         let phi = if hand == ThreadHand::Left { -1. } else { 1. }
                             * std::f64::consts::TAU
                             * (z - relative)
                             / row.pitch_mm;
                         for (offset, inside) in [(-0.001, true), (0.001, false)] {
                             let radial = boundary + offset;
-                            let value =
-                                material(shape, [radial * phi.cos(), radial * phi.sin(), z]);
+                            let value = material(
+                                shape,
+                                [radial * phi.portable_cos(), radial * phi.portable_sin(), z],
+                            );
                             assert!(
                                 if inside { value > 0.999 } else { value < 1e-5 },
                                 "circle {} {hand:?} {angle} {offset} {value}",
@@ -238,7 +241,10 @@ fn custom_entry_and_terminal_relief_change_native_sections_and_enforce_the_large
                 for phi in [0_f64, 0.43, 2.1] {
                     for (offset, inside) in [(-0.001, !internal), (0.001, internal)] {
                         let radius = boundary + offset;
-                        let value = material(shape, [radius * phi.cos(), radius * phi.sin(), z]);
+                        let value = material(
+                            shape,
+                            [radius * phi.portable_cos(), radius * phi.portable_sin(), z],
+                        );
                         assert!(
                             if inside { value > 0.999 } else { value < 1e-5 },
                             "treatment {hand:?} {mode:?} z{z} offset{offset}: {value}"

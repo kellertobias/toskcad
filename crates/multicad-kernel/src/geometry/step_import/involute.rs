@@ -36,7 +36,7 @@ fn bound(flank: &Flank, [a, b]: [f64; 2], spline: &SplineEdge, limit: f64) -> f6
     };
     let distance = |a: Point, b: Point| {
         let [x, y, z] = std::array::from_fn(|i| a[i] - b[i]);
-        x.hypot(y).hypot(z)
+        x.portable_hypot(y).portable_hypot(z)
     };
     let poles = spline.poles_mm();
     let (Some(&first), Some(&last)) = (poles.first(), poles.last()) else {
@@ -82,7 +82,7 @@ fn bound(flank: &Flank, [a, b]: [f64; 2], spline: &SplineEdge, limit: f64) -> f6
         // Convexity bounds the distance between the two cubics by the largest
         // control-point discrepancy. The fourth derivative of the exact
         // involute bounds the remaining Hermite approximation.
-        let fourth = 2_f64.sqrt() * flank.radius_mm * 3_f64.hypot(t0.max(t1));
+        let fourth = 2_f64.sqrt() * flank.radius_mm * 3_f64.portable_hypot(t0.max(t1));
         let remainder = fourth * (t1 - t0).abs().powi(4) / 384.;
         worst = worst.max(discrepancy + remainder * (1. + 1e-9) + 64. * f64::EPSILON * extent);
         if worst > limit {

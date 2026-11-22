@@ -76,7 +76,7 @@ pub(in crate::wood_thread_contact::insert) fn fixture(left: bool) -> (Insert, Sc
     } else {
         -72_f64.to_radians()
     };
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     (
         insert,
         screw,

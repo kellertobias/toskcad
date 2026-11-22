@@ -10,8 +10,8 @@ fn fixture(teeth: u32, hand: f64, bore: f64) -> Herringbone {
 
 fn fixture_with_law(teeth: u32, hand: f64, bore: f64, helical: bool) -> Herringbone {
     let beta = 15_f64.to_radians();
-    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let module = 2. / beta.cos();
+    let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let module = 2. / beta.portable_cos();
     let pitch = f64::from(teeth) * module / 2.;
     let create = if helical {
         Herringbone::new_helical
@@ -22,16 +22,16 @@ fn fixture_with_law(teeth: u32, hand: f64, bore: f64, helical: bool) -> Herringb
         Spec {
             teeth,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * pressure.cos(),
+            base_radius_mm: pitch * pressure.portable_cos(),
             tip_radius_mm: pitch + 2.,
             root_radius_mm: pitch - 2.5,
             root_fillet_radius_mm: 0.4,
-            half_base_angle_rad: (PI * module / 2. - 0.05) / (2. * pitch) + pressure.tan()
+            half_base_angle_rad: (PI * module / 2. - 0.05) / (2. * pitch) + pressure.portable_tan()
                 - pressure,
             face_width_mm: 4.,
             bore_radius_mm: bore,
         },
-        hand * beta.tan() / pitch,
+        hand * beta.portable_tan() / pitch,
         1e-5,
         1e7,
     )
@@ -411,7 +411,7 @@ fn rejects_invalid_shell_records_instead_of_repairing_them() {
 #[test]
 fn integrates_short_rational_arcs_without_cancellation() {
     let a = 1e-3_f64;
-    let weight = a.cos();
+    let weight = a.portable_cos();
     let chart = Chart {
         degree: 2,
         interior_mult: 2,
@@ -429,9 +429,9 @@ fn integrates_short_rational_arcs_without_cancellation() {
     let entities = BTreeMap::new();
     let shell = Shell::new(&entities, TOL, true);
     let points = [
-        [weight, -a.sin(), 0.],
+        [weight, -a.portable_sin(), 0.],
         [weight.recip(), 0., 0.],
-        [weight, a.sin(), 0.],
+        [weight, a.portable_sin(), 0.],
     ];
     let area = section_area(&shell, 0, &chart, &points, &frame).unwrap();
     assert!((area - a).abs() < 1e-14);
@@ -556,23 +556,23 @@ fn rotated_bore_keeps_its_authored_seam_vertex() {
 
 fn gapped(teeth: u32, hand: f64, bore: f64, gap: f64) -> Herringbone {
     let beta = 15_f64.to_radians();
-    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let module = 2. / beta.cos();
+    let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let module = 2. / beta.portable_cos();
     let pitch = f64::from(teeth) * module / 2.;
     Herringbone::new_gapped(
         Spec {
             teeth,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * pressure.cos(),
+            base_radius_mm: pitch * pressure.portable_cos(),
             tip_radius_mm: pitch + 2.,
             root_radius_mm: pitch - 2.5,
             root_fillet_radius_mm: 0.4,
-            half_base_angle_rad: (PI * module / 2. - 0.05) / (2. * pitch) + pressure.tan()
+            half_base_angle_rad: (PI * module / 2. - 0.05) / (2. * pitch) + pressure.portable_tan()
                 - pressure,
             face_width_mm: 10.,
             bore_radius_mm: bore,
         },
-        hand * beta.tan() / pitch,
+        hand * beta.portable_tan() / pitch,
         gap,
         1e-5,
         1e7,

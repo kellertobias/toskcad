@@ -1,4 +1,5 @@
 //! One native source-change form for an entire editable fence run.
+use multicad_precision::PortableMath as _;
 mod construction;
 #[cfg(test)]
 mod tests;
@@ -634,7 +635,7 @@ impl FencePanel {
             if self.selected_post.is_none_or(|key|!choices.iter().any(|(k,_)|*k==key)){self.selected_post=choices.first().map(|(key,_)|*key);}
             egui::ComboBox::from_id_salt("override-target").selected_text(self.selected_post.map(|key|self.post_label(key)).unwrap_or("No interior posts".into())).show_ui(ui,|ui|{for(key,label)in&choices{ui.selectable_value(&mut self.selected_post,Some(*key),label);}});
             if ui.add_enabled(self.selected_post.is_some_and(|key|!self.positions.iter().any(|p|p.post==key)),egui::Button::new("Adjust selected post")).clicked()&&let Some(key)=self.selected_post&&let Some(plan)=draft.automatic.as_ref().ok(){
-                let post=plan.posts.iter().find(|p|p.key==key).expect("selected post");let FencePostKey::Interior{start,..}=key else{unreachable!()};if let Ok(points)=self.outline.positions(document)&&let Some(i)=self.outline.vertex_ids().iter().position(|id|*id==start){let offset=(post.position_mm[0]-points[i][0]).hypot(post.position_mm[1]-points[i][1]);self.positions.push(PositionRow{post:key,offset:field(offset)});changed=true;}
+                let post=plan.posts.iter().find(|p|p.key==key).expect("selected post");let FencePostKey::Interior{start,..}=key else{unreachable!()};if let Ok(points)=self.outline.positions(document)&&let Some(i)=self.outline.vertex_ids().iter().position(|id|*id==start){let offset=(post.position_mm[0]-points[i][0]).portable_hypot(post.position_mm[1]-points[i][1]);self.positions.push(PositionRow{post:key,offset:field(offset)});changed=true;}
             }
             let labels=self.positions.iter().map(|p|self.post_label(p.post)).collect::<Vec<_>>();let mut remove=None;
             for(index,row)in self.positions.iter_mut().enumerate(){ui.push_id(index,|ui|{ui.label(&labels[index]);egui::Grid::new("post-position").num_columns(2).show(ui,|ui|{changed|=row.offset.show(ui,"Offset along segment","Explicit center distance from the directed segment start");ui.end_row();});if ui.button("Restore automatic position").clicked(){remove=Some(index);}});}

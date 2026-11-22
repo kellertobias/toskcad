@@ -454,7 +454,7 @@ pub(super) fn encode_with_interrupt(
         _ => None,
     };
     if let Some((radius_mm, stock_length_mm)) = closure_extents {
-        let norm = |[x, y, z]: Point| x.hypot(y).hypot(z);
+        let norm = |[x, y, z]: Point| x.portable_hypot(y).portable_hypot(z);
         let unit = |p: Point| {
             let n = norm(p);
             p.map(|v| v / n)
@@ -1282,7 +1282,7 @@ impl Spline {
         // The two-end Hermite remainder is f^(12)(ξ)(t-a)^6(t-b)^6 / 12!.
         // Applying the scalar bound to a projection along the error vector
         // bounds the complex norm without a component-wise penalty.
-        let span_limit = 2. * (error * FACTORIAL / max_derivative).powf(1. / 12.);
+        let span_limit = 2. * (error * FACTORIAL / max_derivative).portable_powf(1. / 12.);
         let jet = |t| {
             let r = if t == a {
                 radii[0]
@@ -1460,7 +1460,7 @@ pub(crate) fn product([ax, ay]: Complex, [bx, by]: Complex) -> Complex {
 }
 
 pub(super) fn affine_jet(t: f64, radius: f64, slope: f64, sense: f64) -> [Complex; JETS] {
-    let (sin, cos) = (sense * t).sin_cos();
+    let (sin, cos) = (sense * t).portable_sin_cos();
     let rotation = [cos, sin];
     let imaginary = [0., sense];
     let mut power = [1., 0.];
@@ -1664,7 +1664,7 @@ mod tests {
                         let t = j as f64 / 17.;
                         let x = pair[0] + t * (pair[1] - pair[0]);
                         let r = radii[0] + (radii[1] - radii[0]) * (x - a) / (b - a);
-                        let (sin, cos) = (sense * x).sin_cos();
+                        let (sin, cos) = (sense * x).portable_sin_cos();
                         let idx = i * DEGREE;
                         let mut controls: [[f64; 3]; DEGREE + 1] = std::array::from_fn(|j| {
                             let [a, b] = spline.poles[idx + j];
@@ -1677,7 +1677,10 @@ mod tests {
                                 });
                             }
                         }
-                        assert!((controls[0][0] - r * cos).hypot(controls[0][1] - r * sin) < error);
+                        assert!(
+                            (controls[0][0] - r * cos).portable_hypot(controls[0][1] - r * sin)
+                                < error
+                        );
                         assert!((controls[0][2] - x / b * 5.).abs() < 1e-13);
                     }
                 }

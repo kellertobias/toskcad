@@ -15,6 +15,7 @@ use multicad_kernel::{
     BooleanOperation, CurvedEdge2d, CurvedProfile, DrawingProjection, DrawingSolid, GeometryError,
     GeometryPolicy, PlaneFrame, ProjectedVector, Solid,
 };
+use multicad_precision::PortableMath as _;
 
 /// Plan cut above a wall's base in a downward projection view; the same as
 /// the floor-plan guide default. Guided plans and section views cut at
@@ -343,7 +344,7 @@ fn extrude_region(
                 .chain(planned.iter().copied())
                 .map(f64::abs)
                 .fold(1., f64::max);
-            if (actual[0] - planned[0]).hypot(actual[1] - planned[1])
+            if (actual[0] - planned[0]).portable_hypot(actual[1] - planned[1])
                 > (128. * f64::EPSILON * scale).min(policy.linear_tolerance_mm / 16.)
             {
                 return Err(error(
@@ -824,7 +825,10 @@ pub(crate) fn plan_vectors(
             let preview = (0..=steps)
                 .map(|i| {
                     let t = start + (end - start) * i as f64 / steps as f64;
-                    project([center[0] + radius * t.cos(), center[1] + radius * t.sin()])
+                    project([
+                        center[0] + radius * t.portable_cos(),
+                        center[1] + radius * t.portable_sin(),
+                    ])
                 })
                 .collect();
             vectors.push(vector(

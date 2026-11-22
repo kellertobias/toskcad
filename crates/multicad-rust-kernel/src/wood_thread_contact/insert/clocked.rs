@@ -220,7 +220,7 @@ fn ray_angle(c: I, s: I, scale: I) -> R<(f64, f64)> {
     let c = finite(c)?;
     let s = finite(s)?;
     let scale = positive(scale)?;
-    let angle = s.midpoint().atan2(c.midpoint());
+    let angle = s.midpoint().portable_atan2(c.midpoint());
     let chord = finite(
         ip((c / scale - ip(angle).cos()).magnitude())
             + ip((s / scale - ip(angle).sin()).magnitude()),

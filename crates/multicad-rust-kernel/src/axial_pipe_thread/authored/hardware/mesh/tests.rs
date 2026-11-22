@@ -119,7 +119,7 @@ fn retained(external: bool) {
             length_mm: 6.5,
             radial_taper: if external { 1. / 32. } else { -1. / 32. },
             section: AuthoredSection::BsptRounded {
-                depth_mm: pitch / (3. * 27.5_f64.to_radians().tan()),
+                depth_mm: pitch / (3. * 27.5_f64.to_radians().portable_tan()),
             },
             crest_radius_limit_mm: None,
         },
@@ -331,7 +331,8 @@ fn through_bore_joins_to_closed_cylindrical_stock_with_exact_annular_caps() {
     // Closed, consistently oriented and positive: stock minus bore.
     let proof = crate::manufacturing::certify(mesh).unwrap();
     let bore = cavity.volume_with_interrupt(1e-6, None).unwrap().volume_mm3;
-    let polygon = 0.5 * n as f64 * radius * radius * (std::f64::consts::TAU / n as f64).sin();
+    let polygon =
+        0.5 * n as f64 * radius * radius * (std::f64::consts::TAU / n as f64).portable_sin();
     let expected = polygon * 8. - (bore[0] + bore[1]) / 2.;
     let source_area: f64 = cavity
         .face_properties_with_interrupt(1e-4, None)
@@ -356,7 +357,7 @@ fn through_bore_joins_to_closed_cylindrical_stock_with_exact_annular_caps() {
         if face == wall {
             for &v in t {
                 let p = &mesh.vertices[3 * v as usize..3 * v as usize + 3];
-                assert!((p[0].hypot(p[1]) - radius).abs() < 1e-12);
+                assert!((p[0].portable_hypot(p[1]) - radius).abs() < 1e-12);
                 assert!(p[2] == 0. || p[2] == 8.);
             }
         }

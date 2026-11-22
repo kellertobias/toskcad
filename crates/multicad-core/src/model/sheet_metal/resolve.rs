@@ -279,11 +279,12 @@ pub fn resolve_sheet(
                     return Err(what("a jog angle must be above 0° and at most 90°"));
                 }
                 let t = thickness_mm;
-                let straight = (h - t - 2. * radius + (2. * radius + t) * a.cos()) / a.sin();
+                let straight =
+                    (h - t - 2. * radius + (2. * radius + t) * a.portable_cos()) / a.portable_sin();
                 if straight < -1e-9 {
                     return Err(what(&format!(
                         "a {h} mm jog offset is too small for its bends; it needs at least {:.3} mm",
-                        t + 2. * radius - (2. * radius + t) * a.cos()
+                        t + 2. * radius - (2. * radius + t) * a.portable_cos()
                     )));
                 }
                 (

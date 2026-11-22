@@ -70,7 +70,7 @@ pub(super) fn build(
     };
     // Canonical depth measures the straight wall at the major radius. The
     // conical floor continues to its real apex, preserving the original tool.
-    let slope = 1. / (bottom_angle_deg / 2.).to_radians().tan();
+    let slope = 1. / (bottom_angle_deg / 2.).to_radians().portable_tan();
     let source = Drive::from_authored_tangent(
         TangentSpec {
             major_diameter_mm: 2. * major_radius_mm,

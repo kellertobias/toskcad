@@ -1,5 +1,6 @@
 use multicad_core::{document::EntityId, references::*};
 use multicad_kernel::*;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 fn near(a: f64, b: f64) {
@@ -180,8 +181,8 @@ fn rust_annulus_mirror_preserves_every_named_boundary_and_reflects_cap_and_rim_f
                                     std::array::from_fn(|i| {
                                         frame.origin_mm[i]
                                             + old_r
-                                                * (frame.u[i] * angle.cos()
-                                                    + frame.v[i] * angle.sin())
+                                                * (frame.u[i] * angle.portable_cos()
+                                                    + frame.v[i] * angle.portable_sin())
                                     })
                                 };
                                 near_point(point(new), reflected(plane, point(old), true));
@@ -526,7 +527,8 @@ fn annulus_mirror_certifies_extreme_authored_caps_in_the_world_frame() {
                 let close = |actual: [f64; 3], expected: [f64; 3]| {
                     let delta = std::array::from_fn::<_, 3, _>(|i| actual[i] - expected[i]);
                     assert!(
-                        delta[0].hypot(delta[1]).hypot(delta[2]) <= policy.linear_tolerance_mm,
+                        delta[0].portable_hypot(delta[1]).portable_hypot(delta[2])
+                            <= policy.linear_tolerance_mm,
                         "{actual:?} != {expected:?}"
                     );
                 };

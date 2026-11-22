@@ -9,6 +9,7 @@ use multicad_kernel::{
     BooleanOperation, GeometryPolicy, HelicalThread, PlaneFrame, RigidTransform, Solid,
 };
 use multicad_model::Compiler;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
@@ -30,12 +31,12 @@ fn thread_volume(t: &ResolvedThread) -> f64 {
         .and_then(|m| m.external_root_radius_mm)
     {
         let cr = root + radius;
-        let x = radius * (PI / 3.).sin();
+        let x = radius * (PI / 3.).portable_sin();
         let primitive = |x: f64| {
             (cr * cr + radius * radius) * x
                 - x.powi(3) / 3.
                 - cr * (x * (radius * radius - x * x).sqrt()
-                    + radius * radius * (x / radius).asin())
+                    + radius * radius * (x / radius).portable_asin())
         };
         let tangent = cr - radius / 2.;
         let squared =
@@ -43,8 +44,8 @@ fn thread_volume(t: &ResolvedThread) -> f64 {
                 - primitive(-x);
         PI * t.length_mm * squared / p
     } else {
-        let slopes = t.profile.lower_flank_deg.to_radians().tan()
-            + t.profile.upper_flank_deg.to_radians().tan();
+        let slopes = t.profile.lower_flank_deg.to_radians().portable_tan()
+            + t.profile.upper_flank_deg.to_radians().portable_tan();
         let root_width = p - w - (r - root) * slopes;
         PI * t.length_mm
             * (w * r * r + slopes * (r.powi(3) - root.powi(3)) / 3. + root_width * root * root)

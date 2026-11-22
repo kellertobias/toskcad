@@ -2,6 +2,7 @@
 //! the 3D STEP curve is a verified, tolerance-bounded spline approximation.
 use super::{StepError, helical};
 use crate::helical_tube_cut::CylinderTrim;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 
 const DEGREE: usize = helical::DEGREE;
@@ -117,7 +118,7 @@ impl Rail {
             .map(|t| {
                 let u = pcurve.velocity[0].mul_add(t, pcurve.origin[0]);
                 let z = pcurve.velocity[1].mul_add(t, pcurve.origin[1]);
-                (self.radius * (u - t).abs()).hypot(z - self.height(t))
+                (self.radius * (u - t).abs()).portable_hypot(z - self.height(t))
             })
             .fold(0., f64::max);
         if pcurve_error > self.roundoff || pcurve.velocity[0] <= 0. || pcurve.velocity[1] <= 0. {
@@ -214,8 +215,8 @@ impl Spline {
                         ideal_pole(b, -h, DEGREE - i)
                     };
                     (control[0] - ideal[0])
-                        .hypot(control[1] - ideal[1])
-                        .hypot(control[2] - ideal[2])
+                        .portable_hypot(control[1] - ideal[1])
+                        .portable_hypot(control[2] - ideal[2])
                 })
                 .fold(0., f64::max);
             // The difference between two Bézier curves is inside the
@@ -260,7 +261,7 @@ fn bezier_pole_count(
 }
 
 fn circular_pole(endpoint: f64, span: f64, index: usize) -> [f64; 2] {
-    let (sin, cos) = endpoint.sin_cos();
+    let (sin, cos) = endpoint.portable_sin_cos();
     let mut point = [cos, sin];
     let mut weight = 1.;
     // The j-th control at an endpoint is a weighted sum of its

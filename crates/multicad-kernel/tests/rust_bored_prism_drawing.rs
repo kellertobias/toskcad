@@ -9,6 +9,7 @@ use multicad_kernel::{
     BooleanOperation, DrawingHatch, DrawingProjection, DrawingSolid, GeometryPolicy, PlaneFrame,
     ProjectedVector, Solid, project_drawing,
 };
+use multicad_precision::PortableMath as _;
 
 const TOLERANCE: f64 = 1e-9;
 
@@ -317,7 +318,7 @@ fn axial_sections_keep_the_bore_void_and_hatch_only_material() {
                     "{label}: {p:?}"
                 );
                 assert!(
-                    p[0].hypot(p[1]) >= 2. - 1e-9,
+                    p[0].portable_hypot(p[1]) >= 2. - 1e-9,
                     "{label}: hatch enters the bore at {p:?}"
                 );
             }
@@ -533,7 +534,7 @@ fn oblique_sections_only_keep_the_exact_elliptical_void() {
                         .iter()
                         .any(|d| d.abs() < 1e-9)
                 })
-                || ((w[0] - 10.).hypot(w[1] - 6.) - 2.).abs() < 1e-9
+                || ((w[0] - 10.).portable_hypot(w[1] - 6.) - 2.).abs() < 1e-9
         };
         for vector in vectors.iter().filter(|v| v.role == VectorRole::Section) {
             if let VectorCurve::Line { a, b } = vector.curve {
@@ -563,7 +564,7 @@ fn oblique_sections_only_keep_the_exact_elliptical_void() {
                     "{label}: {w:?}"
                 );
                 assert!(
-                    (w[0] - 10.).hypot(w[1] - 6.) >= 2. - 1e-9,
+                    (w[0] - 10.).portable_hypot(w[1] - 6.) >= 2. - 1e-9,
                     "{label}: hatch enters the bore at {w:?}"
                 );
             }

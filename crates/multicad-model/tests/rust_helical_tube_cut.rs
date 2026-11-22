@@ -12,6 +12,7 @@ use multicad_core::{
 };
 use multicad_kernel::rust_kernel::prism::Location;
 use multicad_model::{Compiler, GeometryBackend, Model};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, TAU};
 
 fn actor() -> Actor {
@@ -90,7 +91,7 @@ fn verify_cut(
     assert!((shape.volume_mm3 - expected_volume).abs() < 1e-8);
     let solid = model.solid(producer).unwrap();
     for theta in [TAU - 0.01, TAU + 0.01, (30. - start) * TAU / 2. - 0.01] {
-        let (sine, cosine) = (theta + phase).sin_cos();
+        let (sine, cosine) = (theta + phase).portable_sin_cos();
         let height = start + 2. * theta / TAU;
         for (radius, expected) in [
             (7.7, Location::Exterior),

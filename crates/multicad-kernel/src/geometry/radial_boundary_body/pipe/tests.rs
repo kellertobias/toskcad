@@ -7,7 +7,7 @@ fn spec() -> AuthoredSpec {
         length_mm: 6.5,
         radial_taper: 1. / 32.,
         section: AuthoredSection::BsptRounded {
-            depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
+            depth_mm: p / (3. * 27.5_f64.to_radians().portable_tan()),
         },
         crest_radius_limit_mm: None,
     }

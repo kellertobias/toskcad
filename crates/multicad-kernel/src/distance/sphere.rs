@@ -1,6 +1,7 @@
 //! Closed sphere and complete spherical face to a finite B-rep point.
 use super::*;
 use multicad_core::references::{AnalyticGeometry, TopologyKind};
+use multicad_precision::PortableMath as _;
 
 pub(super) fn measure(
     a: &Solid,
@@ -81,7 +82,7 @@ pub(super) fn measure(
             std::array::from_fn(|i| frame.origin[i] + projection.point_mm[i])
         };
         let delta: [f64; 3] = std::array::from_fn(|i| point[i] - closest[i]);
-        let distance_mm = delta[0].hypot(delta[1]).hypot(delta[2]);
+        let distance_mm = delta[0].portable_hypot(delta[1]).portable_hypot(delta[2]);
         if !distance_mm.is_finite() || (distance_mm - projection.distance_mm).abs() > tolerance / 4.
         {
             return Err(error(
@@ -89,7 +90,7 @@ pub(super) fn measure(
                 "Sphere distance witness exceeds the numerical budget",
             ));
         }
-        let radial = local[0].hypot(local[1]).hypot(local[2]);
+        let radial = local[0].portable_hypot(local[1]).portable_hypot(local[2]);
         let unique = projection.unique && (!surface || radial > uncertainty);
         Ok(MinimumDistance {
             distance_mm,

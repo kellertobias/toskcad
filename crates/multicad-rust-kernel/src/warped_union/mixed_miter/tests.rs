@@ -213,7 +213,7 @@ fn refuses_geometry_outside_the_supported_coordinate_and_trim_budgets() {
     let count = MAX_RIM_EDGES - 2;
     let point = |i| {
         let theta = FRAC_PI_2 * (i as f64 / count as f64 - 1.);
-        [theta.cos(), theta.sin()]
+        [theta.portable_cos(), theta.portable_sin()]
     };
     for i in 0..count {
         profile.push(ProfileEdge::Arc {
@@ -288,8 +288,8 @@ fn refuses_a_rim_edge_lost_to_coordinate_roundoff() {
 #[test]
 fn replay_keeps_near_quarter_partitions_through_mesh_and_section() {
     let profile = |overshoot: f64| {
-        let points =
-            [0., FRAC_PI_2 + overshoot, PI, 3. * FRAC_PI_2].map(|theta| [theta.cos(), theta.sin()]);
+        let points = [0., FRAC_PI_2 + overshoot, PI, 3. * FRAC_PI_2]
+            .map(|theta| [theta.portable_cos(), theta.portable_sin()]);
         std::array::from_fn::<_, 4, _>(|i| ProfileEdge::Arc {
             center: [0., 0.],
             a: points[i],

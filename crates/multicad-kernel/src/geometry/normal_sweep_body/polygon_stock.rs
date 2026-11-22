@@ -86,7 +86,7 @@ impl NormalSweepBody {
         if ring.len() != 4 || lines != 2 {
             return None;
         }
-        let distance = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]);
+        let distance = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).portable_hypot(p[1] - q[1]);
         let radius = distance(c0, a0);
         // Each arc is an exact half turn: its ends are antipodal about the
         // center, and both arcs share one radius, so the two straight edges

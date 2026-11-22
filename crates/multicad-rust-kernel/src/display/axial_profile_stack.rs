@@ -1,6 +1,7 @@
 //! Tessellate the shared analytic rim and rail graph of an axial stack.
 use super::{DisplayMesh, MeshError, Point2, Tessellation, triangulate_region, wall};
 use crate::axial_profile_stack::{Curve, OrientedEdge, ProfileStack, Support};
+use multicad_precision::PortableMath as _;
 
 /// Every cap, transition and wall uses the same vertex IDs along its seams.
 pub fn axial_profile_stack(
@@ -58,7 +59,7 @@ pub fn axial_profile_stack(
             let point = stack.vertices()[a];
             let [x, y] = [point[0] - center_mm[0], point[1] - center_mm[1]];
             for i in 1..count {
-                let (sin, cos) = (sweep_rad * i as f64 / count as f64).sin_cos();
+                let (sin, cos) = (sweep_rad * i as f64 / count as f64).portable_sin_cos();
                 path.push(mesh.vertices.len() / 3);
                 mesh.vertices.extend([
                     center_mm[0] + x * cos - y * sin,

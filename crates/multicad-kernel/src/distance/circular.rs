@@ -1,13 +1,14 @@
 //! Closed finite cylinder to point projection, without display tessellation.
 use super::*;
 use multicad_core::references::{AnalyticGeometry, TopologyKind};
+use multicad_precision::PortableMath as _;
 
 type Point = [f64; 3];
 fn dot(a: Point, b: Point) -> f64 {
     (0..3).map(|i| a[i] * b[i]).sum()
 }
 fn norm(a: Point) -> f64 {
-    a[0].hypot(a[1]).hypot(a[2])
+    a[0].portable_hypot(a[1]).portable_hypot(a[2])
 }
 fn sub(a: Point, b: Point) -> Point {
     std::array::from_fn(|i| a[i] - b[i])
@@ -100,7 +101,7 @@ pub(super) fn measure(
                 "Cylinder distance witness exceeds the numerical error budget",
             ));
         }
-        let clearance = (radius - local[0].hypot(local[1]))
+        let clearance = (radius - local[0].portable_hypot(local[1]))
             .min(local[2])
             .min(height - local[2]);
         Ok(MinimumDistance {

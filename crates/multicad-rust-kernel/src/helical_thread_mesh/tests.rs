@@ -11,7 +11,7 @@ fn metric(left_hand: bool, starts: u32, rounded: bool, length_mm: f64) -> Thread
     let crest_width_mm = pitch_mm / 8.;
     let root_radius_mm = rounded.then_some(0.18);
     let depth_mm = root_radius_mm.map_or(5. * 3_f64.sqrt() / 16. * pitch_mm, |root| {
-        (pitch_mm - crest_width_mm) / (2. * 30_f64.to_radians().tan()) - root
+        (pitch_mm - crest_width_mm) / (2. * 30_f64.to_radians().portable_tan()) - root
     });
     Thread::new(Spec {
         major_radius_mm: 4.,
@@ -84,8 +84,8 @@ fn verify(thread: &Thread, options: Tessellation) -> DisplayMesh {
     for &[x, y, z] in mesh.vertices.as_chunks::<3>().0 {
         assert!((0. ..=spec.length_mm).contains(&z));
         if [x, y] != [0.; 2] {
-            let radius = thread.radius(y.atan2(x), z);
-            assert!((x.hypot(y) - radius).abs() < 1e-10);
+            let radius = thread.radius(y.portable_atan2(x), z);
+            assert!((x.portable_hypot(y) - radius).abs() < 1e-10);
         } else {
             assert!(z == 0. || z == spec.length_mm);
         }
@@ -102,11 +102,11 @@ fn verify(thread: &Thread, options: Tessellation) -> DisplayMesh {
         }
         let vertices = mesh.vertices.as_chunks::<3>().0;
         let points = [a, b, c].map(|index| vertices[index as usize]);
-        let first = points[0][1].atan2(points[0][0]);
+        let first = points[0][1].portable_atan2(points[0][0]);
         let angle = points
             .iter()
             .map(|p| {
-                let relative = p[1].atan2(p[0]) - first;
+                let relative = p[1].portable_atan2(p[0]) - first;
                 first + (relative + TAU / 2.).rem_euclid(TAU) - TAU / 2.
             })
             .sum::<f64>()
@@ -115,7 +115,9 @@ fn verify(thread: &Thread, options: Tessellation) -> DisplayMesh {
             std::array::from_fn(|i| points.iter().map(|point| point[i]).sum::<f64>() / 3.);
         let radius = thread.radius(angle, p[2]);
         assert!(
-            (p[0] - radius * angle.cos()).hypot(p[1] - radius * angle.sin()) <= options.deflection
+            (p[0] - radius * angle.portable_cos())
+                .portable_hypot(p[1] - radius * angle.portable_sin())
+                <= options.deflection
         );
     }
     mesh
@@ -195,12 +197,15 @@ fn threaded_bore_has_inward_flanks_and_watertight_annular_caps() {
                 }
                 index if index == outer_face => {
                     assert!(radial_normal > 0.);
-                    assert!((radius - mean[0].hypot(mean[1])).abs() <= options.deflection);
+                    assert!((radius - mean[0].portable_hypot(mean[1])).abs() <= options.deflection);
                 }
                 _ => {
                     assert!(radial_normal < 0.);
                     for [x, y, z] in [a, b, c] {
-                        assert!((x.hypot(y) - thread.radius(y.atan2(x), z)).abs() < 1e-10);
+                        assert!(
+                            (x.portable_hypot(y) - thread.radius(y.portable_atan2(x), z)).abs()
+                                < 1e-10
+                        );
                     }
                 }
             }
@@ -287,12 +292,15 @@ fn nut_keeps_six_exact_wrench_faces_and_one_watertight_through_bore() {
                     let center = [a[0] + b[0] + c[0], a[1] + b[1] + c[1]];
                     assert!(normal[0] * center[0] + normal[1] * center[1] < 0.);
                     for [x, y, z] in [a, b, c] {
-                        assert!((x.hypot(y) - thread.radius(y.atan2(x), z)).abs() < 1e-10);
+                        assert!(
+                            (x.portable_hypot(y) - thread.radius(y.portable_atan2(x), z)).abs()
+                                < 1e-10
+                        );
                     }
                 }
                 i => {
                     let side = i - first_wall;
-                    let (sin, cos) = (TAU * f64::from(side + 1) / 6.).sin_cos();
+                    let (sin, cos) = (TAU * f64::from(side + 1) / 6.).portable_sin_cos();
                     for [x, y, _] in [a, b, c] {
                         assert!((cos * x + sin * y - across_flats / 2.).abs() < 1e-10);
                     }
@@ -391,7 +399,7 @@ fn screw_shell_keeps_hex_faces_and_coincident_shank_crests_watertight() {
                 u[0] * v[1] - u[1] * v[0],
             ];
             let [x, y, z] = std::array::from_fn(|i| (a[i] + b[i] + c[i]) / 3.);
-            let radial = x.hypot(y);
+            let radial = x.portable_hypot(y);
             let dot = normal[0] * x + normal[1] * y;
             let planar = |expected: f64, sign: f64| {
                 assert_eq!([a[2], b[2], c[2]], [expected; 3]);
@@ -399,7 +407,7 @@ fn screw_shell_keeps_hex_faces_and_coincident_shank_crests_watertight() {
             };
             let check_hex = |side, across_flats: f64| {
                 let theta = f64::from(side + 1) * TAU / 6.;
-                let distance = x * theta.cos() + y * theta.sin();
+                let distance = x * theta.portable_cos() + y * theta.portable_sin();
                 assert!((distance - across_flats / 2.).abs() < 1e-10);
             };
             match faces[face as usize] {
@@ -408,7 +416,10 @@ fn screw_shell_keeps_hex_faces_and_coincident_shank_crests_watertight() {
                 ScrewFace::ThreadWall(_) => {
                     assert!(dot > 0.);
                     for [x, y, z] in [a, b, c] {
-                        assert!((x.hypot(y) - thread.radius(y.atan2(x), z)).abs() < 1e-10);
+                        assert!(
+                            (x.portable_hypot(y) - thread.radius(y.portable_atan2(x), z)).abs()
+                                < 1e-10
+                        );
                     }
                 }
                 ScrewFace::ShankWall => {

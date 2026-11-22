@@ -7,6 +7,7 @@ use multicad_core::{
     sketch_regions::*,
     sketch_trim::*,
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeSet;
 #[derive(Clone, Copy)]
 struct StraightQueries;
@@ -70,7 +71,7 @@ impl RegionQueries for StraightQueries {
             parameter: u,
             point_mm: q,
             tangent: d,
-            distance_mm: (q[0] - p[0]).hypot(q[1] - p[1]),
+            distance_mm: (q[0] - p[0]).portable_hypot(q[1] - p[1]),
         }])
     }
     fn curve_segment(
@@ -91,7 +92,7 @@ impl RegionQueries for StraightQueries {
         _: f64,
     ) -> Result<SplineContinuation, QueryError> {
         let (a, b) = ends(c);
-        let l = (b[0] - a[0]).hypot(b[1] - a[1]);
+        let l = (b[0] - a[0]).portable_hypot(b[1] - a[1]);
         let ratio = max / l;
         Ok(if start {
             SplineContinuation {

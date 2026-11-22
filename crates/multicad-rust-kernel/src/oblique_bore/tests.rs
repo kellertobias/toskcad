@@ -42,7 +42,7 @@ fn removed_volume(size: V, tool: Tool) -> f64 {
     for i in 0..rings {
         let radius = tool.radius_mm * (i as f64 + 0.5) / rings as f64;
         for j in 0..turns {
-            let (sin, cos) = (TAU * (j as f64 + 0.5) / turns as f64).sin_cos();
+            let (sin, cos) = (TAU * (j as f64 + 0.5) / turns as f64).portable_sin_cos();
             let start = mix(mix(tool.base_mm, radius * cos, e1), radius * sin, e2);
             let mut range = [0., tool.height_mm];
             let mut inside = true;
@@ -99,7 +99,7 @@ fn certify(cut: &ObliqueBore, exact_removed: Option<f64>) -> f64 {
             let ends = [arc.start_rad, arc.start_rad + arc.sweep_rad].map(|a| arc.point(a));
             let principal = arc.principal();
             for (end, angle) in ends.into_iter().zip([0., arc.sweep_rad]) {
-                let (sin, cos) = (principal.start_rad + angle).sin_cos();
+                let (sin, cos) = (principal.start_rad + angle).portable_sin_cos();
                 let again = mix(
                     mix(
                         principal.center_mm,
@@ -165,7 +165,7 @@ fn certify(cut: &ObliqueBore, exact_removed: Option<f64>) -> f64 {
         } else {
             let middle = mix(mix(a, 1., b), 1., c).map(|x| x / 3.);
             let [x, y, _] = cut.chart.local(middle);
-            assert!((x.hypot(y) - tool.radius_mm).abs() <= OPTIONS.deflection);
+            assert!((x.portable_hypot(y) - tool.radius_mm).abs() <= OPTIONS.deflection);
             assert!(dot(normal, cut.chart.normal(WALL, middle)) > 0.);
         }
     }
@@ -660,7 +660,7 @@ fn a_cap_plane_through_a_distant_stock_edge_is_still_resolved() {
     assert!((stock - cut.volume_mm3() - removed).abs() < 4e-5 * removed);
     // The end cap keeps the circular segment below the top face: the chord
     // lies 5/3 mm from the cap centre of the radius-2 disk.
-    let segment = 4. * (5f64 / 6.).acos() - 5. / 3. * (11f64 / 9.).sqrt();
+    let segment = 4. * (5f64 / 6.).portable_acos() - 5. / 3. * (11f64 / 9.).sqrt();
     let floor = cut
         .faces()
         .iter()

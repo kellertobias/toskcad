@@ -7,6 +7,7 @@ use multicad_core::{
     document::Placement,
     plants::{self, PlantKind, SizeBasis},
 };
+use multicad_precision::PortableMath as _;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -169,7 +170,9 @@ pub(super) fn set_plant(host: &dyn Host, call: &Request, args: PlantArgs) -> Too
                     record,
                     position.unwrap_or(pose.translation_mm),
                     args.rotation_deg.unwrap_or_else(|| {
-                        pose.rotation[1][0].atan2(pose.rotation[0][0]).to_degrees()
+                        pose.rotation[1][0]
+                            .portable_atan2(pose.rotation[0][0])
+                            .to_degrees()
                     }),
                 )?
             } else {
@@ -218,7 +221,7 @@ pub(super) fn set_plant(host: &dyn Host, call: &Request, args: PlantArgs) -> Too
                 spread,
                 Placement {
                     translation_mm: position.unwrap_or([0.; 3]),
-                    rotation_xyzw: [0., 0., angle.sin(), angle.cos()],
+                    rotation_xyzw: [0., 0., angle.portable_sin(), angle.portable_cos()],
                 },
             )?;
             request.settings.size_basis = basis;

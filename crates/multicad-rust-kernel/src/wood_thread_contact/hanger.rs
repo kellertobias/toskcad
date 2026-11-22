@@ -186,7 +186,11 @@ pub fn certify_hanger_wood(
     let phase = wood.bands()[0].phase_mm[1] * 0.5;
     let theta = ((ip(center_z) - ip(phase)) * wood.angular_gain()).midpoint();
     let radius = (ip(stock.pilot.radius_mm) + e + ip(wood.maximum_radius_mm())).midpoint() * 0.5;
-    let center = [radius * theta.cos(), radius * theta.sin(), center_z];
+    let center = [
+        radius * theta.portable_cos(),
+        radius * theta.portable_sin(),
+        center_z,
+    ];
     let mut half = ((ip(wood.maximum_radius_mm()) - ip(stock.pilot.radius_mm) - e).lo / 32.)
         .min(phase / 32.)
         .min(overlap.to_f64().ok_or(Error::Unsupported)? / 32.)

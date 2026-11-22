@@ -15,7 +15,7 @@ pub(crate) fn thread_frame(worm: &Worm, [origin, u, v]: [Point; 3]) -> [Point; 3
         u[2] * v[0] - u[0] * v[2],
         u[0] * v[1] - u[1] * v[0],
     ];
-    let (s, c) = worm.phase_rad().sin_cos();
+    let (s, c) = worm.phase_rad().portable_sin_cos();
     let half = worm.length_mm() / 2.;
     [
         std::array::from_fn(|i| origin[i] - half * n[i]),
@@ -157,7 +157,7 @@ pub(super) fn encode_wheel(
         };
     let arc =
         |file: &mut StepFile, [a, b]: [Vertex; 2], z: f64, radius: f64, start: f64, sweep: f64| {
-            let reference = placement.vector([start.cos(), start.sin(), 0.]);
+            let reference = placement.vector([start.portable_cos(), start.portable_sin(), 0.]);
             circular_arc_edge(
                 file,
                 [a, b],

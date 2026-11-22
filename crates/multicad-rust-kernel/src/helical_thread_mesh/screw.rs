@@ -3,6 +3,7 @@ use crate::{
     display::{DisplayMesh, MeshError, Tessellation},
     headed_screw::{Screw, ScrewFace, ScrewHead},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 #[cfg(test)]
 mod contour_tests;
@@ -73,7 +74,9 @@ fn profiled_mesh(
         crate::screw_recess::Recess::FlatHex(recess) => {
             let (drive, _) = recess.geometry();
             if !drive.is_canonical() {
-                let angles = drive.corners_mm().map(|[x, y]| y.atan2(x).rem_euclid(TAU));
+                let angles = drive
+                    .corners_mm()
+                    .map(|[x, y]| y.portable_atan2(x).rem_euclid(TAU));
                 builder.insert_angular_stations(&angles, coupling)?;
             }
         }
@@ -489,7 +492,7 @@ impl HeadMesh<'_, '_> {
         (0..self.angles.len())
             .map(|index| {
                 let angle = self.angles[index];
-                let (sin, cos) = angle.sin_cos();
+                let (sin, cos) = angle.portable_sin_cos();
                 let radius = radius(angle);
                 self.push([radius * cos, radius * sin, z])
             })
@@ -508,7 +511,7 @@ impl HeadMesh<'_, '_> {
                 let [x, y] = corners[i].unwrap_or_else(|| {
                     let angle = self.angles[i];
                     let radius = drive.radius_at_angle_mm(angle);
-                    [radius * angle.cos(), radius * angle.sin()]
+                    [radius * angle.portable_cos(), radius * angle.portable_sin()]
                 });
                 self.push([x, y, z])
             })
@@ -522,7 +525,7 @@ impl HeadMesh<'_, '_> {
     ) -> Result<Vec<Option<[f64; 2]>>, MeshError> {
         let mut corners = vec![None; self.angles.len()];
         for &point in points {
-            let angle = point[1].atan2(point[0]).rem_euclid(TAU);
+            let angle = point[1].portable_atan2(point[0]).rem_euclid(TAU);
             let distance = |a: f64| (a - angle).rem_euclid(TAU).min((angle - a).rem_euclid(TAU));
             let index = (0..self.angles.len())
                 .min_by(|&a, &b| distance(self.angles[a]).total_cmp(&distance(self.angles[b])))
@@ -541,12 +544,12 @@ impl HeadMesh<'_, '_> {
             .enumerate()
             .map(|(index, &id)| {
                 let [x, y, z] = self.builder.mesh.vertices.as_chunks::<3>().0[id as usize];
-                if (radius - x.hypot(y)).abs() <= 64. * f64::EPSILON * radius {
+                if (radius - x.portable_hypot(y)).abs() <= 64. * f64::EPSILON * radius {
                     // A full crest may coincide with a nominal-diameter shank.
                     // Give those stations one vertex identity on both walls.
                     id
                 } else {
-                    let (sin, cos) = self.angles[index].sin_cos();
+                    let (sin, cos) = self.angles[index].portable_sin_cos();
                     self.push([radius * cos, radius * sin, z])
                 }
             })

@@ -18,11 +18,11 @@ fn profile(teeth: u32, bore_radius_mm: f64) -> Profile {
         Spec {
             teeth,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * pressure.cos(),
+            base_radius_mm: pitch * pressure.portable_cos(),
             tip_radius_mm: pitch + 2.,
             root_radius_mm: pitch - 2.5,
             root_fillet_radius_mm: 0.4,
-            half_base_angle_rad: PI / (2. * pitch) + pressure.tan()
+            half_base_angle_rad: PI / (2. * pitch) + pressure.portable_tan()
                 - pressure
                 - 0.05 / (2. * pitch),
             face_width_mm: 8.,

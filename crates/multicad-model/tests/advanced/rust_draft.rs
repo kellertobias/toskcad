@@ -12,6 +12,7 @@ use multicad_kernel::{
     GeometryPolicy, PlaneFrame, Solid, TreatmentFace, rust_kernel::step_read::read_analytic_solid,
 };
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 
 fn face_metrics(solid: &Solid) -> Vec<[i64; 8]> {
     let mut faces: Vec<_> = solid
@@ -76,7 +77,9 @@ fn drafted_volume(
     // Each selected side reduces its section width by pull * tan(angle)
     // per axial millimeter. Integrate the product of the two linear widths.
     let [du, dv] = [u, v].map(|axis| {
-        -(sides.iter().filter(|&&(side, _)| side == axis).count() as f64) * pull * radians.tan()
+        -(sides.iter().filter(|&&(side, _)| side == axis).count() as f64)
+            * pull
+            * radians.portable_tan()
     });
     let [a, b] = [size[u] - du * neutral_level, size[v] - dv * neutral_level];
     let height = size[up];
@@ -158,7 +161,7 @@ fn rust_draft_modifies_adjacent_opposite_and_all_four_sides_for_each_cardinal_pu
                             unreachable!()
                         };
                         let mut expected = cardinal(side, positive);
-                        expected[up] = sense * radians.tan();
+                        expected[up] = sense * radians.portable_tan();
                         let norm = expected.into_iter().map(|n| n * n).sum::<f64>().sqrt();
                         for (actual, expected) in frame.normal().into_iter().zip(expected) {
                             near(actual, expected / norm);
@@ -321,7 +324,7 @@ fn saved_four_side_draft_keeps_every_selected_datum_after_signed_parameter_edits
                     panic!("A selected side datum lost its attachment");
                 };
                 let mut expected = normal;
-                expected[2] = degrees.to_radians().tan();
+                expected[2] = degrees.to_radians().portable_tan();
                 let norm = expected.into_iter().map(|n| n * n).sum::<f64>().sqrt();
                 for (actual, expected) in frame.normal().into_iter().zip(expected) {
                     near(actual, expected / norm);
@@ -489,8 +492,9 @@ fn saved_rust_draft_rebuilds_signed_bound_angles_and_keeps_the_neutral_face_line
         let rust_solid = rust.solid(input.body).unwrap();
         assert!(rust_solid.uses_rust_geometry());
         let a = degrees.to_radians();
-        let expected_volume = 200. * (width + (level - 5.) * a.tan());
-        let max_x = (width + level * a.tan()).max(width + (level - 10.) * a.tan());
+        let expected_volume = 200. * (width + (level - 5.) * a.portable_tan());
+        let max_x =
+            (width + level * a.portable_tan()).max(width + (level - 10.) * a.portable_tan());
         let expected_faces = face_metrics(rust_solid);
         assert_eq!(expected_faces.len(), 6);
         for backend in [GeometryBackend::Rust] {
@@ -520,7 +524,11 @@ fn saved_rust_draft_rebuilds_signed_bound_angles_and_keeps_the_neutral_face_line
                 panic!("drafted side attachment was lost");
             };
             let normal = frame.normal();
-            for (actual, expected) in normal.into_iter().zip([a.cos(), 0., a.sin()]) {
+            for (actual, expected) in
+                normal
+                    .into_iter()
+                    .zip([a.portable_cos(), 0., a.portable_sin()])
+            {
                 near(actual, expected);
             }
             let neutral_point = [width, 0., level];
@@ -618,8 +626,14 @@ fn rust_draft_accepts_negative_cardinal_pull_and_refuses_uncertified_faces_or_pl
             policy,
         )
         .unwrap();
-    near(result.volume_mm3().unwrap(), 6000. + 3600. * angle.tan());
-    near(result.bounds().unwrap().max[1], 20. + 27. * angle.tan());
+    near(
+        result.volume_mm3().unwrap(),
+        6000. + 3600. * angle.portable_tan(),
+    );
+    near(
+        result.bounds().unwrap().max[1],
+        20. + 27. * angle.portable_tan(),
+    );
     let opposite = stock
         .draft_faces_named(
             &[selected.clone(), face(2, "second face")],
@@ -630,9 +644,18 @@ fn rust_draft_accepts_negative_cardinal_pull_and_refuses_uncertified_faces_or_pl
             policy,
         )
         .unwrap();
-    near(opposite.volume_mm3().unwrap(), 6000. + 7200. * angle.tan());
-    near(opposite.bounds().unwrap().min[1], -27. * angle.tan());
-    near(opposite.bounds().unwrap().max[1], 20. + 27. * angle.tan());
+    near(
+        opposite.volume_mm3().unwrap(),
+        6000. + 7200. * angle.portable_tan(),
+    );
+    near(
+        opposite.bounds().unwrap().min[1],
+        -27. * angle.portable_tan(),
+    );
+    near(
+        opposite.bounds().unwrap().max[1],
+        20. + 27. * angle.portable_tan(),
+    );
     for (faces, pull, neutral) in [
         (vec![selected.clone()], [-0.6, 0., 0.8], plane),
         (vec![selected.clone()], [-1., 0., 0.], PlaneFrame::default()),

@@ -72,7 +72,7 @@ fn trig_roots(build: impl Fn(f64) -> Poly, out: &mut Vec<f64>) {
             roots(&polynomial, chart)
                 .into_iter()
                 .chain(roots(&derivative(&polynomial), chart))
-                .map(|t| (phase + 2. * t.atan()).rem_euclid(TAU)),
+                .map(|t| (phase + 2. * t.portable_atan()).rem_euclid(TAU)),
         );
         out.push(phase + FRAC_PI_2);
     }
@@ -149,7 +149,7 @@ impl CrossVoid {
 
     /// The bored-wall rim on a through `side` at the tool angle.
     fn rim(&self, side: usize, angle: f64) -> Point {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let y = self.offset + self.radius * cos;
         let w = ((self.wall - y) * (self.wall + y)).max(0.).sqrt();
         let local = [
@@ -286,7 +286,7 @@ impl CrossVoid {
                 push((value - f.start) / f.delta);
             }
         };
-        let tangent = v1.hypot(v2);
+        let tangent = v1.portable_hypot(v2);
         if tangent > 1e-12 {
             let f = y.combine(-v2 / tangent, z, v1 / tangent);
             level(f, self.radius);
@@ -347,7 +347,7 @@ impl CrossVoid {
         });
         let (y, z) = (y.offset(-self.offset), z.offset(-self.level));
         let [v0, v1, v2] = self.view();
-        let tangent = v1.hypot(v2);
+        let tangent = v1.portable_hypot(v2);
         if tangent > 1e-12 {
             let f = y.combine(-v2 / tangent, z, v1 / tangent);
             f.level(self.radius, trim, cuts);
@@ -372,7 +372,7 @@ impl CrossVoid {
         let o = [origin[0], origin[1]];
         let [a, b] = [[cosine[0], cosine[1]], [sine[0], sine[1]]];
         let det = a[0] * b[1] - a[1] * b[0];
-        let size = a[0].hypot(a[1]).max(b[0].hypot(b[1]));
+        let size = a[0].portable_hypot(a[1]).max(b[0].portable_hypot(b[1]));
         let mut angles = Vec::new();
         let mut push = |angle: f64| {
             if angle > trim[0] && angle < trim[1] {
@@ -384,7 +384,7 @@ impl CrossVoid {
         }
         if det.abs() <= 1e-9 * size * size {
             // An edge-on rim is a paper segment along its larger axis.
-            let dir = if a[0].hypot(a[1]) >= b[0].hypot(b[1]) {
+            let dir = if a[0].portable_hypot(a[1]) >= b[0].portable_hypot(b[1]) {
                 a
             } else {
                 b
@@ -451,7 +451,7 @@ impl CrossVoid {
             for side in self.sides() {
                 let p = self.rim(side, angle);
                 let [c, s] = inverse([p[0] - o[0], p[1] - o[1]]);
-                push(s.atan2(c).rem_euclid(TAU));
+                push(s.portable_atan2(c).rem_euclid(TAU));
             }
         }
     }
@@ -558,7 +558,7 @@ mod tests {
         assert!(!blind.blocks_point([0., 0., 0.], f64::INFINITY, 1e-6));
         // Tilted view: the straight-through window shrinks and moves, and
         // the events still split exactly where visibility changes.
-        let (s, c) = 0.3_f64.sin_cos();
+        let (s, c) = 0.3_f64.portable_sin_cos();
         let tilted = [[0., -s, c], [0., c, s], [1., 0., 0.]];
         let round = bored(tilted);
         let line = [[-20., 0., -30.], [20., 0., -30.]];
@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn rim_events_split_where_the_bore_reveals_a_rim() {
-        let (s, c) = 0.25_f64.sin_cos();
+        let (s, c) = 0.25_f64.portable_sin_cos();
         let round = bored([[0., -s, c], [0., c, s], [1., 0., 0.]]);
         // A tilted circle behind the band, crossing the bore window.
         let rim = Rim {

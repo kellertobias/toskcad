@@ -107,17 +107,20 @@ fn polygon(edges: &[PlanarEdge], chord_mm: f64) -> Vec<P2> {
                 sweep_rad,
                 ..
             } => {
-                let r = (a[0] - center[0]).hypot(a[1] - center[1]);
+                let r = (a[0] - center[0]).portable_hypot(a[1] - center[1]);
                 let step = if r > chord_mm {
-                    2. * (1. - chord_mm / r).clamp(-1., 1.).acos()
+                    2. * (1. - chord_mm / r).clamp(-1., 1.).portable_acos()
                 } else {
                     std::f64::consts::FRAC_PI_4
                 };
                 let n = ((sweep_rad.abs() / step.max(1e-3)).ceil() as usize).clamp(2, 256);
-                let start = (a[1] - center[1]).atan2(a[0] - center[0]);
+                let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
                 for i in 0..n {
                     let t = start + sweep_rad * i as f64 / n as f64;
-                    points.push([center[0] + r * t.cos(), center[1] + r * t.sin()]);
+                    points.push([
+                        center[0] + r * t.portable_cos(),
+                        center[1] + r * t.portable_sin(),
+                    ]);
                 }
             }
         }
@@ -269,7 +272,7 @@ impl Model {
                         lo = [lo[0].min(p[0]), lo[1].min(p[1])];
                         hi = [hi[0].max(p[0]), hi[1].max(p[1])];
                     }
-                    (hi[0] - lo[0]).hypot(hi[1] - lo[1]) / spacing
+                    (hi[0] - lo[0]).portable_hypot(hi[1] - lo[1]) / spacing
                 })
                 .sum()
         };
@@ -278,7 +281,7 @@ impl Model {
         }
         let mut out = vec![];
         for (r, g2) in grains {
-            let len = g2[0].hypot(g2[1]);
+            let len = g2[0].portable_hypot(g2[1]);
             if len < 1e-9 {
                 continue;
             }
@@ -349,6 +352,10 @@ mod tests {
         }];
         let points = polygon(&circle, 0.01);
         assert!(points.len() > 16);
-        assert!(points.iter().all(|p| (p[0].hypot(p[1]) - 5.).abs() < 1e-9));
+        assert!(
+            points
+                .iter()
+                .all(|p| (p[0].portable_hypot(p[1]) - 5.).abs() < 1e-9)
+        );
     }
 }

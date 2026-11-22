@@ -9,6 +9,7 @@ use multicad_core::{
     document::EntityId,
     references::{GeometryIntent, Origin, TopologyKind},
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeSet;
 fn failure(kind: GeometryErrorKind, message: impl Into<String>) -> GeometryError {
     GeometryError {
@@ -113,7 +114,7 @@ fn sweep_start_height(
     policy.point(end)?;
     let offset = std::array::from_fn(|i| start[i] - frame.origin[i]);
     let delta: [f64; 3] = std::array::from_fn(|i| end[i] - start[i]);
-    let length = delta[0].hypot(delta[1]).hypot(delta[2]);
+    let length = delta[0].portable_hypot(delta[1]).portable_hypot(delta[2]);
     policy.length(length)?;
     let normal = frame.normal();
     let dot = |a: [f64; 3], b: [f64; 3]| a.into_iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
@@ -127,7 +128,10 @@ fn sweep_start_height(
             .map(f64::abs)
             .fold(length.max(1.), f64::max);
     if dot(offset, normal).abs() > policy.linear_tolerance_mm
-        || lateral[0].hypot(lateral[1]).hypot(lateral[2]) > roundoff.min(policy.linear_tolerance_mm)
+        || lateral[0]
+            .portable_hypot(lateral[1])
+            .portable_hypot(lateral[2])
+            > roundoff.min(policy.linear_tolerance_mm)
     {
         return Err(failure(
             GeometryErrorKind::Input,
@@ -361,7 +365,7 @@ impl Solid {
         let normal = start.normal();
         let distance = |a: [f64; 3], b: [f64; 3]| {
             let [x, y, z] = std::array::from_fn(|i| a[i] - b[i]);
-            x.hypot(y).hypot(z)
+            x.portable_hypot(y).portable_hypot(z)
         };
         let dot = |a: [f64; 3], b: [f64; 3]| a.into_iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
         let angle_eps = 64. * f64::EPSILON;

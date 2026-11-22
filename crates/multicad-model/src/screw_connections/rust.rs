@@ -3,6 +3,7 @@ use super::*;
 use crate::connection_receivers::{self, rust_through};
 use multicad_core::model::{ResolvedScrewHead, ScrewConnectionHardwareSource};
 use multicad_kernel::rust_kernel::helical_thread::Thread;
+use multicad_precision::PortableMath as _;
 mod blind;
 mod conical;
 mod hanger;
@@ -374,7 +375,7 @@ fn check_radial_clearance(
             "This Rust connection requires the screw and receiving thread axes to have the same direction",
         ));
     }
-    let alpha = dot(nut_frame.u, screw_frame.v).atan2(dot(nut_frame.u, screw_frame.u));
+    let alpha = dot(nut_frame.u, screw_frame.v).portable_atan2(dot(nut_frame.u, screw_frame.u));
     let rate = screw_thread.helical_rate();
     let offset = rate * alpha - axial_station_mm;
     let clearance = screw_thread

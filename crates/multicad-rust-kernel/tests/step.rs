@@ -1,3 +1,4 @@
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     Circle, Rational,
     circular_pockets::CircularPocket,
@@ -98,7 +99,7 @@ fn blind_pockets_reimport_with_exact_rims_on_both_sides_of_a_placed_panel() {
             end: true,
         },
     ];
-    let (s, c) = 0.731_f64.sin_cos();
+    let (s, c) = 0.731_f64.portable_sin_cos();
     let u = [c, s, 0.];
     let v = [0., 0., 1.];
     let origin = [-810., 10., 55.];
@@ -288,7 +289,7 @@ fn mixed_orthogonal_step_retains_the_groove_and_blind_recesses_in_rigid_frames()
         },
     ];
     let expected = 2352. - std::f64::consts::PI * 9.875;
-    let (a, b) = (0.49_f64.sin_cos(), 0.28_f64.sin_cos());
+    let (a, b) = (0.49_f64.portable_sin_cos(), 0.28_f64.portable_sin_cos());
     let rotate = |[x, y, z]: [f64; 3]| {
         let xz = b.1 * x + b.0 * z;
         [
@@ -734,7 +735,7 @@ fn directed_draft_step_shares_planar_edges_and_retains_the_hole() {
     assert!((read.volume_mm3 - 375.).abs() < 1e-8);
 
     let rotation = 0.43_f64;
-    let tilted_u = [rotation.cos(), rotation.sin(), 0.];
+    let tilted_u = [rotation.portable_cos(), rotation.portable_sin(), 0.];
     for (u, v) in [(Y, Z), (tilted_u, Z)] {
         let encoded = write_linear_sweep(&sweep, placement, u, v).unwrap();
         let (expected, solid) = read_import_solid(&encoded, 1e-8).unwrap();

@@ -7,24 +7,28 @@ use multicad_kernel::{
     DrawingHatch, DrawingProjection, DrawingSolid, GeometryErrorKind, GeometryPolicy, PlaneFrame,
     ProjectedVector, RigidTransform, Solid, SphericalBevelGear, project_drawing,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn specification(module: f64, teeth: u32, mate: u32, width: f64, bore: f64) -> SphericalBevelGear {
     let (z, mate) = (f64::from(teeth), f64::from(mate));
     let alpha = 20_f64.to_radians();
-    let delta = 1_f64.atan2(mate / z);
-    let distance = module * z / (2. * delta.sin());
-    let beta = (delta.sin() * alpha.cos()).asin();
+    let delta = 1_f64.portable_atan2(mate / z);
+    let distance = module * z / (2. * delta.portable_sin());
+    let beta = (delta.portable_sin() * alpha.portable_cos()).portable_asin();
     let inv = |g: f64| {
-        let sigma = (g.cos() / beta.cos()).acos();
-        sigma / beta.sin() - sigma.sin().atan2(beta.sin() * sigma.cos())
+        let sigma = (g.portable_cos() / beta.portable_cos()).portable_acos();
+        sigma / beta.portable_sin()
+            - sigma
+                .portable_sin()
+                .portable_atan2(beta.portable_sin() * sigma.portable_cos())
     };
     SphericalBevelGear {
         teeth,
         pitch_cone_angle_rad: delta,
         base_cone_angle_rad: beta,
-        tip_cone_angle_rad: delta + (module / distance).atan(),
-        root_cone_angle_rad: delta - (1.25 * module / distance).atan(),
+        tip_cone_angle_rad: delta + (module / distance).portable_atan(),
+        root_cone_angle_rad: delta - (1.25 * module / distance).portable_atan(),
         outer_cone_distance_mm: distance,
         face_width_mm: width,
         bore_radius_mm: bore,
@@ -60,7 +64,7 @@ fn length(vector: &ProjectedVector) -> f64 {
     vector
         .preview_mm
         .windows(2)
-        .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+        .map(|w| (w[1][0] - w[0][0]).portable_hypot(w[1][1] - w[0][1]))
         .sum()
 }
 
@@ -100,7 +104,7 @@ fn excess(from: &[&ProjectedVector], onto: &[&ProjectedVector]) -> f64 {
                 } else {
                     0.
                 };
-                (p[0] - a[0] - t * d[0]).hypot(p[1] - a[1] - t * d[1])
+                (p[0] - a[0] - t * d[0]).portable_hypot(p[1] - a[1] - t * d[1])
             })
             .fold(f64::INFINITY, f64::min)
     };
@@ -239,8 +243,10 @@ fn bevel_sections_and_retained_views_match_native_cuts() {
     // Planes through the root band, the tooth tops and near the toe apex.
     let middle = spec.outer_cone_distance_mm - spec.face_width_mm / 2.;
     let heights = [
-        middle * spec.pitch_cone_angle_rad.cos(),
-        (spec.outer_cone_distance_mm - spec.face_width_mm) * spec.root_cone_angle_rad.cos() * 1.01,
+        middle * spec.pitch_cone_angle_rad.portable_cos(),
+        (spec.outer_cone_distance_mm - spec.face_width_mm)
+            * spec.root_cone_angle_rad.portable_cos()
+            * 1.01,
     ];
     for heel_side in [true, false] {
         let frame = axial_frame(heel_side);

@@ -3,6 +3,7 @@ use multicad_kernel::{
     BRepSelection, GeometryErrorKind, GeometryPolicy, PlaneFrame, Solid,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
+use multicad_precision::PortableMath as _;
 
 fn cylinder(frame: PlaneFrame) -> Solid {
     let n = |v| Rational::new(v, 1).unwrap();
@@ -61,7 +62,7 @@ fn near(a: [f64; 3], b: [f64; 3]) {
 
 #[test]
 fn finite_cylinder_point_projection_keeps_world_witnesses_and_selection_order() {
-    let (s, c) = 0.4_f64.sin_cos();
+    let (s, c) = 0.4_f64.portable_sin_cos();
     for frame in [
         PlaneFrame::default(),
         PlaneFrame {

@@ -166,6 +166,7 @@ pub fn classify_annulus_disc(
 mod tests {
     use super::*;
     use crate::spur_gear::Spec;
+    use multicad_precision::PortableMath as _;
     use std::f64::consts::PI;
 
     fn spur(bore: f64) -> Profile {
@@ -175,11 +176,11 @@ mod tests {
             Spec {
                 teeth: 20,
                 pitch_radius_mm: pitch,
-                base_radius_mm: pitch * pressure.cos(),
+                base_radius_mm: pitch * pressure.portable_cos(),
                 tip_radius_mm: pitch + 2.,
                 root_radius_mm: pitch - 2.5,
                 root_fillet_radius_mm: 0.4,
-                half_base_angle_rad: PI / 40. + pressure.tan() - pressure,
+                half_base_angle_rad: PI / 40. + pressure.portable_tan() - pressure,
                 face_width_mm: 8.,
                 bore_radius_mm: bore,
             },
@@ -190,7 +191,7 @@ mod tests {
     }
 
     fn polar(r: f64, a: f64) -> Point {
-        [r * a.cos(), r * a.sin()]
+        [r * a.portable_cos(), r * a.portable_sin()]
     }
 
     #[test]
@@ -219,11 +220,11 @@ mod tests {
             crate::spur_gear::internal::RingSpec {
                 teeth: 48,
                 pitch_radius_mm: pitch,
-                base_radius_mm: pitch * a.cos(),
+                base_radius_mm: pitch * a.portable_cos(),
                 tip_radius_mm: pitch - 1.,
                 root_radius_mm: pitch + 1.25,
                 root_fillet_radius_mm: 0.2,
-                half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.tan() + a,
+                half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.portable_tan() + a,
                 face_width_mm: 2.,
                 outer_radius_mm: pitch + 4.,
             },

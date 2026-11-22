@@ -711,13 +711,13 @@ fn section_area(
             let ac = std::array::from_fn(|i| c[i] - a[i]);
             let signed = cross2(ab, ac);
             require(signed != 0.)?;
-            let radius = ac[0].hypot(ac[1]) / (2. * (1. - w * w).sqrt());
-            let angle = 2. * w.acos();
+            let radius = ac[0].portable_hypot(ac[1]) / (2. * (1. - w * w).sqrt());
+            let angle = 2. * w.portable_acos();
             let segment = if angle < 0.01 {
                 let a2 = angle * angle;
                 angle * a2 / 6. * (1. - a2 / 20. + a2 * a2 / 840.)
             } else {
-                angle - angle.sin()
+                angle - angle.portable_sin()
             };
             area += (cross2(a, c) + signed.signum() * radius * radius * segment) / 2.;
         }

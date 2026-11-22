@@ -13,6 +13,7 @@ use multicad_model::{
     GeometryBackend,
     export::{ExportWorker, Exporter, dxf},
 };
+use multicad_precision::PortableMath as _;
 use std::{
     f64::consts::{FRAC_PI_4, PI},
     io::Cursor,
@@ -244,10 +245,10 @@ fn measured_area(poly: &::dxf::entities::LwPolyline) -> f64 {
             if a.bulge.abs() < 1e-12 {
                 cross
             } else {
-                let theta = 4. * a.bulge.atan();
-                let chord = (a.x - b.x).hypot(a.y - b.y);
-                let radius = chord / (2. * (theta.abs() * 0.5).sin());
-                cross + radius * radius * (theta - theta.sin()) * 0.5
+                let theta = 4. * a.bulge.portable_atan();
+                let chord = (a.x - b.x).portable_hypot(a.y - b.y);
+                let radius = chord / (2. * (theta.abs() * 0.5).portable_sin());
+                cross + radius * radius * (theta - theta.portable_sin()) * 0.5
             }
         })
         .sum()
@@ -273,7 +274,7 @@ fn rust_worker_exports_placed_rounded_panel_with_analytic_dxf_holes() {
             component: body,
             placement: Placement {
                 translation_mm: [100., 40., 3.],
-                rotation_xyzw: [0., 0., FRAC_PI_4.sin(), FRAC_PI_4.cos()],
+                rotation_xyzw: [0., 0., FRAC_PI_4.portable_sin(), FRAC_PI_4.portable_cos()],
             },
             placement_source: None,
         },
@@ -429,7 +430,7 @@ fn actual_panel_holes_import_as_exact_closed_dxf_loops_centers_and_labels() {
                 assert!(poly.vertices.len() >= 2);
                 for (i, a) in poly.vertices.iter().enumerate() {
                     let b = &poly.vertices[(i + 1) % poly.vertices.len()];
-                    assert!((a.x - b.x).hypot(a.y - b.y) > 1e-7);
+                    assert!((a.x - b.x).portable_hypot(a.y - b.y) > 1e-7);
                     assert!(a.bulge.is_finite());
                 }
                 let area = measured_area(poly);
@@ -486,8 +487,8 @@ fn explicit_units_world_occurrence_and_source_changes_survive_save_reopen() {
                 rotation_xyzw: [
                     0.,
                     0.,
-                    std::f64::consts::FRAC_PI_4.sin(),
-                    std::f64::consts::FRAC_PI_4.cos(),
+                    std::f64::consts::FRAC_PI_4.portable_sin(),
+                    std::f64::consts::FRAC_PI_4.portable_cos(),
                 ],
             },
             placement_source: None,

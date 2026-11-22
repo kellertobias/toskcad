@@ -10,6 +10,7 @@
 //! that way are refused, not approximated.
 use super::*;
 use multicad_core::references::{AnalyticGeometry, TopologyKind};
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 use std::f64::consts::TAU;
 
@@ -40,7 +41,7 @@ fn dot(a: Point, b: Point) -> f64 {
     (0..3).map(|i| a[i] * b[i]).sum()
 }
 fn norm(a: Point) -> f64 {
-    a[0].hypot(a[1]).hypot(a[2])
+    a[0].portable_hypot(a[1]).portable_hypot(a[2])
 }
 fn sub(a: Point, b: Point) -> Point {
     std::array::from_fn(|i| a[i] - b[i])
@@ -88,7 +89,7 @@ fn segment_distance(p: Flat, [a, b]: [Flat; 2]) -> f64 {
     let v = [b[0] - a[0], b[1] - a[1]];
     let w = [p[0] - a[0], p[1] - a[1]];
     let t = ((w[0] * v[0] + w[1] * v[1]) / (v[0] * v[0] + v[1] * v[1])).clamp(0., 1.);
-    (w[0] - t * v[0]).hypot(w[1] - t * v[1])
+    (w[0] - t * v[0]).portable_hypot(w[1] - t * v[1])
 }
 
 impl Edge {
@@ -102,23 +103,23 @@ impl Edge {
                 sweep,
             } => {
                 let at = |angle: f64| {
-                    let (s, c) = angle.sin_cos();
+                    let (s, c) = angle.portable_sin_cos();
                     [center[0] + radius * c, center[1] + radius * s]
                 };
                 let d = [p[0] - center[0], p[1] - center[1]];
-                let offset = (d[1].atan2(d[0]) - start).rem_euclid(TAU);
+                let offset = (d[1].portable_atan2(d[0]) - start).rem_euclid(TAU);
                 let within = if sweep >= 0. {
                     offset <= sweep
                 } else {
                     TAU - offset <= -sweep || offset == 0.
                 };
                 if within || sweep.abs() >= TAU {
-                    (d[0].hypot(d[1]) - radius).abs()
+                    (d[0].portable_hypot(d[1]) - radius).abs()
                 } else {
                     let [a, b] = [at(start), at(start + sweep)];
                     (p[0] - a[0])
-                        .hypot(p[1] - a[1])
-                        .min((p[0] - b[0]).hypot(p[1] - b[1]))
+                        .portable_hypot(p[1] - a[1])
+                        .min((p[0] - b[0]).portable_hypot(p[1] - b[1]))
                 }
             }
         }
@@ -137,10 +138,10 @@ impl Edge {
                 let count = (sweep.abs() / TAU * CHORDS).ceil().max(1.) as usize;
                 let step = sweep / count as f64;
                 let at = |i: usize| {
-                    let (s, c) = (start + step * i as f64).sin_cos();
+                    let (s, c) = (start + step * i as f64).portable_sin_cos();
                     [center[0] + radius * c, center[1] + radius * s]
                 };
-                let sagitta = radius * (1. - (step.abs() / 2.).cos());
+                let sagitta = radius * (1. - (step.abs() / 2.).portable_cos());
                 (
                     (0..count).map(|i| [at(i), at(i + 1)]).collect(),
                     sagitta * (1. + 1e-9) + 1e-12 * radius,
@@ -236,7 +237,7 @@ fn region(solid: &Solid, face: u32, chart: Option<&Plane>) -> Option<(Plane, Reg
                 }
                 let sense = dot(n, chart.normal).signum();
                 let [ux, uy] = chart.axes.map(|axis| dot(u, axis));
-                let phase = uy.atan2(ux);
+                let phase = uy.portable_atan2(ux);
                 Edge::Arc {
                     center: chart.flat(frame.origin_mm),
                     radius: radius_mm,

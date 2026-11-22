@@ -9,6 +9,7 @@ use multicad_core::{
     document::EntityId,
     references::{Origin, ReferenceFrame},
 };
+use multicad_precision::PortableMath as _;
 fn input(message: impl Into<String>) -> GeometryError {
     GeometryError {
         operation: "tapered extrusion",
@@ -78,7 +79,7 @@ pub(crate) fn offset(
             ));
         }
         let e = sub(*b, *a);
-        let length = e[0].hypot(e[1]);
+        let length = e[0].portable_hypot(e[1]);
         let u = e.map(|x| x / length);
         directions.push(u);
         normals.push([orientation * u[1], -orientation * u[0]]);
@@ -148,7 +149,7 @@ pub(crate) fn end_profile(
             "Taper angle must be finite and strictly between -90 and 90 degrees",
         ));
     }
-    let delta = length * taper_rad.tan();
+    let delta = length * taper_rad.portable_tan();
     if !delta.is_finite() || delta.abs() > p.maximum_coordinate_mm {
         return Err(input("Taper offset exceeds the numerical policy"));
     }

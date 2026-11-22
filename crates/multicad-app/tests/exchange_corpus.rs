@@ -28,6 +28,7 @@ use multicad_kernel::{
     Solid, project_drawing, rust_kernel::step_read,
 };
 use multicad_model::{Compiler, GeometryBackend, imports::read_step_file_with_backend};
+use multicad_precision::PortableMath as _;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -410,7 +411,7 @@ fn section_at(solid: &Solid, height: f64, hatch: Option<HatchStyle>) -> Value {
             let length: f64 = boundary
                 .iter()
                 .map(|v| match v.curve {
-                    VectorCurve::Line { a, b } => (b[0] - a[0]).hypot(b[1] - a[1]),
+                    VectorCurve::Line { a, b } => (b[0] - a[0]).portable_hypot(b[1] - a[1]),
                     VectorCurve::Ellipse {
                         major_mm,
                         minor_mm,
@@ -422,7 +423,7 @@ fn section_at(solid: &Solid, height: f64, hatch: Option<HatchStyle>) -> Value {
                         exact = false;
                         v.preview_mm
                             .windows(2)
-                            .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+                            .map(|w| (w[1][0] - w[0][0]).portable_hypot(w[1][1] - w[0][1]))
                             .sum::<f64>()
                     }
                 })

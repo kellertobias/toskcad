@@ -9,6 +9,7 @@ use multicad_core::{
     model::{self, *},
     parameters::EvaluatedParameters,
 };
+use multicad_precision::PortableMath as _;
 
 struct BoxFields {
     id: EntityId,
@@ -620,7 +621,7 @@ impl CompoundCutoutPanel {
                     } else {
                         0.
                     };
-                    let (s, c) = angle.to_radians().sin_cos();
+                    let (s, c) = angle.to_radians().portable_sin_cos();
                     let delta = [point[0] - start[0], point[1] - start[1]];
                     let width = (delta[0] * c + delta[1] * s).abs();
                     let depth = (-delta[0] * s + delta[1] * c).abs();

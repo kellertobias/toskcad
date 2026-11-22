@@ -45,7 +45,7 @@ impl Solid {
                 .map(f64::abs)
                 .fold(length.max(1.), f64::max);
         let [x, y, _] = local(first);
-        if profile_origin[2].abs() > tolerance || x.hypot(y) > roundoff.min(tolerance) {
+        if profile_origin[2].abs() > tolerance || x.portable_hypot(y) > roundoff.min(tolerance) {
             return Err(error(
                 OPERATION,
                 GeometryErrorKind::Input,
@@ -86,8 +86,8 @@ impl Solid {
                 policy.point([p[0], p[1], 0.])?;
                 policy.point(frame.point(p))?;
             }
-            policy.length((b[0] - a[0]).hypot(b[1] - a[1]))?;
-            if (b[0] - next[0]).hypot(b[1] - next[1]) > tolerance {
+            policy.length((b[0] - a[0]).portable_hypot(b[1] - a[1]))?;
+            if (b[0] - next[0]).portable_hypot(b[1] - next[1]) > tolerance {
                 return Err(error(
                     OPERATION,
                     GeometryErrorKind::Input,

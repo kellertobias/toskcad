@@ -10,6 +10,7 @@ use multicad_core::{
     model::{self, ModelPrepared, angle, length},
     symbols,
 };
+use multicad_precision::PortableMath as _;
 use std::cell::RefCell;
 
 #[derive(Clone, Debug)]
@@ -643,11 +644,11 @@ impl EquipmentPanel {
                                 let a = wall.points[i];
                                 let b = wall.points[(i + 1) % wall.points.len()];
                                 let d = [b[0] - a[0], b[1] - a[1]];
-                                let len = d[0].hypot(d[1]);
+                                let len = d[0].portable_hypot(d[1]);
                                 let t = ((point[0] - a[0]) * d[0] + (point[1] - a[1]) * d[1]) / len;
                                 let t = t.clamp(0., len);
                                 let distance = (point[0] - a[0] - d[0] * t / len)
-                                    .hypot(point[1] - a[1] - d[1] * t / len);
+                                    .portable_hypot(point[1] - a[1] - d[1] * t / len);
                                 (i, t, distance, len)
                             })
                             .min_by(|a, b| a.2.total_cmp(&b.2));

@@ -56,7 +56,7 @@ fn fixture(left: bool, starts: u32, nb: bool) -> (Hanger, Nut, Frame) {
     let metric_start = -source.spec().plain_length_mm - source.metric().full_length_mm();
     let angle = std::f64::consts::TAU * (nut_z - metric_start) / (pitch * f64::from(starts))
         * if left { -1. } else { 1. };
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     let axes = [[c, s, 0.], [-s, c, 0.], [0., 0., c * c + s * s]];
     (
         source,

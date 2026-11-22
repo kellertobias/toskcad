@@ -6,6 +6,7 @@ use multicad_kernel::{
     BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, RigidTransform,
     Solid, rust_kernel::Rational,
 };
+use multicad_precision::PortableMath as _;
 
 fn profile() -> CurvedProfile {
     let wire = |p: &[[f64; 2]]| {
@@ -114,7 +115,7 @@ fn hollow_sloping_caps_prove_contact_without_losing_positive_common_material() {
     let policy = GeometryPolicy::default();
     let source = profile();
     let slope = 0.25_f64;
-    let length = slope.hypot(1.);
+    let length = slope.portable_hypot(1.);
     let join = PlaneFrame {
         origin: [0., 0., 10.],
         u: [1. / length, 0., slope / length],

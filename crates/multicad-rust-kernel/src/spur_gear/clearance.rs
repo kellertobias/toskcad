@@ -3,6 +3,7 @@
 //! replace either manufacturing boundary.
 use super::{Edge, Point, Profile, add, normal_sweep, scale, sub};
 use crate::revolution::{cross, dot, length};
+use multicad_precision::PortableMath as _;
 
 const MAX_CHORDS: usize = 32_768;
 const MAX_PAIR_TESTS: usize = 1_000_000;
@@ -264,7 +265,7 @@ fn curvature_bound(edge: Edge) -> Result<f64, Error> {
         }
         Edge::Involute(edge) => {
             let [a, b] = edge.interval();
-            edge.base_radius_mm() * a.max(b).hypot(1.) * (b - a).powi(2)
+            edge.base_radius_mm() * a.max(b).portable_hypot(1.) * (b - a).powi(2)
         }
     })
 }

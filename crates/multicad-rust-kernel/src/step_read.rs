@@ -3,6 +3,7 @@
 //! and normal sweeps with clamped cubic trims. The reader verifies each shell
 //! and integrates its boundary without tessellating it.
 
+use multicad_precision::PortableMath as _;
 mod authored_compound;
 mod bevel;
 mod box_void;
@@ -255,7 +256,7 @@ fn include_point(bounds: &mut [Point; 2], point: Point) {
 }
 
 fn length([a, b, c]: Point) -> f64 {
-    a.hypot(b).hypot(c)
+    a.portable_hypot(b).portable_hypot(c)
 }
 
 fn unit(v: Point) -> Result<Point> {
@@ -987,7 +988,7 @@ fn segments_meet(a: [Point2; 2], b: [Point2; 2], tolerance: f64) -> bool {
         a.min(c) - tolerance > b.max(d) || b.min(d) - tolerance > a.max(c)
     });
     let same_side = |a: [Point2; 2], [b, c]: [Point2; 2]| {
-        let slack = tolerance * (a[1][0] - a[0][0]).hypot(a[1][1] - a[0][1]);
+        let slack = tolerance * (a[1][0] - a[0][0]).portable_hypot(a[1][1] - a[0][1]);
         let [b, c] = [orient(a, b), orient(a, c)];
         (b > slack && c > slack) || (b < -slack && c < -slack)
     };
@@ -1000,7 +1001,7 @@ fn simple_ring(ring: &[Point2], tolerance: f64) -> bool {
         let c = ring[(i + 2) % ring.len()];
         let before = [(a[0] - b[0]), (a[1] - b[1])];
         let after = [(c[0] - b[0]), (c[1] - b[1])];
-        let slack = tolerance * before[0].hypot(before[1]);
+        let slack = tolerance * before[0].portable_hypot(before[1]);
         if orient(segment, c).abs() <= slack && before[0] * after[0] + before[1] * after[1] > 0. {
             return false;
         }

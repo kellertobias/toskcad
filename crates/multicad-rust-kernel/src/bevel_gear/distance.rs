@@ -86,7 +86,7 @@ fn middle([a, b]: [f64; 2]) -> f64 {
 }
 
 fn angle(a: Point, b: Point) -> f64 {
-    norm(cross(a, b)).atan2(dot(a, b))
+    norm(cross(a, b)).portable_atan2(dot(a, b))
 }
 
 /// Smallest `r₁² + r₂² - 2 r₁ r₂ c` over a positive radius box, and its
@@ -156,7 +156,7 @@ impl<'a> Side<'a> {
                     sample.gamma,
                     [
                         half[0] * speed,
-                        half[1] * sample.gamma.sin() * sample.phi.abs(),
+                        half[1] * sample.gamma.portable_sin() * sample.phi.abs(),
                     ],
                 )
             }
@@ -165,7 +165,7 @@ impl<'a> Side<'a> {
                 (
                     polar(gamma, middle(cell.ranges[1])),
                     gamma,
-                    [half[0], half[1] * gamma.sin()],
+                    [half[0], half[1] * gamma.portable_sin()],
                 )
             }
         };
@@ -186,7 +186,7 @@ impl<'a> Side<'a> {
     fn radii(&self, gamma: [f64; 2]) -> [f64; 2] {
         let gear = self.gear;
         let pitch = gear.spec.pitch_cone_angle_rad;
-        let scale = |g: f64| 1. / (g - pitch).cos();
+        let scale = |g: f64| 1. / (g - pitch).portable_cos();
         let low = scale(pitch.clamp(gamma[0], gamma[1]));
         let high = scale(gamma[0]).max(scale(gamma[1]));
         [
@@ -202,7 +202,7 @@ impl<'a> Side<'a> {
         let high = gear.end_distance_along(End::Heel, gamma);
         if let Some(bore) = gear.bore_radius_mm() {
             // Strictly outside the bore, so the point is retained material.
-            low = low.max(bore / gamma.sin() * (1. + 1e-12));
+            low = low.max(bore / gamma.portable_sin() * (1. + 1e-12));
         }
         (low.is_finite() && low <= high).then_some([low, high])
     }
@@ -260,14 +260,14 @@ pub fn minimum(
             let b = &bounds[i];
             sides[i].radii([(b.gamma - b.radius).max(0.), (b.gamma + b.radius).min(PI)])
         });
-        let (square, _) = radial(ranges[0], ranges[1], floor.cos());
+        let (square, _) = radial(ranges[0], ranges[1], floor.portable_cos());
         let bound = (square.sqrt() * (1. - 1e-12) - apart - 1e-12).max(0.);
         // Actual material pair at the centers.
         if let (Some(a), Some(b)) = (
             sides[0].material(bounds[0].gamma),
             sides[1].material(bounds[1].gamma),
         ) {
-            let (_, [r1, r2]) = radial(a, b, theta.cos());
+            let (_, [r1, r2]) = radial(a, b, theta.portable_cos());
             let points = [
                 sides[0].point(&pair[0], &bounds[0], r1),
                 sides[1].point(&pair[1], &bounds[1], r2),
@@ -341,8 +341,8 @@ mod tests {
         });
         let [za, zb] = counts.map(f64::from);
         let phase = PI - PI / zb - drive * za / zb;
-        let (s0, c0) = drive.sin_cos();
-        let (s1, c1) = phase.sin_cos();
+        let (s0, c0) = drive.portable_sin_cos();
+        let (s1, c1) = phase.portable_sin_cos();
         let placements = [
             Placement {
                 apex_mm: [0.; 3],

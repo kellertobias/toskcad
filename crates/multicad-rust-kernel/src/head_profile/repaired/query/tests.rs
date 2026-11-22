@@ -1,5 +1,6 @@
 use super::*;
 use crate::head_profile::Head;
+use multicad_precision::PortableMath as _;
 fn profile(head: Head) -> Profile {
     Profile::new_for_thread_union(head, 1., 0.).unwrap()
 }
@@ -79,8 +80,14 @@ fn repaired_crown_and_neck_queries_bound_actual_source_away_from_every_surface()
                 for theta in [0_f64, 0.7, -2.] {
                     for (offset, expected) in [(-0.001, Inside), (0.001, Outside)] {
                         let radial = point[0] + offset;
-                        let bounds =
-                            box_at([radial * theta.cos(), radial * theta.sin(), point[1]], 1e-6);
+                        let bounds = box_at(
+                            [
+                                radial * theta.portable_cos(),
+                                radial * theta.portable_sin(),
+                                point[1],
+                            ],
+                            1e-6,
+                        );
                         assert_eq!(
                             s.classify_box(bounds, Default::default(), None)
                                 .unwrap()

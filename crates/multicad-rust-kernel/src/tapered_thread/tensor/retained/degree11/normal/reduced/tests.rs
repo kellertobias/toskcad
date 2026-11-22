@@ -156,7 +156,7 @@ fn convex_coefficient_cone_preserves_coupled_vector_direction_and_refuses_real_e
         .map(|(a, b)| a * b)
         .sum::<f64>()
         / (spurious.into_iter().map(|x| x * x).sum::<f64>().sqrt() * 3f64.sqrt());
-    assert!(cosine < 0.1f64.cos());
+    assert!(cosine < 0.1f64.portable_cos());
     assert!(
         cell.certifies_normal_cone(axis.map(|x| [x, x]), 0.1)
             .unwrap()

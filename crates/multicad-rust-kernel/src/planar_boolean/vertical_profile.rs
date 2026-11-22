@@ -1,5 +1,6 @@
 use super::*;
 use crate::normal_sweep::{self, Edge, Sweep};
+use multicad_precision::PortableMath as _;
 
 type Point2 = [f64; 2];
 type Crossing = (Point2, usize);
@@ -47,7 +48,7 @@ impl ConvexPiece {
             return Err(Error::Invalid);
         }
         let [x, y, z] = displacement_world;
-        let height = x.hypot(y);
+        let height = x.portable_hypot(y);
         let magnitude = ring_world
             .iter()
             .flatten()

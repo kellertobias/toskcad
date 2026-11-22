@@ -6,6 +6,7 @@ use crate::{
     orthogonal_boundary::BoundaryFace, orthogonal_pockets::FacePlane,
     orthogonal_slots::OrthogonalSlot, stadium::Stadium,
 };
+use multicad_precision::PortableMath as _;
 
 /// Write a stadium prism with two exact semicylinders and four planar faces.
 pub fn write_stadium_prism(
@@ -83,7 +84,7 @@ impl Rim {
             let error = |point: Point, sign: f64| {
                 let [x, y, z]: Point =
                     std::array::from_fn(|i| point[i] - center[i] - sign * radius * reference[i]);
-                x.hypot(y).hypot(z)
+                x.portable_hypot(y).portable_hypot(z)
             };
             if radius * dot(reference, normal).abs() > 1e-7
                 || error(from.point, 1.) > 1e-7

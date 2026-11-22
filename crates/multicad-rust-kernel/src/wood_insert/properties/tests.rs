@@ -1,5 +1,6 @@
 use super::*;
 use crate::authored_internal_treatment::{FaceKey as ThreadFace, ThreadBandRole};
+use multicad_precision::PortableMath as _;
 use std::cell::Cell;
 fn width(e: measure::Enclosure) -> f64 {
     e.upper - e.lower
@@ -129,9 +130,14 @@ fn cap_subtraction_matches_independent_source_angular_integral() {
             let b = radius(body.inner());
             let da = (a * a - b * b) * 0.5;
             let dm = (a * a * a - b * b * b) / 3.;
-            for (i, v) in [da, dm * theta.cos(), dm * theta.sin(), z * da]
-                .into_iter()
-                .enumerate()
+            for (i, v) in [
+                da,
+                dm * theta.portable_cos(),
+                dm * theta.portable_sin(),
+                z * da,
+            ]
+            .into_iter()
+            .enumerate()
             {
                 oracle[i] += v * std::f64::consts::TAU / count as f64;
             }
@@ -236,7 +242,7 @@ fn bare_thread_wall_measures_match_independent_tangent_cross_quadrature() {
                     let r = b.radius_mm[0] + m * (q - b.phase_mm[0]);
                     for j in 0..nz {
                         let z = (j as f64 + 0.5) * dz;
-                        let (s, c) = ((z - q) / signed_rate).sin_cos();
+                        let (s, c) = ((z - q) / signed_rate).portable_sin_cos();
                         let u = [m * c + r / signed_rate * s, m * s - r / signed_rate * c, 0.];
                         let v = [-r / signed_rate * s, r / signed_rate * c, 1.];
                         let cross = [u[1] * v[2], -u[0] * v[2], u[0] * v[1] - u[1] * v[0]];

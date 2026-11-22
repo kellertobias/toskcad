@@ -6,6 +6,7 @@ use crate::{
     display::{MeshError, Tessellation},
     manufacturing::certify,
 };
+use multicad_precision::PortableMath as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 const MINIMUM: f64 = 1e-5;
@@ -104,7 +105,7 @@ fn gapped_shell_names_the_core_and_every_tooth_shoulder() {
                 let z = gear.ring_height_mm(ring);
                 for fraction in [0., 0.3, 1.] {
                     let [x, y, actual] = edge.curve.point(&gear, fraction);
-                    close(x.hypot(y), spec_root(teeth), 1e-11);
+                    close(x.portable_hypot(y), spec_root(teeth), 1e-11);
                     assert_eq!(actual, z);
                 }
             }
@@ -208,7 +209,7 @@ fn analytic_volume_bounds_and_certified_mesh_agree() {
             });
             if face == core_face {
                 for p in points {
-                    close(p[0].hypot(p[1]), spec.root_radius_mm, 1e-9);
+                    close(p[0].portable_hypot(p[1]), spec.root_radius_mm, 1e-9);
                     assert!((band..=10. - band).contains(&p[2]));
                 }
             } else if face > core_face && face <= core_face + 2 * teeth {
@@ -219,7 +220,7 @@ fn analytic_volume_bounds_and_certified_mesh_agree() {
                 };
                 for p in points {
                     assert_eq!(p[2], z);
-                    assert!(p[0].hypot(p[1]) >= spec.root_radius_mm - 1e-9);
+                    assert!(p[0].portable_hypot(p[1]) >= spec.root_radius_mm - 1e-9);
                 }
             }
         }
@@ -318,7 +319,7 @@ fn support_encloses_dense_band_sections_and_the_core_in_oblique_directions() {
         ] {
             let support = gear.support([dx, dy, dz]);
             let intervals = 2000;
-            let radial = dx.hypot(dy);
+            let radial = dx.portable_hypot(dy);
             let sampled = (0..=intervals)
                 .map(|i| {
                     let z = i as f64 * 10. / intervals as f64;

@@ -1,5 +1,6 @@
 //! Publish exact loft cuts, tessellating only their two-dimensional previews.
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::planar_boolean::{Error, LoftSectionCurve};
 
 mod clip;
@@ -225,7 +226,7 @@ fn sample(
     // The middle control's distance to the chord bounds the entire subarc.
     if offset[0]
         .mul_add(1., -t * edge[0])
-        .hypot(offset[1] - t * edge[1])
+        .portable_hypot(offset[1] - t * edge[1])
         <= deflection
     {
         charge(remaining, 1)?;

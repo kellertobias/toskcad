@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::cell::Cell;
 fn zero(v: I) {
     assert!(v.valid() && v.lo <= 0. && v.hi >= 0., "{v:?}")
@@ -118,7 +119,7 @@ fn metric_event_graph_owns_true_shared_join_points_and_dual_support_trims() {
                 assert!(midpoint[2] >= last_depth);
                 last_depth = midpoint[2];
                 if midpoint[2] > 0. {
-                    let rho = midpoint[0].hypot(midpoint[1]);
+                    let rho = midpoint[0].portable_hypot(midpoint[1]);
                     let epsilon = 1e-5;
                     let inside = [
                         midpoint[0] * (1. - epsilon / rho),
@@ -336,8 +337,8 @@ fn authored_positive_features_refuse_an_underresolved_cone_join() {
     let (s, d) = super::super::tests::fixture(1);
     let beta = s.tilt_angle_deg.to_radians();
     let q = 0.9999;
-    let flank = (beta.tan() / q).atan();
-    let qf = beta.tan() * s.floor_angle_deg.to_radians().tan();
+    let flank = (beta.portable_tan() / q).portable_atan();
+    let qf = beta.portable_tan() * s.floor_angle_deg.to_radians().portable_tan();
     let width = (s.g_diameter_mm * (q - qf) + 2e-10) / (1. - qf);
     let candidate = scaled(
         Spec {

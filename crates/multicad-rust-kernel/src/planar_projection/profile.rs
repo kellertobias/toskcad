@@ -31,7 +31,7 @@ impl ProfileTrim {
         match self {
             Self::Circle { center, .. } => {
                 let [x, y] = sub(point, center);
-                x.hypot(y)
+                x.portable_hypot(y)
             }
             Self::Stadium(stadium) => segments_distance(stadium.centers(), [point; 2]),
         }

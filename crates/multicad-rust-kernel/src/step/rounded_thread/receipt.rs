@@ -100,9 +100,9 @@ fn circle_remainder(c: Circle, rate: f64, length: I) -> I {
         .map(|rho| {
             let radial = point(c.center_radius_mm.abs())
                 + point(c.center_error_mm)
-                + point(c.radius_mm) * hyperbolic_upper(rho.cosh());
-            let exponent = point(c.radius_mm) / point(rate) * hyperbolic_upper(rho.sinh());
-            let maximum = radial * hyperbolic_upper(exponent.hi.exp());
+                + point(c.radius_mm) * hyperbolic_upper(rho.portable_cosh());
+            let exponent = point(c.radius_mm) / point(rate) * hyperbolic_upper(rho.portable_sinh());
+            let maximum = radial * hyperbolic_upper(exponent.hi.portable_exp());
             (maximum * power(length / point(2. * rho))).hi
         })
         .fold(f64::INFINITY, f64::min);
@@ -237,10 +237,10 @@ mod tests {
     #[test]
     fn high_amplitude_and_center_cancellation_keep_independent_point_error_bounds() {
         let theta = 80_f64.to_radians();
-        let total = 0.8 / (2. * theta.cos());
+        let total = 0.8 / (2. * theta.portable_cos());
         let rc = total * 0.99;
         let rr = total * 0.01;
-        let depth = 1. / (2. * theta.tan()) - (rc + rr) * (1. / theta.sin() - 1.);
+        let depth = 1. / (2. * theta.portable_tan()) - (rc + rr) * (1. / theta.portable_sin() - 1.);
         let source = Thread::new(crate::rounded_thread::Spec {
             major_radius_mm: 0.1,
             pitch_mm: 1.,
@@ -263,10 +263,10 @@ mod tests {
                 for i in 0..=32 {
                     let u = i as f64 / 32.;
                     let t = pair[0] + (pair[1] - pair[0]) * u;
-                    let phase = c.center_phase_mm + c.radius_mm * t.sin();
+                    let phase = c.center_phase_mm + c.radius_mm * t.portable_sin();
                     let radius = source.radius_at_phase(phase);
                     let angle = -phase / source.helical_rate();
-                    let exact = [radius * angle.cos(), radius * angle.sin()];
+                    let exact = [radius * angle.portable_cos(), radius * angle.portable_sin()];
                     let mut poles: Vec<_> =
                         curve.poles[span * DEGREE..=span * DEGREE + DEGREE].to_vec();
                     for remaining in (1..=DEGREE).rev() {
@@ -276,7 +276,10 @@ mod tests {
                             poles[j] = std::array::from_fn(|k| (1. - u) * a[k] + u * b[k]);
                         }
                     }
-                    assert!((poles[0][0] - exact[0]).hypot(poles[0][1] - exact[1]) <= 1e-7 / 16.);
+                    assert!(
+                        (poles[0][0] - exact[0]).portable_hypot(poles[0][1] - exact[1])
+                            <= 1e-7 / 16.
+                    );
                 }
             }
         }

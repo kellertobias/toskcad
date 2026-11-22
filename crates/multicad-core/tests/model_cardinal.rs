@@ -4,6 +4,7 @@ use multicad_core::{
     model::{Direction, ExtrudeParameters, RevolveParameters, angle},
     parameters,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 fn rad(value: f64) -> Dimension {
@@ -82,9 +83,9 @@ fn exact_bearings_include_reduced_turns_but_near_cardinals_are_not_snapped() {
             ..Default::default()
         };
         let resolved = sweep.resolve_controls(&parameters).unwrap().direction;
-        assert_eq!(resolved[0], (PI / 4.).cos() * expected[0]);
-        assert_eq!(resolved[1], (PI / 4.).cos() * expected[1]);
-        assert_eq!(resolved[2], (PI / 4.).sin());
+        assert_eq!(resolved[0], (PI / 4.).portable_cos() * expected[0]);
+        assert_eq!(resolved[1], (PI / 4.).portable_cos() * expected[1]);
+        assert_eq!(resolved[2], (PI / 4.).portable_sin());
     }
     for bearing in [
         89.9999_f64.to_radians(),
@@ -97,7 +98,7 @@ fn exact_bearings_include_reduced_turns_but_near_cardinals_are_not_snapped() {
         };
         assert_eq!(
             source.resolve(&parameters).unwrap().axis_direction,
-            [bearing.cos(), bearing.sin()]
+            [bearing.portable_cos(), bearing.portable_sin()]
         );
         assert_ne!(source.resolve(&parameters).unwrap().axis_direction[0], 0.);
         let source = ExtrudeParameters {
@@ -109,7 +110,7 @@ fn exact_bearings_include_reduced_turns_but_near_cardinals_are_not_snapped() {
         };
         assert_eq!(
             source.resolve_controls(&parameters).unwrap().direction,
-            [bearing.cos(), 0., bearing.sin()]
+            [bearing.portable_cos(), 0., bearing.portable_sin()]
         );
     }
 }

@@ -108,7 +108,7 @@ fn tilted_support_shrinks_when_the_stock_maximum_lies_inside_the_opening() {
     assert_eq!(cut.support_upper_mm([1., 0., 0.]), Ok(8.));
     assert_eq!(cut.support_upper_mm([2., 0., 0.]), Err(Error::InvalidInput));
     let [a, b] = cut.cylinder_trims().map(|branch| branch.azimuth_rad[1]);
-    let (sin, cos) = a.midpoint(b).sin_cos();
+    let (sin, cos) = a.midpoint(b).portable_sin_cos();
     let q = std::f64::consts::FRAC_1_SQRT_2;
     let direction = [q * cos, q * sin, q];
     assert_eq!(
@@ -146,7 +146,7 @@ fn tilted_support_shrinks_when_the_stock_maximum_lies_inside_the_opening() {
 }
 
 fn point(cut: Cut, theta: f64, x: f64, y: f64) -> [f64; 3] {
-    let (s, c) = (theta + cut.spec.start_angle_rad).sin_cos();
+    let (s, c) = (theta + cut.spec.start_angle_rad).portable_sin_cos();
     let radial = cut.spec.stock_radius_mm + x;
     [
         radial * c - cut.tangent * y * s,
@@ -180,9 +180,9 @@ fn occt_1543_cuts_material_and_keeps_both_lifted_branches_through_the_stock_cap(
             assert!(a.height_mm[0] > b.height_mm[0]);
             let [x, y] = cut.rim;
             for (y, trim) in [(-y, a), (y, b)] {
-                near(x.hypot(y), cut.spec.tube_radius_mm);
+                near(x.portable_hypot(y), cut.spec.tube_radius_mm);
                 for (azimuth, height) in trim.azimuth_rad.into_iter().zip(trim.height_mm) {
-                    let (s, c) = azimuth.sin_cos();
+                    let (s, c) = azimuth.portable_sin_cos();
                     let p = [8. * c, 8. * s, height];
                     assert_eq!(cut.classify(p), Ok(Location::Boundary));
                 }

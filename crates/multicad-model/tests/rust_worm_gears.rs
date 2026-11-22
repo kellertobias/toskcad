@@ -12,6 +12,7 @@ use multicad_kernel::{
     BooleanOperation, RigidTransform, Solid, rust_kernel::worm_gear::clearance::ResultKind,
 };
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeSet, f64::consts::PI};
 
 fn actor() -> Actor {
@@ -129,7 +130,7 @@ fn rust_worm_pairs_certify_saved_edited_motion_and_refuse_wrong_poses() {
         .unwrap();
     let spin = |angle: f64| {
         let ([px, py, pz], [x, y, z]) = axis_frame;
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         let t = 1. - c;
         let rotation = [
             [c + x * x * t, x * y * t - z * s, x * z * t + y * s],

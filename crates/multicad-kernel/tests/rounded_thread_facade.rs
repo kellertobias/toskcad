@@ -6,15 +6,16 @@ use multicad_kernel::{
     GeometryPolicy, MeshOptions, PlaneFrame, RigidTransform, Solid,
     rust_kernel::rounded_thread::Spec,
 };
+use multicad_precision::PortableMath as _;
 fn spec(left_hand: bool) -> Spec {
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     Spec {
         major_radius_mm: 3.175,
         pitch_mm: p,
         length_mm: 3.7 * p,
-        depth_mm: p / (3. * a.tan()),
+        depth_mm: p / (3. * a.portable_tan()),
         crest_radius_mm: r,
         root_radius_mm: r,
         flank_angle_deg: 27.5,

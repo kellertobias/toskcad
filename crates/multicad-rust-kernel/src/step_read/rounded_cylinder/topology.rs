@@ -246,7 +246,9 @@ fn toroid_seam(
     };
     for (id, angle) in vertices.into_iter().zip(angles) {
         let expected = std::array::from_fn(|i| {
-            frame.origin[i] + minor * (angle.cos() * frame.u[i] + angle.sin() * support.normal[i])
+            frame.origin[i]
+                + minor
+                    * (angle.portable_cos() * frame.u[i] + angle.portable_sin() * support.normal[i])
         });
         let actual = shell.vertex(id)?;
         near(shell, actual, expected)?;

@@ -6,13 +6,13 @@ use crate::{
 fn source(left_hand: bool) -> BlindBore {
     let pitch = 1.27;
     let angle = 27.5_f64.to_radians();
-    let rounding = pitch * angle.cos() / (12. * (1. - angle.sin()));
+    let rounding = pitch * angle.portable_cos() / (12. * (1. - angle.portable_sin()));
     BlindBore::new(
         Thread::new(Spec {
             major_radius_mm: 3.175,
             pitch_mm: pitch,
             length_mm: 3. * pitch,
-            depth_mm: pitch / (3. * angle.tan()),
+            depth_mm: pitch / (3. * angle.portable_tan()),
             crest_radius_mm: rounding,
             root_radius_mm: rounding,
             flank_angle_deg: 27.5,
@@ -69,7 +69,7 @@ fn actual_blind_floor_closes_the_original_rounded_rim_for_both_hands() {
                 if face == 1 {
                     for p in points {
                         if p[0] != 0. || p[1] != 0. {
-                            floor_radii.push(p[0].hypot(p[1]));
+                            floor_radii.push(p[0].portable_hypot(p[1]));
                         }
                     }
                 }

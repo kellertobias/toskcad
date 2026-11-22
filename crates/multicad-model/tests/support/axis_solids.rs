@@ -12,6 +12,7 @@ use multicad_core::{
     model::{self, PrimitiveParameters},
     parameters::{self, Unit},
 };
+use multicad_precision::PortableMath as _;
 
 pub type Aabb = [[f64; 3]; 2];
 
@@ -244,7 +245,7 @@ fn clipped_length(a: [f64; 2], b: [f64; 2], rect: [[f64; 2]; 2]) -> f64 {
         t0 = t0.max(ta.min(tb));
         t1 = t1.min(ta.max(tb));
     }
-    (t1 - t0).max(0.) * d[0].hypot(d[1])
+    (t1 - t0).max(0.) * d[0].portable_hypot(d[1])
 }
 
 /// A convex polygon prism swept along one world axis.
@@ -355,10 +356,12 @@ impl Prism {
 /// along one axis), and the arc length inside that band.
 fn band(radius: f64, t0: f64, t1: f64) -> (f64, f64) {
     let [t0, t1] = [t0, t1].map(|t| t.clamp(-radius, radius));
-    let f = |t: f64| radius * radius * (t / radius).asin() + t * (radius * radius - t * t).sqrt();
+    let f = |t: f64| {
+        radius * radius * (t / radius).portable_asin() + t * (radius * radius - t * t).sqrt()
+    };
     (
         f(t1) - f(t0),
-        2. * radius * ((t1 / radius).asin() - (t0 / radius).asin()),
+        2. * radius * ((t1 / radius).portable_asin() - (t0 / radius).portable_asin()),
     )
 }
 

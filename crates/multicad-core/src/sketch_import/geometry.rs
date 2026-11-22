@@ -1,6 +1,7 @@
 //! Exact planar source curves before sketch placement. Circular arcs remain
 //! analytic under similarities; ellipses become exact rational quadratic
 //! B-splines. Nothing here samples or tessellates a curve.
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, TAU};
 
 pub type P = [f64; 2];
@@ -128,7 +129,10 @@ impl Segment {
 }
 
 pub fn polar(c: P, r: f64, angle: f64) -> P {
-    [c[0] + r * angle.cos(), c[1] + r * angle.sin()]
+    [
+        c[0] + r * angle.portable_cos(),
+        c[1] + r * angle.portable_sin(),
+    ]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -168,7 +172,7 @@ impl Affine {
         Self([x, 0., 0., y, 0., 0.])
     }
     pub fn rotate(radians: f64) -> Self {
-        let (s, c) = radians.sin_cos();
+        let (s, c) = radians.portable_sin_cos();
         Self([c, s, -s, c, 0., 0.])
     }
     /// `self ∘ inner`: apply `inner` first.
@@ -199,8 +203,8 @@ impl Affine {
     /// similarity within a relative tolerance.
     pub fn similarity_scale(&self) -> Option<f64> {
         let [a, b, c, d, ..] = self.0;
-        let sx = a.hypot(b);
-        let sy = c.hypot(d);
+        let sx = a.portable_hypot(b);
+        let sy = c.portable_hypot(d);
         let tolerance = 1e-12 * sx.max(sy).max(1.);
         ((sx - sy).abs() <= tolerance && (a * c + b * d).abs() <= tolerance && sx > 0.)
             .then_some(sx)
@@ -217,19 +221,19 @@ pub fn ellipse_arc(c: P, u: P, v: P, t0: f64, sweep: f64) -> Segment {
     let step = sweep / spans as f64;
     let point = |t: f64| {
         [
-            c[0] + u[0] * t.cos() + v[0] * t.sin(),
-            c[1] + u[1] * t.cos() + v[1] * t.sin(),
+            c[0] + u[0] * t.portable_cos() + v[0] * t.portable_sin(),
+            c[1] + u[1] * t.portable_cos() + v[1] * t.portable_sin(),
         ]
     };
-    let w = (step / 2.).cos();
+    let w = (step / 2.).portable_cos();
     let mut poles = vec![point(t0)];
     let mut weights = vec![1.];
     for i in 0..spans {
         let a = t0 + step * i as f64;
         let mid = a + step / 2.;
         poles.push([
-            c[0] + (u[0] * mid.cos() + v[0] * mid.sin()) / w,
-            c[1] + (u[1] * mid.cos() + v[1] * mid.sin()) / w,
+            c[0] + (u[0] * mid.portable_cos() + v[0] * mid.portable_sin()) / w,
+            c[1] + (u[1] * mid.portable_cos() + v[1] * mid.portable_sin()) / w,
         ]);
         weights.push(w);
         poles.push(point(a + step));
@@ -299,11 +303,11 @@ pub fn transform(segment: &Segment, m: &Affine) -> Segment {
             sweep,
         } => match m.similarity_scale() {
             Some(s) => {
-                let d = m.linear([start.cos(), start.sin()]);
+                let d = m.linear([start.portable_cos(), start.portable_sin()]);
                 Segment::Arc {
                     center: m.apply(*center),
                     radius: radius * s,
-                    start: d[1].atan2(d[0]),
+                    start: d[1].portable_atan2(d[0]),
                     sweep: if m.det() < 0. { -sweep } else { *sweep },
                 }
             }

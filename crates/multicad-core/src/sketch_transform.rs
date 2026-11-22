@@ -4,6 +4,7 @@ use crate::{
     constraint_sketch::{Axis, Constraint, ConstraintKind, Curve, CurveKind, source::Source},
     document::EntityId,
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -141,7 +142,7 @@ impl Mapping {
                 } else if angle == 3. * std::f64::consts::FRAC_PI_2 {
                     (-1., 0.)
                 } else {
-                    angle.sin_cos()
+                    angle.portable_sin_cos()
                 };
                 ([[c, -s], [s, c]], center_mm, [0.; 2], false)
             }
@@ -149,7 +150,7 @@ impl Mapping {
                 point_mm,
                 direction,
             } => {
-                let length = direction[0].hypot(direction[1]);
+                let length = direction[0].portable_hypot(direction[1]);
                 if direction.iter().any(|v| !v.is_finite()) || !length.is_finite() || length < 1e-12
                 {
                     return Err(invalid());
@@ -347,7 +348,7 @@ fn check_orientation(
             let angle = |source: &Source| {
                 let a = direction(source, *from)?;
                 let b = direction(source, *to)?;
-                Some((a[0] * b[1] - a[1] * b[0]).atan2(a[0] * b[0] + a[1] * b[1]))
+                Some((a[0] * b[1] - a[1] * b[0]).portable_atan2(a[0] * b[0] + a[1] * b[1]))
             };
             let (Some(a), Some(b)) = (angle(before), angle(after)) else {
                 return Err(fail());
@@ -377,12 +378,12 @@ fn validate_geometry(source: &Source) -> Result<(), TransformError> {
             CurveKind::BSpline { ref poles, .. } => !poles.windows(2).any(|p| {
                 let a = point(p[0]);
                 let b = point(p[1]);
-                (a[0] - b[0]).hypot(a[1] - b[1]) >= 1e-7
+                (a[0] - b[0]).portable_hypot(a[1] - b[1]) >= 1e-7
             }),
             CurveKind::Line { start, end } => {
                 let a = point(start);
                 let b = point(end);
-                (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-7
+                (a[0] - b[0]).portable_hypot(a[1] - b[1]) < 1e-7
             }
             CurveKind::Arc {
                 center, start, end, ..
@@ -390,9 +391,9 @@ fn validate_geometry(source: &Source) -> Result<(), TransformError> {
                 let c = point(center);
                 let a = point(start);
                 let b = point(end);
-                let r = (a[0] - c[0]).hypot(a[1] - c[1]);
-                let s = (b[0] - c[0]).hypot(b[1] - c[1]);
-                r < 1e-7 || !near(r, s) || (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-7
+                let r = (a[0] - c[0]).portable_hypot(a[1] - c[1]);
+                let s = (b[0] - c[0]).portable_hypot(b[1] - c[1]);
+                r < 1e-7 || !near(r, s) || (a[0] - b[0]).portable_hypot(a[1] - b[1]) < 1e-7
             }
             CurveKind::Circle { .. } => false,
         };

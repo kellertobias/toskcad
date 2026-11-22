@@ -86,7 +86,7 @@ pub(super) fn mode_input(tool: DrawTool, clicks: &[Click], last: Click) -> Optio
 }
 
 fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 
 /// Center on the perpendicular bisector of `a`-`b` nearest to `pick`, and
@@ -116,8 +116,8 @@ fn circle_segments(center: [f64; 2], radius: f64) -> Vec<[[f64; 2]; 2]> {
             let at = |k: usize| {
                 let angle = k as f64 / steps as f64 * std::f64::consts::TAU;
                 [
-                    center[0] + radius * angle.cos(),
-                    center[1] + radius * angle.sin(),
+                    center[0] + radius * angle.portable_cos(),
+                    center[1] + radius * angle.portable_sin(),
                 ]
             };
             [at(i), at(i + 1)]

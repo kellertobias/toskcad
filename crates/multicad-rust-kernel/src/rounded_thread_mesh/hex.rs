@@ -51,7 +51,7 @@ fn side_of(angle: f64) -> usize {
 }
 fn side_normal(side: usize) -> [f64; 3] {
     let angle = FRAC_PI_3 * (side as f64 + 1.);
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     [c, s, 0.]
 }
 impl Builder<'_, '_> {
@@ -93,8 +93,8 @@ impl Builder<'_, '_> {
                 None => {
                     let side = side_of(angle);
                     let mid = FRAC_PI_3 * (side as f64 + 1.);
-                    let r = half / (angle - mid).cos();
-                    let (s, c) = angle.sin_cos();
+                    let r = half / (angle - mid).portable_cos();
+                    let (s, c) = angle.portable_sin_cos();
                     [r * c, r * s]
                 }
             };

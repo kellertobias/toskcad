@@ -1,6 +1,7 @@
 //! Clip regular source cells; retain shared analytic boundary footpoints.
 use super::cell::{Bound, Corner, Kind};
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::collections::HashMap;
 pub(super) enum Failure {
     Geometry(Error),
@@ -253,7 +254,7 @@ impl Builder<'_> {
                 } else {
                     node.r
                 };
-                let (s, c) = (self.body.tool.helical_rate().signum() * w).sin_cos();
+                let (s, c) = (self.body.tool.helical_rate().signum() * w).portable_sin_cos();
                 let index = self.vertex([r * c, r * s, z])?;
                 Vertex {
                     index,
@@ -540,7 +541,7 @@ impl Builder<'_> {
                 work.step()?;
                 let q = rim.nominal + f64::from(rim.period) * self.body.tool.spec().pitch_mm;
                 let theta = (f - q) / self.body.tool.helical_rate();
-                let (s, c) = theta.sin_cos();
+                let (s, c) = theta.portable_sin_cos();
                 let points = [[r * c, r * s, f], [r * c, r * s, h]];
                 let ids = [self.vertex(points[0])?, self.vertex(points[1])?];
                 let t = (I::point(f)
@@ -644,7 +645,7 @@ fn dot(a: [I; 3], b: [I; 3]) -> I {
         .fold(I::point(0.), |s, (a, b)| s + a * b)
 }
 fn polar(radius: f64, z: f64, q: f64, rate: f64) -> [f64; 3] {
-    let (s, c) = ((z - q) / rate).sin_cos();
+    let (s, c) = ((z - q) / rate).portable_sin_cos();
     [radius * c, radius * s, z]
 }
 pub(super) fn build(
@@ -782,16 +783,16 @@ mod tests {
         let theta = 0.1_f64;
         let p = [
             [3., 0., 1.],
-            [3. * theta.cos(), 3. * theta.sin(), 1.],
+            [3. * theta.portable_cos(), 3. * theta.portable_sin(), 1.],
             [3., 0., 2.],
         ];
         for v in p {
-            assert_eq!(body.radius(v[1].atan2(v[0]), v[2]), 3.);
+            assert_eq!(body.radius(v[1].portable_atan2(v[0]), v[2]), 3.);
         }
         let ids = p.map(|p| require(b.vertex(p)));
         let normal = [
-            I::point((theta / 2.).cos()),
-            I::point((theta / 2.).sin()),
+            I::point((theta / 2.).portable_cos()),
+            I::point((theta / 2.).portable_sin()),
             I::point(0.),
         ];
         assert!(b.normal_check(ids, normal, 0.1).is_ok());

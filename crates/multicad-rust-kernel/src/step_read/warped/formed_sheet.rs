@@ -374,7 +374,7 @@ fn flange_section(
 }
 
 fn length2(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 
 #[cfg(test)]

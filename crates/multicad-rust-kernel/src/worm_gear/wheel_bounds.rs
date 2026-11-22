@@ -27,6 +27,7 @@
 use super::interval::{Interval, Series, factorial};
 use super::jet::Real;
 use super::wheel::{CUTTER_TIP, PIECES, Piece, WORM_ROOT, Wheel, turn};
+use multicad_precision::PortableMath as _;
 
 /// Profile and height cells for the section motion and bending bounds.
 const SECTION_CELLS: [usize; 2] = [32, 64];
@@ -214,7 +215,7 @@ impl Wheel {
             let bounds =
                 self.patch_bounds::<4, 4, 3>(piece, [[0, 1], [2, 0], [0, 2]], SECTION_CELLS)?;
             for (slot, [x, y]) in result.iter_mut().zip(bounds) {
-                *slot = slot.max(x.hypot(y));
+                *slot = slot.max(x.portable_hypot(y));
             }
         }
         Some(result)
@@ -275,7 +276,7 @@ impl Wheel {
 /// Chebyshev points `cos(jπ/n)` (Trefethen, Approximation Theory and
 /// Approximation Practice, Theorem 15.2).
 pub(crate) fn lebesgue(n: usize) -> f64 {
-    2. / std::f64::consts::PI * ((n + 1) as f64).ln() + 1.
+    2. / std::f64::consts::PI * ((n + 1) as f64).portable_ln() + 1.
 }
 
 /// Chebyshev points of the second kind on `[0, 1]`, endpoints included.
@@ -284,7 +285,7 @@ pub(crate) fn lobatto(n: usize) -> Vec<f64> {
         .map(|j| {
             // Reflect so both halves round identically and the ends are exact.
             let k = j.min(n - j);
-            let x = (1. - (std::f64::consts::PI * k as f64 / n as f64).cos()) / 2.;
+            let x = (1. - (std::f64::consts::PI * k as f64 / n as f64).portable_cos()) / 2.;
             if k == j { x } else { 1. - x }
         })
         .collect()
@@ -296,7 +297,9 @@ pub(crate) fn lobatto(n: usize) -> Vec<f64> {
 /// whose magnitude is `|sin θ sin nθ| / 2^(n-1) ≤ 2^(1-n)` with `x = cos θ`,
 /// so the Cauchy remainder is at most `ℓ^(n+1) 2^(1-n) max |F_(n+1)|`.
 fn interpolation_error(n: usize, half_length: f64, coefficient: [f64; 2]) -> f64 {
-    half_length.powi(n as i32 + 1) * 2_f64.powi(1 - n as i32) * coefficient[0].hypot(coefficient[1])
+    half_length.powi(n as i32 + 1)
+        * 2_f64.powi(1 - n as i32)
+        * coefficient[0].portable_hypot(coefficient[1])
 }
 
 /// Proven Taylor coefficient bounds of one generating patch, module units.
@@ -404,8 +407,14 @@ mod tests {
                     .flatten()
                     .all(|value| value.is_finite() && *value >= 0.)
             );
-            assert!(bounds[0][0].hypot(bounds[0][1]) >= point[0].value.hypot(point[1].value));
-            assert!(bounds[1][0].hypot(bounds[1][1]) >= point[0].d[0].hypot(point[1].d[0]));
+            assert!(
+                bounds[0][0].portable_hypot(bounds[0][1])
+                    >= point[0].value.portable_hypot(point[1].value)
+            );
+            assert!(
+                bounds[1][0].portable_hypot(bounds[1][1])
+                    >= point[0].d[0].portable_hypot(point[1].d[0])
+            );
         }
     }
 
@@ -431,12 +440,12 @@ mod tests {
                             d: [exit.0[1], 0.],
                         },
                     );
-                    sampled[0] = sampled[0].max(p[0].d[0].hypot(p[1].d[0]));
+                    sampled[0] = sampled[0].max(p[0].d[0].portable_hypot(p[1].d[0]));
                     let d = 1e-4;
                     let [a, b, c] =
                         [u - d, u, u + d].map(|t| wheel.piece_point(&section, piece, t));
                     let second = [0, 1].map(|k| (a[k] - 2. * b[k] + c[k]) / (d * d));
-                    sampled[1] = sampled[1].max(second[0].hypot(second[1]));
+                    sampled[1] = sampled[1].max(second[0].portable_hypot(second[1]));
                 }
             }
         }

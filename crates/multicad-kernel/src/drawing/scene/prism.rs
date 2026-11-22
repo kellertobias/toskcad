@@ -5,6 +5,7 @@
 use super::paths::{Lift, ProfilePath, Segment, add, dot2, edge_point, scaled};
 use super::profile::{Family, Rings, contains, exclusive, intersect, merge};
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::spur_gear::Edge;
 use std::sync::OnceLock;
 
@@ -64,7 +65,7 @@ impl Prism {
             ));
         }
         let toward = axes.map(|axis| axis[2]);
-        let slope = toward[0].hypot(toward[1]);
+        let slope = toward[0].portable_hypot(toward[1]);
         let along = if slope > AXIAL {
             [toward[0] / slope, toward[1] / slope]
         } else {
@@ -321,7 +322,7 @@ impl Member for Prism {
             .axes
             .map(|axis| paths::dot3(axis, paths::add(start, paths::scaled(self.origin, -1.))));
         let rate = self.axes.map(|axis| paths::dot3(axis, direction));
-        let planar = rate[0].hypot(rate[1]);
+        let planar = rate[0].portable_hypot(rate[1]);
         let length = paths::dot3(direction, direction).sqrt();
         Some((|| {
             let mut output = Vec::new();

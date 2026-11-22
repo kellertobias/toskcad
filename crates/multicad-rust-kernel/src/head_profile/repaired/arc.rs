@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 #[derive(Clone, Copy)]
 pub(super) struct ArcSource {
     center: [f64; 2],
@@ -158,7 +159,7 @@ impl ArcSource {
                 dot,
                 det,
                 proposal_angles: [
-                    (s.start[1] - center[1]).atan2(s.start[0] - center[0]),
+                    (s.start[1] - center[1]).portable_atan2(s.start[0] - center[0]),
                     sweep,
                 ],
             },

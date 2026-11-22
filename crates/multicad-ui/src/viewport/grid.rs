@@ -1,9 +1,10 @@
 use crate::camera::Camera;
 use eframe::egui::Rect;
+use multicad_precision::PortableMath as _;
 /// Coarsen display lines at distant zoom without changing the configured sketch
 /// snap spacing. Center the finite display patch on the current view.
 pub fn floor_grid(camera: Camera, rect: Rect, base_mm: f64) -> Vec<[[f64; 3]; 2]> {
-    let facing = camera.pitch.sin().abs() as f64;
+    let facing = camera.pitch.portable_sin().abs() as f64;
     if !base_mm.is_finite()
         || base_mm <= 0.
         || !camera.scale.is_finite()
@@ -16,8 +17,8 @@ pub fn floor_grid(camera: Camera, rect: Rect, base_mm: f64) -> Vec<[[f64; 3]; 2]
         return vec![];
     }
     let scale = camera.scale as f64;
-    let factor = (8. / (base_mm * scale)).max(1.).log10().ceil();
-    let mut step = base_mm * 10_f64.powf(factor);
+    let factor = (8. / (base_mm * scale)).max(1.).portable_log10().ceil();
+    let mut step = base_mm * 10_f64.portable_powf(factor);
     let extent = rect.width().max(rect.height()) as f64 / scale / facing;
     while extent / step > 100. {
         step *= 10.;

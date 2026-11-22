@@ -1,5 +1,6 @@
 use super::*;
 use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
+use multicad_precision::PortableMath as _;
 fn actual_bspt(external: bool) -> RadialBoundary {
     let p = 25.4 / 28.;
     let taper = if external { 1. / 32. } else { -1. / 32. };
@@ -10,7 +11,7 @@ fn actual_bspt(external: bool) -> RadialBoundary {
             length_mm: 6.5,
             radial_taper: taper,
             section: AuthoredSection::BsptRounded {
-                depth_mm: p / (3. * 27.5_f64.to_radians().tan()),
+                depth_mm: p / (3. * 27.5_f64.to_radians().portable_tan()),
             },
             crest_radius_limit_mm: None,
         },
@@ -86,7 +87,7 @@ fn contains(range: [f64; 2], expected: f64) {
 #[test]
 fn independent_cam_surface_areas_centroids_and_rigid_world_transport() {
     let body = cam();
-    let phi = 4_f64.atan2(3.);
+    let phi = 4_f64.portable_atan2(3.);
     let angle = 2. * (std::f64::consts::PI - phi);
     let area = 25. * (std::f64::consts::PI - phi) + 30.;
     let expected = [

@@ -7,6 +7,7 @@
 //! `q ∈ B` about A's center, an interval `[m, M]`, meet A's radii; the
 //! radial distance is the gap between those two intervals.
 use super::*;
+use multicad_precision::PortableMath as _;
 
 type Point = [f64; 3];
 
@@ -24,7 +25,7 @@ fn dot(a: Point, b: Point) -> f64 {
     (0..3).map(|i| a[i] * b[i]).sum()
 }
 fn norm(a: Point) -> f64 {
-    a[0].hypot(a[1]).hypot(a[2])
+    a[0].portable_hypot(a[1]).portable_hypot(a[2])
 }
 fn sub(a: Point, b: Point) -> Point {
     std::array::from_fn(|i| a[i] - b[i])
@@ -159,7 +160,7 @@ fn solve(a: Ring, b: Ring, tolerance: f64) -> Result<MinimumDistance, GeometryEr
     };
     let pa = place(qa, za);
     let pb = place(qb, zb);
-    let distance = radial.hypot(axial);
+    let distance = radial.portable_hypot(axial);
     let actual = norm(sub(pa, pb));
     if !actual.is_finite() || (actual - distance).abs() > tolerance / 4. {
         return Err(unproved(

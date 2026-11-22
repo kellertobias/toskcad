@@ -97,7 +97,7 @@ impl Sphere {
                     let [u, v] = std::array::from_fn(|i| {
                         planes[i].map_or(0., |[lo, hi]| center[i] - center[i].clamp(lo, hi))
                     });
-                    near_trimmed = u.hypot(v) < rim - tolerance;
+                    near_trimmed = u.portable_hypot(v) < rim - tolerance;
                 }
             }
         }
@@ -119,7 +119,7 @@ impl Sphere {
         epsilon: f64,
     ) -> bool {
         let [u, v, _] = sub(point, self.center);
-        let radial = u.hypot(v);
+        let radial = u.portable_hypot(v);
         let [far, near] = self.depth;
         if let Some(half) = cross_section(self.radius, radial, epsilon) {
             return (self.center[2] + half).min(near)
@@ -133,7 +133,7 @@ impl Sphere {
                 && (self.radius - rim.ellipse.major).abs() <= epsilon
                 && (self.radius - rim.ellipse.minor).abs() <= epsilon
                 && length(minus(rim.ellipse.center, paper(self.center))) <= epsilon
-                && rim.depth_cosine.hypot(rim.depth_sine) <= epsilon
+                && rim.depth_cosine.portable_hypot(rim.depth_sine) <= epsilon
         })
     }
 

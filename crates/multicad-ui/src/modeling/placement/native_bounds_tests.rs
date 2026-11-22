@@ -6,6 +6,7 @@ use multicad_core::{
     parameters::{self, Unit},
 };
 use multicad_model::Compiler;
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeMap, sync::Arc};
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -24,8 +25,8 @@ fn fixture() -> (Session, EntityId, EntityId) {
                     model::length(2000.),
                     model::length(3000.),
                 ],
-                u: [angle.cos(), angle.sin(), 0.],
-                v: [-angle.sin(), angle.cos(), 0.],
+                u: [angle.portable_cos(), angle.portable_sin(), 0.],
+                v: [-angle.portable_sin(), angle.portable_cos(), 0.],
             },
         },
     );

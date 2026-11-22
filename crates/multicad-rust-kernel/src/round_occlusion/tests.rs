@@ -90,7 +90,7 @@ fn a_side_view_splits_at_the_cap_and_the_cylindrical_wall_depth() {
 #[test]
 fn a_rotated_line_coincident_with_the_outer_silhouette_stays_visible() {
     for degrees in [25_f64, 53.] {
-        let (sin, cos) = degrees.to_radians().sin_cos();
+        let (sin, cos) = degrees.to_radians().portable_sin_cos();
         let axis = [cos, sin, 0.];
         let solid = RoundOccluder::new([0.; 3], axis, 3., 10., None).unwrap();
         let line = |offset: f64| {

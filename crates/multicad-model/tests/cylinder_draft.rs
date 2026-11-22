@@ -13,6 +13,7 @@ use multicad_core::{
     },
 };
 use multicad_model::{Compiler, GeometryBackend, Model};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn actor() -> Actor {
@@ -254,7 +255,7 @@ fn cylinder_draft_keeps_saved_cap_datums_rim_references_instances_and_parameter_
                 .unwrap();
         }
         let saved = reopen(&session);
-        let slope = degrees.to_radians().tan();
+        let slope = degrees.to_radians().portable_tan();
         let a = radius + slope * level;
         let b = radius - slope * (height - level);
         let expected = PI * height / 3. * (a * a + a * b + b * b);
@@ -339,7 +340,7 @@ fn cylinder_draft_keeps_saved_cap_datums_rim_references_instances_and_parameter_
     let edited = session.document().clone();
     session.undo(session.revision(), actor()).unwrap();
     assert_eq!(session.document(), &initial);
-    let r = 10. - 20. * 5_f64.to_radians().tan();
+    let r = 10. - 20. * 5_f64.to_radians().portable_tan();
     near(
         compile(&session, GeometryBackend::Rust)
             .solid(primitive.body)

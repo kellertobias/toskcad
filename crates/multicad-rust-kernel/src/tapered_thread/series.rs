@@ -214,6 +214,7 @@ impl<T: Scalar> Div for Dual<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use multicad_precision::PortableMath as _;
     type S = Series<13>;
     #[test]
     fn elementary_coefficients_enclose_independent_derivative_formulas() {
@@ -225,10 +226,10 @@ mod tests {
                 factorial *= n as f64;
             }
             let (s, c) = match n % 4 {
-                0 => (0.37f64.sin(), 0.37f64.cos()),
-                1 => (0.37f64.cos(), -0.37f64.sin()),
-                2 => (-0.37f64.sin(), -0.37f64.cos()),
-                _ => (-0.37f64.cos(), 0.37f64.sin()),
+                0 => (0.37f64.portable_sin(), 0.37f64.portable_cos()),
+                1 => (0.37f64.portable_cos(), -0.37f64.portable_sin()),
+                2 => (-0.37f64.portable_sin(), -0.37f64.portable_cos()),
+                _ => (-0.37f64.portable_cos(), 0.37f64.portable_sin()),
             };
             for (range, value) in [(sin.c[n], s / factorial), (cos.c[n], c / factorial)] {
                 assert!(

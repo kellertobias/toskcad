@@ -172,7 +172,7 @@ fn plane_sweeps_refuse_invalid_directions_planes_and_reach() {
 
     // Between two tilted planes on either side of the section.
     let tilt = |height: f64| {
-        let l = 1_f64.hypot(0.25);
+        let l = 1_f64.portable_hypot(0.25);
         PlaneFrame {
             origin: [0., 0., height],
             u: [1. / l, 0., 0.25 / l],
@@ -202,7 +202,7 @@ fn tapered_halves_refuse_invalid_controls_and_join_drafted_frusta() {
             &profile,
             direction,
             lengths,
-            0.1_f64.atan(),
+            0.1_f64.portable_atan(),
             feature,
             &origins,
             policy(),

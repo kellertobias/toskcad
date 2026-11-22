@@ -564,7 +564,7 @@ fn partially_exposed_coplanar_patch_does_not_own_an_internal_section() {
 /// still published as positive material.
 #[test]
 fn rotated_shared_face_is_a_certified_contact_but_real_overlap_is_material() {
-    let (sin, cos) = 30_f64.to_radians().sin_cos();
+    let (sin, cos) = 30_f64.to_radians().portable_sin_cos();
     let rotate = |[x, y, z]: Point| [cos * x - sin * y + 400., sin * x + cos * y + 40., z];
     let placed = |min: Point, max: Point| block(min, max).transformed(rotate, TOL).unwrap();
     let left = placed([0., 0., 0.], [215.6, 18., 300.]);
@@ -598,7 +598,7 @@ fn rotated_shared_face_is_a_certified_contact_but_real_overlap_is_material() {
 /// slab: their rounding-scale overlap may be real source material.
 #[test]
 fn rounded_sources_refuse_a_face_contact_but_keep_separation_and_material() {
-    let (sin, cos) = 30_f64.to_radians().sin_cos();
+    let (sin, cos) = 30_f64.to_radians().portable_sin_cos();
     let rotate = |[x, y, z]: Point| [cos * x - sin * y + 400., sin * x + cos * y + 40., z];
     let placed =
         |min: Point, max: Point| material(&[block(min, max).transformed(rotate, TOL).unwrap()]);

@@ -166,7 +166,7 @@ fn independent_point_to_segment_samples_check_original_curve_distance() {
                     let norm = d.iter().map(|x| x * x).sum::<f64>();
                     let t = ((0..3).map(|i| v[i] * d[i]).sum::<f64>() / norm).clamp(0., 1.);
                     let delta: [f64; 3] = std::array::from_fn(|i| v[i] - t * d[i]);
-                    delta[0].hypot(delta[1]).hypot(delta[2])
+                    delta[0].portable_hypot(delta[1]).portable_hypot(delta[2])
                 })
                 .fold(f64::INFINITY, f64::min);
             assert!(

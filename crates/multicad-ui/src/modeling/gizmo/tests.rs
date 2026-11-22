@@ -221,8 +221,14 @@ fn actual_plane_drag_and_rotation_ring_have_geometric_pointer_solutions() {
     let radius = 82. / camera.scale as f64 * 0.74;
     // The Z ring at 45 degrees is distinct from all projected cardinal axes.
     let t = std::f64::consts::FRAC_PI_4;
-    let start = point(camera, [radius * t.cos(), radius * t.sin(), 0.]);
-    let end = point(camera, [-radius * t.sin(), radius * t.cos(), 0.]);
+    let start = point(
+        camera,
+        [radius * t.portable_cos(), radius * t.portable_sin(), 0.],
+    );
+    let end = point(
+        camera,
+        [-radius * t.portable_sin(), radius * t.portable_cos(), 0.],
+    );
     frame(
         &ctx,
         &mut interaction,
@@ -367,7 +373,10 @@ fn plane_snapping_uses_the_active_rotated_coordinate_frame() {
     let mut interaction = Interaction::default();
     let source = NumericTransform::default();
     let camera = camera();
-    let (c, s) = (30_f64.to_radians().cos(), 30_f64.to_radians().sin());
+    let (c, s) = (
+        30_f64.to_radians().portable_cos(),
+        30_f64.to_radians().portable_sin(),
+    );
     let (u, v) = ([c, s, 0.], [-s, c, 0.]);
     let basis = GizmoBasis {
         axes: [u, v, [0., 0., 1.]],
@@ -413,7 +422,10 @@ fn rotate_snaps_to_45_degree_steps_shows_the_angle_and_shift_frees_it() {
     let radius = 82. / camera.scale as f64 * 0.74;
     let ring = |degrees: f64| {
         let t = degrees.to_radians();
-        point(camera, [radius * t.cos(), radius * t.sin(), 0.])
+        point(
+            camera,
+            [radius * t.portable_cos(), radius * t.portable_sin(), 0.],
+        )
     };
     let run = |interaction: &mut Interaction, source: &NumericTransform, events, shift| {
         snapped_frame(

@@ -99,7 +99,7 @@ impl BandWall<'_> {
         };
         for z in [0., length] {
             for i in 0..count {
-                let (sin, cos) = (TAU * i as f64 / count as f64).sin_cos();
+                let (sin, cos) = (TAU * i as f64 / count as f64).portable_sin_cos();
                 mesh.vertices.extend([radius * cos, radius * sin, z]);
             }
         }
@@ -693,7 +693,7 @@ fn round_mouth(
         // Opposite normals reverse the planar V axis. Reverse the sample
         // index as well to use the identical world offset on both mouths.
         let sample = if opposite { (count - i) % count } else { i };
-        let (sin, cos) = (-TAU * sample as f64 / count as f64).sin_cos();
+        let (sin, cos) = (-TAU * sample as f64 / count as f64).portable_sin_cos();
         let sign = if opposite { -1. } else { 1. };
         let point = [uv[0] + radius * cos, uv[1] + sign * radius * sin];
         mesh.vertices.extend(plane.lift(point));

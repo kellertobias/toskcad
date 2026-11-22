@@ -9,6 +9,7 @@ use crate::{
     commands::{Actor, CommandError, Prepared, Request, Session},
     document::{Definition, Document, DocumentError, Entity, EntityData, EntityId, Link, Mutation},
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -34,7 +35,7 @@ impl PrintPlatePlacement {
     pub fn rotation(&self) -> [[f64; 3]; 3] {
         let [(sx, cx), (sy, cy), (sz, cz)] = self
             .rotation_deg
-            .map(|angle| angle.rem_euclid(360.).to_radians().sin_cos());
+            .map(|angle| angle.rem_euclid(360.).to_radians().portable_sin_cos());
         [
             [cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx],
             [sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx],

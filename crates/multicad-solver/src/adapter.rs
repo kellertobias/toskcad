@@ -4,6 +4,7 @@ use multicad_core::{
     document::EntityId,
     parameters::{EvaluatedParameters, Unit},
 };
+use multicad_precision::PortableMath as _;
 use sketch_solver::{Along, Constraint, Pair, Source, Status};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -366,7 +367,7 @@ fn evaluate_context(
                 .ok_or_else(|| error(Some(c.id), "Missing solved spline pole"))?;
             if poles.iter().all(|id| {
                 sol.point(a.entity(*id).expect("mapped pole"))
-                    .is_some_and(|p| (p[0] - first[0]).hypot(p[1] - first[1]) < 1e-7)
+                    .is_some_and(|p| (p[0] - first[0]).portable_hypot(p[1] - first[1]) < 1e-7)
             }) {
                 return Err(error(
                     Some(c.id),
@@ -393,7 +394,7 @@ fn evaluate_context(
             let q = sol
                 .point(a.entity(end)?)
                 .ok_or_else(|| error(Some(c.id), "Missing line end"))?;
-            if (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-7 {
+            if (p[0] - q[0]).portable_hypot(p[1] - q[1]) < 1e-7 {
                 return Err(error(Some(c.id), "Solved line is degenerate"));
             }
         }
@@ -448,12 +449,12 @@ fn measure(
     let distance_line = |p: [f64; 2], id| -> Result<f64, InputError> {
         let [q, r] = line(id)?;
         let d = [r[0] - q[0], r[1] - q[1]];
-        Ok(((p[0] - q[0]) * d[1] - (p[1] - q[1]) * d[0]).abs() / d[0].hypot(d[1]))
+        Ok(((p[0] - q[0]) * d[1] - (p[1] - q[1]) * d[0]).abs() / d[0].portable_hypot(d[1]))
     };
     let value = match kind {
         Kind::Length { line, .. } => {
             let d = direction(*line)?;
-            d[0].hypot(d[1])
+            d[0].portable_hypot(d[1])
         }
         Kind::Distance {
             a: x, b: y, axis, ..
@@ -462,7 +463,7 @@ fn measure(
                 match axis {
                     Axis::X => q[0] - p[0],
                     Axis::Y => q[1] - p[1],
-                    Axis::Direct => (q[0] - p[0]).hypot(q[1] - p[1]),
+                    Axis::Direct => (q[0] - p[0]).portable_hypot(q[1] - p[1]),
                 }
             } else if let Ok(p) = point(*x) {
                 distance_line(p, *y)?
@@ -486,7 +487,7 @@ fn measure(
             let y = direction(*to)?;
             return Ok((
                 (x[0] * y[1] - x[1] * y[0])
-                    .atan2(x[0] * y[0] + x[1] * y[1])
+                    .portable_atan2(x[0] * y[0] + x[1] * y[1])
                     .to_degrees(),
                 Unit::Degree,
             ));

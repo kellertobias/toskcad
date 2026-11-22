@@ -9,6 +9,7 @@ use crate::{
     document::DocumentError,
     parameters::{EvaluatedParameters, Unit},
 };
+use multicad_precision::PortableMath as _;
 
 /// Screw neck station along the connection axis. Only seats at the front entry
 /// are supported. A captured face's zero manual station is a sentinel, not
@@ -138,7 +139,7 @@ pub fn resolve_screw_connection_head_station(
                 .value_in(Unit::Millimeter, Some(parameters))
                 .map_err(|e| invalid(&e))?;
             let theta = included_angle_deg.to_radians() / 2.;
-            let slope = theta.tan();
+            let slope = theta.portable_tan();
             if !mouth.is_finite()
                 || !depth.is_finite()
                 || depth <= 0.
@@ -151,7 +152,7 @@ pub fn resolve_screw_connection_head_station(
                     "Countersunk head and receiving cone must have the same positive supporting slope",
                 ));
             }
-            let lower = (shank + neck_radius_mm * (1. - theta.cos())).max(bore);
+            let lower = (shank + neck_radius_mm * (1. - theta.portable_cos())).max(bore);
             let upper = radius_mm
                 .min(shank + (height_mm - edge_chamfer_mm) * slope)
                 .min(mouth);

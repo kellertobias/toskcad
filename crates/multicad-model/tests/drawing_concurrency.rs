@@ -6,6 +6,7 @@ use multicad_core::{
     references::ReferenceFrame,
 };
 use multicad_model::{Compiler, DrawingProviders};
+use multicad_precision::PortableMath as _;
 use std::{
     process::{Command, Stdio},
     sync::{Arc, Barrier},
@@ -125,7 +126,7 @@ fn simultaneous_first_use() {
                         let VectorCurve::Line { a, b } = vector.curve else {
                             panic!("Planar box produced an unexpected curve")
                         };
-                        assert!((a[0] - b[0]).hypot(a[1] - b[1]) > 1e-7);
+                        assert!((a[0] - b[0]).portable_hypot(a[1] - b[1]) > 1e-7);
                         for p in [a, b] {
                             for axis in 0..2 {
                                 assert!(p[axis].is_finite());

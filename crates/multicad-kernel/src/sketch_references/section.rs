@@ -16,6 +16,7 @@ use crate::{
 use multicad_core::references::{
     AnalyticGeometry, ReferenceFrame, TopologyElement, TopologyKey, TopologyKind, TopologySnapshot,
 };
+use multicad_precision::PortableMath as _;
 
 type V3 = [f64; 3];
 
@@ -173,7 +174,7 @@ fn vertices(edges: &[&TopologyElement]) -> Vec<V3> {
                     _ => [radius_mm; 2],
                 };
                 for angle in [start_rad, start_rad + sweep_rad] {
-                    let (sin, cos) = angle.sin_cos();
+                    let (sin, cos) = angle.portable_sin_cos();
                     result.push(add(
                         frame.origin_mm,
                         add(
@@ -239,7 +240,7 @@ fn inside(
     let tolerance = policy.linear_tolerance_mm;
     let (u, v, normal) = face;
     for angle in [0.3711_f64, 1.2345, 2.0187, 2.9031, 3.7777, 4.6093, 5.4419] {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let Some(direction) = unit(add(scale(u, cos), scale(v, sin))) else {
             continue;
         };
@@ -358,7 +359,7 @@ fn planar(
             let mut merged: Vec<Contact> = vec![];
             for hit in hits {
                 if let Some(last) = merged.last_mut()
-                    && (last.point[0] - hit.point[0]).hypot(last.point[1] - hit.point[1])
+                    && (last.point[0] - hit.point[0]).portable_hypot(last.point[1] - hit.point[1])
                         <= tolerance * 2.
                 {
                     last.support.extend(hit.support);
@@ -571,7 +572,7 @@ fn cylindrical(
         // Oblique plane: P(t) = base + r(cos t x + sin t y) + h(t) axis.
         let center_height = -offset / slope;
         let [hx, hy] = [c.x, c.y].map(|d| -c.radius * dot(d, n) / slope);
-        let reach = hx.hypot(hy);
+        let reach = hx.portable_hypot(hy);
         let [low, high] = [center_height - reach, center_height + reach];
         if high < -tolerance || low > c.height + tolerance {
             return Ok(SketchReferenceCatalog {

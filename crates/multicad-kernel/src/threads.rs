@@ -3,6 +3,7 @@
 pub use crate::ffi::ThreadFactoryStats;
 use crate::{GeometryError, GeometryErrorKind, GeometryPolicy, Solid, ffi};
 use multicad_core::document::EntityId;
+use multicad_precision::PortableMath as _;
 
 /// Diagnostic work counts for the current native owner thread. No native
 /// handles or cache mutation cross the thread boundary through these values.
@@ -76,8 +77,9 @@ pub struct KnuckleHelicalThread {
 impl KnuckleHelicalThread {
     fn checked(self, policy: GeometryPolicy) -> Result<ffi::ThreadData, GeometryError> {
         let angle = 15_f64.to_radians();
-        let basic = self.pitch_mm * (angle.cos() - angle.sin()) / (4. * (1. - angle.sin()));
-        let delta = self.pitch_mm * 0.05 * angle.sin() / (1. - angle.sin());
+        let basic = self.pitch_mm * (angle.portable_cos() - angle.portable_sin())
+            / (4. * (1. - angle.portable_sin()));
+        let delta = self.pitch_mm * 0.05 * angle.portable_sin() / (1. - angle.portable_sin());
         let matches = |actual: f64, expected: f64| {
             actual.is_finite() && (actual - expected).abs() <= expected.abs() * 1e-12
         };
@@ -97,7 +99,7 @@ impl KnuckleHelicalThread {
             pitch_mm: self.pitch_mm,
             length_mm: self.length_mm,
             depth_mm: self.pitch_mm / 2.,
-            crest_width_mm: 2. * self.crest_radius_mm * angle.cos(),
+            crest_width_mm: 2. * self.crest_radius_mm * angle.portable_cos(),
             lower_flank_deg: 15.,
             upper_flank_deg: 15.,
             radial_taper: 0.,
@@ -153,8 +155,8 @@ impl HelicalThread {
                 "Thread needs pitch ≥0.001 mm, at least one pitch of length, and at most 128 total extended turns",
             ));
         }
-        let lower_slope = self.lower_flank_deg.to_radians().tan();
-        let upper_slope = self.upper_flank_deg.to_radians().tan();
+        let lower_slope = self.lower_flank_deg.to_radians().portable_tan();
+        let upper_slope = self.upper_flank_deg.to_radians().portable_tan();
         let overlap = (self.pitch_mm * 0.02).max(policy.linear_tolerance_mm * 64.);
         let root = self.major_radius_mm - self.depth_mm;
         let width = self.crest_width_mm + (self.depth_mm + overlap) * (lower_slope + upper_slope);
@@ -209,16 +211,17 @@ impl RootRoundedHelicalThread {
         }
         let lower = p.lower_flank_deg.to_radians();
         let upper = p.upper_flank_deg.to_radians();
-        let intersection = (p.pitch_mm - p.crest_width_mm) / (lower.tan() + upper.tan());
+        let intersection =
+            (p.pitch_mm - p.crest_width_mm) / (lower.portable_tan() + upper.portable_tan());
         let half = (lower + upper) / 2.;
         let tilt = (upper - lower) / 2.;
-        let center_z = p.crest_width_mm / 2. + intersection * upper.tan()
-            - self.root_radius_mm * tilt.sin() / half.sin();
-        let center_r =
-            p.major_radius_mm - intersection + self.root_radius_mm * tilt.cos() / half.sin();
+        let center_z = p.crest_width_mm / 2. + intersection * upper.portable_tan()
+            - self.root_radius_mm * tilt.portable_sin() / half.portable_sin();
+        let center_r = p.major_radius_mm - intersection
+            + self.root_radius_mm * tilt.portable_cos() / half.portable_sin();
         let depth = p.major_radius_mm - center_r + self.root_radius_mm;
-        let lo = center_z - self.root_radius_mm * upper.cos();
-        let hi = center_z + self.root_radius_mm * lower.cos();
+        let lo = center_z - self.root_radius_mm * upper.portable_cos();
+        let hi = center_z + self.root_radius_mm * lower.portable_cos();
         if (depth - p.depth_mm).abs() > p.depth_mm.abs() * 1e-12
             || lo <= p.crest_width_mm / 2. + policy.minimum_feature_mm
             || hi >= p.pitch_mm - p.crest_width_mm / 2. - policy.minimum_feature_mm
@@ -248,8 +251,8 @@ impl AxialFlatHelicalThread {
                 "Axial flat conical threads require one start and signed 1:16 diameter taper",
             ));
         }
-        let lower = 1. / p.lower_flank_deg.to_radians().tan() - p.radial_taper;
-        let upper = 1. / p.upper_flank_deg.to_radians().tan() + p.radial_taper;
+        let lower = 1. / p.lower_flank_deg.to_radians().portable_tan() - p.radial_taper;
+        let upper = 1. / p.upper_flank_deg.to_radians().portable_tan() + p.radial_taper;
         if lower <= 0. || upper <= 0. {
             return Err(failure(
                 GeometryErrorKind::Input,
@@ -288,14 +291,14 @@ impl AxialFlatHelicalThread {
 impl RoundedHelicalThread {
     fn checked(self, policy: GeometryPolicy) -> Result<ffi::ThreadData, GeometryError> {
         let angle = 27.5_f64.to_radians();
-        let depth = self.pitch_mm / (3. * angle.tan());
+        let depth = self.pitch_mm / (3. * angle.portable_tan());
         let k = self.radial_taper;
         let rounding = if k == 0. {
-            self.pitch_mm * angle.cos() / (12. * (1. - angle.sin()))
+            self.pitch_mm * angle.portable_cos() / (12. * (1. - angle.portable_sin()))
         } else {
-            let m = 1. / angle.tan();
+            let m = 1. / angle.portable_tan();
             let fundamental = self.pitch_mm * (m * m - k * k) / (2. * m);
-            (fundamental - depth) / (2. * (1. / angle.sin() - (1. + k * k).sqrt()))
+            (fundamental - depth) / (2. * (1. / angle.portable_sin() - (1. + k * k).sqrt()))
         };
         let matches = |actual: f64, expected: f64| {
             actual.is_finite() && (actual - expected).abs() <= expected.abs() * 1e-12
@@ -318,7 +321,7 @@ impl RoundedHelicalThread {
             pitch_mm: self.pitch_mm,
             length_mm: self.length_mm,
             depth_mm: self.depth_mm,
-            crest_width_mm: 2. * self.rounding_radius_mm * angle.cos(),
+            crest_width_mm: 2. * self.rounding_radius_mm * angle.portable_cos(),
             lower_flank_deg: self.flank_angle_deg,
             upper_flank_deg: self.flank_angle_deg,
             radial_taper: k,

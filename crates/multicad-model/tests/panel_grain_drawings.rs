@@ -15,6 +15,7 @@ use multicad_core::{
     references::ReferenceFrame,
 };
 use multicad_model::{Compiler, DrawingProviders, GRAIN_RGB};
+use multicad_precision::PortableMath as _;
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -265,7 +266,7 @@ fn page_grain_follows_each_panel_clips_holes_and_reaches_pdf_only_when_enabled()
     };
     let dir = |(a, b): ([f64; 2], [f64; 2])| {
         let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
-        let l = dx.hypot(dy);
+        let l = dx.portable_hypot(dy);
         [dx / l, dy / l]
     };
     // Along length: horizontal, inside 0..600 × 0..400, never inside the hole.
@@ -305,7 +306,8 @@ fn page_grain_follows_each_panel_clips_holes_and_reaches_pdf_only_when_enabled()
     assert!(!rotated.is_empty());
     for &l in &rotated {
         let d = dir(l);
-        let along = d[0] * 30f64.to_radians().cos() + d[1] * 30f64.to_radians().sin();
+        let along =
+            d[0] * 30f64.to_radians().portable_cos() + d[1] * 30f64.to_radians().portable_sin();
         assert!(along.abs() > 1. - 1e-9, "{d:?}");
     }
     // Any: no fixed direction, no grain.

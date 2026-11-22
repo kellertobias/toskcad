@@ -35,10 +35,10 @@ fn close(actual: f64, expected: f64, tolerance: f64) {
 fn area(spec: Spec) -> f64 {
     let alpha = spec.pressure_angle_rad;
     let sharp_tooth = (spec.addendum_mm + spec.dedendum_mm)
-        * (spec.pitch_thickness_mm + (spec.dedendum_mm - spec.addendum_mm) * alpha.tan());
+        * (spec.pitch_thickness_mm + (spec.dedendum_mm - spec.addendum_mm) * alpha.portable_tan());
     // The tangent quadrilateral area minus its circular sector.
     let root_corner = spec.root_fillet_radius_mm.powi(2)
-        * (1. / alpha.cos() - alpha.tan() - (FRAC_PI_2 - alpha) / 2.);
+        * (1. / alpha.portable_cos() - alpha.portable_tan() - (FRAC_PI_2 - alpha) / 2.);
     f64::from(spec.teeth)
         * (spec.pitch_mm * spec.backing_thickness_mm + sharp_tooth + 2. * root_corner)
 }
@@ -61,7 +61,7 @@ fn pitch_x(edge: Edge, alpha: f64) -> f64 {
         panic!("expected straight tooth flank");
     };
     let slope = (b[0] - a[0]) / (b[1] - a[1]);
-    close(slope.abs().atan(), alpha, 1e-12);
+    close(slope.abs().portable_atan(), alpha, 1e-12);
     assert!(a[1].min(b[1]) < 0. && a[1].max(b[1]) > 0.);
     a[0] - a[1] * slope
 }

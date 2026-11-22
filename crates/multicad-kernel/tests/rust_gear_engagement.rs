@@ -6,6 +6,7 @@ use multicad_kernel::{
     GearHub, GearSweep, GeometryErrorKind, GeometryPolicy, InvoluteGear, RigidTransform, Solid,
     StraightRack, rust_kernel::spur_gear::clearance::ResultKind,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI};
 
 const THINNING: f64 = 0.05;
@@ -16,15 +17,15 @@ fn spur(teeth: u32, shift: f64, hub: Option<GearHub>) -> InvoluteGear {
     let module = 2.;
     let pressure = 20_f64.to_radians();
     let pitch = module * f64::from(teeth) / 2.;
-    let thickness = module * (PI / 2. + 2. * shift * pressure.tan()) - THINNING;
+    let thickness = module * (PI / 2. + 2. * shift * pressure.portable_tan()) - THINNING;
     InvoluteGear {
         teeth,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * pressure.cos(),
+        base_radius_mm: pitch * pressure.portable_cos(),
         tip_radius_mm: pitch + module * (1. + shift),
         root_radius_mm: pitch - module * (1.25 - shift),
         root_fillet_radius_mm: 0.4,
-        half_base_angle_rad: thickness / (2. * pitch) + pressure.tan() - pressure,
+        half_base_angle_rad: thickness / (2. * pitch) + pressure.portable_tan() - pressure,
         face_width_mm: 4.,
         bore_radius_mm: 3.,
         hub,
@@ -34,7 +35,7 @@ fn spur(teeth: u32, shift: f64, hub: Option<GearHub>) -> InvoluteGear {
 }
 
 fn rotated(solid: &Solid, phase: f64, translation_mm: [f64; 3]) -> Solid {
-    let (s, c) = phase.sin_cos();
+    let (s, c) = phase.portable_sin_cos();
     solid
         .transformed(RigidTransform {
             rotation: [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]],
@@ -46,14 +47,14 @@ fn rotated(solid: &Solid, phase: f64, translation_mm: [f64; 3]) -> Solid {
 /// Working pressure angle and centre distance of a shifted external pair.
 fn working_center(teeth: [u32; 2], shifts: [f64; 2]) -> f64 {
     let pressure = 20_f64.to_radians();
-    let inv = |a: f64| a.tan() - a;
+    let inv = |a: f64| a.portable_tan() - a;
     let target = inv(pressure)
-        + 2. * pressure.tan() * (shifts[0] + shifts[1]) / f64::from(teeth[0] + teeth[1]);
+        + 2. * pressure.portable_tan() * (shifts[0] + shifts[1]) / f64::from(teeth[0] + teeth[1]);
     let mut working = pressure;
     for _ in 0..60 {
-        working -= (inv(working) - target) / working.tan().powi(2);
+        working -= (inv(working) - target) / working.portable_tan().powi(2);
     }
-    f64::from(teeth[0] + teeth[1]) * pressure.cos() / working.cos()
+    f64::from(teeth[0] + teeth[1]) * pressure.portable_cos() / working.portable_cos()
 }
 
 #[test]
@@ -314,22 +315,23 @@ fn finite_rack_and_spur_pinion_clear_in_either_order_with_actual_flank_points() 
 
 fn twisted(teeth: u32, sweep: GearSweep) -> InvoluteGear {
     let beta = 15_f64.to_radians();
-    let at = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let transverse_module = 2. / beta.cos();
+    let at = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let transverse_module = 2. / beta.portable_cos();
     let pitch = transverse_module * f64::from(teeth) / 2.;
     InvoluteGear {
         teeth,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * at.cos(),
+        base_radius_mm: pitch * at.portable_cos(),
         tip_radius_mm: pitch + 2.,
         root_radius_mm: pitch - 2.5,
         root_fillet_radius_mm: 0.4,
-        half_base_angle_rad: (PI * transverse_module / 2. - THINNING) / (2. * pitch) + at.tan()
+        half_base_angle_rad: (PI * transverse_module / 2. - THINNING) / (2. * pitch)
+            + at.portable_tan()
             - at,
         face_width_mm: 4.,
         bore_radius_mm: 4.,
         hub: None,
-        twist_rad_per_mm: if teeth == 24 { 1. } else { -1. } * beta.tan() / pitch,
+        twist_rad_per_mm: if teeth == 24 { 1. } else { -1. } * beta.portable_tan() / pitch,
         sweep,
     }
 }

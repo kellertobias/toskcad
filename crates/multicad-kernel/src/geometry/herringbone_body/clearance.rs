@@ -87,15 +87,15 @@ pub(in crate::geometry) fn aligned_chart(
     let mut placements = [Placement::default(); 2];
     for (i, (body, frame)) in [(a, af), (b, bf)].into_iter().enumerate() {
         let [u, v] = [project(frame.u), project(frame.v)];
-        let magnitude = u[0].hypot(u[1]);
+        let magnitude = u[0].portable_hypot(u[1]);
         let un = u.map(|c| c / magnitude);
         let vn = [-un[1], un[0]];
         let world_scale = frame.origin.into_iter().map(f64::abs).fold(
             separation.max(body.geometry.tip_radius_mm()).max(1.),
             f64::max,
         );
-        let rotation_error =
-            (u[0] - un[0]).hypot(u[1] - un[1]) + (v[0] - vn[0]).hypot(v[1] - vn[1]);
+        let rotation_error = (u[0] - un[0]).portable_hypot(u[1] - un[1])
+            + (v[0] - vn[0]).portable_hypot(v[1] - vn[1]);
         let height = body.geometry.profile().height_mm();
         let radius = body.geometry.tip_radius_mm();
         // Bound the local height change needed to meet the common
@@ -106,7 +106,7 @@ pub(in crate::geometry) fn aligned_chart(
             + height * (normal[axis] - sense).abs())
             / normal[axis].abs();
         let phase_error = axial_error * body.geometry.twist_rad_per_mm().abs();
-        let transverse_drift = height * dot(normal, x).hypot(dot(normal, y));
+        let transverse_drift = height * dot(normal, x).portable_hypot(dot(normal, y));
         let uncertainty_mm = radius * (rotation_error + phase_error)
             + transverse_drift
             + 1024. * f64::EPSILON * world_scale;

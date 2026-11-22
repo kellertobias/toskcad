@@ -9,11 +9,13 @@ fn spec(teeth: u32, pressure_deg: f64) -> Spec {
     Spec {
         teeth,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * pressure.cos(),
+        base_radius_mm: pitch * pressure.portable_cos(),
         tip_radius_mm: pitch + 2.,
         root_radius_mm: pitch - 2.5,
         root_fillet_radius_mm: 0.4,
-        half_base_angle_rad: PI / (2. * pitch) + pressure.tan() - pressure - 0.05 / (2. * pitch),
+        half_base_angle_rad: PI / (2. * pitch) + pressure.portable_tan()
+            - pressure
+            - 0.05 / (2. * pitch),
         face_width_mm: 8.,
         bore_radius_mm: 2.,
     }
@@ -34,7 +36,7 @@ fn point(edge: Edge, t: f64) -> Point {
 }
 
 fn norm([x, y]: Point) -> f64 {
-    x.hypot(y)
+    x.portable_hypot(y)
 }
 
 fn arc_tangent(edge: Edge, at_start: bool) -> Point {
@@ -48,7 +50,10 @@ fn arc_tangent(edge: Edge, at_start: bool) -> Point {
         panic!("Expected circle");
     };
     let [x, y] = sub(if at_start { a } else { b }, center);
-    scale([-y, x], if clockwise { -1. } else { 1. } / x.hypot(y))
+    scale(
+        [-y, x],
+        if clockwise { -1. } else { 1. } / x.portable_hypot(y),
+    )
 }
 
 #[test]
@@ -109,13 +114,15 @@ fn exact_profiles_cover_both_native_fillet_constructions() {
             close(norm(fillet.start()), spec.root_radius_mm, 1e-12);
             close(norm(flank.point(1.)), spec.tip_radius_mm, 1e-12);
             let [a, b] = flank.interval();
-            let t = (spec.base_radius_mm / spec.pitch_radius_mm).acos().tan();
+            let t = (spec.base_radius_mm / spec.pitch_radius_mm)
+                .portable_acos()
+                .portable_tan();
             let phase = TAU * tooth as f64 / f64::from(spec.teeth);
             let pitch_point = rotate(flank.point((t - a) / (b - a)), -phase);
             close(norm(pitch_point), spec.pitch_radius_mm, 1e-12);
             close(
-                pitch_point[1].atan2(pitch_point[0]),
-                -spec.half_base_angle_rad + t - t.atan(),
+                pitch_point[1].portable_atan2(pitch_point[0]),
+                -spec.half_base_angle_rad + t - t.portable_atan(),
                 1e-12,
             );
             close(
@@ -436,7 +443,7 @@ fn support_and_arc_length_centroid_use_the_analytic_flank() {
         let [u, v] = curve.basis();
         close(
             curve.base_radius_mm(),
-            norm(curve.point(0.)) / a.hypot(1.),
+            norm(curve.point(0.)) / a.portable_hypot(1.),
             1e-12,
         );
         close(dot(u, v), 0., 1e-12);
@@ -505,7 +512,12 @@ fn detached_samples_respect_chord_and_angle_and_refuse_excess_work() {
             let chord_mid = scale(add(pair[0], pair[1]), 0.5);
             assert!(norm(sub(d, chord_mid)) <= deflection + 1e-12);
             let [p, q] = [edge.tangent(a), edge.tangent(b)];
-            assert!(cross(p, q).atan2(crate::revolution::dot(p, q)).abs() <= angular + 1e-12);
+            assert!(
+                cross(p, q)
+                    .portable_atan2(crate::revolution::dot(p, q))
+                    .abs()
+                    <= angular + 1e-12
+            );
         }
     }
     let curve = Edge::Involute(Involute::new(20., [0., 0.7], 0.).unwrap());
@@ -675,14 +687,14 @@ fn hub_extends_the_authored_band_with_one_continuous_bore() {
             });
             if face == bore_face && bore_radius_mm > 0. {
                 for [x, y, z] in points {
-                    close(x.hypot(y), bore_radius_mm, 1e-12);
+                    close(x.portable_hypot(y), bore_radius_mm, 1e-12);
                     assert!(z == low || z == high);
                 }
             }
             for ext in extensions.iter().flatten() {
                 if face == ext.wall_face {
                     for [x, y, z] in points {
-                        close(x.hypot(y), radius, 1e-12);
+                        close(x.portable_hypot(y), radius, 1e-12);
                         assert!(z == ext.gear_z_mm || z == ext.end_z_mm);
                     }
                 }

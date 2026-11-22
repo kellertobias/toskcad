@@ -189,7 +189,7 @@ impl SketchEditor {
             ]
             .into_iter()
             .filter_map(|p| view.camera.on_plane(p, rect, frame))
-            .map(|p| (p[0] - point[0]).hypot(p[1] - point[1]))
+            .map(|p| (p[0] - point[0]).portable_hypot(p[1] - point[1]))
             .filter(|r| r.is_finite() && *r > 0.)
             .fold(0., f64::max);
             if radius <= 0. {

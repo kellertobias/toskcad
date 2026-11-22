@@ -31,8 +31,8 @@ impl CircleEdge {
     pub(super) fn bounds(self) -> [Point; 2] {
         std::array::from_fn(|side| {
             std::array::from_fn(|i| {
-                let extent =
-                    self.radius_mm * self.normal[(i + 1) % 3].hypot(self.normal[(i + 2) % 3]);
+                let extent = self.radius_mm
+                    * self.normal[(i + 1) % 3].portable_hypot(self.normal[(i + 2) % 3]);
                 if side == 0 {
                     self.center_mm[i] - extent
                 } else {
@@ -230,7 +230,7 @@ impl Shell<'_, '_> {
             return Err(ReadError::Invalid);
         }
         let radius = *radius;
-        let slope = angle.tan();
+        let slope = angle.portable_tan();
         let surface = self.placement(reference(axis)?)?;
         let [a, seam_out, b, seam_back] = &self.periodic_round_loop(bounds, face)?;
         let [Curve::Circle(circle_a), Curve::Circle(circle_b)] =
@@ -411,7 +411,7 @@ impl Trim {
 }
 
 fn distance(a: Point2, b: Point2) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 
 fn polygon_clear_of_disk(ring: &[Point2], center: Point2, radius: f64) -> bool {

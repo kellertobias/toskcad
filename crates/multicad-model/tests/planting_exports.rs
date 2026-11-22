@@ -1,3 +1,4 @@
+use multicad_precision::PortableMath as _;
 #[allow(dead_code)]
 #[path = "../../multicad-app/examples/planting_review.rs"]
 mod garden;
@@ -57,12 +58,12 @@ fn dxf_paths(text: &str) -> Vec<Vec<[f64; 2]>> {
         let (a, b) = ([line.p1.x, line.p1.y], [line.p2.x, line.p2.y]);
         if current
             .last()
-            .is_none_or(|p| (p[0] - a[0]).hypot(p[1] - a[1]) > 1e-5)
+            .is_none_or(|p| (p[0] - a[0]).portable_hypot(p[1] - a[1]) > 1e-5)
         {
             current = vec![a];
         }
         current.push(b);
-        if (current[0][0] - b[0]).hypot(current[0][1] - b[1]) < 1e-5 {
+        if (current[0][0] - b[0]).portable_hypot(current[0][1] - b[1]) < 1e-5 {
             if current.len() > 16 {
                 paths.push(current.clone());
             }

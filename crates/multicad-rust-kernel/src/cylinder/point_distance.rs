@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PointDistance {
@@ -18,7 +19,7 @@ impl AxialCylinder {
         let radius = self.circle().radius().as_f64();
         let height = self.height().as_f64();
         let [x, y, z] = point;
-        let radial = x.hypot(y);
+        let radial = x.portable_hypot(y);
         // Select multiplication order per component: an extreme quotient can
         // lose precision, or discard a representable final small coordinate.
         let project = |coordinate: f64| {
@@ -32,7 +33,7 @@ impl AxialCylinder {
         };
         let closest = [project(x), project(y), z.clamp(0., height)];
         let delta: [f64; 3] = std::array::from_fn(|i| point[i] - closest[i]);
-        let distance = delta[0].hypot(delta[1]).hypot(delta[2]);
+        let distance = delta[0].portable_hypot(delta[1]).portable_hypot(delta[2]);
         if !radial.is_finite() || !distance.is_finite() {
             return Err(Error::InvalidLength);
         }

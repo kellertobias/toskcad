@@ -3,6 +3,7 @@ use multicad_core::{
     commands::{Actor, Channel, Session},
     model::{self, PrimitiveParameters, PrimitiveRequest, length},
 };
+use multicad_precision::PortableMath as _;
 use std::time::{Duration, Instant};
 
 fn box_session() -> (Session, PrimitiveRequest) {
@@ -206,7 +207,7 @@ fn rust_twisted_loft_preview_publishes_a_pickable_wall_and_drawing_section() {
     use multicad_ui::modeling::ModelToolController;
 
     let bottom = [[-2., -1.], [2., -1.], [2., 1.], [-2., 1.]];
-    let (sin, cos) = std::f64::consts::FRAC_PI_6.sin_cos();
+    let (sin, cos) = std::f64::consts::FRAC_PI_6.portable_sin_cos();
     let top = bottom.map(|[x, y]| [cos * x - sin * y + 1., sin * x + cos * y + 0.5]);
     let mut document = Document::new("Twisted loft preview").unwrap();
     let mut profiles = Vec::new();
@@ -3016,7 +3017,7 @@ fn rust_model_worker_picks_the_moving_associative_cap_around_its_hole() {
     };
 
     let (mut session, feature, mut parameters) = rust_polygon::drafted_fixture();
-    let scale = 1_f64.hypot(0.5);
+    let scale = 1_f64.portable_hypot(0.5);
     let mut plane = Entity::new(
         "Sloped end",
         EntityData::Plane {

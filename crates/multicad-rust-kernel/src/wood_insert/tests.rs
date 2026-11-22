@@ -1,5 +1,6 @@
 use super::*;
 use crate::{authored_flat_thread::SourceOptions, helical_thread::Spec};
+use multicad_precision::PortableMath as _;
 use std::cell::Cell;
 fn source(outer: bool, left: bool, starts: u32, nonbinary: bool) -> AuthoredThread {
     let pitch_mid = (2.675 + 2.775) / 2.;
@@ -195,7 +196,7 @@ fn real_phase_samples_include_flanks_and_no_proxy_radius() {
         for band in 0..5 {
             for u in [0.2, 0.7] {
                 let p = source.point_in_band(band, 0, u, 2.).unwrap();
-                let r = p.point_mm[0].hypot(p.point_mm[1]);
+                let r = p.point_mm[0].portable_hypot(p.point_mm[1]);
                 let factor = if std::ptr::eq(source, body.outer()) {
                     0.999
                 } else {

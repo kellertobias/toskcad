@@ -250,7 +250,7 @@ impl Wheel {
     pub(crate) fn boundary_radius(&self, section: &Section, theta: f64) -> f64 {
         let angle = |piece: Piece, u: f64| {
             let [x, y] = self.piece_point(section, piece, u);
-            y.atan2(x)
+            y.portable_atan2(x)
         };
         let piece = PIECES
             .into_iter()
@@ -266,7 +266,7 @@ impl Wheel {
             }
         }
         let [x, y] = self.piece_point(section, piece, (lo + hi) / 2.);
-        x.hypot(y)
+        x.portable_hypot(y)
     }
 
     /// Angle of the minus or plus boundary at a radius between the root and
@@ -289,14 +289,14 @@ impl Wheel {
         for _ in 0..64 {
             let mid = (lo + hi) / 2.;
             let [x, y] = point(mid);
-            if (x.hypot(y) < radius) == plus {
+            if (x.portable_hypot(y) < radius) == plus {
                 lo = mid;
             } else {
                 hi = mid;
             }
         }
         let [x, y] = point((lo + hi) / 2.);
-        y.atan2(x)
+        y.portable_atan2(x)
     }
 
     /// Angles of a circle of `radius` inside the open space of a section.
@@ -343,7 +343,7 @@ impl Wheel {
     ) -> Result<Runs, ViewError> {
         let torus = [0., 1.].map(|u| {
             let [x, y] = self.piece_point(near, Piece::Torus, u);
-            y.atan2(x)
+            y.portable_atan2(x)
         });
         let [low, high] = near.exit;
         let mut pending: Vec<_> = cells(0., 1., CURVE_CELLS).collect();
@@ -360,7 +360,7 @@ impl Wheel {
             } else {
                 None
             };
-            let size = (r.hi - r.lo).hypot(r.hi * (th.hi - th.lo));
+            let size = (r.hi - r.lo).portable_hypot(r.hi * (th.hi - th.lo));
             let mid = (cell.lo + cell.hi) / 2.;
             match state {
                 Some(visible) => runs.push((cell.lo, cell.hi, visible)),
@@ -429,7 +429,7 @@ impl Wheel {
         };
         let joint = |section: &Section, piece: Piece, u: f64| {
             let [x, y] = self.piece_point(section, piece, u);
-            y.atan2(x)
+            y.portable_atan2(x)
         };
         let torus = |section: &Section| [0., 1.].map(|u| joint(section, Piece::Torus, u));
         // Near face: every edge lies on the nearest plane.
@@ -440,7 +440,7 @@ impl Wheel {
             let floor = torus(&near);
             arcs(&mut sector, vn, self.root_radius(vn), floor, Some(floor));
             let inner = self.bore_radius_mm().map_or(0., |b| b / m);
-            let (s, c) = (-span).sin_cos();
+            let (s, c) = (-span).portable_sin_cos();
             sector.push(ViewCurve::Polyline {
                 points_mm: [inner, blank]
                     .map(|r| [r * c * m, r * s * m, vn * m])
@@ -511,7 +511,7 @@ impl Wheel {
                 },
                 |u| {
                     let [x, y] = self.piece_point(&far, piece, u);
-                    [x.hypot(y), y.atan2(x)]
+                    [x.portable_hypot(y), y.portable_atan2(x)]
                 },
                 resolution,
                 &mut budget,
@@ -546,7 +546,7 @@ impl Wheel {
                 },
                 |t| {
                     let [x, y] = at(t);
-                    [x.hypot(y), y.atan2(x)]
+                    [x.portable_hypot(y), y.portable_atan2(x)]
                 },
                 resolution,
                 &mut budget,
@@ -687,9 +687,9 @@ mod tests {
                     for pair in points.windows(2) {
                         let p: [f64; 3] = std::array::from_fn(|i| (pair[0][i] + pair[1][i]) / 2.);
                         let pitch = 2. * wheel.span();
-                        let theta = p[1].atan2(p[0]);
+                        let theta = p[1].portable_atan2(p[0]);
                         let local = theta - (theta / pitch).round() * pitch;
-                        let r = p[0].hypot(p[1]) / m;
+                        let r = p[0].portable_hypot(p[1]) / m;
                         if (p[2] - near_z).abs() < 1e-9 {
                             assert!(!hidden);
                             continue;

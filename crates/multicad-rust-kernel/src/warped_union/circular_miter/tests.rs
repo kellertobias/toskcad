@@ -183,8 +183,8 @@ fn shares_the_exact_oblique_rim_and_keeps_two_end_disks() {
         close(ellipse.semiaxes_mm()[1], 2.);
         assert_eq!(ellipse.center_mm(), RIGHT_ANGLE[1]);
         let point = ellipse.point_at(arc.start_rad() + FRAC_PI_2 / 3.);
-        close(point[0].hypot(point[1]), 2.);
-        close((point[2] - 20.).hypot(point[1]), 2.);
+        close(point[0].portable_hypot(point[1]), 2.);
+        close((point[2] - 20.).portable_hypot(point[1]), 2.);
         close(dot(sub(point, RIGHT_ANGLE[1]), ellipse.normal()), 0.);
         let uses: Vec<_> = shell
             .faces()

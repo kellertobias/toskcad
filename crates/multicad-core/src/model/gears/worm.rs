@@ -171,8 +171,8 @@ impl GearParameters {
             axial_module_mm: m,
             diameter_quotient: q,
             normal_pressure_angle_rad: alpha,
-            axial_pressure_angle_rad: (alpha.tan() * 1.01_f64.sqrt()).atan(),
-            lead_angle_rad: 0.1_f64.atan(),
+            axial_pressure_angle_rad: (alpha.portable_tan() * 1.01_f64.sqrt()).portable_atan(),
+            lead_angle_rad: 0.1_f64.portable_atan(),
             pitch_mm: PI * m,
             lead_mm: PI * m,
             pitch_radius_mm: pitch_radius,
@@ -294,7 +294,7 @@ impl GearPairParameters {
         phases[gi] = drive / f64::from(teeth);
         let base = self.frame.resolve(evaluated)?;
         let mating = std::array::from_fn(|i| {
-            let (sin, cos) = phases[i].rem_euclid(2. * PI).sin_cos();
+            let (sin, cos) = phases[i].rem_euclid(2. * PI).portable_sin_cos();
             let wheel = i == gi;
             crate::references::ReferenceFrame {
                 origin_mm: std::array::from_fn(|j| {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::normal_sweep::Sweep;
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 
 struct Rim {
@@ -114,7 +115,7 @@ impl Builder {
                 let a = edge.start();
                 let b = section.edges[group.end - 1].end();
                 let [x, y] = std::array::from_fn(|i| b[i] - a[i]);
-                let length = x.hypot(y);
+                let length = x.portable_hypot(y);
                 (
                     Support::Plane {
                         normal: [y / length, -x / length, 0.],

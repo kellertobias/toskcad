@@ -73,7 +73,12 @@ fn all_stroke_styles_clip_around_a_hole_and_retain_their_distinct_marks() {
             .map(delta)
             .any(|[x, y]| x.abs() < 1e-7 && y.abs() > 1e-7)
     };
-    let has_long = |edges: &[Segment]| edges.iter().map(delta).any(|[x, y]| x.hypot(y) > 2.);
+    let has_long = |edges: &[Segment]| {
+        edges
+            .iter()
+            .map(delta)
+            .any(|[x, y]| x.portable_hypot(y) > 2.)
+    };
     assert!(has_vertical(&definitions[1]));
     assert!(has_vertical(&definitions[4]));
     assert!(has_vertical(&definitions[5]));
@@ -245,7 +250,7 @@ fn candidate_and_boundary_work_are_independently_bounded() {
 fn polygon(center: Point, radius: f64, count: usize, hole: bool) -> Vec<Segment> {
     let point = |i: usize| {
         let angle = std::f64::consts::TAU * (i % count) as f64 / count as f64;
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         [center[0] + radius * cos, center[1] + radius * sin]
     };
     (0..count)
@@ -289,7 +294,7 @@ fn indexed_clipping_matches_the_full_boundary_scan() {
             let clip = |indexed: bool| {
                 let (min, max) = bounds(boundary.iter().flatten().copied());
                 let center = std::array::from_fn(|i| min[i] + (max[i] - min[i]) * 0.5);
-                let (sin, cos) = angle_rad.sin_cos();
+                let (sin, cos) = angle_rad.portable_sin_cos();
                 let mut output = Vec::new();
                 let mut budget = Budget::default();
                 for axes in [[[cos, sin], [-sin, cos]], [[-sin, cos], [-cos, -sin]]] {

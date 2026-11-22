@@ -1,5 +1,6 @@
 use super::*;
 use multicad_kernel::RigidTransform;
+use multicad_precision::PortableMath as _;
 fn fixture(
     case: usize,
 ) -> (
@@ -24,7 +25,7 @@ fn fixture(
         // Author the actual section rotation too, so BOTH member solids have
         // the intended common physical pose rather than just moved endpoints.
         let mut member = members[1].member.clone();
-        member.rotation = Some(model::angle(0.6_f64.atan2(0.8).to_degrees()));
+        member.rotation = Some(model::angle(0.6_f64.portable_atan2(0.8).to_degrees()));
         session
             .commit(
                 model::prepare_member_edit(

@@ -3,6 +3,7 @@ use multicad_kernel::{
     CircularPocketTool, CurvedEdge2d, CurvedProfile, GeometryErrorKind, GeometryPolicy, PlaneFrame,
     RigidTransform, Solid, rust_kernel::Rational,
 };
+use multicad_precision::PortableMath as _;
 fn rectangle(frame: PlaneFrame, x: [f64; 2], y: [f64; 2]) -> Solid {
     let feature = EntityId::new();
     let corners = [[x[0], y[0]], [x[1], y[0]], [x[1], y[1]], [x[0], y[1]]];
@@ -111,7 +112,7 @@ fn curved_orthogonal_stock_keeps_its_existing_occupied_cell_clearance_provider()
 fn common_chart_empty_certificate_never_hides_a_retained_positive_overlap() {
     let policy = GeometryPolicy::default();
     for angle in [0., std::f64::consts::PI / 6.] {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         for translation in [
             [0.; 3],
             [10_000., 20_000., 7.],

@@ -6,6 +6,7 @@ use multicad_core::{
     parameters::BoundExpression,
     project_file::{self, ProjectFile},
 };
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -41,17 +42,17 @@ fn normal_and_transverse_conventions_resolve_distinct_reference_geometry() {
     .resolve(s.parameters())
     .unwrap();
     let beta = 15_f64.to_radians();
-    close(normal.pitch_radius_mm * 2., 60. / beta.cos());
+    close(normal.pitch_radius_mm * 2., 60. / beta.portable_cos());
     close(transverse.pitch_radius_mm * 2., 60.);
     close(normal.normal_module_mm, 2.);
-    close(transverse.normal_module_mm, 2. * beta.cos());
+    close(transverse.normal_module_mm, 2. * beta.portable_cos());
     close(
         normal.transverse_pressure_angle_rad,
-        (20_f64.to_radians().tan() / beta.cos()).atan(),
+        (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan(),
     );
     close(
         transverse.normal_pressure_angle_rad,
-        (20_f64.to_radians().tan() * beta.cos()).atan(),
+        (20_f64.to_radians().portable_tan() * beta.portable_cos()).portable_atan(),
     );
     for r in [&normal, &transverse] {
         close(r.tip_radius_mm - r.pitch_radius_mm, 2.);

@@ -4,6 +4,7 @@ use crate::{
     display::{DisplayMesh, MeshError, Tessellation},
     profiled_screw::{Face, Screw},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -49,7 +50,7 @@ impl Envelope {
             return false;
         }
         let [x, y, z] = point;
-        let r = x.hypot(y);
+        let r = x.portable_hypot(y);
         let [a, b] = self.shaft_interval_mm();
         let profile = self.source.profile();
         let local = z + self.source.spec().shank_length_mm;
@@ -73,7 +74,7 @@ impl Envelope {
             return f64::NAN;
         }
         let [a, b] = self.shaft_interval_mm();
-        let cylinder = self.shaft_radius_mm() * direction[0].hypot(direction[1])
+        let cylinder = self.shaft_radius_mm() * direction[0].portable_hypot(direction[1])
             + direction[2] * if direction[2] < 0. { a } else { b };
         cylinder.max(
             self.source.profile().support(direction)
@@ -142,7 +143,7 @@ impl PhillipsEnvelope {
             return f64::NAN;
         }
         let [a, b] = self.shaft_interval_mm();
-        let cylinder = self.shaft_radius_mm() * direction[0].hypot(direction[1])
+        let cylinder = self.shaft_radius_mm() * direction[0].portable_hypot(direction[1])
             + direction[2] * if direction[2] < 0. { a } else { b };
         cylinder.max(
             self.source.profile().support(direction)

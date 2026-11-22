@@ -5,20 +5,23 @@ use crate::{display::Tessellation, manufacturing};
 pub(crate) fn spec(module: f64, teeth: u32, mate: u32, width: f64, bore: f64, fillet: f64) -> Spec {
     let (z, mate) = (f64::from(teeth), f64::from(mate));
     let alpha = 20_f64.to_radians();
-    let delta = 1_f64.atan2(mate / z);
-    let distance = module * z / (2. * delta.sin());
-    let beta = (delta.sin() * alpha.cos()).asin();
+    let delta = 1_f64.portable_atan2(mate / z);
+    let distance = module * z / (2. * delta.portable_sin());
+    let beta = (delta.portable_sin() * alpha.portable_cos()).portable_asin();
     let inv = |g: f64| {
-        let sigma = (g.cos() / beta.cos()).acos();
-        sigma / beta.sin() - sigma.sin().atan2(beta.sin() * sigma.cos())
+        let sigma = (g.portable_cos() / beta.portable_cos()).portable_acos();
+        sigma / beta.portable_sin()
+            - sigma
+                .portable_sin()
+                .portable_atan2(beta.portable_sin() * sigma.portable_cos())
     };
     let thickness = PI * module / 2. - 0.05;
     Spec {
         teeth,
         pitch_cone_angle_rad: delta,
         base_cone_angle_rad: beta,
-        tip_cone_angle_rad: delta + (module / distance).atan(),
-        root_cone_angle_rad: delta - (1.25 * module / distance).atan(),
+        tip_cone_angle_rad: delta + (module / distance).portable_atan(),
+        root_cone_angle_rad: delta - (1.25 * module / distance).portable_atan(),
         outer_cone_distance_mm: distance,
         face_width_mm: width,
         bore_radius_mm: bore,
@@ -108,11 +111,12 @@ fn analytic_volume_matches_an_independent_cone_integral() {
             gear.half_width(gamma)
         };
         let [heel, toe] = [End::Heel, End::Toe].map(|e| gear.end_distance_along(e, gamma));
-        total += 2. * width * gamma.sin() * (heel.powi(3) - toe.powi(3)) / 3. * gear.tip_gamma()
+        total += 2. * width * gamma.portable_sin() * (heel.powi(3) - toe.powi(3)) / 3.
+            * gear.tip_gamma()
             / n as f64;
     }
     total *= f64::from(spec.teeth);
-    total -= PI * 4. * 3. / spec.pitch_cone_angle_rad.cos();
+    total -= PI * 4. * 3. / spec.pitch_cone_angle_rad.portable_cos();
     assert!(
         (total - gear.volume_mm3()).abs() / total < 1e-4,
         "{total} {}",
@@ -377,8 +381,8 @@ fn sliver_meridians_are_absorbed_by_an_exactly_tangent_fillet() {
     let beta = base.base_cone_angle_rad;
     // Meridian length on the unit sphere for a fillet radius in mm.
     let length = |fillet: f64| {
-        let rho = (fillet / distance).asin();
-        beta - ((root + rho).cos() / rho.cos()).acos()
+        let rho = (fillet / distance).portable_asin();
+        beta - ((root + rho).portable_cos() / rho.portable_cos()).portable_acos()
     };
     let (mut lo, mut hi) = (base.root_fillet_radius_mm, distance * 0.5);
     let target = 0.5 * minimum / distance;
@@ -421,9 +425,9 @@ fn sliver_meridians_are_absorbed_by_an_exactly_tangent_fillet() {
         };
         let along = |s: &Sample| {
             let polar = [
-                s.gamma.cos() * s.phi.cos(),
-                s.gamma.cos() * s.phi.sin(),
-                -s.gamma.sin(),
+                s.gamma.portable_cos() * s.phi.portable_cos(),
+                s.gamma.portable_cos() * s.phi.portable_sin(),
+                -s.gamma.portable_sin(),
             ];
             dot(tangent(s.derivative, s.direction), polar).abs()
         };
@@ -431,8 +435,10 @@ fn sliver_meridians_are_absorbed_by_an_exactly_tangent_fillet() {
     }
     // The absorbed fillet stays within the derived radius bound and the
     // solid remains watertight with its exact volume.
-    let effective = gear.rounding.sin() * distance;
-    assert!(effective > lo && effective - lo <= minimum * beta.sin() / root.sin());
+    let effective = gear.rounding.portable_sin() * distance;
+    assert!(
+        effective > lo && effective - lo <= minimum * beta.portable_sin() / root.portable_sin()
+    );
     let mesh = gear.mesh(options(0.002)).unwrap();
     let proof = manufacturing::certify(&mesh).unwrap();
     assert!((proof.signed_volume_mm3 - gear.volume_mm3()).abs() / gear.volume_mm3() < 2e-4);

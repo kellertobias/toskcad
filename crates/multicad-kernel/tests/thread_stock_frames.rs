@@ -9,6 +9,7 @@ use multicad_kernel::{
     RigidTransform, Solid,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
+use multicad_precision::PortableMath as _;
 fn n(v: i64) -> Rational {
     Rational::new(v, 1).unwrap()
 }
@@ -163,7 +164,7 @@ fn receiving_threads_keep_saved_cap_charts_for_both_directions_and_clocking() {
                     policy,
                 )
                 .unwrap();
-                let (s, c) = angle.sin_cos();
+                let (s, c) = angle.portable_sin_cos();
                 let sign = if reversed { -1. } else { 1. };
                 let entry = PlaneFrame {
                     origin: placed(frame, [0., 0., if reversed { 3.7 } else { 0. }]),
@@ -308,7 +309,7 @@ fn far_blind_stock_requires_finite_full_extent_reconstruction() {
     let policy = GeometryPolicy::default();
     let mut accepted = 0;
     for angle in [0.13_f64, 0.37, 0.71, 1.03, 1.27] {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         let frame = PlaneFrame {
             u: [c, s, 0.],
             v: [-s, c, 0.],
@@ -324,7 +325,7 @@ fn far_blind_stock_requires_finite_full_extent_reconstruction() {
             )
             .unwrap();
             let before = stock.topology_snapshot(stock_id, 0).unwrap();
-            let (s, c) = clock.sin_cos();
+            let (s, c) = clock.portable_sin_cos();
             let entry = PlaneFrame {
                 origin: placed(frame, [9_000_000., 10., 20.]),
                 u: std::array::from_fn(|i| c * frame.u[i] + s * frame.v[i]),
@@ -452,7 +453,7 @@ fn receiving_descriptor_center_and_bottom_are_world_translation_not_local_extent
     .unwrap();
     let stock = Solid::from_axial_cylinder(cylinder, frame, policy).unwrap();
     let before = stock.topology_snapshot(id, 0).unwrap();
-    let (s, c) = 0.37_f64.sin_cos();
+    let (s, c) = 0.37_f64.portable_sin_cos();
     let entry = PlaneFrame {
         origin: frame.origin,
         u: std::array::from_fn(|i| c * frame.u[i] + s * frame.v[i]),

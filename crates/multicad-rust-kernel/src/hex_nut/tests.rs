@@ -45,7 +45,7 @@ fn hex_flats_and_fractional_through_thread_enclose_the_expected_material() {
     let expected = (hex_area - PI * mean_squared_radius) * spec.length_mm;
     assert!((nut.volume_mm3() - expected).abs() < 1e-10);
     let crest_at_exit = TAU * spec.length_mm.rem_euclid(spec.pitch_mm) / spec.pitch_mm;
-    let (exit_sin, exit_cos) = crest_at_exit.sin_cos();
+    let (exit_sin, exit_cos) = crest_at_exit.portable_sin_cos();
 
     for point in [
         [4., 0., 0.],
@@ -76,7 +76,7 @@ fn hex_flats_and_fractional_through_thread_enclose_the_expected_material() {
 fn opposite_hands_reverse_the_bore_phase_without_changing_the_prism_support() {
     let right = Nut::new(thread(2, false), 13.).unwrap();
     let left = Nut::new(thread(2, true), 13.).unwrap();
-    let (sin, cos) = FRAC_PI_4.sin_cos();
+    let (sin, cos) = FRAC_PI_4.portable_sin_cos();
     let probe = [3.8 * cos, 3.8 * sin, 1.25 / 4.];
     assert!(!right.contains(probe, 0.));
     assert!(left.contains(probe, 0.));

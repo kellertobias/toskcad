@@ -1,5 +1,6 @@
 use super::super::super::{Binding, bindings, edge, uv};
 use super::*;
+use multicad_precision::PortableMath as _;
 const TOL: f64 = 1e-7;
 fn text(left: bool, posed: bool) -> String {
     let tool = crate::helical_thread::Thread::new(crate::helical_thread::Spec {
@@ -246,7 +247,7 @@ fn hull_tangent_proof_accepts_agreeing_cells_and_never_reversed_ones() {
     let arc = |reverse: bool, b: &mut Budget<'_>| -> VecP {
         let point = |t: f64| {
             let a = 0.1 * if reverse { 1. - t } else { t };
-            [2. * a.cos(), 2. * a.sin(), 0.]
+            [2. * a.portable_cos(), 2. * a.portable_sin(), 0.]
         };
         // Interpolating cubic through four arc points, in Bernstein form.
         let p: Vec<[f64; 3]> = [0., 1. / 3., 2. / 3., 1.].map(point).to_vec();

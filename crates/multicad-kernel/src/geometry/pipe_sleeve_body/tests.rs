@@ -36,8 +36,8 @@ fn receiving_frame() -> PlaneFrame {
     let phi = std::f64::consts::TAU * origin / (25.4 / 27.);
     PlaneFrame {
         origin: [0., 0., origin],
-        u: [phi.cos(), phi.sin(), 0.],
-        v: [phi.sin(), -phi.cos(), 0.],
+        u: [phi.portable_cos(), phi.portable_sin(), 0.],
+        v: [phi.portable_sin(), -phi.portable_cos(), 0.],
     }
 }
 fn sleeve(allowance: f64, radius: f64) -> Result<Solid, GeometryError> {
@@ -222,8 +222,8 @@ fn gauge_aligned_external_pipe_thread_clears_the_sleeve_in_either_operand_order(
                 law: body.law,
             }),
             PlaneFrame {
-                u: rotate(frame, [half.cos(), half.sin(), 0.]),
-                v: rotate(frame, [-half.sin(), half.cos(), 0.]),
+                u: rotate(frame, [half.portable_cos(), half.portable_sin(), 0.]),
+                v: rotate(frame, [-half.portable_sin(), half.portable_cos(), 0.]),
                 ..frame
             },
         ),

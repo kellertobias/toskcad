@@ -6,6 +6,7 @@ use crate::{
     document::EntityId,
     project_file::ContentHash,
 };
+use multicad_precision::PortableMath as _;
 use std::{
     collections::{BTreeMap, BTreeSet},
     f64::consts::TAU,
@@ -231,7 +232,7 @@ fn cross(a: Position, b: Position) -> f64 {
     a[0] * b[1] - a[1] * b[0]
 }
 fn length(a: Position) -> f64 {
-    a[0].hypot(a[1])
+    a[0].portable_hypot(a[1])
 }
 fn along(a: Position, d: Position, t: f64) -> Position {
     [a[0] + d[0] * t, a[1] + d[1] * t]
@@ -346,7 +347,7 @@ fn boundary_contains(
     let radius = length(sub(a, c));
     let angle = |p: Position| {
         let d = sub(p, c);
-        d[1].atan2(d[0])
+        d[1].portable_atan2(d[0])
     };
     let sweep = if clockwise {
         (angle(a) - angle(b)).rem_euclid(TAU)

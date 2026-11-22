@@ -1,6 +1,7 @@
 //! Exact operand-membership partitions. Schema-independent native geometry
 //! returns a pair only when each partition is one connected volumetric solid.
 use crate::{BooleanOperation, GeometryError, GeometryErrorKind, GeometryPolicy, Solid};
+use multicad_precision::PortableMath as _;
 
 /// Semantic sides, never native solid enumeration order or size ranking.
 pub struct SolidSplit {
@@ -197,7 +198,7 @@ impl Solid {
                         bounds.max[i] - plane.origin[i]
                     }
                 });
-                delta[0].hypot(delta[1]).hypot(delta[2])
+                delta[0].portable_hypot(delta[1]).portable_hypot(delta[2])
             })
             .fold(policy.minimum_feature_mm, f64::max);
         // checked() bounds both squared axis lengths and their dot product

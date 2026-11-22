@@ -7,6 +7,7 @@
 //! drag handles synchronized with the Inspector's numeric fields.
 use super::*;
 use multicad_core::drawings::{Annotation, AnnotationKind, DraftGeometry};
+use multicad_precision::PortableMath as _;
 
 /// Snap radius on paper.
 pub const SNAP_MM: f64 = 2.0;
@@ -29,15 +30,18 @@ fn sub(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
 }
 fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     let d = sub(a, b);
-    d[0].hypot(d[1])
+    d[0].portable_hypot(d[1])
 }
 fn angle_deg(center: [f64; 2], p: [f64; 2]) -> f64 {
     let d = sub(p, center);
-    d[1].atan2(d[0]).to_degrees()
+    d[1].portable_atan2(d[0]).to_degrees()
 }
 fn on_circle(center: [f64; 2], r: f64, deg: f64) -> [f64; 2] {
     let t = deg.to_radians();
-    [center[0] + r * t.cos(), center[1] + r * t.sin()]
+    [
+        center[0] + r * t.portable_cos(),
+        center[1] + r * t.portable_sin(),
+    ]
 }
 
 /// Points a drafting tool needs (hatch: at least three, finished explicitly).
@@ -124,7 +128,7 @@ pub fn build(tool: DrawingTool, points: &[[f64; 2]]) -> Option<AnnotationKind> {
         )),
         (DrawingTool::DraftDimension, [a, b, rest @ ..]) if dist(*a, *b) > 1e-6 => {
             let along = sub(*b, *a);
-            let l = along[0].hypot(along[1]);
+            let l = along[0].portable_hypot(along[1]);
             let normal = [along[1] / l, -along[0] / l];
             let offset = rest.first().map_or(6., |o| {
                 let d = sub(*o, *a);
@@ -164,7 +168,7 @@ pub fn handles(kind: &AnnotationKind) -> Vec<[f64; 2]> {
             a, b, offset_mm, ..
         } => {
             let along = sub(*b, *a);
-            let l = along[0].hypot(along[1]).max(1e-9);
+            let l = along[0].portable_hypot(along[1]).max(1e-9);
             let n = [along[1] / l, -along[0] / l];
             let mid = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
             vec![
@@ -690,7 +694,10 @@ fn preview_graphic(
         let points: Vec<_> = (0..=48)
             .map(|i| {
                 let t = start + (end - start) * i as f64 / 48.;
-                to([center[0] + r * t.cos(), center[1] + r * t.sin()])
+                to([
+                    center[0] + r * t.portable_cos(),
+                    center[1] + r * t.portable_sin(),
+                ])
             })
             .collect();
         painter.extend(egui::Shape::dashed_line(&points, stroke, 5., 3.));

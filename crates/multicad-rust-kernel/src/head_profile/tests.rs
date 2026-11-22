@@ -94,9 +94,9 @@ fn metric_counter_retains_every_source_segment_and_tangent_neck() {
         assert!(s.area_mm2() > 0.);
     }
     let neck = s[3];
-    close(neck.end[1], 0.1 * (PI / 8.).tan());
+    close(neck.end[1], 0.1 * (PI / 8.).portable_tan());
     close(
-        (neck.start[0] - 1.6).hypot(neck.start[1] - neck.end[1]),
+        (neck.start[0] - 1.6).portable_hypot(neck.start[1] - neck.end[1]),
         0.1,
     );
     close(p.radius_at(-1.6).unwrap(), 2.95);
@@ -323,7 +323,7 @@ fn named_surface_moments_follow_the_actual_meridian() {
                 let a = segment.point(i as f64 / 10_000.);
                 let b = segment.point((i + 1) as f64 / 10_000.);
                 let [r, z] = segment.point((i as f64 + 0.5) / 10_000.);
-                let weight = r * (b[0] - a[0]).hypot(b[1] - a[1]);
+                let weight = r * (b[0] - a[0]).portable_hypot(b[1] - a[1]);
                 area += weight;
                 moment += z * weight;
             }
@@ -383,7 +383,7 @@ fn erased_positive_features_and_marginal_socket_walls_are_refused() {
     ] {
         assert_eq!(Profile::new(head, 1.5, 1.), Err(ThreadError::Invalid));
     }
-    let neck_z = 0.1 * (PI / 8.).tan();
+    let neck_z = 0.1 * (PI / 8.).portable_tan();
     assert_eq!(
         Profile::new(counter(0.1, 0.), 1.5, neck_z + 1e-15),
         Err(ThreadError::Invalid)
@@ -626,7 +626,7 @@ fn literal_support_radius_is_preserved_and_never_fitted_to_trim_vertices() {
     };
     let actual = Profile::from_retained_segments(&[arc]).unwrap();
     let q = arc.point(0.5);
-    assert!((q[0].hypot(q[1]) - (1. + 1e-14)).abs() < 1e-15);
+    assert!((q[0].portable_hypot(q[1]) - (1. + 1e-14)).abs() < 1e-15);
     assert!(actual.support([1., 0., 0.]) > 1.);
     assert!(actual.support([0., 0., -1.]) > 1.);
 }

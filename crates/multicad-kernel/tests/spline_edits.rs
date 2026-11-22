@@ -4,6 +4,7 @@ use multicad_core::{
     sketch_regions::{Edge, ExactCurve, RegionQueries},
 };
 use multicad_kernel::*;
+use multicad_precision::PortableMath as _;
 fn p() -> GeometryPolicy {
     Default::default()
 }
@@ -257,7 +258,7 @@ fn exact_segment_hits_line_arc_circle_and_spline_boundaries_and_builds_a_real_so
         ],
         holes: vec![],
     };
-    let expected = (b[1].atan2(b[0]) - a[1].atan2(a[0])) * 0.5;
+    let expected = (b[1].portable_atan2(b[0]) - a[1].portable_atan2(a[0])) * 0.5;
     let boundary: Vec<_> = profile
         .outer
         .iter()
@@ -355,7 +356,7 @@ fn bounded_g1_continuation_preserves_entire_old_curve_weights_and_straight_span_
                 *result.curve.knots.last().unwrap()
             };
             let jet = source.evaluate(join, p()).unwrap();
-            let speed = jet.derivative[0].hypot(jet.derivative[1]);
+            let speed = jet.derivative[0].portable_hypot(jet.derivative[1]);
             let sign = if at_start { -1. } else { 1. };
             for i in 0..=20 {
                 let fraction = i as f64 / 20.;
@@ -482,7 +483,7 @@ fn periodic_circle_projection_has_one_seam_identity_without_clamping_interior_hi
     assert_eq!(seam.len(), 1);
     near(seam[0].parameter, 0.);
     let angle = -1e-7_f64;
-    let point = [2. * angle.cos(), 2. * angle.sin()];
+    let point = [2. * angle.portable_cos(), 2. * angle.portable_sin()];
     let adjacent = queries.project_parameters(&circle, point, 1e-7).unwrap();
     assert_eq!(adjacent.len(), 1);
     assert!(adjacent[0].parameter > 0.9999999 && adjacent[0].parameter < 1.);

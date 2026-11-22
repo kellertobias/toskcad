@@ -3,6 +3,7 @@ use crate::curves::arc_sweep;
 use crate::{
     CurveProjection2d, CurveSample2d, CurvedEdge2d, GeometryError, GeometryErrorKind, ffi,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 type Point = [f64; 2];
@@ -31,7 +32,7 @@ fn dot(a: Point, b: Point) -> f64 {
 }
 
 fn norm(point: Point) -> f64 {
-    point[0].hypot(point[1])
+    point[0].portable_hypot(point[1])
 }
 
 fn input(message: &str) -> GeometryError {
@@ -121,7 +122,7 @@ impl ElementaryCurve {
                 ..
             } => {
                 // Use one position and derivative for the two full-circle seam parameters.
-                let (sin, cos) = angle_in_period(parameter).sin_cos();
+                let (sin, cos) = angle_in_period(parameter).portable_sin_cos();
                 (
                     std::array::from_fn(|i| center[i] + radius * (cos * u[i] + sin * v[i])),
                     std::array::from_fn(|i| -sin * u[i] + cos * v[i]),
@@ -149,7 +150,7 @@ impl ElementaryCurve {
                 if radial == 0. || (periodic && radial <= tolerance) {
                     return Err(input("Curve center has a continuous ambiguous projection"));
                 }
-                let closest = angle_in_period(dot(delta, v).atan2(dot(delta, u)));
+                let closest = angle_in_period(dot(delta, v).portable_atan2(dot(delta, u)));
                 if periodic {
                     return Ok(vec![self.projection(point, closest)]);
                 }

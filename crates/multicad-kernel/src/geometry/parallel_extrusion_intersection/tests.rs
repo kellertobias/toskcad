@@ -31,7 +31,7 @@ fn common(a: &Solid, b: &Solid) -> Option<Solid> {
 
 /// Area of the disk of radius `r` on the far side of the chord at `d`.
 fn segment(r: f64, d: f64) -> f64 {
-    r * r * (d / r).acos() - d * (r * r - d * d).sqrt()
+    r * r * (d / r).portable_acos() - d * (r * r - d * d).sqrt()
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn a_corner_in_the_disk_gives_two_chords_and_an_arc() {
     // Region x > 1, y > 1 of the disk, swept over z in [1, 3]:
     // the integral of sqrt(25 - x^2) - 1 for x from 1 to sqrt(24).
     let x = 24f64.sqrt();
-    let primitive = |x: f64| 0.5 * x * (25. - x * x).sqrt() + 12.5 * (x / 5.).asin();
+    let primitive = |x: f64| 0.5 * x * (25. - x * x).sqrt() + 12.5 * (x / 5.).portable_asin();
     let area = primitive(x) - primitive(1.) - (x - 1.);
     near(clipped.volume_mm3().unwrap(), 2. * area);
     let bounds = clipped.bounds().unwrap();

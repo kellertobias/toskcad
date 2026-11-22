@@ -196,7 +196,7 @@ impl ChamferedBores {
             }
             for other in &stacks[..i] {
                 let d = std::array::from_fn::<_, 2, _>(|k| stack.center_mm[k] - other.center_mm[k]);
-                if d[0].hypot(d[1]) <= radius + max_radius(other) + guard {
+                if d[0].portable_hypot(d[1]) <= radius + max_radius(other) + guard {
                     return Err(UnresolvedBoundary);
                 }
             }

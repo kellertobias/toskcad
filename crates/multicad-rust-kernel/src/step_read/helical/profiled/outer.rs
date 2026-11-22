@@ -160,7 +160,8 @@ pub(super) fn verify_walls(
                     let arc = ArcSource {
                         center: [center[0], center[1] - shift],
                         radius: radius_mm,
-                        angle: (source.start[1] - center[1]).atan2(source.start[0] - center[0]),
+                        angle: (source.start[1] - center[1])
+                            .portable_atan2(source.start[0] - center[0]),
                         sweep,
                         role: source.role,
                     };

@@ -72,7 +72,9 @@ pub(super) fn project(
 
     let mut edges = Vec::new();
     let mut line = |hidden: bool, [a, b]: [Point; 2]| {
-        if (!hidden || options.hidden_lines) && (a[0] - b[0]).hypot(a[1] - b[1]) > tolerance {
+        if (!hidden || options.hidden_lines)
+            && (a[0] - b[0]).portable_hypot(a[1] - b[1]) > tolerance
+        {
             edges.push(Edge {
                 hidden,
                 curve: Curve::Line([a, b]),
@@ -114,7 +116,7 @@ pub(super) fn project(
         } else if options.hidden_lines {
             for [a, b] in piercing_edges(opening.faces, opening.outline, screen.toward_viewer) {
                 let [a, b] = [screen.point(a), screen.point(b)];
-                if (a[0] - b[0]).hypot(a[1] - b[1]) > tolerance {
+                if (a[0] - b[0]).portable_hypot(a[1] - b[1]) > tolerance {
                     edges.push(Edge {
                         hidden: true,
                         curve: Curve::Line([a, b]),
@@ -371,7 +373,7 @@ fn is_rail(previous: ProfileEdge, edge: ProfileEdge, chart: Chart) -> bool {
             let [a, b] = [edge.start(), edge.end()];
             [b[0] - a[0], b[1] - a[1]]
         };
-        let length = direction[0].hypot(direction[1]);
+        let length = direction[0].portable_hypot(direction[1]);
         direction.map(|v| v / length)
     };
     let [a, b] = [
@@ -398,8 +400,8 @@ fn arc_branches(
     let radius = edge.radius_mm().expect("circular edge");
     let sweep = edge.signed_sweep_rad().expect("circular edge");
     let start = edge.start();
-    let start_angle = (start[1] - center[1]).atan2(start[0] - center[0]);
-    let side_angle = chart.section_side[1].atan2(chart.section_side[0]);
+    let start_angle = (start[1] - center[1]).portable_atan2(start[0] - center[0]);
+    let side_angle = chart.section_side[1].portable_atan2(chart.section_side[0]);
     let center = chart.section(center);
     let mut events = vec![(0., chart.section(start)), (1., chart.section(edge.end()))];
     for (angle, side) in [(side_angle, 1.), (side_angle + PI, -1.)] {
@@ -463,8 +465,9 @@ impl<'a> Opening<'a> {
                     center, radius_mm, ..
                 },
             ] => {
-                let radial = [chart.side, chart.axis, chart.depth]
-                    .map(|axis| radius_mm * dot(axis, faces[0].u).hypot(dot(axis, faces[0].v)));
+                let radial = [chart.side, chart.axis, chart.depth].map(|axis| {
+                    radius_mm * dot(axis, faces[0].u).portable_hypot(dot(axis, faces[0].v))
+                });
                 for face in faces {
                     let [s, a, d] = chart.coordinates(face_point(face, *center));
                     extend_bounds(&mut bounds, [s, a, d], radial);

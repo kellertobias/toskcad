@@ -24,7 +24,7 @@ pub fn tessellate_end_relief(
     let mut neck = Vec::with_capacity(shoulder.len());
     let mut far = Vec::with_capacity(shoulder.len());
     for &(angle, _) in &shoulder {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let [x, y] = [relief.neck_radius_mm() * cos, relief.neck_radius_mm() * sin];
         neck.push(builder.mesh.vertices.len() as u32 / 3);
         builder

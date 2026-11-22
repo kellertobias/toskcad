@@ -1,5 +1,6 @@
 use super::*;
 use crate::conical_screw_seat::tests::{head, options, seat};
+use multicad_precision::PortableMath as _;
 fn placed(
     profile: &Profile,
     receiving: Seat,
@@ -138,7 +139,7 @@ fn matching_neck_origin_does_not_hide_whole_head_tilt_or_small_affine_scaling() 
         .unwrap()
         .safe_neck_z_mm;
     let angle = 1e-6_f64;
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     let axes = [[cos, 0., -sin], [0., 1., 0.], [sin, 0., cos]];
     let tilted = Placement {
         axes,

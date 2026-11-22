@@ -214,7 +214,7 @@ impl RoundedHexBody {
     fn wall_frame(&self, frame: PlaneFrame, side: usize) -> ReferenceFrame {
         let angle = FRAC_PI_3 * (side as f64 + 1.);
         let [low, high] = self.geometry.hex_interval_mm();
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         let half = self.geometry.across_flats_mm() / 2.;
         let n = frame.normal();
         // u along the flat (counterclockwise), v along the axis: u × v is the

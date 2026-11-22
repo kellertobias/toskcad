@@ -6,6 +6,7 @@ use multicad_kernel::{
     BRepSelection, BooleanOperation, GeneratedZaWormWheel, GeometryErrorKind, GeometryPolicy,
     MeshOptions, RigidTransform, Solid, ZaWorm,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 fn worm() -> ZaWorm {
@@ -49,7 +50,7 @@ fn expected_worm_volume(s: ZaWorm) -> f64 {
     let m = s.axial_module_mm;
     let top = 6. * m;
     let root = 3.75 * m;
-    let k = 20_f64.to_radians().tan() * 1.01_f64.sqrt();
+    let k = 20_f64.to_radians().portable_tan() * 1.01_f64.sqrt();
     let crest = PI * m / 2. - s.axial_thinning_mm - 2. * m * k;
     let integral = (crest + 2. * k * top) * (top * top - root * root) / 2.
         - 2. * k * (top.powi(3) - root.powi(3)) / 3.;
@@ -90,8 +91,26 @@ fn native_worm_has_axial_trapezoid_centered_phase_bore_and_independent_volume() 
         for z in [-2.1, 0., 2.3] {
             let z = z * m;
             let angle = PI + 2. * z / m;
-            assert!(probe(&native, [5.9 * m * angle.cos(), 5.9 * m * angle.sin(), z]) > 0.999);
-            assert!(probe(&native, [-5.9 * m * angle.cos(), -5.9 * m * angle.sin(), z]) < 1e-5);
+            assert!(
+                probe(
+                    &native,
+                    [
+                        5.9 * m * angle.portable_cos(),
+                        5.9 * m * angle.portable_sin(),
+                        z
+                    ]
+                ) > 0.999
+            );
+            assert!(
+                probe(
+                    &native,
+                    [
+                        -5.9 * m * angle.portable_cos(),
+                        -5.9 * m * angle.portable_sin(),
+                        z
+                    ]
+                ) < 1e-5
+            );
         }
         let axis_material = probe(&native, [0., 0., 0.]);
         assert!(if spec.bore_radius_mm > 0. {
@@ -121,7 +140,7 @@ fn native_worm_has_axial_trapezoid_centered_phase_bore_and_independent_volume() 
     }
 }
 fn rotate(p: [f64; 3], angle: f64) -> [f64; 3] {
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     [c * p[0] - s * p[1], s * p[0] + c * p[1], p[2]]
 }
 fn unit(p: [f64; 3]) -> [f64; 3] {
@@ -133,10 +152,10 @@ fn flank_point(teeth: u32, r: f64, v: f64, side: f64) -> ([f64; 3], [f64; 3]) {
     // in physical worm coordinates rather than the native tensor evaluator.
     let rw = f64::from(teeth) / 2.;
     let h = 0.5;
-    let theta = PI - (v / r).asin();
-    let k = -side * 20_f64.to_radians().tan() * 1.01_f64.sqrt();
+    let theta = PI - (v / r).portable_asin();
+    let k = -side * 20_f64.to_radians().portable_tan() * 1.01_f64.sqrt();
     let z = side * (PI / 2. + 0.05) / 2. + k * (r - 5.) + h * (theta - PI);
-    let (sn, cs) = theta.sin_cos();
+    let (sn, cs) = theta.portable_sin_cos();
     let nx = h * sn - k * r * cs;
     let normal = [nx, -h * cs - k * r * sn, r];
     let phi = (z * nx + (rw - (r * cs + 5. + rw)) * r) / (h * nx);
@@ -231,7 +250,7 @@ fn generated_wheel_has_measured_throat_flanks_root_caps_bore_and_native_step() {
     }
     for v in [-0.6_f64, 0., 0.6] {
         let root = 21. - (6.25_f64.powi(2) - v * v).sqrt();
-        let angle = 0.5 / 16. * (v / 6.25).asin();
+        let angle = 0.5 / 16. * (v / 6.25).portable_asin();
         let point = rotate([root, 0., v], angle);
         let normal = unit(rotate(
             [1., 0., -v / (6.25_f64.powi(2) - v * v).sqrt()],
@@ -276,7 +295,12 @@ fn generated_wheel_upper_domain_has_independent_volume_and_step_readback() {
     close(bounds.max[2], 2., 2e-6);
     assert!(probe(&native, [65., 0., 0.]) < 1e-5);
     let a = PI / 64.;
-    assert!(probe(&native, [65. * a.cos(), 65. * a.sin(), 0.]) > 0.999);
+    assert!(
+        probe(
+            &native,
+            [65. * a.portable_cos(), 65. * a.portable_sin(), 0.]
+        ) > 0.999
+    );
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("upper-wheel.step");
     native.write_step(&path).unwrap();
@@ -292,7 +316,7 @@ fn conjugate_pair_phase_clears_and_half_tooth_wrong_phase_interferes() {
     let worm = Solid::rust_za_worm_named(worm(), worm_id, policy).unwrap();
     let wheel = Solid::rust_generated_za_worm_wheel_named(wheel(32), wheel_id, policy).unwrap();
     for drive in [0., TAU * 0.37] {
-        let (s, c) = drive.sin_cos();
+        let (s, c) = drive.portable_sin_cos();
         let driven = worm
             .transformed(RigidTransform {
                 rotation: [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]],
@@ -301,7 +325,7 @@ fn conjugate_pair_phase_clears_and_half_tooth_wrong_phase_interferes() {
             .unwrap();
         for wrong in [false, true] {
             let angle = drive / 32. + if wrong { PI / 32. } else { 0. };
-            let (s, c) = angle.sin_cos();
+            let (s, c) = angle.portable_sin_cos();
             let placed = wheel
                 .transformed(RigidTransform {
                     rotation: [[c, -s, 0.], [0., 0., 1.], [-s, -c, 0.]],
@@ -362,7 +386,7 @@ fn conjugate_pair_phase_clears_and_half_tooth_wrong_phase_interferes() {
 fn worm_interference_solid_moves_rigidly_stays_in_both_members_and_refuses_boundary_queries() {
     let policy = GeometryPolicy::default();
     let worm = Solid::rust_za_worm_named(worm(), EntityId::new(), policy).unwrap();
-    let (s, c) = (PI / 32.).sin_cos();
+    let (s, c) = (PI / 32.).portable_sin_cos();
     let wheel = Solid::rust_generated_za_worm_wheel_named(wheel(32), EntityId::new(), policy)
         .unwrap()
         .transformed(RigidTransform {

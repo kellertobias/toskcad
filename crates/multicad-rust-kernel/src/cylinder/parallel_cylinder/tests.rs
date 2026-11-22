@@ -1,5 +1,6 @@
 use super::*;
 use crate::Circle;
+use multicad_precision::PortableMath as _;
 fn q(n: i64, d: i64) -> Rational {
     Rational::new(n, d).unwrap()
 }
@@ -30,10 +31,15 @@ fn disks_times_intervals_prove_finite_and_continuum_extrema_and_material() {
         assert_eq!(result.total_solutions, solutions);
         assert!(result.distance_bounds_mm[0] <= d && result.distance_bounds_mm[1] >= d);
         let [p, q] = result.witness;
-        near((p[0] - q[0]).hypot(p[1] - q[1]).hypot(p[2] - q[2]), d);
+        near(
+            (p[0] - q[0])
+                .portable_hypot(p[1] - q[1])
+                .portable_hypot(p[2] - q[2]),
+            d,
+        );
     }
     let result = measure(&a, &b, [5., 0., 2.], false).unwrap();
-    let area = 50. * (0.5_f64).acos() - 12.5 * 3_f64.sqrt();
+    let area = 50. * (0.5_f64).portable_acos() - 12.5 * 3_f64.sqrt();
     near(result.common_volume_mm3, 8. * area);
     assert!(result.common_volume_bounds_mm3[0] > 0.);
     near(
@@ -170,7 +176,7 @@ fn endpoint_capacity_fallback_and_uncertain_positive_slices_keep_their_sign_cont
     let result = measure(&large, &small, [4., 0., 0.], false).unwrap();
     near(
         result.common_volume_mm3,
-        2. * (25. * (0.8_f64).acos() + 4.5 * std::f64::consts::PI - 12.),
+        2. * (25. * (0.8_f64).portable_acos() + 4.5 * std::f64::consts::PI - 12.),
     );
 }
 
@@ -194,7 +200,9 @@ fn literal_diagonal_subulp_gaps_and_lenses_keep_separate_receipts() {
             );
             assert_eq!(result.common_volume_bounds_mm3, [0.; 2]);
             let [p, q] = result.witness;
-            let representative_distance = (p[0] - q[0]).hypot(p[1] - q[1]).hypot(p[2] - q[2]);
+            let representative_distance = (p[0] - q[0])
+                .portable_hypot(p[1] - q[1])
+                .portable_hypot(p[2] - q[2]);
             assert!(
                 (representative_distance - result.distance_mm).abs()
                     <= 2. * result.witness_error_mm
@@ -204,8 +212,8 @@ fn literal_diagonal_subulp_gaps_and_lenses_keep_separate_receipts() {
             assert!(lens.common_volume_bounds_mm3[0] > 0.);
             // Inscribed rectangle and enclosing box bound the lens independently
             // of the circular-segment law for penetration in [1.7,1.9]*1e-16.
-            assert!(lens.common_volume_bounds_mm3[0] > 2. * 0.7 * 1.7e-16_f64.powf(1.5));
-            assert!(lens.common_volume_bounds_mm3[1] < 2. * 2. * 1.9e-16_f64.powf(1.5));
+            assert!(lens.common_volume_bounds_mm3[0] > 2. * 0.7 * 1.7e-16_f64.portable_powf(1.5));
+            assert!(lens.common_volume_bounds_mm3[1] < 2. * 2. * 1.9e-16_f64.portable_powf(1.5));
         }
     }
     let pythagorean = cylinder(q(5, 2), q(2, 1));

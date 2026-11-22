@@ -54,7 +54,7 @@ impl Cut {
         if z.abs() <= ANGULAR {
             // A view ray is parallel to the cut caps. The certified cavity
             // can only be reached after hitting intact enclosing stock.
-            let length = x.hypot(y);
+            let length = x.portable_hypot(y);
             let span = [-y * self.radius / length, x * self.radius / length];
             let [a, b] = self.centers.map(|center| {
                 [-1., 1.].map(|sign| {
@@ -72,7 +72,7 @@ impl Cut {
             }
             return Ok(());
         }
-        if x.hypot(y) > ANGULAR {
+        if x.portable_hypot(y) > ANGULAR {
             return Err(err(
                 GeometryErrorKind::Unsupported,
                 "Rust hidden circular stock projection requires face-on or edge-on cuts",

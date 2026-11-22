@@ -8,6 +8,7 @@
 //! are parallel or pass each other without meeting are not connected.
 use super::*;
 use crate::{model::common::number, parameters::EvaluatedParameters};
+use multicad_precision::PortableMath as _;
 use resolve::vec3::*;
 
 pub const CONNECTION_KIND: &str = "weldment.connection";
@@ -227,7 +228,7 @@ fn at_end(m: &ResolvedMember, p: [f64; 3], role: &str) -> Result<MemberEnd, Docu
     }
 }
 fn angle_between(a: [f64; 3], b: [f64; 3]) -> f64 {
-    dot(a, b).clamp(-1., 1.).acos().to_degrees()
+    dot(a, b).clamp(-1., 1.).portable_acos().to_degrees()
 }
 /// The extent of a member's placed outline beyond `p` along `direction`,
 /// which must be square to the member axis.

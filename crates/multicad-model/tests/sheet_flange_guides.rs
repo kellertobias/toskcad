@@ -14,6 +14,7 @@ use multicad_core::{
     parameters,
 };
 use multicad_model::{Compiler, Model};
+use multicad_precision::PortableMath as _;
 
 const T: f64 = 2.;
 const R: f64 = 3.;
@@ -140,7 +141,7 @@ fn guide_bounds(s: &Session, definition: &SheetDefinition) -> ([f64; 3], [f64; 3
     for g in model::flange_guides(&resolved, &outline) {
         for w in g.section.windows(2) {
             let d = [w[1][0] - w[0][0], w[1][1] - w[0][1]];
-            let l = d[0].hypot(d[1]);
+            let l = d[0].portable_hypot(d[1]);
             if l < 1e-12 {
                 continue;
             }

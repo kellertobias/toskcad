@@ -380,7 +380,7 @@ mod circular_stock_tests {
         let stock = PlaneFrame::default();
         let angle = 1e-11_f64;
         let placed = PlaneFrame {
-            u: [angle.cos(), 0., angle.sin()],
+            u: [angle.portable_cos(), 0., angle.portable_sin()],
             v: [0., 1., 0.],
             ..Default::default()
         };
@@ -398,6 +398,6 @@ mod circular_stock_tests {
             GeometryErrorKind::Unsupported
         );
         assert_eq!(stock, PlaneFrame::default());
-        assert_eq!(placed.u, [angle.cos(), 0., angle.sin()]);
+        assert_eq!(placed.u, [angle.portable_cos(), 0., angle.portable_sin()]);
     }
 }

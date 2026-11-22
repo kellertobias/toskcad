@@ -20,6 +20,7 @@ use multicad_core::{
 use multicad_kernel::{
     BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, Solid,
 };
+use multicad_precision::PortableMath as _;
 
 mod channel;
 mod inset;
@@ -112,7 +113,7 @@ fn curved(edge: &PlanarEdge) -> CurvedEdge2d {
             let _ = b;
             CurvedEdge2d::Circle {
                 center,
-                radius_mm: (a[0] - center[0]).hypot(a[1] - center[1]),
+                radius_mm: (a[0] - center[0]).portable_hypot(a[1] - center[1]),
             }
         }
         PlanarEdge::Arc {
@@ -312,7 +313,7 @@ fn touching_roots(flanges: &[PlacedFlange]) -> Option<String> {
             let touch = ends(a).into_iter().any(|p| {
                 ends(b)
                     .into_iter()
-                    .any(|q| (p[0] - q[0]).hypot(p[1] - q[1]) <= TOLERANCE_MM)
+                    .any(|q| (p[0] - q[0]).portable_hypot(p[1] - q[1]) <= TOLERANCE_MM)
             });
             let [first, second] = {
                 let mut pair = [a.flange.index, b.flange.index];
@@ -402,16 +403,19 @@ fn place_flanges(
                 clockwise,
             } => {
                 points.push(*a);
-                let start = (a[1] - center[1]).atan2(a[0] - center[0]);
-                let end = (b[1] - center[1]).atan2(b[0] - center[0]);
+                let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
+                let end = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
                 let sweep = if *clockwise {
                     -(start - end).rem_euclid(std::f64::consts::TAU)
                 } else {
                     (end - start).rem_euclid(std::f64::consts::TAU)
                 };
-                let r = (a[0] - center[0]).hypot(a[1] - center[1]);
+                let r = (a[0] - center[0]).portable_hypot(a[1] - center[1]);
                 let mid = start + sweep / 2.;
-                points.push([center[0] + r * mid.cos(), center[1] + r * mid.sin()]);
+                points.push([
+                    center[0] + r * mid.portable_cos(),
+                    center[1] + r * mid.portable_sin(),
+                ]);
             }
             _ => {}
         }
@@ -440,7 +444,7 @@ fn place_flanges(
             ));
         };
         let d = [b[0] - a[0], b[1] - a[1]];
-        let length = d[0].hypot(d[1]);
+        let length = d[0].portable_hypot(d[1]);
         let along = [d[0] / length, d[1] / length];
         let outward = if ccw {
             [along[1], -along[0]]

@@ -1,6 +1,7 @@
 //! A single closed rectangular stock shell with a two-radius blind recess.
 //! The bore center is the local origin and depth increases along positive Z.
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 use std::f64::consts::FRAC_PI_2;
 
@@ -242,7 +243,8 @@ impl ProfileStack {
                 at(corners[j], s.height_mm),
                 at(corners[i], s.height_mm),
             ];
-            let width = (corners[j][0] - corners[i][0]).hypot(corners[j][1] - corners[i][1]);
+            let width =
+                (corners[j][0] - corners[i][0]).portable_hypot(corners[j][1] - corners[i][1]);
             b.face(
                 &p,
                 &[Curve::Line; 4],

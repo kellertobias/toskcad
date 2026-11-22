@@ -208,7 +208,7 @@ mod failure_tests {
                     1,
                     vec![0., 1.],
                     vec![2, 2],
-                    vec![[2., 0., 0.], [2. + angle.tan(), 0., 1.]],
+                    vec![[2., 0., 0.], [2. + angle.portable_tan(), 0., 1.]],
                 )
                 .unwrap();
                 let uv = Curve::new(1, vec![0., 1.], vec![2, 2], vec![[0., 0.], [0., 1.]]).unwrap();
@@ -217,7 +217,10 @@ mod failure_tests {
                     1,
                     vec![0., 1.],
                     vec![2, 2],
-                    vec![[2., 0., 0.], [2. + angle.sin(), 0., angle.cos()]],
+                    vec![
+                        [2., 0., 0.],
+                        [2. + angle.portable_sin(), 0., angle.portable_cos()],
+                    ],
                 )
                 .unwrap();
                 // This source-known verifier promises the actual emitted

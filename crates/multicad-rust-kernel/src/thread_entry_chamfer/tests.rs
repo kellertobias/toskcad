@@ -1,5 +1,6 @@
 use super::*;
 use crate::helical_thread::Spec;
+use multicad_precision::PortableMath as _;
 pub(super) fn tool(left: bool, starts: u32, rounded: bool) -> Thread {
     let root = rounded.then_some(1. / (4. * 3_f64.sqrt()));
     Thread::new(Spec {
@@ -299,7 +300,9 @@ fn controlled_support_encloses_true_caps_neck_and_oblique_material_without_a_fak
                     let theta = std::f64::consts::TAU * i as f64 / 1024.;
                     let r = body.radius(theta, z);
                     let value = r
-                        * (direction[0] * theta.cos() + direction[1] * theta.sin()).max(0.)
+                        * (direction[0] * theta.portable_cos()
+                            + direction[1] * theta.portable_sin())
+                        .max(0.)
                         + direction[2] * z;
                     sample = sample.max(value);
                 }
@@ -318,7 +321,7 @@ fn controlled_support_encloses_true_caps_neck_and_oblique_material_without_a_fak
     let mut sample = 0_f64;
     for i in 0..8192 {
         let theta = std::f64::consts::TAU * i as f64 / 8192.;
-        sample = sample.max(shallow.radius(theta, 0.) * theta.sin());
+        sample = sample.max(shallow.radius(theta, 0.) * theta.portable_sin());
     }
     // Along each fixed phase, the downward objective is strictly decreasing:
     // 100 > cone slope + R/|rate|. The cap's angular Lipschitz bound gives

@@ -224,8 +224,8 @@ fn every_anchor_sits_exactly_on_the_position_and_moves_the_block_around_it() {
         // Same box size for every anchor; only its offset differs.
         let size = |b: &[[f64; 2]; 4]| {
             (
-                (b[1][0] - b[0][0]).hypot(b[1][1] - b[0][1]),
-                (b[3][0] - b[0][0]).hypot(b[3][1] - b[0][1]),
+                (b[1][0] - b[0][0]).portable_hypot(b[1][1] - b[0][1]),
+                (b[3][0] - b[0][0]).portable_hypot(b[3][1] - b[0][1]),
             )
         };
         for b in &boxes {

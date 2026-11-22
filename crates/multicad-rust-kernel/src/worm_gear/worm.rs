@@ -12,7 +12,7 @@ use std::f64::consts::{PI, TAU};
 
 /// Axial pressure slope of the q10, 20-degree normal ZA recipe.
 pub(crate) fn slope() -> f64 {
-    20_f64.to_radians().tan() * 1.01_f64.sqrt()
+    20_f64.to_radians().portable_tan() * 1.01_f64.sqrt()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -69,7 +69,7 @@ impl Worm {
         if !(16. * m..=32. * m).contains(&length) {
             return Err(Error::Limit);
         }
-        let angle = slope().atan().to_degrees();
+        let angle = slope().portable_atan().to_degrees();
         let thread = Thread::new(Spec {
             major_radius_mm: 6. * m,
             pitch_mm: PI * m,
@@ -130,7 +130,7 @@ impl Worm {
     pub(crate) fn wall_point(&self, s: f64, z: f64) -> Point {
         let theta = (z - s) / self.thread.helical_rate();
         let r = self.thread.radius_at_phase(s);
-        let (sin, cos) = theta.sin_cos();
+        let (sin, cos) = theta.portable_sin_cos();
         [r * cos, r * sin, z]
     }
 
@@ -164,8 +164,8 @@ impl Worm {
             let value = |i: usize| {
                 move |phase: f64| {
                     let [r, slope] = thread.radius_and_slope_at_phase(phase);
-                    let area = r.hypot(slope * r.hypot(rate));
-                    let (sin, cos) = (-phase / rate).sin_cos();
+                    let area = r.portable_hypot(slope * r.portable_hypot(rate));
+                    let (sin, cos) = (-phase / rate).portable_sin_cos();
                     [
                         area,
                         area * r * cos,
@@ -186,8 +186,8 @@ impl Worm {
         let bore = self.bore_radius_mm().unwrap_or(0.);
         let cap_area = thread.volume_mm3() / height - PI * bore * bore;
         let half_twist = height / (2. * rate);
-        let spin = half_twist.sin() / half_twist;
-        let (sin, cos) = half_twist.sin_cos();
+        let spin = half_twist.portable_sin() / half_twist;
+        let (sin, cos) = half_twist.portable_sin_cos();
         let mut faces = Vec::with_capacity(7);
         for (cap, role) in ROLES.iter().enumerate().take(2) {
             let z = cap as f64 * height;
@@ -229,10 +229,10 @@ impl Worm {
     pub(crate) fn margin(&self, local: Point) -> f64 {
         let [x, y, z] = self.to_thread(local);
         let length = self.length_mm();
-        let radius = x.hypot(y);
+        let radius = x.portable_hypot(y);
         let mut margin = z
             .min(length - z)
-            .min(self.thread.radius(y.atan2(x), z.clamp(0., length)) - radius);
+            .min(self.thread.radius(y.portable_atan2(x), z.clamp(0., length)) - radius);
         if let Some(bore) = self.bore_radius_mm() {
             margin = margin.min(radius - bore);
         }
@@ -248,7 +248,7 @@ impl Worm {
         if ![x, y, z].into_iter().all(I::valid) {
             return UnresolvedBoundary;
         }
-        let (sin, cos) = (-self.phase).sin_cos();
+        let (sin, cos) = (-self.phase).portable_sin_cos();
         let (s, c) = (I::point(sin), I::point(cos));
         let tx = c * x - s * y;
         let ty = s * x + c * y;
@@ -312,7 +312,7 @@ impl Worm {
         for cap in 0..2 {
             let z = cap as f64 * self.length_mm();
             for i in 0..count {
-                let (sin, cos) = (TAU * i as f64 / count as f64).sin_cos();
+                let (sin, cos) = (TAU * i as f64 / count as f64).portable_sin_cos();
                 mesh.vertices.extend([bore * cos, bore * sin, z]);
             }
         }

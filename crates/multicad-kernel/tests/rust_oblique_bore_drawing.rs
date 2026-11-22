@@ -15,6 +15,7 @@ use multicad_kernel::{
     ProjectedVector, Solid, project_drawing,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
+use multicad_precision::PortableMath as _;
 
 // The oblique bore refuses STEP exchange, so only the reference comparison
 // with an independently built native solid applies.
@@ -262,7 +263,7 @@ fn a_cut_through_a_blind_oblique_floor_draws_its_cap_chord() {
         panic!("one floor chord: {chord:?}");
     };
     // The plane contains the axis, so the chord spans the floor diameter.
-    assert!(((a[0] - b[0]).hypot(a[1] - b[1]) - 2.).abs() < 1e-9);
+    assert!(((a[0] - b[0]).portable_hypot(a[1] - b[1]) - 2.).abs() < 1e-9);
     for p in hatch_points(&vectors) {
         let (radial, along) = bore_coordinates(world(options, 0., p), base, axis);
         assert!(

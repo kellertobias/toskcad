@@ -11,6 +11,7 @@ use multicad_core::{
 use multicad_kernel::{
     BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame, Solid,
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 
 mod clearance;
@@ -54,7 +55,7 @@ fn hexagon(across_flats: f64) -> Vec<CurvedEdge2d> {
     let p: Vec<[f64; 2]> = (0..6)
         .map(|k| {
             let a = k as f64 * std::f64::consts::FRAC_PI_3;
-            [r * a.cos(), r * a.sin()]
+            [r * a.portable_cos(), r * a.portable_sin()]
         })
         .collect();
     (0..6)

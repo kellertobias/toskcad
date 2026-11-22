@@ -7,6 +7,7 @@ use multicad_kernel::{
     Solid,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
+use multicad_precision::PortableMath as _;
 fn placed(f: PlaneFrame, p: [f64; 3]) -> [f64; 3] {
     std::array::from_fn(|i| f.origin[i] + f.u[i] * p[0] + f.v[i] * p[1] + f.normal()[i] * p[2])
 }
@@ -295,7 +296,7 @@ fn partial_threads_keep_the_entire_long_admitted_receiving_chart() {
     )
     .unwrap();
     let before = source.topology_snapshot(owner, 0).unwrap();
-    let (s, c) = 0.37_f64.sin_cos();
+    let (s, c) = 0.37_f64.portable_sin_cos();
     let entry = PlaneFrame {
         origin: frame.origin,
         u: std::array::from_fn(|i| c * frame.u[i] + s * frame.v[i]),

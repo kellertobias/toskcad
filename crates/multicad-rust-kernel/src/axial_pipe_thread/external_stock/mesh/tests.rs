@@ -1,5 +1,6 @@
 use super::*;
 use crate::axial_pipe_thread::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
+use multicad_precision::PortableMath as _;
 
 fn engineering_cut(flat: f64) -> ExternalStockCut {
     let taper = 1. / 32.;
@@ -270,7 +271,7 @@ fn genuine_thin_stock_mesh_keeps_source_and_reports_actual_cap_owner_routes() {
         candidate.connectivity()
     );
     assert!(candidate.source_distance_mm() <= q.deflection);
-    assert!(candidate.normal_chord() <= 2. * (q.angle / 2.).sin());
+    assert!(candidate.normal_chord() <= 2. * (q.angle / 2.).portable_sin());
     assert_eq!(candidate.source().thread().source().spec(), before);
     eprintln!(
         "THIN_ACTUAL_MESH triangles={} work={} bytes={}",

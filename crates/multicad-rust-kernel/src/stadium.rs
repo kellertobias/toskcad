@@ -1,6 +1,7 @@
 //! Analytic stadium profile for a rounded tenon and its mating mortise.
 
 use crate::circular_pockets::PocketError;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 type Point = [f64; 2];
@@ -25,7 +26,7 @@ fn cross(a: Point, b: Point) -> f64 {
 }
 
 fn length([x, y]: Point) -> f64 {
-    x.hypot(y)
+    x.portable_hypot(y)
 }
 
 impl Stadium {

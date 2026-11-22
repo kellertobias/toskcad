@@ -14,6 +14,7 @@ use multicad_model::{
     Compiler,
     export::{Exporter, mesh},
 };
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -45,8 +46,8 @@ fn pair(size: PipeThreadSize) -> (Session, ThreadRequest, ThreadRequest) {
     let phi = std::f64::consts::TAU * origin / intent(PipeThreadForm::R).preset().pitch_mm;
     internal.frame = PrimitiveFrame {
         origin: [length(0.), length(0.), length(origin)],
-        u: [phi.cos(), phi.sin(), 0.],
-        v: [phi.sin(), -phi.cos(), 0.],
+        u: [phi.portable_cos(), phi.portable_sin(), 0.],
+        v: [phi.portable_sin(), -phi.portable_cos(), 0.],
     };
     let blank = PrimitiveRequest::new(
         "Rc fitting blank",

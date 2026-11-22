@@ -209,7 +209,7 @@ pub(super) fn extract_cells_with_control(
         halves.sort_by(|a, b| {
             let angle = |h: usize| {
                 let d = tangents[h / 2][h % 2];
-                d[1].atan2(d[0])
+                d[1].portable_atan2(d[0])
             };
             angle(*a).total_cmp(&angle(*b))
         });
@@ -496,7 +496,7 @@ pub(super) fn interior_point_controlled(
                 control,
             )?
         };
-        let length = direction[0].hypot(direction[1]);
+        let length = direction[0].portable_hypot(direction[1]);
         if !length.is_finite() || length <= tolerance {
             continue;
         }

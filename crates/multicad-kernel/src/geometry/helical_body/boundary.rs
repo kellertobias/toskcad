@@ -38,7 +38,7 @@ pub(super) fn hex_wall_plane(
     sign: f64,
 ) -> ReferenceFrame {
     let [[ax, ay], [bx, by]] = hex_edge(af, i);
-    let length = (bx - ax).hypot(by - ay);
+    let length = (bx - ax).portable_hypot(by - ay);
     placed_frame(
         frame,
         [ax, ay, z],

@@ -55,7 +55,7 @@ fn determinant(a: Paper, b: Paper) -> f64 {
 }
 
 fn length([x, y]: Paper) -> f64 {
-    x.hypot(y)
+    x.portable_hypot(y)
 }
 
 fn overlap(a: [Paper; 2], b: [Paper; 2], tolerance: f64) -> bool {

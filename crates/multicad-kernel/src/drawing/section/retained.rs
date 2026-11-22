@@ -1,5 +1,6 @@
 //! Adapt exact extruded material bands to retained section visibility.
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     orthogonal::Box3,
     retained_section::{self, AxialProfile, Body, Options, Profile},
@@ -322,7 +323,7 @@ impl Alignment {
     }
 
     fn along_u(self, local_axis: usize) -> bool {
-        self.axes[local_axis][1].hypot(self.axes[local_axis][2]) <= AXIS_TOLERANCE
+        self.axes[local_axis][1].portable_hypot(self.axes[local_axis][2]) <= AXIS_TOLERANCE
     }
 
     fn axial_span(self, axis: usize, values: [f64; 2]) -> [f64; 2] {

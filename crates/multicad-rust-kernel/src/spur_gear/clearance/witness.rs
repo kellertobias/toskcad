@@ -206,6 +206,7 @@ fn chord_span(spans: &[Span]) -> f64 {
 mod tests {
     use super::*;
     use crate::{normal_sweep, spur_gear::Profile};
+    use multicad_precision::PortableMath as _;
 
     fn square(offset: f64) -> Vec<(usize, Edge)> {
         let p = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]].map(|[x, y]| [x + offset, y]);
@@ -292,11 +293,11 @@ mod tests {
             crate::spur_gear::Spec {
                 teeth: 64,
                 pitch_radius_mm: 64.,
-                base_radius_mm: 64. * pressure.cos(),
+                base_radius_mm: 64. * pressure.portable_cos(),
                 tip_radius_mm: 66.,
                 root_radius_mm: 61.5,
                 root_fillet_radius_mm: 0.4,
-                half_base_angle_rad: (std::f64::consts::PI - 0.05) / 128. + pressure.tan()
+                half_base_angle_rad: (std::f64::consts::PI - 0.05) / 128. + pressure.portable_tan()
                     - pressure,
                 face_width_mm: 5.,
                 bore_radius_mm: 4.,

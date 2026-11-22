@@ -10,6 +10,7 @@ use multicad_core::{
     references::{AnalyticGeometry, TopologyKind},
 };
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -103,7 +104,7 @@ fn rust_helical_gears_keep_the_full_twist_and_survive_saved_edits() {
         };
         let start = section(0.);
         let end = section(8.);
-        let (sin, cos) = (resolved.twist_rad_per_mm * 8.).sin_cos();
+        let (sin, cos) = (resolved.twist_rad_per_mm * 8.).portable_sin_cos();
         let mut flanks = 0;
         for (a, b) in start.iter().zip(&end) {
             if let (VectorCurve::BSpline { poles: a, .. }, VectorCurve::BSpline { poles: b, .. }) =
@@ -154,7 +155,7 @@ fn rust_helical_gears_keep_the_full_twist_and_survive_saved_edits() {
         );
         let faces = solid.faces().unwrap();
         let wall_count = (faces.len() - 3) / 2;
-        let (sin, cos) = (resolved.twist_rad_per_mm * 4.).sin_cos();
+        let (sin, cos) = (resolved.twist_rad_per_mm * 4.).portable_sin_cos();
         for (lower, upper) in faces[2..2 + wall_count]
             .iter()
             .zip(&faces[2 + wall_count..2 + wall_count * 2])
@@ -589,7 +590,7 @@ fn rotary_pair_roundtrip(family: GearFamily) {
         .unwrap();
     let report = &rust.gear_pair_checks()[&request.pair];
     let center = if twisted {
-        60. / 15_f64.to_radians().cos()
+        60. / 15_f64.to_radians().portable_cos()
     } else {
         60.
     };
@@ -602,7 +603,7 @@ fn rotary_pair_roundtrip(family: GearFamily) {
 
     let [a, b] = request.outputs.instances;
     let phase = -std::f64::consts::PI / 36.;
-    let (sin, cos) = phase.sin_cos();
+    let (sin, cos) = phase.portable_sin_cos();
     let wrong = RigidTransform {
         rotation: [[cos, -sin, 0.], [sin, cos, 0.], [0., 0., 1.]],
         translation_mm: [center * (1. - cos), -center * sin, 0.],
@@ -754,7 +755,7 @@ fn rust_herringbone_sections_rotate_the_tooth_profile_and_preserve_the_bore() {
         }
     )));
     let mut flank_count = 0;
-    let (sin, cos) = (gear.twist_rad_per_mm * 4.).sin_cos();
+    let (sin, cos) = (gear.twist_rad_per_mm * 4.).portable_sin_cos();
     for (from, to) in end.iter().zip(&middle) {
         if let (VectorCurve::BSpline { poles: a, .. }, VectorCurve::BSpline { poles: b, .. }) =
             (&from.curve, &to.curve)
@@ -874,7 +875,7 @@ fn rust_herringbone_sections_rotate_the_tooth_profile_and_preserve_the_bore() {
             panic!("Expected a hatch line");
         };
         let [x, y]: [f64; 2] = std::array::from_fn(|i| a[i].midpoint(b[i]));
-        assert!(x.hypot(y) >= 3.9999);
+        assert!(x.portable_hypot(y) >= 3.9999);
     }
 }
 

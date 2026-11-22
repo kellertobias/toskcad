@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 fn stock() -> Sweep {
     let ring = vec![
         [-6.9, 0.],
@@ -70,7 +71,7 @@ fn actual_stock_tap_and_open_crown_material_volume_and_whole_queries() {
         removed += if w >= r {
             std::f64::consts::PI * r * r
         } else {
-            2. * (w * (r * r - w * w).sqrt() + r * r * (w / r).asin())
+            2. * (w * (r * r - w * w).sqrt() + r * r * (w / r).portable_asin())
         };
     }
     removed *= dz;
@@ -137,7 +138,7 @@ fn actual_open_crown_nut_candidate_is_one_connected_seventeen_face_shell() {
     for rolled in [false, true] {
         let mut n = nut();
         if rolled {
-            let (s, c) = 0.317_f64.sin_cos();
+            let (s, c) = 0.317_f64.portable_sin_cos();
             n = Nut::new(stock(), 7.5, thread(), [[c, -s], [s, c]], n.relief(), None).unwrap();
         }
         let q = crate::display::Tessellation {
@@ -196,7 +197,7 @@ fn all_seventeen_physical_face_measures_are_source_integrals_including_crown_not
     for rolled in [false, true] {
         let mut n = nut();
         if rolled {
-            let (s, c) = 0.317_f64.sin_cos();
+            let (s, c) = 0.317_f64.portable_sin_cos();
             n = Nut::new(stock(), 7.5, thread(), [[c, -s], [s, c]], n.relief(), None).unwrap();
         }
         for face in 0..17 {
@@ -391,7 +392,7 @@ fn actual_full_prefix_stock_plane_wall_bound_is_positive_and_conservative() {
                 let b = n.stock().base()[0][(side + 1) % 8];
                 let dy = b[0] - a[0];
                 let dz = b[1] - a[1];
-                let distance = (dy * (z - a[1]) - dz * (y - a[0])) / dy.hypot(dz);
+                let distance = (dy * (z - a[1]) - dz * (y - a[0])) / dy.portable_hypot(dz);
                 assert!(distance >= wall);
             }
         }

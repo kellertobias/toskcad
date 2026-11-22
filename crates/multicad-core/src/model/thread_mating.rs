@@ -5,6 +5,7 @@ use super::{
     ThreadHand, ThreadRepresentation, align_frames,
 };
 use crate::{document::DocumentError, references::ReferenceFrame};
+use multicad_precision::PortableMath as _;
 use serde::Serialize;
 use std::f64::consts::TAU;
 
@@ -148,12 +149,12 @@ pub fn straight_thread_phase(
     // Reduce distance before multiplying, including negative stations. This
     // avoids unnecessarily large trigonometric arguments on long assemblies.
     let angle = sign * TAU * station.rem_euclid(reference.lead_mm) / reference.lead_mm;
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     let crest = std::array::from_fn(|i| reference_start.u[i] * cos + reference_start.v[i] * sin);
-    let raw = dot(crest, follower_start.v).atan2(dot(crest, follower_start.u));
+    let raw = dot(crest, follower_start.v).portable_atan2(dot(crest, follower_start.u));
     let period = TAU / f64::from(reference.starts);
     let roll = (raw + period / 2.).rem_euclid(period) - period / 2.;
-    let (sin, cos) = roll.sin_cos();
+    let (sin, cos) = roll.portable_sin_cos();
     let target = ReferenceFrame {
         origin_mm: follower_start.origin_mm,
         u: std::array::from_fn(|i| follower_start.u[i] * cos + follower_start.v[i] * sin),

@@ -14,6 +14,7 @@ use multicad_core::{
     symbols::{self, SymbolAuthorRequest, SymbolKind},
 };
 use multicad_model::Compiler;
+use multicad_precision::PortableMath as _;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -571,7 +572,8 @@ fn validate_entry(entry: &Entry) -> Result<(), Error> {
                     let r = scalar(radius, "mm")?;
                     let e = 2.
                         * r
-                        * (scalar(&profile.outer_corner_angle, "deg")?.to_radians() / 2.).cos();
+                        * (scalar(&profile.outer_corner_angle, "deg")?.to_radians() / 2.)
+                            .portable_cos();
                     if !bounds(
                         r,
                         f.inner_radius_instead_of_alpha_min_mm,
@@ -625,7 +627,8 @@ fn validate_entry(entry: &Entry) -> Result<(), Error> {
             ..
         } => {
             let rim = height_mm
-                - (radius_mm - shank_radius_mm) / (included_angle_deg.to_radians() / 2.).tan();
+                - (radius_mm - shank_radius_mm)
+                    / (included_angle_deg.to_radians() / 2.).portable_tan();
             if entry
                 .engineering_checks
                 .rim_height_mm

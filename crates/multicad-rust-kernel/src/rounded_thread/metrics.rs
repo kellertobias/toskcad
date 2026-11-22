@@ -1,6 +1,7 @@
 //! Smooth phase integrals with closed axial Fourier moments; no axial-symmetry
 //! assumption is made for fractional or complete turns.
 use super::{Error, Thread};
+use multicad_precision::PortableMath as _;
 type Point = [f64; 3];
 #[derive(Clone, Debug, PartialEq)]
 pub struct Properties {
@@ -44,8 +45,8 @@ pub(super) fn compute(t: &Thread) -> Result<Properties, Error> {
     let h = s.length_mm / q;
     let half = h / 2.;
     let average = [
-        half.cos() * half.sin() / half,
-        half.sin() * half.sin() / half,
+        half.portable_cos() * half.portable_sin() / half,
+        half.portable_sin() * half.portable_sin() / half,
     ];
     let mut cap = [0.; 4];
     let mut walls = Vec::with_capacity(5);
@@ -53,28 +54,29 @@ pub(super) fn compute(t: &Thread) -> Result<Properties, Error> {
     for (band, pair) in breaks.windows(2).enumerate() {
         let circle = t.profile_circle(band);
         let bounds = circle.map_or([pair[0], pair[1]], |c| {
-            [pair[0], pair[1]].map(|p| ((p - c.center_phase_mm) / c.radius_mm).asin())
+            [pair[0], pair[1]].map(|p| ((p - c.center_phase_mm) / c.radius_mm).portable_asin())
         });
         let values = integral(bounds[0], bounds[1], |parameter| {
             let (phase, r, ds, area) = if let Some(c) = circle {
-                let (sin, cos) = parameter.sin_cos();
+                let (sin, cos) = parameter.portable_sin_cos();
                 let base = if c.radial_sign > 0. {
                     s.major_radius_mm
                 } else {
                     t.root_radius_mm()
                 };
-                let r = base - c.radial_sign * 2. * c.radius_mm * (parameter / 2.).sin().powi(2);
+                let r = base
+                    - c.radial_sign * 2. * c.radius_mm * (parameter / 2.).portable_sin().powi(2);
                 (
                     c.center_phase_mm + c.radius_mm * sin,
                     r,
                     c.radius_mm * cos,
-                    c.radius_mm * r.hypot(q * sin),
+                    c.radius_mm * r.portable_hypot(q * sin),
                 )
             } else {
                 let [r, d] = t.radius_and_slope_at_phase(parameter);
-                (parameter, r, 1., r.hypot(d * r.hypot(q)))
+                (parameter, r, 1., r.portable_hypot(d * r.portable_hypot(q)))
             };
-            let (sin, cos) = (-phase / q).sin_cos();
+            let (sin, cos) = (-phase / q).portable_sin_cos();
             let sin2 = 2. * sin * cos;
             let cos2 = cos * cos - sin * sin;
             [
@@ -103,7 +105,7 @@ pub(super) fn compute(t: &Thread) -> Result<Properties, Error> {
     let second = [cap[2], cap[3]].map(|x| x / (4. * q.abs()));
     let mut faces = [0., s.length_mm]
         .map(|z| {
-            let (si, co) = (z / q).sin_cos();
+            let (si, co) = (z / q).portable_sin_cos();
             let p = multiply(first, [co, si]).map(|v| v / area);
             ([p[0], p[1], z], area)
         })
@@ -111,12 +113,16 @@ pub(super) fn compute(t: &Thread) -> Result<Properties, Error> {
     faces.extend(walls);
     let moment = multiply(first, average.map(|x| x * s.length_mm));
     let centroid = [moment[0] / volume, moment[1] / volume, s.length_mm / 2.];
-    let w2 = [h.cos() * h.sin() / h, h.sin() * h.sin() / h].map(|x| x * s.length_mm);
+    let w2 = [
+        h.portable_cos() * h.portable_sin() / h,
+        h.portable_sin() * h.portable_sin() / h,
+    ]
+    .map(|x| x * s.length_mm);
     let difference = multiply(second, w2);
     let polar = t.polar_second_moment_mm5();
     let weighted = [
-        q * s.length_mm * h.sin() + q * q * (h.cos() - 1.),
-        -q * s.length_mm * h.cos() + q * q * h.sin(),
+        q * s.length_mm * h.portable_sin() + q * q * (h.portable_cos() - 1.),
+        -q * s.length_mm * h.portable_cos() + q * q * h.portable_sin(),
     ];
     let mixed = multiply(first, weighted);
     let raw = [

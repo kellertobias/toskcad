@@ -12,6 +12,7 @@ use multicad_kernel::{
     BooleanOperation, Bounds, CurvedEdge2d, CurvedProfile, GeometryPolicy, PlaneFrame,
     RigidTransform, Solid,
 };
+use multicad_precision::PortableMath as _;
 
 fn closed(points: &[[f64; 2]]) -> Vec<CurvedEdge2d> {
     let n = points.len();
@@ -461,7 +462,7 @@ pub(crate) fn plan_vectors(
         }
         if let [.., a, b] = w.as_slice() {
             let d = [b[0] - a[0], b[1] - a[1]];
-            let l = d[0].hypot(d[1]).max(1e-9);
+            let l = d[0].portable_hypot(d[1]).max(1e-9);
             let (u, v) = ([d[0] / l, d[1] / l], [-d[1] / l, d[0] / l]);
             let size = 150.;
             for side in [1., -1.] {

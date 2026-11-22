@@ -306,9 +306,9 @@ mod component_tests {
                 let a = std::f64::consts::TAU * i as f64 / 3.;
                 let b = std::f64::consts::TAU * j as f64 / 3.;
                 mesh.vertices.extend([
-                    10. + (3. + b.cos()) * a.cos(),
-                    (3. + b.cos()) * a.sin(),
-                    b.sin(),
+                    10. + (3. + b.portable_cos()) * a.portable_cos(),
+                    (3. + b.portable_cos()) * a.portable_sin(),
+                    b.portable_sin(),
                 ]);
             }
         }

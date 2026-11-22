@@ -16,6 +16,7 @@ use multicad_model::{
         sheet_dxf::{SheetDxfLayers, SheetDxfOptions},
     },
 };
+use multicad_precision::PortableMath as _;
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -292,7 +293,7 @@ fn developed_c_channel_flange_cut_matches_folded_geometry_and_millimeter_dxf() {
     let [x, y] = [45., 25.];
     let unit = |p: [f64; 2]| {
         let delta = [p[0] - p0[0], p[1] - p0[1]];
-        let length = delta[0].hypot(delta[1]);
+        let length = delta[0].portable_hypot(delta[1]);
         delta.map(|d| d / length)
     };
     let center: [f64; 2] = std::array::from_fn(|i| p0[i] + x * unit(p1)[i] + y * unit(p3)[i]);
@@ -458,7 +459,7 @@ fn developed_c_channel_flange_cut_matches_folded_geometry_and_millimeter_dxf() {
             // A full circle is emitted as two exact bulged semicircles.
             (a.bulge.abs() - 1.).abs() < 1e-8
                 && (b.bulge.abs() - 1.).abs() < 1e-8
-                && ((a.x - b.x).hypot(a.y - b.y) - 6.).abs() < 1e-7
+                && ((a.x - b.x).portable_hypot(a.y - b.y) - 6.).abs() < 1e-7
                 && ((a.x + b.x) * 0.5 - center[0]).abs() < 1e-7
                 && ((a.y + b.y) * 0.5 - center[1]).abs() < 1e-7
         });
@@ -571,7 +572,7 @@ fn rust_rebuilds_live_sketch_cuts_on_folded_and_developed_c_channel_faces() {
     let [a, b, _, d] = folded_pattern.chart.legs[0].quad;
     let unit = |p: [f64; 2]| {
         let [x, y] = [p[0] - a[0], p[1] - a[1]];
-        let magnitude = x.hypot(y);
+        let magnitude = x.portable_hypot(y);
         [x / magnitude, y / magnitude]
     };
     let u = unit(b);

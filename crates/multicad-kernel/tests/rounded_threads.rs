@@ -3,6 +3,7 @@ use multicad_kernel::{
     BooleanOperation, GeometryError, GeometryPolicy, MeshOptions, PlaneFrame, RigidTransform,
     RoundedHelicalThread, Solid, rust_kernel::rounded_thread,
 };
+use multicad_precision::PortableMath as _;
 
 /// Owned-kernel single-radius rounded (Whitworth-form) thread: identical
 /// tangent crest and root circles on symmetric straight flanks.
@@ -45,8 +46,8 @@ fn spec() -> RoundedHelicalThread {
         major_radius_mm: 3.175,
         pitch_mm: pitch,
         length_mm: 3.7 * pitch,
-        depth_mm: pitch / (3. * angle.tan()),
-        rounding_radius_mm: pitch * angle.cos() / (12. * (1. - angle.sin())),
+        depth_mm: pitch / (3. * angle.portable_tan()),
+        rounding_radius_mm: pitch * angle.portable_cos() / (12. * (1. - angle.portable_sin())),
         flank_angle_deg: 27.5,
         radial_taper: 0.,
         starts: 1,
@@ -86,8 +87,8 @@ fn material(solid: &Solid, point: [f64; 3], size: f64) -> f64 {
 fn expected_volume(s: RoundedHelicalThread, n: usize) -> f64 {
     let angle = 27.5_f64.to_radians();
     let r = s.rounding_radius_mm;
-    let a = r * angle.cos();
-    let drop = r * (1. - angle.sin());
+    let a = r * angle.portable_cos();
+    let drop = r * (1. - angle.portable_sin());
     let radius = |z: f64| {
         let z = z.abs();
         if z <= a {
@@ -96,7 +97,7 @@ fn expected_volume(s: RoundedHelicalThread, n: usize) -> f64 {
             let offset = z - s.pitch_mm / 2.;
             s.major_radius_mm - s.depth_mm + r - (r * r - offset * offset).sqrt()
         } else {
-            s.major_radius_mm - drop - (z - a) / angle.tan()
+            s.major_radius_mm - drop - (z - a) / angle.portable_tan()
         }
     };
     // Independent quadrature of the analytic circular/linear meridian,
@@ -117,7 +118,7 @@ fn expected_volume(s: RoundedHelicalThread, n: usize) -> f64 {
 }
 fn check_circles(solid: &Solid, s: RoundedHelicalThread) {
     let r = s.rounding_radius_mm;
-    let half = r * 27.5_f64.to_radians().cos();
+    let half = r * 27.5_f64.to_radians().portable_cos();
     let offset = (r * 0.02).min(0.003);
     let cube = offset * 0.2;
     for fraction in [0.4, 0.65, 0.85] {
@@ -452,12 +453,16 @@ fn fitted_left_bsw_fractional_preserves_diagonal_material_and_step_geometry() {
         for turns in [0.875, 1.875] {
             let z = turns * s.pitch_mm;
             let angle = -2. * std::f64::consts::PI * z / s.pitch_mm;
-            let radius =
-                s.major_radius_mm - 0.1 * 2. * s.rounding_radius_mm * 27.5_f64.to_radians().cos();
+            let radius = s.major_radius_mm
+                - 0.1 * 2. * s.rounding_radius_mm * 27.5_f64.to_radians().portable_cos();
             assert!(
                 material(
                     shape,
-                    [radius * angle.cos(), radius * angle.sin(), z],
+                    [
+                        radius * angle.portable_cos(),
+                        radius * angle.portable_sin(),
+                        z
+                    ],
                     0.001
                 ) > 0.999
             );
@@ -682,7 +687,7 @@ fn blind_and_through_rounded_receivers_keep_rigid_geometry_ancestry_and_step_bou
                     );
                 }
                 let r = s.rounding_radius_mm;
-                let dz = 0.65 * r * 27.5_f64.to_radians().cos();
+                let dz = 0.65 * r * 27.5_f64.to_radians().portable_cos();
                 for valley in [false, true] {
                     let center = if valley { 1.5 * s.pitch_mm } else { s.pitch_mm };
                     let boundary = if valley {

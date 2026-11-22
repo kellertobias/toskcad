@@ -8,6 +8,7 @@ use super::super::*;
 use super::Gear;
 use crate::{GearHub, GearSweep, InvoluteGear, RigidTransform};
 use multicad_core::document::EntityId;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::spur_gear::{Edge, Profile, Spec};
 use std::f64::consts::PI;
 
@@ -22,11 +23,11 @@ pub(super) fn specification(sweep: GearSweep, twist: f64, bore: f64, hub: bool) 
         }),
         teeth: 24,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * a.cos(),
+        base_radius_mm: pitch * a.portable_cos(),
         tip_radius_mm: pitch + 1.,
         root_radius_mm: pitch - 1.25,
         root_fillet_radius_mm: 0.2,
-        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+        half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.portable_tan() - a,
         face_width_mm: 4.,
         bore_radius_mm: bore,
         twist_rad_per_mm: twist,
@@ -101,11 +102,11 @@ pub(super) struct Oracle {
 }
 
 fn swept(edge: Edge, w: P2, [a, b]: [f64; 2], [pa, pb]: [P2; 2], depth: u32) -> f64 {
-    let chord = (pb[0] - pa[0]).hypot(pb[1] - pa[1]);
+    let chord = (pb[0] - pa[0]).portable_hypot(pb[1] - pa[1]);
     let mid = [0.5 * (pa[0] + pb[0]), 0.5 * (pa[1] + pb[1])];
-    if (w[0] - mid[0]).hypot(w[1] - mid[1]) > chord || depth > 60 {
+    if (w[0] - mid[0]).portable_hypot(w[1] - mid[1]) > chord || depth > 60 {
         let [p, q] = [[pa[0] - w[0], pa[1] - w[1]], [pb[0] - w[0], pb[1] - w[1]]];
-        return (p[0] * q[1] - p[1] * q[0]).atan2(p[0] * q[0] + p[1] * q[1]);
+        return (p[0] * q[1] - p[1] * q[0]).portable_atan2(p[0] * q[0] + p[1] * q[1]);
     }
     let m = 0.5 * (a + b);
     let pm = edge.point(m);
@@ -166,7 +167,7 @@ impl Oracle {
     }
 
     pub(super) fn in_profile(&self, w: P2) -> bool {
-        let r = w[0].hypot(w[1]);
+        let r = w[0].portable_hypot(w[1]);
         if r < self.spec.root_radius_mm - 1e-3 {
             return true;
         }
@@ -199,7 +200,7 @@ impl Oracle {
     }
 
     pub(super) fn inside_local(&self, [x, y, z]: P3) -> bool {
-        let r = x.hypot(y);
+        let r = x.portable_hypot(y);
         if r <= self.spec.bore_radius_mm {
             return false;
         }
@@ -208,7 +209,7 @@ impl Oracle {
             if self.in_gap(z) {
                 return r < self.spec.root_radius_mm;
             }
-            let (sin, cos) = (-self.phase(z)).sin_cos();
+            let (sin, cos) = (-self.phase(z)).portable_sin_cos();
             return self.in_profile([x * cos - y * sin, x * sin + y * cos]);
         }
         self.spec
@@ -382,7 +383,7 @@ impl Oracle {
     fn flank_normal(&self, edge: Edge, s: f64, z: f64) -> P3 {
         let [tx, ty] = edge.tangent(s);
         let c = edge.point(s);
-        let (sin, cos) = self.phase(z).sin_cos();
+        let (sin, cos) = self.phase(z).portable_sin_cos();
         let [nx, ny] = [ty, -tx];
         let n = [
             nx * cos - ny * sin,
@@ -395,14 +396,14 @@ impl Oracle {
 
     fn flank_point(&self, edge: Edge, s: f64, z: f64) -> P3 {
         let [x, y] = edge.point(s);
-        let (sin, cos) = self.phase(z).sin_cos();
+        let (sin, cos) = self.phase(z).portable_sin_cos();
         [x * cos - y * sin, x * sin + y * cos, z]
     }
 
     /// The surface normal at a boundary point away from the end faces,
     /// found on the nearest exact profile curve.
     fn normal(&self, [x, y, z]: P3) -> P3 {
-        let r = x.hypot(y);
+        let r = x.portable_hypot(y);
         let radial = [x / r, y / r, 0.];
         if !(z > 0. && z < self.spec.face_width_mm)
             || (r - self.spec.bore_radius_mm).abs() < 1e-6
@@ -410,11 +411,11 @@ impl Oracle {
         {
             return radial;
         }
-        let (sin, cos) = (-self.phase(z)).sin_cos();
+        let (sin, cos) = (-self.phase(z)).portable_sin_cos();
         let w = [x * cos - y * sin, x * sin + y * cos];
         let distance = |edge: Edge, s: f64| {
             let p = edge.point(s);
-            (p[0] - w[0]).hypot(p[1] - w[1])
+            (p[0] - w[0]).portable_hypot(p[1] - w[1])
         };
         let mut nearest: Vec<(f64, Edge, f64)> = self
             .edges
@@ -756,7 +757,7 @@ fn check_section(case: &Case, depth: f64, loops: Vec<Loop>) -> (f64, f64) {
             .iter()
             .enumerate()
             .filter(|(index, _)| !taken[*index])
-            .map(|(index, q)| (index, (p[0] - q[0]).hypot(p[1] - q[1])))
+            .map(|(index, q)| (index, (p[0] - q[0]).portable_hypot(p[1] - q[1])))
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .unwrap_or_else(|| panic!("{} at {depth}: an end without a start", case.label));
         worst_gap = worst_gap.max(gap);
@@ -776,7 +777,7 @@ fn check_section(case: &Case, depth: f64, loops: Vec<Loop>) -> (f64, f64) {
         // Material on the left, void on the right.
         let [p, q] = [piece.point(0.5 - 1e-4), piece.point(0.5 + 1e-4)];
         let m = piece.point(0.5);
-        let l = (q[0] - p[0]).hypot(q[1] - p[1]);
+        let l = (q[0] - p[0]).portable_hypot(q[1] - p[1]);
         let left = [-(q[1] - p[1]) / l, (q[0] - p[0]) / l];
         let at = |side: f64| {
             case.oracle.inside([
@@ -852,7 +853,7 @@ fn sight_lines_tangent_to_coaxial_cylinders_keep_the_material() {
                         let p = [paper[0], paper[1], depth];
                         // Skip depths at the contact itself or at an end.
                         let local = case.oracle.local(p);
-                        if (local[0].hypot(local[1]) - station).abs() < 1e-6
+                        if (local[0].portable_hypot(local[1]) - station).abs() < 1e-6
                             || spans.iter().flatten().any(|end| (end - depth).abs() < 1e-6)
                         {
                             continue;

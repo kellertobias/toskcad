@@ -108,7 +108,7 @@ pub(super) fn verify(
             return Err(ReadError::Invalid);
         };
         require(*measured == radius)?;
-        let (sin, cos) = ((spec.length_mm - start) / rate).sin_cos();
+        let (sin, cos) = ((spec.length_mm - start) / rate).portable_sin_cos();
         let reference = std::array::from_fn(|i| cos * u[i] + sin * v[i]);
         proof.axis(shell, placement, world(spec.length_mm), axis, reference)?;
         let uses = ring(shell, bounds[0], true)?;

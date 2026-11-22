@@ -61,7 +61,7 @@ fn actual_literal_cap_mutations_refuse_angular_transfer_and_normal_certification
     let start = edge.station == StockClipStation::Start;
     let center = plan.vertex_count() + usize::from(!start);
     let triangle = [center as u32, ids[0], ids[1]];
-    let allowed = 2. * (quality.angle / 2.).sin();
+    let allowed = 2. * (quality.angle / 2.).portable_sin();
     assert!(cap_normal(&mesh, triangle, start, allowed).is_ok());
     mesh.vertices[center * 3 + 2] += 100.;
     assert!(matches!(

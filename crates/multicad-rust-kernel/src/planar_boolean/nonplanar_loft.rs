@@ -1,5 +1,6 @@
 //! Linear interpolation of corresponding convex sections on parallel planes.
 use super::*;
+use multicad_precision::PortableMath as _;
 
 mod area;
 mod projection;
@@ -274,7 +275,7 @@ fn divisions(wall: LoftWall, options: Tessellation) -> f64 {
     };
     let min_jacobian = rail[2] * norm(interpolate(edge, edge_end, fraction));
     let normal_change = norm(cross(edge, twist)) + norm(cross(twist, rail));
-    let rotation = normal_change / (min_jacobian * (options.angle * 0.5).sin());
+    let rotation = normal_change / (min_jacobian * (options.angle * 0.5).portable_sin());
     displacement.max(rotation).ceil()
 }
 

@@ -143,10 +143,10 @@ mod tests {
                     let arc = source.arcs()[i];
                     for sample in 0..=200 {
                         let theta = arc.start_angle_rad + arc.sweep_rad * sample as f64 / 200.;
-                        let x = arc.center_mm[0] + arc.radius_mm * theta.cos();
-                        let y = arc.center_mm[1] + arc.radius_mm * theta.sin();
+                        let x = arc.center_mm[0] + arc.radius_mm * theta.portable_cos();
+                        let y = arc.center_mm[1] + arc.radius_mm * theta.portable_sin();
                         let z = screw.head_top_z() + source.cone().tip_depth_mm
-                            - x.hypot(y) * source.cone().depth_per_radius;
+                            - x.portable_hypot(y) * source.cone().depth_per_radius;
                         let p = position(frame, [x, y, z]);
                         let error = edge
                             .points_mm

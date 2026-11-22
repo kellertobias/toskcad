@@ -1,6 +1,7 @@
 use super::super::Value;
 use super::*;
 use crate::step_read::brep::pcurve::{Proof, uv};
+use multicad_precision::PortableMath as _;
 
 const CYLINDER: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -215,7 +216,7 @@ fn large_raw_angle_interval_encloses_the_true_extremum_without_quotient_search()
     assert_eq!(cosine.hi, 1.);
     for i in 0..=32 {
         let t = interval.lo + (interval.hi - interval.lo) * f64::from(i) / 32.;
-        assert!(cosine.lo <= t.cos() && t.cos() <= cosine.hi);
+        assert!(cosine.lo <= t.portable_cos() && t.portable_cos() <= cosine.hi);
     }
 }
 #[test]

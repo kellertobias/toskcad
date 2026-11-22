@@ -263,7 +263,7 @@ impl CosmeticProfiledBody {
                             x,
                             y,
                             top + drive.cone().tip_depth_mm
-                                - x.hypot(y) * drive.cone().depth_per_radius,
+                                - x.portable_hypot(y) * drive.cone().depth_per_radius,
                         ],
                     ),
                 })
@@ -358,7 +358,7 @@ impl CosmeticProfiledBody {
                 (
                     1,
                     source.head_top_z() + drive.cone().tip_depth_mm
-                        - x.hypot(y) * drive.cone().depth_per_radius,
+                        - x.portable_hypot(y) * drive.cone().depth_per_radius,
                 ),
             ] {
                 elements.push(TopologyElement {

@@ -7,6 +7,7 @@ use multicad_core::{
     references::{Origin, TopologyKind},
 };
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -99,7 +100,7 @@ fn rust_gap_edits_history_reopen_and_refusals_keep_the_actual_core() {
         .filter(|face| {
             face.plane.is_some()
                 && (face.center_mm[2] - (12. - 3.) / 2.).abs() < 1e-9
-                && face.center_mm[0].hypot(face.center_mm[1]) > gear.root_radius_mm
+                && face.center_mm[0].portable_hypot(face.center_mm[1]) > gear.root_radius_mm
         })
         .map(|face| face.area_mm2)
         .sum::<f64>();

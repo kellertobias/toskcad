@@ -82,7 +82,7 @@ fn add_boundary(
 }
 
 fn turn([x, y, z]: Point, angle: f64) -> Point {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     [x * cos - y * sin, x * sin + y * cos, z]
 }
 

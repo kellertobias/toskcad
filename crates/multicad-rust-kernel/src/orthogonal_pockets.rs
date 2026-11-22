@@ -6,6 +6,7 @@ use crate::{
     orthogonal::{Box3, OrthogonalSolid},
     orthogonal_boundary::{Boundary, BoundaryFace},
 };
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeSet, f64::consts::PI};
 
 type Point = [f64; 3];
@@ -128,7 +129,8 @@ impl Cylinder {
             let u = (self.axis + 1) % 3;
             let v = (self.axis + 2) % 3;
             return interval_gap(self.depth, other.depth) > axial_guard
-                || (self.center[u] - other.center[u]).hypot(self.center[v] - other.center[v])
+                || (self.center[u] - other.center[u])
+                    .portable_hypot(self.center[v] - other.center[v])
                     > self.radius + other.radius + guard;
         }
         // A perpendicular cylinder has a possible slice on the shared
@@ -247,7 +249,8 @@ fn prove_tile_clearance(
         // Orthogonal tiles project to rectangles, segments or points, for
         // which distance to the cutting axis is exact up to the guard.
         if interval_gap(travel, range(axis)) <= 0.
-            && distance(cylinder.center[u], range(u)).hypot(distance(cylinder.center[v], range(v)))
+            && distance(cylinder.center[u], range(u))
+                .portable_hypot(distance(cylinder.center[v], range(v)))
                 <= cylinder.radius + guard
         {
             return Err(PocketError::UnresolvedBoundary);

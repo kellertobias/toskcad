@@ -1,6 +1,7 @@
 //! Straight single-start screw material with tangent circular crest and root.
 //! The supplied meridian dimensions are retained; no flattened substitute or
 //! inferred manufacturing mesh defines the occupied material.
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 mod blind;
@@ -78,8 +79,8 @@ impl Thread {
             return Err(Error::Limit);
         }
         let angle = deg.to_radians();
-        let (sin, cos) = angle.sin_cos();
-        let expected = p / (2. * angle.tan()) - (rc + rr) * (1. / sin - 1.);
+        let (sin, cos) = angle.portable_sin_cos();
+        let expected = p / (2. * angle.portable_tan()) - (rc + rr) * (1. / sin - 1.);
         if (expected - d).abs() > 64. * f64::EPSILON * p.max(d).max(rc + rr) {
             return Err(Error::Invalid);
         }
@@ -240,16 +241,17 @@ impl Thread {
             && y.is_finite()
             && z >= -tolerance
             && z <= self.spec.length_mm + tolerance
-            && x.hypot(y) <= self.radius(y.atan2(x), z.clamp(0., self.spec.length_mm)) + tolerance
+            && x.portable_hypot(y)
+                <= self.radius(y.portable_atan2(x), z.clamp(0., self.spec.length_mm)) + tolerance
     }
     pub fn normal(&self, theta: f64, z: f64) -> [f64; 3] {
         let theta = theta.rem_euclid(TAU);
         let phase = z.rem_euclid(self.spec.pitch_mm) - self.helical_rate() * theta;
         let [r, slope] = self.radius_and_slope_at_phase(phase);
-        let (sin, cos) = theta.sin_cos();
+        let (sin, cos) = theta.portable_sin_cos();
         let a = self.helical_rate() * slope;
         let n = [r * cos - a * sin, r * sin + a * cos, -r * slope];
-        let length = n[0].hypot(n[1]).hypot(n[2]);
+        let length = n[0].portable_hypot(n[1]).portable_hypot(n[2]);
         n.map(|x| x / length)
     }
     /// Smooth-band quadrature with closed axial Fourier integration. Face
@@ -319,7 +321,7 @@ fn circle_moment(c: Circle, x: f64, power: u32) -> f64 {
     let r = c.radius_mm;
     let v = c.center_radius_mm;
     let h = height(r, x);
-    let asin = (x / r).clamp(-1., 1.).asin();
+    let asin = (x / r).clamp(-1., 1.).portable_asin();
     let ih = (x * h + r * r * asin) / 2.;
     if power == 2 {
         (v * v + r * r) * x - x.powi(3) / 3. + 2. * c.radial_sign * v * ih

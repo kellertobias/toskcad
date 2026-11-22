@@ -356,7 +356,7 @@ fn check_cone(
     require(
         radius >= r[0]
             && radius <= r[1]
-            && angle == k.abs().atan()
+            && angle == k.abs().portable_atan()
             && length(sub(actual.origin, origin)) <= shell.tolerance / 16.
             && length(sub(
                 actual.normal,

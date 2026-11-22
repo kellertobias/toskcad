@@ -114,7 +114,7 @@ pub(super) fn junction(
     let [_, start, _, _, crest, _] = thread.profile_breaks();
     let rate = thread.helical_rate();
     let radial = |phase: f64| {
-        let (sin, cos) = ((z - phase) / rate).sin_cos();
+        let (sin, cos) = ((z - phase) / rate).portable_sin_cos();
         p.vector([cos, sin, 0.])
     };
     let center = p.point_f64([0.; 2], z);

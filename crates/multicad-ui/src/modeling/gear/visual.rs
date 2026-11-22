@@ -5,6 +5,7 @@
 //! gear form's canonical fields.
 use super::super::diagram::{Diagram, Key, Line, Notation, legible};
 use multicad_core::model::{GearFamily, GearHand, GearPitchInput, WormMember};
+use multicad_precision::PortableMath as _;
 use std::f32::consts::{PI, TAU};
 
 pub(super) const FIELDS: [Key; 11] = [
@@ -69,7 +70,7 @@ fn tooth_ring(z: usize, pitch_radius: f32, module: f32, inward: bool) -> Vec<[f3
             (tip, c + 0.14 * step),
             (root, c + 0.29 * step),
         ] {
-            points.push([r * a.cos(), r * a.sin()]);
+            points.push([r * a.portable_cos(), r * a.portable_sin()]);
         }
     }
     points.push(points[0]);
@@ -178,7 +179,7 @@ fn cylindrical(variant: &Variant, v: &Values) -> Diagram {
     let band = |d: Diagram, xa: f32, xb: f32, s: f32| {
         (0..traces).fold(d, |d, i| {
             let y = -0.8 * h + 1.6 * h * i as f32 / (traces - 1) as f32;
-            let dy = s * (xb - xa) * beta.tan();
+            let dy = s * (xb - xa) * beta.portable_tan();
             d.line([xa, y - dy / 2.], [xb, y + dy / 2.], Line::Hidden)
         })
     };
@@ -307,10 +308,10 @@ fn bevel(variant: &Variant, v: &Values) -> Diagram {
     let z = legible(v.teeth, 30., 6., 400.);
     let mate = legible(v.mate, z, 6., 400.);
     let m = legible(v.module, 2., 0.01, 1e5);
-    let delta = (z / mate).atan();
-    let cone = m * z / 2. / delta.sin();
+    let delta = (z / mate).portable_atan();
+    let cone = m * z / 2. / delta.portable_sin();
     let b = legible(v.face, cone / 4., 0.1 * cone, 0.45 * cone);
-    let dir = [delta.sin(), delta.cos()];
+    let dir = [delta.portable_sin(), delta.portable_cos()];
     let at = |s: f32, off: f32| [dir[0] * s + dir[1] * off, dir[1] * s - dir[0] * off];
     let (heel, toe) = (cone, cone - b);
     // Half tooth height either side of the pitch cone (addendum ≈ module).

@@ -51,7 +51,7 @@ impl Core {
                 [[0.; 3], u, [0.; 3], du]
             }
             Sheet::Cap(end) => {
-                let (sin, cos) = s.sin_cos();
+                let (sin, cos) = s.portable_sin_cos();
                 let [sd, cd] = self.pitch;
                 [
                     [0., 0., self.bevel.back_cone_apex_mm(end)],
@@ -62,7 +62,7 @@ impl Core {
             }
             Sheet::Bore => {
                 let bore = self.bore.unwrap_or(0.);
-                let (sin, cos) = s.sin_cos();
+                let (sin, cos) = s.portable_sin_cos();
                 [
                     [bore * cos, bore * sin, 0.],
                     [0., 0., 1.],
@@ -91,7 +91,7 @@ impl Core {
     /// derivative over the strip.
     fn slope(&self, sheet: Sheet, plane: Plane, s: f64) -> [f64; 2] {
         let [_, _, dalpha, dbeta] = self.terms(sheet, plane, s);
-        let across = plane.normal[0].hypot(plane.normal[1]);
+        let across = plane.normal[0].portable_hypot(plane.normal[1]);
         match sheet {
             Sheet::Side { piece, .. } => [dalpha, self.shapes[piece].curvature],
             Sheet::Cap(_) => [dalpha, self.pitch[1] * across],
@@ -204,10 +204,18 @@ impl Path for Cut {
                 0.,
             ),
             Sheet::Side { sector, piece } => match core.pieces[piece] {
-                Piece::RootLeft | Piece::RootRight => {
-                    ([0.; 3], [0., 0., 1.], Some(core.root.cos().powi(2)), 0.)
-                }
-                Piece::Tip => ([0.; 3], [0., 0., 1.], Some(core.tip.cos().powi(2)), 0.),
+                Piece::RootLeft | Piece::RootRight => (
+                    [0.; 3],
+                    [0., 0., 1.],
+                    Some(core.root.portable_cos().powi(2)),
+                    0.,
+                ),
+                Piece::Tip => (
+                    [0.; 3],
+                    [0., 0., 1.],
+                    Some(core.tip.portable_cos().powi(2)),
+                    0.,
+                ),
                 Piece::MeridianLeft | Piece::MeridianRight => return line,
                 Piece::FilletLeft | Piece::FilletRight => {
                     let shape = core.shapes[piece];
@@ -245,8 +253,8 @@ impl Path for Cut {
         let solved = [(c * m[0] - b * m[1]) / det, (a * m[1] - b * m[0]) / det];
         let center = [apex[0] - dz * solved[0], apex[1] - dz * solved[1]];
         let constant = radius2 - dz * dz * (form(2, 2) - m[0] * solved[0] - m[1] * solved[1]);
-        let turn = 0.5 * (2. * b).atan2(a - c);
-        let (sin, cos) = turn.sin_cos();
+        let turn = 0.5 * (2. * b).portable_atan2(a - c);
+        let (sin, cos) = turn.portable_sin_cos();
         // `values[0]` belongs to (cos, sin), `values[1]` to (−sin, cos).
         let radii = [constant / values[0], constant / values[1]];
         if !(radii[0] > 0. && radii[1] > 0.) {
@@ -258,7 +266,7 @@ impl Path for Cut {
             let offset = [point[0] - center[0], point[1] - center[1]];
             let [x, y] = [0, 1]
                 .map(|k| (offset[0] * directions[k][0] + offset[1] * directions[k][1]) / radii[k]);
-            (y.atan2(x), x.hypot(y))
+            (y.portable_atan2(x), x.portable_hypot(y))
         };
         let start = angle(p);
         let mut sweep = 0.;
@@ -302,7 +310,7 @@ struct Rates {
 
 impl Core {
     fn rates(&self, sheet: Sheet, plane: Plane) -> Rates {
-        let across = plane.normal[0].hypot(plane.normal[1]);
+        let across = plane.normal[0].portable_hypot(plane.normal[1]);
         match sheet {
             Sheet::Side { piece, .. } => {
                 let Shape {
@@ -590,7 +598,7 @@ impl Builder<'_> {
         let core = self.core;
         let eval = |phi: f64| {
             let [x, y, _] = self.plane.normal;
-            let (sin, cos) = phi.sin_cos();
+            let (sin, cos) = phi.portable_sin_cos();
             (
                 self.value(core.bottom(end, phi)),
                 bore * (y * cos - x * sin),
@@ -600,7 +608,7 @@ impl Builder<'_> {
         let mut found = Vec::new();
         roots::crossings(
             &eval,
-            bore * self.plane.normal[0].hypot(self.plane.normal[1]),
+            bore * self.plane.normal[0].portable_hypot(self.plane.normal[1]),
             [start, start + TAU],
             [first, first],
             &mut found,

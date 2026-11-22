@@ -38,7 +38,7 @@ pub(super) fn oriented_triangle(
     let yaw = facet[1]
         .lo
         .midpoint(facet[1].hi)
-        .atan2(facet[0].lo.midpoint(facet[0].hi));
+        .portable_atan2(facet[0].lo.midpoint(facet[0].hi));
     // Actual-source vertices are bounded by 1e7 in each coordinate. Their
     // finite unnormalized cross products stay below 1e15; atan2(0,0) is finite.
     let a = I::point(yaw);

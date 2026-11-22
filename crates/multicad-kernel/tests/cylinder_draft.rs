@@ -3,6 +3,7 @@ use multicad_kernel::{
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
     *,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn near(a: f64, b: f64) {
@@ -83,7 +84,7 @@ fn check(solid: &Solid, frame: PlaneFrame, radii: [f64; 2]) -> f64 {
     assert_eq!(solid.solid_count().unwrap(), 1);
     let bounds = solid.bounds().unwrap();
     for i in 0..3 {
-        let radial = frame.u[i].hypot(frame.v[i]);
+        let radial = frame.u[i].portable_hypot(frame.v[i]);
         near(
             bounds.min[i],
             (frame.origin[i] - a * radial)
@@ -130,8 +131,8 @@ fn cylinder_draft_exact_taper_matches_native_for_signed_angles_pulls_and_neutral
                             )
                             .unwrap();
                         let radii = [
-                            10. + sense * angle.tan() * level,
-                            10. - sense * angle.tan() * (20. - level),
+                            10. + sense * angle.portable_tan() * level,
+                            10. - sense * angle.portable_tan() * (20. - level),
                         ];
                         check(&result, frame, radii);
                         let output = result.topology_snapshot(feature, 1).unwrap();

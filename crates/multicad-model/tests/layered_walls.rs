@@ -11,6 +11,7 @@ use multicad_core::{
 };
 use multicad_kernel::{GeometryPolicy, Solid, SolidPairRelation};
 use multicad_model::{Compiler, GeometryBackend, Model};
+use multicad_precision::PortableMath as _;
 use std::collections::{BTreeMap, BTreeSet};
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -1369,7 +1370,8 @@ fn t_junction_with_door_and_window_exports_a_true_contact_boundary_at_three_scal
         ];
         let expected_b = [view.position_mm[0] + 2191.25 / denominator, expected_a[1]];
         let matches = |a: [f64; 2], b: [f64; 2], tolerance: f64| {
-            let same = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) < tolerance;
+            let same =
+                |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).portable_hypot(a[1] - b[1]) < tolerance;
             (same(a, expected_a) && same(b, expected_b))
                 || (same(b, expected_a) && same(a, expected_b))
         };
@@ -1455,7 +1457,7 @@ fn perpendicular_t_contact_is_rigidly_invariant_under_rotation_and_translation()
     let (mut session, value) = fixture(WallLayerReference::Center);
     let ty = NewType::new("Rotated construction", NewTypeKind::LayeredWall(value));
     let angle = std::f64::consts::PI / 6.;
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     let transform = |p: [f64; 2]| [10000. + c * p[0] - s * p[1], 20000. + s * p[0] + c * p[1]];
     let host = request(ty.id, &[[0., 0.], [4000., 0.]].map(transform), false);
     let p = model::prepare_wall_change(&session, 0, actor(), &[ty], &WallChange::Create(&host))

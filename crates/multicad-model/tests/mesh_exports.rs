@@ -15,6 +15,7 @@ use multicad_model::{
     GeometryBackend,
     export::{ExportWorker, Exporter},
 };
+use multicad_precision::PortableMath as _;
 use quick_xml::{Reader, events::Event};
 use std::{collections::BTreeMap, f64::consts::PI, path::Path};
 
@@ -80,7 +81,7 @@ impl Fixture {
                 .unwrap(),
             )
             .unwrap();
-        let q = (std::f64::consts::FRAC_PI_4).sin();
+        let q = (std::f64::consts::FRAC_PI_4).portable_sin();
         let instances = [
             Entity::new(
                 "Rotated copy",
@@ -915,7 +916,7 @@ fn rust_export_worker_writes_one_closed_headed_screw_with_a_hex_socket_floor() {
             triangles
                 .iter()
                 .flatten()
-                .any(|p| (2. ..8.).contains(&p[2]) && p[0].hypot(p[1]) < 1.24)
+                .any(|p| (2. ..8.).contains(&p[2]) && p[0].portable_hypot(p[1]) < 1.24)
         );
     });
 }
@@ -943,7 +944,7 @@ fn rust_export_worker_writes_one_closed_hex_nut_with_an_open_threaded_bore() {
             triangles
                 .iter()
                 .flatten()
-                .any(|p| (1. ..4.).contains(&p[2]) && p[0].hypot(p[1]) < 2.6)
+                .any(|p| (1. ..4.).contains(&p[2]) && p[0].portable_hypot(p[1]) < 2.6)
         );
         // An axis ray must miss every triangle of both caps and the bore.
         let cross = |a: [f64; 3], b: [f64; 3]| a[0] * b[1] - a[1] * b[0];
@@ -977,7 +978,7 @@ fn rust_export_worker_writes_a_closed_bearing_envelope_with_open_axis() {
             triangles
                 .iter()
                 .flatten()
-                .any(|p| (p[0].hypot(p[1]) - 4.).abs() < 1e-6)
+                .any(|p| (p[0].portable_hypot(p[1]) - 4.).abs() < 1e-6)
         );
     });
 }
@@ -1023,7 +1024,7 @@ fn rust_export_worker_writes_a_signed_revolve_with_its_internal_cavity() {
         for (z, radius) in [(1., 3.), (1., 4.), (3., 3.), (3., 4.), (4., 5.)] {
             assert!(vertices().any(|p| {
                 (p[2] - z).abs() < 1e-6
-                    && (p[0].hypot(p[1]) - radius).abs() < 1e-6
+                    && (p[0].portable_hypot(p[1]) - radius).abs() < 1e-6
                     && p[0] > 0.5
                     && p[1] < -0.5
             }));
@@ -1225,7 +1226,7 @@ fn rust_export_metric_thread(internal: bool) {
             .iter()
             .flatten()
             .filter(|p| (1. ..8.).contains(&p[2]))
-            .map(|p| p[0].hypot(p[1]));
+            .map(|p| p[0].portable_hypot(p[1]));
         assert!(
             wall_radii
                 .clone()
@@ -1237,10 +1238,11 @@ fn rust_export_metric_thread(internal: bool) {
         let crest_vertices = triangles
             .iter()
             .flatten()
-            .filter(|p| (1. ..8.).contains(&p[2]) && (p[0].hypot(p[1]) - 4.).abs() < 1e-5);
+            .filter(|p| (1. ..8.).contains(&p[2]) && (p[0].portable_hypot(p[1]) - 4.).abs() < 1e-5);
         assert!(crest_vertices.clone().count() > 100);
         for p in crest_vertices {
-            let phase = (p[2] + p[1].atan2(p[0]) * 1.25 / std::f64::consts::TAU).rem_euclid(1.25);
+            let phase =
+                (p[2] + p[1].portable_atan2(p[0]) * 1.25 / std::f64::consts::TAU).rem_euclid(1.25);
             assert!(phase.min(1.25 - phase) < 1.25 / 16. + 1e-5);
         }
     }
@@ -1488,7 +1490,7 @@ fn assembly_glb_shares_one_mesh_between_named_placed_instances_at_meter_scale() 
     near(volume(&moved), 6000., 1e-2);
     // Basic appearance: the default appearance as linear PBR factors.
     let material = &json["materials"][0]["pbrMetallicRoughness"];
-    let linear = |c: f64| ((c / 255. + 0.055) / 1.055f64).powf(2.4);
+    let linear = |c: f64| ((c / 255. + 0.055) / 1.055f64).portable_powf(2.4);
     near(
         material["baseColorFactor"][0].as_f64().unwrap(),
         linear(137.),
@@ -1557,7 +1559,7 @@ fn project_and_tag_scopes_keep_glb_membership_and_part_appearances() {
     // pin is inscribed in its cylinder and, at the recipe's 10 degree angular
     // deviation, has at least 36 facets around, bounding its deficit below.
     let storage = 6000. * f64::from(f32::EPSILON) * 8.;
-    let pin_floor = 10. * 0.5 * 36. * 25. * (2. * PI / 36.).sin();
+    let pin_floor = 10. * 0.5 * 36. * 25. * (2. * PI / 36.).portable_sin();
     for name in &names {
         let v = volume(&drawn_by(&all, name));
         if name == "Pin" {
@@ -1569,7 +1571,7 @@ fn project_and_tag_scopes_keep_glb_membership_and_part_appearances() {
     // Two appearances: the default and steel red.
     let materials = all.json["materials"].as_array().unwrap();
     assert_eq!(materials.len(), 2);
-    let red = ((200. / 255. + 0.055) / 1.055f64).powf(2.4);
+    let red = ((200. / 255. + 0.055) / 1.055f64).portable_powf(2.4);
     assert!(materials.iter().any(|m| {
         (m["pbrMetallicRoughness"]["baseColorFactor"][0]
             .as_f64()

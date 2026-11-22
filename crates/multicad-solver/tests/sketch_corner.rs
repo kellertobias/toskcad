@@ -7,6 +7,7 @@ use multicad_core::{
     sketch::Datum,
     sketch_corner::{CornerTreatment, corner_draft, treatable_corners},
 };
+use multicad_precision::PortableMath as _;
 use multicad_solver::{SolveState, prepare_edit};
 
 fn actor() -> Actor {
@@ -151,7 +152,7 @@ fn solver_keeps_tangency_when_the_fillet_radius_dimension_changes() {
         panic!()
     };
     let center = position(&solved, center);
-    let radius = |p: [f64; 2]| (p[0] - center[0]).hypot(p[1] - center[1]);
+    let radius = |p: [f64; 2]| (p[0] - center[0]).portable_hypot(p[1] - center[1]);
     assert!((radius(position(&solved, start)) - 8.).abs() < 1e-6);
     assert!((radius(position(&solved, end)) - 8.).abs() < 1e-6);
     // Each trimmed edge stays tangent (its line is 8 mm from the center) and
@@ -172,7 +173,7 @@ fn solver_keeps_tangency_when_the_fillet_radius_dimension_changes() {
         };
         let (a, b) = (position(&solved, a), position(&solved, b));
         let d = [b[0] - a[0], b[1] - a[1]];
-        let len = d[0].hypot(d[1]);
+        let len = d[0].portable_hypot(d[1]);
         let off = |p: [f64; 2]| ((p[0] - a[0]) * d[1] - (p[1] - a[1]) * d[0]).abs() / len;
         assert!((off(center) - 8.).abs() < 1e-6, "edge not tangent");
         assert!(off(sharp) < 1e-6, "virtual sharp left the edge line");
@@ -305,7 +306,7 @@ fn build(points: &[[f64; 2]], curves: &[Spec]) -> (Session, EntityId, Vec<Entity
     (Session::new(document).unwrap(), id, ids)
 }
 fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 fn curve(sketch: &Sketch, id: EntityId) -> CurveKind {
     sketch
@@ -354,7 +355,8 @@ fn assert_tangent_fillet(sketch: &Sketch, fillet: EntityId, r: f64) {
             CurveKind::Line { start: a, end: b } => {
                 let (a, b) = (position(sketch, a), position(sketch, b));
                 let d = [b[0] - a[0], b[1] - a[1]];
-                let off = ((q[0] - a[0]) * d[1] - (q[1] - a[1]) * d[0]).abs() / d[0].hypot(d[1]);
+                let off =
+                    ((q[0] - a[0]) * d[1] - (q[1] - a[1]) * d[0]).abs() / d[0].portable_hypot(d[1]);
                 assert!((off - r).abs() < 1e-6, "line not tangent: {off}");
             }
             CurveKind::Arc {

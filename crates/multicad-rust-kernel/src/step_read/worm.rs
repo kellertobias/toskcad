@@ -97,7 +97,8 @@ impl Frame {
 fn gauss(n: usize) -> Vec<(f64, f64)> {
     (0..n)
         .map(|i| {
-            let mut x = (std::f64::consts::PI * (i as f64 + 0.75) / (n as f64 + 0.5)).cos();
+            let mut x =
+                (std::f64::consts::PI * (i as f64 + 0.75) / (n as f64 + 0.5)).portable_cos();
             let mut derivative = 1.;
             for _ in 0..64 {
                 let (mut p0, mut p1) = (1., x);
@@ -145,7 +146,7 @@ struct Decoded {
 fn sweep(ends: [Point; 2], center: Point, normal: Point) -> f64 {
     let [a, b] = ends.map(|p| sub(p, center));
     dot(cross(a, b), normal)
-        .atan2(dot(a, b))
+        .portable_atan2(dot(a, b))
         .rem_euclid(std::f64::consts::TAU)
 }
 
@@ -163,7 +164,7 @@ impl Decoded {
             } => {
                 let e1 = sub(a, *center).map(|x| x / radius);
                 let e2 = cross(*normal, e1);
-                let (s, c) = (sweep(self.ends, *center, *normal) * t).sin_cos();
+                let (s, c) = (sweep(self.ends, *center, *normal) * t).portable_sin_cos();
                 Some(std::array::from_fn(|i| {
                     center[i] + radius * (c * e1[i] + s * e2[i])
                 }))
@@ -484,7 +485,7 @@ pub(super) fn verify_wheel_member(
                 require(forward && loops.len() == 1)?;
                 // Identify the sector and piece from the corner poles.
                 let corner = patch.poles[0][0];
-                let sector = (corner[1].atan2(corner[0]) / pitch).round();
+                let sector = (corner[1].portable_atan2(corner[0]) / pitch).round();
                 let sector = (sector as i64).rem_euclid(i64::from(teeth)) as u32;
                 let joint = |j: usize| topology.vertices_mm[sector as usize * 14 + j];
                 let near = |a: Point, b: Point| length(sub(a, b)) <= tolerance;

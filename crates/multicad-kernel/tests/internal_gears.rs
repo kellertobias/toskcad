@@ -5,6 +5,7 @@ use multicad_core::{
 use multicad_kernel::{
     BooleanOperation, GearSweep, GeometryPolicy, InvoluteGear, RigidTransform, Solid,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn ring(teeth: u32, thinning: f64) -> InvoluteGear {
@@ -14,11 +15,11 @@ fn ring(teeth: u32, thinning: f64) -> InvoluteGear {
         hub: None,
         teeth,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * a.cos(),
+        base_radius_mm: pitch * a.portable_cos(),
         tip_radius_mm: pitch - 1.,
         root_radius_mm: pitch + 1.25,
         root_fillet_radius_mm: 0.2,
-        half_base_angle_rad: (PI / 2. - thinning) / (2. * pitch) - a.tan() + a,
+        half_base_angle_rad: (PI / 2. - thinning) / (2. * pitch) - a.portable_tan() + a,
         face_width_mm: 2.,
         bore_radius_mm: 0.,
         twist_rad_per_mm: 0.,
@@ -33,8 +34,8 @@ fn probe(s: &Solid, r: f64, a: f64) -> f64 {
         .unwrap()
         .transformed(RigidTransform {
             translation_mm: [
-                r * a.cos() - size / 2.,
-                r * a.sin() - size / 2.,
+                r * a.portable_cos() - size / 2.,
+                r * a.portable_sin() - size / 2.,
                 0.91 - size / 2.,
             ],
             ..Default::default()
@@ -77,11 +78,11 @@ fn inward_involutes_connected_rim_root_circles_and_step_are_actual_native_geomet
             spec.root_radius_mm - 0.5,
         ] {
             // Independently reconstruct the material width from pitch thickness.
-            let alpha = (spec.base_radius_mm / r).acos();
+            let alpha = (spec.base_radius_mm / r).portable_acos();
             let reference = 20_f64.to_radians();
-            let half = (PI / 2. - 0.05) / (2. * spec.pitch_radius_mm) + alpha.tan()
+            let half = (PI / 2. - 0.05) / (2. * spec.pitch_radius_mm) + alpha.portable_tan()
                 - alpha
-                - reference.tan()
+                - reference.portable_tan()
                 + reference;
             for sign in [-1., 1.] {
                 assert!(probe(&solid, r, sign * (half - 0.002)) > 0.999);
@@ -116,8 +117,8 @@ fn inward_involutes_connected_rim_root_circles_and_step_are_actual_native_geomet
                     .iter()
                     .find(|f| f.index == element.key.ordinal)
                     .unwrap();
-                let angle = face.center_mm[1].atan2(face.center_mm[0]) - phase;
-                let offset = angle.sin().atan2(angle.cos());
+                let angle = face.center_mm[1].portable_atan2(face.center_mm[0]) - phase;
+                let offset = angle.portable_sin().portable_atan2(angle.portable_cos());
                 if side == "tip" {
                     assert!(
                         offset.abs() < 1e-9,

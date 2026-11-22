@@ -231,7 +231,7 @@ impl View {
         let ellipse = arc.ellipse();
         let [radius, _] = ellipse.semiaxes_mm();
         let [u, v] = [ellipse.major_axis(), ellipse.minor_axis()].map(|basis| self.vector(basis));
-        let inclination = u[2].hypot(v[2]);
+        let inclination = u[2].portable_hypot(v[2]);
         let [cos, sin] = if inclination <= ANGULAR {
             [1., 0.]
         } else {
@@ -240,7 +240,7 @@ impl View {
         let major: Point = std::array::from_fn(|i| cos.mul_add(u[i], sin * v[i]));
         let minor: Point = std::array::from_fn(|i| (-sin).mul_add(u[i], cos * v[i]));
         let screen_u = [major[0], major[1]];
-        let projected = minor[0].hypot(minor[1]);
+        let projected = minor[0].portable_hypot(minor[1]);
         let (screen_v, radius_v) = if projected <= ANGULAR {
             ([-screen_u[1], screen_u[0]], 0.)
         } else {
@@ -251,7 +251,7 @@ impl View {
         };
         let [x, y, depth] = self.point(ellipse.center_mm());
         let sweep = arc.sweep_rad();
-        let lo = (arc.start_rad() + sweep.min(0.) - sin.atan2(cos)).rem_euclid(TAU);
+        let lo = (arc.start_rad() + sweep.min(0.) - sin.portable_atan2(cos)).rem_euclid(TAU);
         let hi = lo + sweep.abs();
         [[lo, hi.min(TAU)], [0., hi - TAU]]
             .into_iter()
@@ -285,11 +285,11 @@ impl View {
         let aa = a[0].mul_add(a[0], a[1] * a[1]);
         let bb = b[0].mul_add(b[0], b[1] * b[1]);
         let ab = a[0].mul_add(b[0], a[1] * b[1]);
-        let phase = 0.5 * (2. * ab).atan2(aa - bb);
-        let (sin, cos) = phase.sin_cos();
+        let phase = 0.5 * (2. * ab).portable_atan2(aa - bb);
+        let (sin, cos) = phase.portable_sin_cos();
         let major_axis: Point = std::array::from_fn(|i| cos.mul_add(a[i], sin * b[i]));
         let minor_axis: Point = std::array::from_fn(|i| (-sin).mul_add(a[i], cos * b[i]));
-        let major = major_axis[0].hypot(major_axis[1]);
+        let major = major_axis[0].portable_hypot(major_axis[1]);
         let u = [major_axis[0] / major, major_axis[1] / major];
         let perpendicular = [-u[1], u[0]];
         let signed = minor_axis[0].mul_add(perpendicular[0], minor_axis[1] * perpendicular[1]);
@@ -413,7 +413,8 @@ impl CylinderPatch {
                     return Ok(Some(Silhouette::Rail(edge)));
                 }
             }
-            let phase = dot(radial, ellipse.minor_axis()).atan2(dot(radial, ellipse.major_axis()));
+            let phase =
+                dot(radial, ellipse.minor_axis()).portable_atan2(dot(radial, ellipse.major_axis()));
             let travel = ((phase - chart.start_rad()) * chart.sweep_rad().signum()).rem_euclid(TAU);
             Ok((travel < chart.sweep_rad().abs()).then_some(Silhouette::Interior(points)))
         };

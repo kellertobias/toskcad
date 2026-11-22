@@ -166,7 +166,7 @@ fn full_public_density_keeps_fifty_exact_line_segments_per_motif() {
             let center = [-47. + (i % 16) as f64 * 6., -37. + (i / 16) as f64 * 6.];
             let points = (0..50)
                 .map(|j| {
-                    let (s, c) = (std::f64::consts::TAU * j as f64 / 50.).sin_cos();
+                    let (s, c) = (std::f64::consts::TAU * j as f64 / 50.).portable_sin_cos();
                     [center[0] + 0.5 * c, center[1] + 0.5 * s]
                 })
                 .collect::<Vec<_>>();
@@ -436,7 +436,7 @@ fn large_combined_cap_and_underflowing_mass_are_explicitly_refused() {
         .map(|i| {
             let point = |j: usize| {
                 let a = std::f64::consts::TAU * j as f64 / 1024.;
-                [3. + 0.5 * a.cos(), 3. + 0.5 * a.sin()]
+                [3. + 0.5 * a.portable_cos(), 3. + 0.5 * a.portable_sin()]
             };
             Edge::Line {
                 a: point(i),

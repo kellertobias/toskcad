@@ -255,7 +255,7 @@ pub(super) fn encode(
     );
     let floor_ellipse_center = file.point(world([0., 0., spec.start_height_mm]));
     let ellipse_axis = file.axis(floor_ellipse_center, floor_normal, transverse);
-    let semi_major = radius * radius.hypot(rise) / rise;
+    let semi_major = radius * radius.portable_hypot(rise) / rise;
     let floor_curve = file.entity(format_args!(
         "ELLIPSE('',{ellipse_axis},{semi_major:.16E},{radius:.16E})"
     ));

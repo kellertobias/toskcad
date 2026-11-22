@@ -9,6 +9,7 @@ use multicad_mcp::{
     Headless, Storage, Workspace,
     tools::{Call, dispatch},
 };
+use multicad_precision::PortableMath as _;
 use serde_json::{Value, json};
 use std::sync::{Arc, atomic::AtomicBool};
 fn call(cancelled: bool) -> Call {
@@ -96,8 +97,8 @@ fn assert_fit(report: &Value, preset: &model::WhitworthThreadPreset, internal: b
     );
     let r = &report["resolved"];
     let a = 27.5_f64.to_radians();
-    let depth = preset.pitch_mm / (3. * a.tan());
-    let radius = preset.pitch_mm * a.cos() / (12. * (1. - a.sin()));
+    let depth = preset.pitch_mm / (3. * a.portable_tan());
+    let radius = preset.pitch_mm * a.portable_cos() / (12. * (1. - a.portable_sin()));
     assert!((r["profile"]["rounding_radius_mm"].as_f64().unwrap() - radius).abs() < 1e-12);
     assert!((r["profile"]["depth_mm"].as_f64().unwrap() - depth).abs() < 1e-12);
     assert_eq!(r["profile"]["crest_width_mm"], 0.);

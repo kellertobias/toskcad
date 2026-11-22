@@ -15,6 +15,7 @@
 //! face-plane separation, including true contact, is decided in rational
 //! arithmetic on the literal binary operands.
 use crate::display::{DisplayMesh, MeshError, Tessellation, triangulate_region};
+use multicad_precision::PortableMath as _;
 use num_rational::BigRational;
 use spade::Point2;
 use std::{
@@ -138,19 +139,19 @@ pub struct Principal {
 
 impl Arc {
     pub fn point(&self, angle: f64) -> V {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         mix(mix(self.center_mm, cos, self.cos_mm), sin, self.sin_mm)
     }
 
     fn tangent(&self, angle: f64) -> V {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         mix(mix([0.; 3], -sin, self.cos_mm), cos, self.sin_mm)
     }
 
     pub fn principal(&self) -> Principal {
         let (a, b) = (self.cos_mm, self.sin_mm);
-        let turn = 0.5 * (2. * dot(a, b)).atan2(dot(a, a) - dot(b, b));
-        let (sin, cos) = turn.sin_cos();
+        let turn = 0.5 * (2. * dot(a, b)).portable_atan2(dot(a, a) - dot(b, b));
+        let (sin, cos) = turn.portable_sin_cos();
         let major = mix(mix([0.; 3], cos, a), sin, b);
         let minor = mix(mix([0.; 3], -sin, a), cos, b);
         let semiaxes_mm = [major, minor].map(|axis| dot(axis, axis).sqrt());
@@ -170,9 +171,12 @@ impl Arc {
         let p = dot(sub(self.center_mm, chart.base), w);
         let (q, s) = (dot(self.cos_mm, w), dot(self.sin_mm, w));
         let sweep = to - from;
-        let (sin, cos) = (to.sin() - from.sin(), to.cos() - from.cos());
-        let sin2 = (2. * to).sin() - (2. * from).sin();
-        let cos2 = (2. * to).cos() - (2. * from).cos();
+        let (sin, cos) = (
+            to.portable_sin() - from.portable_sin(),
+            to.portable_cos() - from.portable_cos(),
+        );
+        let sin2 = (2. * to).portable_sin() - (2. * from).portable_sin();
+        let cos2 = (2. * to).portable_cos() - (2. * from).portable_cos();
         let first = p * sweep + q * sin - s * cos;
         let second = p * p * sweep
             + 2. * p * (q * sin - s * cos)
@@ -237,7 +241,7 @@ impl Chart {
         match surface {
             CAP_START => travel,
             CAP_END => self.height - travel,
-            WALL => self.radius - x.hypot(y),
+            WALL => self.radius - x.portable_hypot(y),
             _ if surface.is_multiple_of(2) => point[surface / 2],
             _ => self.size[surface / 2] - point[surface / 2],
         }
@@ -363,19 +367,19 @@ impl Arrangement {
         let k = plane / 2;
         let center = mix(c.base, c.station(cap), w);
         let offset = c.level(plane) - center[k];
-        let amplitude = c.radius * e1[k].hypot(e2[k]);
+        let amplitude = c.radius * e1[k].portable_hypot(e2[k]);
         let side = if offset < 0. { -1. } else { 1. };
-        let phase = (side * e2[k]).atan2(side * e1[k]);
+        let phase = (side * e2[k]).portable_atan2(side * e1[k]);
         // A grazing rim is unresolved unless its nearest point is clearly
         // off the finite boundary.
-        let (sin, cos) = phase.sin_cos();
+        let (sin, cos) = phase.portable_sin_cos();
         let nearest = mix(mix(center, c.radius * cos, e1), c.radius * sin, e2);
         let grazing = (offset.abs() - amplitude).abs() <= c.resolution;
         self.resolved &= !grazing || c.clearance([plane, cap, WALL], nearest) < -c.resolution;
         if offset.abs() >= amplitude {
             return Vec::new();
         }
-        let half = (offset.abs() / amplitude).acos();
+        let half = (offset.abs() / amplitude).portable_acos();
         vec![
             (phase - half).rem_euclid(TAU),
             (phase + half).rem_euclid(TAU),
@@ -415,7 +419,7 @@ impl Arrangement {
                     .collect();
                 let lead = e1[m] * e1[m] + e2[m] * e2[m];
                 let near = -(x * e1[m] + y * e2[m]) / lead;
-                let reach = (x + near * e1[m]).hypot(y + near * e2[m]);
+                let reach = (x + near * e1[m]).portable_hypot(y + near * e2[m]);
                 // A grazing edge line is unresolved unless its nearest
                 // point is clearly off the finite boundary.
                 let grazing = (reach - c.radius).abs() <= c.resolution;
@@ -426,7 +430,7 @@ impl Arrangement {
                     for along in [near - half, near + half] {
                         let point = mix(start, along, unit(m));
                         let [x, y, _] = c.local(point);
-                        let angle = y.atan2(x).rem_euclid(TAU);
+                        let angle = y.portable_atan2(x).rem_euclid(TAU);
                         let snapped = generators.iter().copied().min_by(|p, q| {
                             turn_between(*p, angle).total_cmp(&turn_between(*q, angle))
                         });
@@ -442,13 +446,13 @@ impl Arrangement {
                 // its closest approach to the axis clears the cap radius.
                 let lead = e1[m] * e1[m] + e2[m] * e2[m];
                 let near = -(x * e1[m] + y * e2[m]) / lead;
-                let reach = (x + near * e1[m]).hypot(y + near * e2[m]);
+                let reach = (x + near * e1[m]).portable_hypot(y + near * e2[m]);
                 self.resolved &= (travel - c.station(s[2])).abs() > c.resolution
                     || reach - c.radius > c.resolution;
             }
         } else if planes == 1 && s[2] == WALL {
             for angle in self.wall_angles(s[0], s[1]) {
-                let (sin, cos) = angle.sin_cos();
+                let (sin, cos) = angle.portable_sin_cos();
                 let center = mix(c.base, c.station(s[1]), w);
                 let point = mix(mix(center, c.radius * cos, e1), c.radius * sin, e2);
                 found.push((point, Some(angle)));
@@ -465,8 +469,10 @@ impl Arrangement {
             self.resolved &= clearance.abs() > c.resolution;
             if clearance > 0. {
                 ids.push(self.points.len());
-                self.points
-                    .push((point, angle.unwrap_or_else(|| y.atan2(x).rem_euclid(TAU))));
+                self.points.push((
+                    point,
+                    angle.unwrap_or_else(|| y.portable_atan2(x).rem_euclid(TAU)),
+                ));
             }
         }
         self.triples.insert(s, ids.clone());
@@ -749,7 +755,7 @@ fn assemble(arrangement: &mut Arrangement, tool: Tool, drafts: Vec<Draft>) -> Ob
             stretch = stretch.max(
                 dot(arc.cos_mm, arc.cos_mm)
                     .sqrt()
-                    .hypot(dot(arc.sin_mm, arc.sin_mm).sqrt()),
+                    .portable_hypot(dot(arc.sin_mm, arc.sin_mm).sqrt()),
             );
         }
     }
@@ -821,10 +827,10 @@ fn assemble(arrangement: &mut Arrangement, tool: Tool, drafts: Vec<Draft>) -> Ob
                     moment = mix(moment, piece / 3., mix(mix(reference, 1., p), 1., q));
                     if let Some(arc) = edges[u.0].curve {
                         let sweep = arc.sweep_rad;
-                        let lens = (sweep - sweep.sin()) / 2.;
+                        let lens = (sweep - sweep.portable_sin()) / 2.;
                         let sign = if u.1 { 1. } else { -1. };
                         let piece = sign * lens * dot(normal, cross(arc.cos_mm, arc.sin_mm));
-                        let lever = 2. * (sweep / 2.).sin().powi(3) / (3. * lens);
+                        let lever = 2. * (sweep / 2.).portable_sin().powi(3) / (3. * lens);
                         let middle = arc.point(arc.start_rad + sweep / 2.);
                         let centroid = mix(arc.center_mm, lever, sub(middle, arc.center_mm));
                         area += piece;
@@ -995,9 +1001,9 @@ impl ObliqueBore {
         for arc in self.edges.iter().filter_map(|edge| edge.curve) {
             let [q, s] = [dot(arc.cos_mm, direction), dot(arc.sin_mm, direction)];
             for sign in [-1., 1.] {
-                let peak = (sign * s).atan2(sign * q);
+                let peak = (sign * s).portable_atan2(sign * q);
                 if (peak - arc.start_rad).rem_euclid(TAU) < arc.sweep_rad {
-                    values.push(dot(arc.center_mm, direction) + sign * q.hypot(s));
+                    values.push(dot(arc.center_mm, direction) + sign * q.portable_hypot(s));
                 }
             }
         }

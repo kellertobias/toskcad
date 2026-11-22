@@ -28,8 +28,9 @@ pub fn tessellate_shaft(shaft: &Shaft, options: Tessellation) -> Result<DisplayM
     for &(angle, inner) in &shoulder {
         let [x, y, _] = builder.mesh.vertices.as_chunks::<3>().0[inner as usize];
         let radius = shaft.radius_mm();
-        let (sin, cos) = angle.sin_cos();
-        let outer = if shaft.tangent() && (radius - x.hypot(y)).abs() <= 64. * f64::EPSILON * radius
+        let (sin, cos) = angle.portable_sin_cos();
+        let outer = if shaft.tangent()
+            && (radius - x.portable_hypot(y)).abs() <= 64. * f64::EPSILON * radius
         {
             inner
         } else {

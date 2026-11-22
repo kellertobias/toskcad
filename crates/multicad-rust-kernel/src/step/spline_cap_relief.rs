@@ -221,7 +221,7 @@ fn subtract3(a: Point, b: Point) -> Point {
     std::array::from_fn(|i| a[i] - b[i])
 }
 fn length3(a: Point) -> f64 {
-    a[0].hypot(a[1]).hypot(a[2])
+    a[0].portable_hypot(a[1]).portable_hypot(a[2])
 }
 fn wall_tangent(
     placement: &Placement,

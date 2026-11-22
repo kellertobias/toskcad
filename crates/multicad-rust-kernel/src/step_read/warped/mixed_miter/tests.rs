@@ -154,7 +154,7 @@ fn accepts_an_arc_and_chord_cap_and_rejects_the_same_loop_with_two_lines() {
     let shell = warped_union::mixed_miter(&profile, &path, TOL).unwrap();
     let source = write_warped_union(&shell, ORIGIN, U, V).unwrap();
     let (proof, _) = read_import_solid(&source, TOL).unwrap();
-    let area = 2.5 * (2. * 0.5_f64.atan() - 0.8);
+    let area = 2.5 * (2. * 0.5_f64.portable_atan() - 0.8);
     assert_eq!(proof.face_count, 6);
     assert!((proof.volume_mm3 - 40. * area).abs() < TOL);
 

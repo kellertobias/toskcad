@@ -1,6 +1,7 @@
 //! Intersect two trimmed biquadratic Bernstein graphs in a shared chart.
 //! Exact rational tests certify topology before the loop is evaluated in f64.
 use crate::Rational;
+use multicad_precision::PortableMath as _;
 use std::cmp::Ordering;
 
 mod trace;
@@ -74,7 +75,7 @@ impl ClosedLoop {
     pub fn parameter_at(&self, radians: f64) -> [f64; 2] {
         // This triangular parameterization completes the square in U:
         // a*(du + b/a*dv)^2 + (det/a)*dv^2 = -minimum.
-        let (sin, cos) = radians.sin_cos();
+        let (sin, cos) = radians.portable_sin_cos();
         let [x, y] = self.radii_squared.map(|value| value.as_f64().sqrt());
         let dv = y * sin;
         [

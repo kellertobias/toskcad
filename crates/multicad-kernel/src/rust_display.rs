@@ -7,6 +7,7 @@ use multicad_core::{
     manufacturing::{PlanarContours, PlanarEdge, PlanarLoop},
     references::{AnalyticGeometry, ReferenceFrame, TopologyKey, TopologyKind, TopologySnapshot},
 };
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::display::{DisplayMesh, MeshError};
 use std::collections::BTreeMap;
 
@@ -72,12 +73,12 @@ pub(crate) fn placed_mesh(
 }
 
 fn point_on_arc(frame: ReferenceFrame, radius: f64, angle: f64) -> [f64; 3] {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     std::array::from_fn(|i| frame.origin_mm[i] + radius * (cos * frame.u[i] + sin * frame.v[i]))
 }
 
 fn point_on_ellipse(frame: ReferenceFrame, [major, minor]: [f64; 2], angle: f64) -> [f64; 3] {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     std::array::from_fn(|i| {
         frame.origin_mm[i] + major * cos * frame.u[i] + minor * sin * frame.v[i]
     })
@@ -94,7 +95,11 @@ pub(crate) fn edges(
     let sample = |frame, radii: [f64; 2], start, sweep: f64, total_points: &mut usize| {
         // Scaling a unit circle by the two semiaxes amplifies any chord
         // error by at most the longer semiaxis.
-        let sagitta_angle = 4. * (deflection / (2. * radii[0])).sqrt().min(1.).asin();
+        let sagitta_angle = 4.
+            * (deflection / (2. * radii[0]))
+                .sqrt()
+                .min(1.)
+                .portable_asin();
         let segments = (sweep.abs() / sagitta_angle.min(0.3)).ceil() as usize;
         *total_points += segments + 1;
         if *total_points > MAX_EDGE_POINTS {
@@ -450,7 +455,8 @@ pub(crate) fn planar_contours(
                     let max_arc_offset =
                         dot(subtract(support.origin_mm, frame.origin), query_normal).abs()
                             + radius_mm
-                                * dot(support.u, query_normal).hypot(dot(support.v, query_normal));
+                                * dot(support.u, query_normal)
+                                    .portable_hypot(dot(support.v, query_normal));
                     if max_arc_offset > policy.linear_tolerance_mm {
                         return Err(input("Arc is outside the contour plane tolerance"));
                     }

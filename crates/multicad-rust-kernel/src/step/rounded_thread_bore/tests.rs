@@ -3,13 +3,13 @@ use crate::rounded_thread::{Spec, Thread};
 fn bore(left_hand: bool) -> ThroughBore {
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     ThroughBore::new(
         Thread::new(Spec {
             major_radius_mm: 3.175,
             pitch_mm: p,
             length_mm: 3.7 * p,
-            depth_mm: p / (3. * a.tan()),
+            depth_mm: p / (3. * a.portable_tan()),
             crest_radius_mm: r,
             root_radius_mm: r,
             flank_angle_deg: 27.5,
@@ -43,8 +43,8 @@ fn through_receiver_caps_share_all_five_rims_and_analytic_outer_wall() {
 fn rd(left: bool) -> ThroughBore {
     let p = 3.175;
     let a = 15_f64.to_radians();
-    let base = p * (a.cos() - a.sin()) / (4. * (1. - a.sin()));
-    let clearance = 0.05 * p * a.sin() / (1. - a.sin());
+    let base = p * (a.portable_cos() - a.portable_sin()) / (4. * (1. - a.portable_sin()));
+    let clearance = 0.05 * p * a.portable_sin() / (1. - a.portable_sin());
     ThroughBore::new(
         Thread::new(Spec {
             major_radius_mm: 10. + 0.05 * p,
@@ -158,7 +158,7 @@ fn complete_outer_domain_controls_representation_and_matching() {
     let file = write_rounded_thread_bore(&large, f[0], f[1], f[2], 1e-7).unwrap();
     let (_, mut candidate) = crate::step_read::read_rounded_thread_bore(&file, 1e-7).unwrap();
     let tilt = 5e-11_f64;
-    candidate.u = [tilt.cos(), 0., tilt.sin()];
+    candidate.u = [tilt.portable_cos(), 0., tilt.portable_sin()];
     assert!(crate::step_read::rounded_thread_import_matches(
         &crate::step_read::ImportedRoundedThread {
             thread: *candidate.bore.thread(),

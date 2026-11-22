@@ -4,6 +4,7 @@ use multicad_core::{
     document::EntityId,
     drawings::{self, DrawingEvaluation, Page, VectorRole, ViewEvaluation},
 };
+use multicad_precision::PortableMath as _;
 
 /// Screen-space navigation for the current sheet. Drawing coordinates and the
 /// evaluated geometry stay the same when the camera moves.
@@ -83,7 +84,11 @@ impl SheetView {
                             egui::MouseWheelUnit::Page => delta.y * 240.,
                         };
                         if let Some(pointer) = input.pointer.hover_pos() {
-                            self.zoom_at(viewport, pointer, (amount * 0.0035).clamp(-2., 2.).exp());
+                            self.zoom_at(
+                                viewport,
+                                pointer,
+                                (amount * 0.0035).clamp(-2., 2.).portable_exp(),
+                            );
                         }
                     }
                     egui::Event::Zoom(factor)
@@ -563,7 +568,10 @@ fn annotations(
             let points: Vec<_> = (0..=steps)
                 .map(|i| {
                     let t = start + (end - start) * i as f64 / steps as f64;
-                    to([center[0] + r * t.cos(), center[1] + r * t.sin()])
+                    to([
+                        center[0] + r * t.portable_cos(),
+                        center[1] + r * t.portable_sin(),
+                    ])
                 })
                 .collect();
             painter.add(egui::Shape::line(points, stroke));

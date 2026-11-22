@@ -85,7 +85,7 @@ impl Builder<'_, '_> {
         for (cap, ring) in outer.iter_mut().enumerate() {
             for column in 0..self.steps {
                 self.work.charge(1)?;
-                let (s, c) = (TAU * self.fraction(column)).sin_cos();
+                let (s, c) = (TAU * self.fraction(column)).portable_sin_cos();
                 let z = if cap == 0 { 0. } else { height };
                 let id = self.mesh.vertices.len() as u32 / 3;
                 self.mesh.vertices.extend([radius * c, radius * s, z]);
@@ -97,7 +97,7 @@ impl Builder<'_, '_> {
         for column in 0..self.steps {
             self.work.checkpoint()?;
             let next = (column + 1) % self.steps;
-            let (s, c) = (TAU * self.fraction(column)).sin_cos();
+            let (s, c) = (TAU * self.fraction(column)).portable_sin_cos();
             for triangle in [
                 [outer[0][column], outer[0][next], outer[1][next]],
                 [outer[0][column], outer[1][next], outer[1][column]],

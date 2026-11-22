@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 fn check(mesh: &DisplayMesh, caps: &[Cap; 2], bytes: usize) -> Result<LiteralEmbeddingProof> {
     let mut budget = Budget {
         used: 0,
@@ -47,10 +48,10 @@ fn actual_literal_embedding_refuses_swaps_folds_double_winding_and_inward_apex()
         let at = index as usize * 3;
         let x = mesh.vertices[at];
         let y = mesh.vertices[at + 1];
-        let radius = x.hypot(y);
-        let angle = 2. * y.atan2(x);
-        double.vertices[at] = radius * angle.cos();
-        double.vertices[at + 1] = radius * angle.sin();
+        let radius = x.portable_hypot(y);
+        let angle = 2. * y.portable_atan2(x);
+        double.vertices[at] = radius * angle.portable_cos();
+        double.vertices[at + 1] = radius * angle.portable_sin();
     }
     assert!(crate::manufacturing::certify(&double).is_ok());
     assert_eq!(check(&double, caps, bytes).err(), Some(Error::Unsupported));

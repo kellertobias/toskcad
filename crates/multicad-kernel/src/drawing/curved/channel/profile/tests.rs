@@ -150,7 +150,7 @@ fn holes_must_clear_every_edge_of_one_piece() {
 #[test]
 fn refuses_concave_and_non_quarter_rounds() {
     // An 80 degree convex round cannot snap to a cardinal quarter.
-    let (sin, cos) = 80_f64.to_radians().sin_cos();
+    let (sin, cos) = 80_f64.to_radians().portable_sin_cos();
     let end = [10. * cos, 10. * sin];
     let ring = vec![
         line([0., 0.], [10., 0.]),

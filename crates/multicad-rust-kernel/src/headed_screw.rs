@@ -2,6 +2,7 @@
 //! The thread starts at z=0. The shank and head extend along negative Z.
 
 use crate::helical_thread::{Thread, ThreadError};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_3, FRAC_PI_6, PI};
 
 const MAX_DIMENSION_MM: f64 = 1e7;
@@ -96,7 +97,7 @@ pub(crate) fn hex_area(across_flats_mm: f64) -> f64 {
 
 pub(crate) fn hex_radius(across_flats_mm: f64, theta: f64) -> f64 {
     let offset = (theta + FRAC_PI_6).rem_euclid(FRAC_PI_3) - FRAC_PI_6;
-    across_flats_mm * 0.5 / offset.cos()
+    across_flats_mm * 0.5 / offset.portable_cos()
 }
 
 pub(crate) fn hex_support(across_flats_mm: f64, [x, y]: [f64; 2]) -> f64 {
@@ -230,7 +231,7 @@ impl Screw {
         }
         let unit = direction.map(|v| v / scale);
         let [x, y, z] = unit;
-        let radial = x.hypot(y);
+        let radial = x.portable_hypot(y);
         let head_xy = match self.spec.head {
             ScrewHead::SocketCap { radius_mm, .. } => radial * radius_mm,
             ScrewHead::ExternalHex {
@@ -252,7 +253,7 @@ impl Screw {
         if !tolerance.is_finite() || tolerance < 0. || ![x, y, z].into_iter().all(f64::is_finite) {
             return false;
         }
-        let radius = x.hypot(y);
+        let radius = x.portable_hypot(y);
         if self.thread.contains([x, y, z], tolerance)
             || (self.spec.shank_length_mm > 0.
                 && z >= self.head_seat_z() - tolerance
@@ -261,7 +262,7 @@ impl Screw {
         {
             return true;
         }
-        let theta = y.atan2(x);
+        let theta = y.portable_atan2(x);
         let top = self.head_top_z();
         z >= top - tolerance
             && z <= self.head_seat_z() + tolerance

@@ -96,11 +96,11 @@ fn builder_fixture() -> (
     let seat = 4.5;
     let station: f64 = seat - external_start;
     let angle = std::f64::consts::TAU * station.rem_euclid(pitch) / pitch;
-    let (s, c) = angle.sin_cos();
-    let raw = s.atan2(c);
+    let (s, c) = angle.portable_sin_cos();
+    let raw = s.portable_atan2(c);
     let roll = (raw + std::f64::consts::TAU / 2.).rem_euclid(std::f64::consts::TAU)
         - std::f64::consts::TAU / 2.;
-    let (s, c) = roll.sin_cos();
+    let (s, c) = roll.portable_sin_cos();
     let external = Thread::new(Spec {
         major_radius_mm: 4. - 0.08,
         pitch_mm: pitch,
@@ -472,11 +472,11 @@ fn finite_original_prefix_must_earn_two_actual_turns_and_physical_engagement() {
     .unwrap();
     let station = stock_frame.origin_mm[2] - screw_frame.origin_mm[2];
     let angle = std::f64::consts::TAU * station.rem_euclid(pitch) / pitch;
-    let (s, c) = angle.sin_cos();
-    let raw = s.atan2(c);
+    let (s, c) = angle.portable_sin_cos();
+    let raw = s.portable_atan2(c);
     let roll = (raw + std::f64::consts::TAU / 2.).rem_euclid(std::f64::consts::TAU)
         - std::f64::consts::TAU / 2.;
-    let (s, c) = roll.sin_cos();
+    let (s, c) = roll.portable_sin_cos();
     let nut = crate::line8_nut::Nut::new(
         original.stock().clone(),
         original.bore_from_start_mm(),

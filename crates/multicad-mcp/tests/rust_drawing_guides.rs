@@ -10,6 +10,7 @@ use multicad_mcp::{
     Headless, Workspace,
     tools::{Call, dispatch},
 };
+use multicad_precision::PortableMath as _;
 use serde_json::{Value, json};
 use std::sync::{Arc, atomic::AtomicBool};
 
@@ -79,7 +80,7 @@ fn sampled_bore(evaluation: &ViewEvaluation, radius: f64) -> usize {
         .iter()
         .filter(|v| v.role == VectorRole::Section)
         .flat_map(|v| &v.preview_mm)
-        .filter(|p| ((p[0] - 60.).hypot(p[1]) - radius).abs() < 1e-6)
+        .filter(|p| ((p[0] - 60.).portable_hypot(p[1]) - radius).abs() < 1e-6)
         .count()
 }
 
@@ -173,7 +174,9 @@ fn mcp_guides_draw_and_regenerate_rust_gear_sections() {
         .iter()
         .filter(|v| v.role == VectorRole::Section)
         .filter_map(|v| match v.curve {
-            VectorCurve::Line { a, b } if ((b[0] - a[0]).hypot(b[1] - a[1]) - 8.).abs() < 1e-9 => {
+            VectorCurve::Line { a, b }
+                if ((b[0] - a[0]).portable_hypot(b[1] - a[1]) - 8.).abs() < 1e-9 =>
+            {
                 Some([a, b])
             }
             _ => None,

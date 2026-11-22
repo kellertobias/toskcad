@@ -1,4 +1,5 @@
 //! Bounded closest-point queries on degree-two and degree-three rational spans.
+use multicad_precision::PortableMath as _;
 use std::cmp::Ordering::{self, Equal, Greater, Less};
 
 use super::{CurveProjection2d, QueryCheckpoint, failure};
@@ -238,7 +239,7 @@ impl Candidate {
         policy: GeometryPolicy,
     ) -> Result<CurveProjection2d, GeometryError> {
         let sample = spline.evaluate(self.parameter, policy)?;
-        let speed = sample.derivative[0].hypot(sample.derivative[1]);
+        let speed = sample.derivative[0].portable_hypot(sample.derivative[1]);
         if !self.regular_tangent || speed == 0. || !speed.is_finite() {
             return Err(failure(
                 GeometryErrorKind::Input,
@@ -252,7 +253,7 @@ impl Candidate {
             parameter: self.parameter,
             point: sample.point,
             tangent: sample.derivative.map(|component| component / speed),
-            distance_mm: (sample.point[0] - point[0]).hypot(sample.point[1] - point[1]),
+            distance_mm: (sample.point[0] - point[0]).portable_hypot(sample.point[1] - point[1]),
         })
     }
 }

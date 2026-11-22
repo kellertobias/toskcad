@@ -250,7 +250,8 @@ fn circle_center_position_and_parameter_diameter_are_entered_beside_the_preview(
     let shown = h.editor.inline.last_point.unwrap();
     assert!(
         // The radius is exact; the direction comes from the pointer.
-        ((shown[0] - 3.).hypot(shown[1] + 4.) - 6.).abs() < 1e-9 && (shown[0] - 3.).abs() < 1e-5,
+        ((shown[0] - 3.).portable_hypot(shown[1] + 4.) - 6.).abs() < 1e-9
+            && (shown[0] - 3.).abs() < 1e-5,
         "{shown:?} {:?} {:?}",
         h.editor.inline.texts,
         h.editor.inline_invalid()
@@ -362,7 +363,7 @@ fn line_length_field_and_invalid_or_cancelled_entries_change_nothing() {
                         .position_mm
                 };
                 let (a, b) = (at(start), at(end));
-                Some((a[0] - b[0]).hypot(a[1] - b[1]))
+                Some((a[0] - b[0]).portable_hypot(a[1] - b[1]))
             }
             _ => None,
         })

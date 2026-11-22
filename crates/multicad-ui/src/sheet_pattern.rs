@@ -6,6 +6,7 @@ use multicad_core::{
     manufacturing::{PlanarContours, PlanarEdge, PlanarLoop},
     model::CutoutFace,
 };
+use multicad_precision::PortableMath as _;
 use std::{sync::Arc, time::Duration};
 
 pub trait Backend: Send {
@@ -511,7 +512,7 @@ fn paint(
         }
         let delta = ui.input(|input| input.smooth_scroll_delta.y);
         if delta != 0. {
-            let next = (*zoom * (delta * 0.008).exp()).clamp(0.25, 24.);
+            let next = (*zoom * (delta * 0.008).portable_exp()).clamp(0.25, 24.);
             let anchor = pointer - rect.center();
             *pan = anchor + (*pan - anchor) * (next / *zoom);
             *zoom = next;
@@ -553,16 +554,16 @@ fn edge_points(edge: &PlanarEdge, scale: f32) -> Vec<[f64; 2]> {
         } => {
             let dx = a[0] - center[0];
             let dy = a[1] - center[1];
-            let radius = dx.hypot(dy);
-            let start = dy.atan2(dx);
+            let radius = dx.portable_hypot(dy);
+            let start = dy.portable_atan2(dx);
             let segments =
                 ((radius * sweep_rad.abs() * f64::from(scale) / 5.).ceil() as usize).clamp(8, 512);
             std::iter::once(a)
                 .chain((1..segments).map(|step| {
                     let angle = start + sweep_rad * step as f64 / segments as f64;
                     [
-                        center[0] + radius * angle.cos(),
-                        center[1] + radius * angle.sin(),
+                        center[0] + radius * angle.portable_cos(),
+                        center[1] + radius * angle.portable_sin(),
                     ]
                 }))
                 .chain(std::iter::once(b))

@@ -24,6 +24,7 @@
 //! point by at most `eps`.
 use super::super::P3;
 use super::Path;
+use multicad_precision::PortableMath as _;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 /// A closed interval with outward-rounded arithmetic.
@@ -122,7 +123,7 @@ impl Iv {
         if !(self.lo.is_finite() && self.hi.is_finite()) || self.hi - self.lo >= 6. {
             return Self::new(-1., 1.);
         }
-        let [a, b] = [self.lo.sin(), self.hi.sin()];
+        let [a, b] = [self.lo.portable_sin(), self.hi.portable_sin()];
         let hi = if self.reaches(FRAC_PI_2, TAU) {
             1.
         } else {
@@ -141,14 +142,17 @@ impl Iv {
         if !(self.lo.is_finite() && self.hi.is_finite()) || self.hi - self.lo >= 6. {
             return Self::new(-1., 1.);
         }
-        let [a, b] = [self.lo.cos(), self.hi.cos()];
+        let [a, b] = [self.lo.portable_cos(), self.hi.portable_cos()];
         let hi = if self.reaches(0., TAU) { 1. } else { a.max(b) };
         let lo = if self.reaches(PI, TAU) { -1. } else { a.min(b) };
         Self::new((lo - LIBM).max(-1.), (hi + LIBM).min(1.))
     }
 
     pub fn atan(self) -> Self {
-        Self::new(self.lo.atan() - LIBM, self.hi.atan() + LIBM)
+        Self::new(
+            self.lo.portable_atan() - LIBM,
+            self.hi.portable_atan() + LIBM,
+        )
     }
 
     /// The arc cosine of the part of the interval within `[-1, 1]`: the
@@ -157,9 +161,9 @@ impl Iv {
         let [lo, hi] = [self.lo.max(-1.), self.hi.min(1.)];
         if lo > hi {
             let end = if self.lo > 1. { 1_f64 } else { -1. };
-            return Self::new(end.acos() - LIBM, end.acos() + LIBM);
+            return Self::new(end.portable_acos() - LIBM, end.portable_acos() + LIBM);
         }
-        Self::new(hi.acos() - LIBM, lo.acos() + LIBM)
+        Self::new(hi.portable_acos() - LIBM, lo.portable_acos() + LIBM)
     }
 
     /// The closed-form constant pi.

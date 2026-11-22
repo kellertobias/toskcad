@@ -8,6 +8,7 @@ use multicad_core::{
     sketch::{self, CreationPlane, Datum, PlaneOptions},
 };
 use multicad_kernel::{MeshOptions, Profile, Solid};
+use multicad_precision::PortableMath as _;
 use multicad_ui::{
     sketch_context,
     viewport::{Geometry, Instance, Scene, SceneStamp, Transform},
@@ -408,7 +409,10 @@ fn preferred_shared_occurrence_wins_otherwise_identity_is_used_and_offsets_follo
         v: local.v,
     });
     near(world.origin_mm, [140., 25., 61.]);
-    near(world.u, [-0.4_f64.sin(), 0.4_f64.cos(), 0.]);
+    near(
+        world.u,
+        [-0.4_f64.portable_sin(), 0.4_f64.portable_cos(), 0.],
+    );
     assert_eq!(fixture.session.document(), &before);
 }
 #[test]

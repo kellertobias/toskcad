@@ -47,7 +47,7 @@ fn sub2(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
 }
 
 fn length2(a: [f64; 2]) -> f64 {
-    a[0].hypot(a[1])
+    a[0].portable_hypot(a[1])
 }
 
 fn cross2(a: [f64; 2], b: [f64; 2]) -> f64 {
@@ -56,7 +56,7 @@ fn cross2(a: [f64; 2], b: [f64; 2]) -> f64 {
 
 fn angle(disk: &Disk, point: [f64; 2]) -> f64 {
     let d = sub2(point, disk.center);
-    d[1].atan2(d[0]).rem_euclid(TAU)
+    d[1].portable_atan2(d[0]).rem_euclid(TAU)
 }
 
 /// The planar union boundary of `disks`, or `None` for any tangency,
@@ -209,7 +209,7 @@ fn loop_area(union: &Union, disks: &[Disk], ring: &[BoundaryArc]) -> f64 {
                 sweep += TAU;
             }
             // Chord triangle from the origin plus the circular segment.
-            0.5 * cross2(a, b) + 0.5 * r * r * (sweep - sweep.sin())
+            0.5 * cross2(a, b) + 0.5 * r * r * (sweep - sweep.portable_sin())
         })
         .sum()
 }

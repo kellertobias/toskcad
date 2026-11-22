@@ -48,7 +48,7 @@ fn actual_counterbored_clamp_retains_original_stock_height_and_source_frame() {
 fn actual_clocked_native_queries_keep_source_identity_policies_and_cancellation() {
     let (original, insert) =
         super::super::mating::tests::fixture(false, 8., 0., PlaneFrame::default());
-    let (sin, cos) = (-72_f64.to_radians()).sin_cos();
+    let (sin, cos) = (-72_f64.to_radians()).portable_sin_cos();
     let screw = original
         .transformed(RigidTransform {
             rotation: [[cos, -sin, 0.], [sin, cos, 0.], [0., 0., 1.]],

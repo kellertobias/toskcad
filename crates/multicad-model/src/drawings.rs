@@ -7,6 +7,7 @@ use multicad_core::{
     materials::{self, HatchPattern},
 };
 use multicad_kernel::{DrawingHatch, DrawingProjection, DrawingSolid, PlaneFrame, Solid};
+use multicad_precision::PortableMath as _;
 use std::collections::{BTreeMap, BTreeSet};
 mod grain;
 pub use grain::{GRAIN_LINE_MM, GRAIN_RGB, GRAIN_SPACING_MM};
@@ -918,7 +919,7 @@ impl Model {
                         } else {
                             start_rad + sweep_rad / 2.
                         };
-                        let (s, c) = angle.sin_cos();
+                        let (s, c) = angle.portable_sin_cos();
                         let rim = std::array::from_fn(|i| {
                             frame.origin_mm[i] + radius_mm * (c * frame.u[i] + s * frame.v[i])
                         });
@@ -956,7 +957,7 @@ impl Model {
                         view,
                         (a0, a1),
                         (b0, b1),
-                        cos.acos().to_degrees(),
+                        cos.portable_acos().to_degrees(),
                         *offset_mm,
                         *precision,
                         *reference,

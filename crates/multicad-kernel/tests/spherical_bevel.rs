@@ -1,16 +1,17 @@
 use multicad_core::document::EntityId;
 use multicad_kernel::{GeometryPolicy, Solid, SphericalBevelGear};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI};
 fn specimen(teeth: u32, mate: u32) -> SphericalBevelGear {
-    let pitch = (f64::from(teeth) / f64::from(mate)).atan();
-    let distance = f64::from(teeth) / (2. * pitch.sin());
-    let base = (pitch.sin() * 20_f64.to_radians().cos()).asin();
+    let pitch = (f64::from(teeth) / f64::from(mate)).portable_atan();
+    let distance = f64::from(teeth) / (2. * pitch.portable_sin());
+    let base = (pitch.portable_sin() * 20_f64.to_radians().portable_cos()).portable_asin();
     SphericalBevelGear {
         teeth,
         pitch_cone_angle_rad: pitch,
         base_cone_angle_rad: base,
-        tip_cone_angle_rad: pitch + (1. / distance).atan(),
-        root_cone_angle_rad: pitch - (1.25 / distance).atan(),
+        tip_cone_angle_rad: pitch + (1. / distance).portable_atan(),
+        root_cone_angle_rad: pitch - (1.25 / distance).portable_atan(),
         outer_cone_distance_mm: distance,
         face_width_mm: (distance / 6.).min(5.),
         bore_radius_mm: 2.,
@@ -19,8 +20,9 @@ fn specimen(teeth: u32, mate: u32) -> SphericalBevelGear {
     }
 }
 fn involute(gamma: f64, base: f64) -> f64 {
-    let sigma = (gamma.cos() / base.cos()).acos();
-    sigma / base.sin() - (sigma.sin()).atan2(base.sin() * sigma.cos())
+    let sigma = (gamma.portable_cos() / base.portable_cos()).portable_acos();
+    sigma / base.portable_sin()
+        - (sigma.portable_sin()).portable_atan2(base.portable_sin() * sigma.portable_cos())
 }
 fn close(a: f64, b: f64, tol: f64) {
     assert!((a - b).abs() <= tol, "{a} != {b}; budget {tol}");
@@ -91,21 +93,26 @@ struct RootOracle {
     meridian: bool,
 }
 fn root_oracle(s: SphericalBevelGear) -> RootOracle {
-    let rho = (s.root_fillet_radius_mm / s.outer_cone_distance_mm).asin();
+    let rho = (s.root_fillet_radius_mm / s.outer_cone_distance_mm).portable_asin();
     let center = s.root_cone_angle_rad + rho;
-    let meridian = center <= (s.base_cone_angle_rad.cos() * rho.cos()).acos();
+    let meridian =
+        center <= (s.base_cone_angle_rad.portable_cos() * rho.portable_cos()).portable_acos();
     let (touch, phi) = if meridian {
         (
-            (center.cos() / rho.cos()).acos(),
-            s.half_base_tooth_angle_rad + (rho.sin() / center.sin()).asin(),
+            (center.portable_cos() / rho.portable_cos()).portable_acos(),
+            s.half_base_tooth_angle_rad
+                + (rho.portable_sin() / center.portable_sin()).portable_asin(),
         )
     } else {
-        let sigma = (center.cos() / s.base_cone_angle_rad.cos()).acos() - rho;
-        let gamma = (s.base_cone_angle_rad.cos() * sigma.cos()).acos();
+        let sigma =
+            (center.portable_cos() / s.base_cone_angle_rad.portable_cos()).portable_acos() - rho;
+        let gamma = (s.base_cone_angle_rad.portable_cos() * sigma.portable_cos()).portable_acos();
         let half = s.half_base_tooth_angle_rad - involute(gamma, s.base_cone_angle_rad);
         (
             gamma,
-            half + (rho.sin() * s.base_cone_angle_rad.sin() / (gamma.sin() * center.sin())).asin(),
+            half + (rho.portable_sin() * s.base_cone_angle_rad.portable_sin()
+                / (gamma.portable_sin() * center.portable_sin()))
+            .portable_asin(),
         )
     };
     RootOracle {
@@ -121,11 +128,11 @@ fn half_tooth(s: SphericalBevelGear, r: &RootOracle, gamma: f64) -> f64 {
         return r.center_phi;
     }
     if gamma < r.touch {
-        let k = (r.rounding.cos() - gamma.cos() * r.center_gamma.cos())
-            / (gamma.sin() * r.center_gamma.sin());
+        let k = (r.rounding.portable_cos() - gamma.portable_cos() * r.center_gamma.portable_cos())
+            / (gamma.portable_sin() * r.center_gamma.portable_sin());
         // Exactly tangent endpoints can round one ULP outside acos's domain.
         assert!(k.abs() <= 1. + 1e-12);
-        return r.center_phi - k.clamp(-1., 1.).acos();
+        return r.center_phi - k.clamp(-1., 1.).portable_acos();
     }
     if gamma < s.base_cone_angle_rad {
         s.half_base_tooth_angle_rad
@@ -179,7 +186,7 @@ fn integral(f: &impl Fn(f64) -> f64, a: f64, b: f64, eps: f64) -> f64 {
 fn independent_volume(s: SphericalBevelGear) -> f64 {
     let r = root_oracle(s);
     let d = s.pitch_cone_angle_rad;
-    let density = |g: f64| g.sin() / (g - d).cos().powi(3);
+    let density = |g: f64| g.portable_sin() / (g - d).portable_cos().powi(3);
     let mut angular = 2. * PI * integral(&density, 0., s.root_cone_angle_rad, 1e-13);
     // Squaring the coordinate removes the square-root tangency at the root.
     let root_span = r.touch - s.root_cone_angle_rad;
@@ -221,14 +228,14 @@ fn independent_volume(s: SphericalBevelGear) -> f64 {
     let radial = (s.outer_cone_distance_mm.powi(3)
         - (s.outer_cone_distance_mm - s.face_width_mm).powi(3))
         / 3.;
-    radial * angular - PI * s.bore_radius_mm.powi(2) * s.face_width_mm / d.cos()
+    radial * angular - PI * s.bore_radius_mm.powi(2) * s.face_width_mm / d.portable_cos()
 }
 fn position(s: SphericalBevelGear, distance: f64, gamma: f64, phi: f64) -> [f64; 3] {
-    let radial = distance / (gamma - s.pitch_cone_angle_rad).cos();
+    let radial = distance / (gamma - s.pitch_cone_angle_rad).portable_cos();
     [
-        radial * gamma.sin() * phi.cos(),
-        radial * gamma.sin() * phi.sin(),
-        radial * gamma.cos(),
+        radial * gamma.portable_sin() * phi.portable_cos(),
+        radial * gamma.portable_sin() * phi.portable_sin(),
+        radial * gamma.portable_cos(),
     ]
 }
 fn material(solid: &Solid, p: [f64; 3]) -> f64 {
@@ -252,12 +259,12 @@ fn offset(p: [f64; 3], n: [f64; 3], a: f64) -> [f64; 3] {
 }
 fn radial_side_normal(gamma: f64, phi: f64, slope: f64) -> [f64; 3] {
     let eg = [
-        gamma.cos() * phi.cos(),
-        gamma.cos() * phi.sin(),
-        -gamma.sin(),
+        gamma.portable_cos() * phi.portable_cos(),
+        gamma.portable_cos() * phi.portable_sin(),
+        -gamma.portable_sin(),
     ];
-    let ep = [-phi.sin(), phi.cos(), 0.];
-    let n: [f64; 3] = std::array::from_fn(|i| ep[i] - gamma.sin() * slope * eg[i]);
+    let ep = [-phi.portable_sin(), phi.portable_cos(), 0.];
+    let n: [f64; 3] = std::array::from_fn(|i| ep[i] - gamma.portable_sin() * slope * eg[i]);
     let length = n.iter().map(|v| v * v).sum::<f64>().sqrt();
     n.map(|v| v / length)
 }
@@ -265,8 +272,9 @@ fn verify_material(solid: &Solid, s: SphericalBevelGear) {
     let root = root_oracle(s);
     let gamma = (root.touch.max(s.base_cone_angle_rad) + s.tip_cone_angle_rad) / 2.;
     let half = half_tooth(s, &root, gamma);
-    let slope = -(s.base_cone_angle_rad.cos().powi(2) - gamma.cos().powi(2)).sqrt()
-        / (s.base_cone_angle_rad.sin() * gamma.sin());
+    let slope = -(s.base_cone_angle_rad.portable_cos().powi(2) - gamma.portable_cos().powi(2))
+        .sqrt()
+        / (s.base_cone_angle_rad.portable_sin() * gamma.portable_sin());
     let normal = radial_side_normal(gamma, half, slope);
     for fraction in [0.2, 0.5, 0.8] {
         let distance = s.outer_cone_distance_mm - s.face_width_mm * fraction;
@@ -290,9 +298,9 @@ fn verify_material(solid: &Solid, s: SphericalBevelGear) {
     // Both genuine backcones, away from the pitch circle so flat-Z caps fail.
     let gamma = (s.pitch_cone_angle_rad + s.tip_cone_angle_rad) / 2.;
     let normal = [
-        s.pitch_cone_angle_rad.sin(),
+        s.pitch_cone_angle_rad.portable_sin(),
         0.,
-        s.pitch_cone_angle_rad.cos(),
+        s.pitch_cone_angle_rad.portable_cos(),
     ];
     for (distance, direction) in [
         (s.outer_cone_distance_mm, 1.),
@@ -313,10 +321,12 @@ fn verify_material(solid: &Solid, s: SphericalBevelGear) {
     for (arc_fraction, cone_fraction) in [(0.25, 0.2), (0.5, 0.5), (0.75, 0.8)] {
         let gamma = s.root_cone_angle_rad + (root.touch - s.root_cone_angle_rad) * arc_fraction;
         let half = half_tooth(s, &root, gamma);
-        let k = (root.rounding.cos() - gamma.cos() * root.center_gamma.cos())
-            / (gamma.sin() * root.center_gamma.sin());
-        let kp = (root.center_gamma.cos() - root.rounding.cos() * gamma.cos())
-            / (gamma.sin().powi(2) * root.center_gamma.sin());
+        let k = (root.rounding.portable_cos()
+            - gamma.portable_cos() * root.center_gamma.portable_cos())
+            / (gamma.portable_sin() * root.center_gamma.portable_sin());
+        let kp = (root.center_gamma.portable_cos()
+            - root.rounding.portable_cos() * gamma.portable_cos())
+            / (gamma.portable_sin().powi(2) * root.center_gamma.portable_sin());
         let normal = radial_side_normal(gamma, half, kp / (1. - k * k).sqrt());
         let p = position(
             s,
@@ -364,8 +374,8 @@ fn both_root_branches_and_64_tooth_boundary_match_independent_volume_cap_flank_a
             if names.iter().any(|o| o.role.contains("bevel/heel")) {
                 for p in &edge.points_mm {
                     close(
-                        p[0].hypot(p[1]) * s.pitch_cone_angle_rad.sin()
-                            + p[2] * s.pitch_cone_angle_rad.cos(),
+                        p[0].portable_hypot(p[1]) * s.pitch_cone_angle_rad.portable_sin()
+                            + p[2] * s.pitch_cone_angle_rad.portable_cos(),
                         s.outer_cone_distance_mm,
                         16. * policy.linear_tolerance_mm,
                     );
@@ -377,10 +387,10 @@ fn both_root_branches_and_64_tooth_boundary_match_independent_volume_cap_flank_a
                 && names.iter().any(|o| o.role.contains("bevel/heel"))
             {
                 for p in &edge.points_mm {
-                    let gamma = p[0].hypot(p[1]).atan2(p[2]);
+                    let gamma = p[0].portable_hypot(p[1]).portable_atan2(p[2]);
                     if gamma > s.base_cone_angle_rad + 1e-5 && gamma < s.tip_cone_angle_rad - 1e-5 {
                         close(
-                            p[1].atan2(p[0]),
+                            p[1].portable_atan2(p[0]),
                             s.half_base_tooth_angle_rad - involute(gamma, s.base_cone_angle_rad),
                             16. * policy.linear_tolerance_mm / s.outer_cone_distance_mm,
                         );

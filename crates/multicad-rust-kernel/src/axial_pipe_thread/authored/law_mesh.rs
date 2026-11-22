@@ -311,7 +311,7 @@ fn build_law(thread: &AuthoredThread, closure: LawClosure) -> Result<Law, Error>
                 let Profile::Arc { qc, .. } = profile else {
                     unreachable!("arc piece")
                 };
-                let phi = |q: f64| ((q - qc) / ra).clamp(-1., 1.).asin();
+                let phi = |q: f64| ((q - qc) / ra).clamp(-1., 1.).portable_asin();
                 Piece {
                     profile,
                     start: Track::Fixed(a),
@@ -435,7 +435,7 @@ fn norm(a: V3) -> f64 {
 }
 fn angle(a: V3, b: V3) -> f64 {
     // atan2 of |a x b| and a.b is accurate for small angles.
-    norm(cross(a, b)).atan2(dot(a, b))
+    norm(cross(a, b)).portable_atan2(dot(a, b))
 }
 
 /// Bound of |dA/dq| = |a' + k| over a piece.
@@ -470,7 +470,7 @@ impl Lines {
             if self.index[l] == 0 {
                 return law.track_theta(piece.start, theta);
             }
-            return qc + ra * (phi0 + (phi1 - phi0) * f).sin();
+            return qc + ra * (phi0 + (phi1 - phi0) * f).portable_sin();
         }
         let a = law.track_theta(piece.start, theta);
         let b = law.track_theta(piece.end, theta);
@@ -557,7 +557,7 @@ impl Builder<'_> {
             return Err(Error::Unresolved);
         }
         self.vertex_error = self.vertex_error.max(error);
-        let (s, c) = corner.theta.sin_cos();
+        let (s, c) = corner.theta.portable_sin_cos();
         let id = (self.vertices.len() / 3) as u32;
         self.vertices.extend([radius * c, radius * s, z]);
         self.heights.push(z);
@@ -882,7 +882,7 @@ fn emit(
                     } else {
                         (radius, -rq / w, rq + law.k)
                     };
-                    let (sn, co) = c.theta.sin_cos();
+                    let (sn, co) = c.theta.portable_sin_cos();
                     let e = [co, sn, 0.];
                     let t = [-sn, co, 0.];
                     let st: V3 = std::array::from_fn(|i| rt * e[i] + radius * t[i]);
@@ -970,7 +970,7 @@ fn emit(
     for rim in &mut rims {
         let angle_of = |id: &u32| {
             let i = 3 * *id as usize;
-            vertices[i + 1].atan2(vertices[i])
+            vertices[i + 1].portable_atan2(vertices[i])
         };
         rim.sort_by(|a, b| angle_of(a).total_cmp(&angle_of(b)));
         if rim.len() < 3 {
@@ -1057,7 +1057,7 @@ fn plan(law: &Law, alpha: f64, chord: f64, angle: f64, turn: f64) -> Option<Vec<
         let count = if let Some((_, ra, phi0, phi1)) = piece.arc {
             // Uniform in phi: normal turn dphi per sub-band, chord
             // ra dphi^2 / cos(phi) + 2 ra dphi alpha + A alpha^2.
-            let cos = (phi0.abs().max(phi1.abs())).cos().max(1e-6);
+            let cos = (phi0.abs().max(phi1.abs())).portable_cos().max(1e-6);
             let c2 = ra / cos;
             let c1 = 2. * ra * alpha;
             let by_chord = (-c1 + (c1 * c1 + 4. * c2 * rest).sqrt()) / (2. * c2);

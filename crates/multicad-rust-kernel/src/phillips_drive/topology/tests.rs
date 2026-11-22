@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::cell::Cell;
 fn zero(x: I) {
     assert!(x.valid() && x.lo <= 0. && x.hi >= 0., "{x:?}")
@@ -173,8 +174,8 @@ fn metric_closed_topologies_own_real_shared_cross_surface_curves_and_manifold_ap
                 zero(n.into_iter().fold(I::point(0.), |s, v| s + v.square()) - I::point(1.));
                 let angle = (quarter as f64 + t) * PI / 2.;
                 let tangent = [
-                    I::point(angle.cos()),
-                    I::point(angle.sin()),
+                    I::point(angle.portable_cos()),
+                    I::point(angle.portable_sin()),
                     -cutter.envelope.sin_c / cutter.envelope.cos_c,
                 ];
                 zero(

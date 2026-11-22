@@ -90,7 +90,7 @@ impl Shapes {
 
         // The smooth side silhouette follows the two extremal generators
         // perpendicular to the projected extrusion axis.
-        let projected = axial[0].hypot(axial[1]);
+        let projected = axial[0].portable_hypot(axial[1]);
         if projected > ANGULAR_TOLERANCE {
             for sign in [-1., 1.] {
                 let direction = [-sign * axial[1] / projected, sign * axial[0] / projected];
@@ -168,7 +168,7 @@ pub(super) fn spatial_rims(
 ) -> impl Iterator<Item = SpatialRimCandidate> {
     let [original_u, original_v] = [vector(frame.u), vector(frame.v)];
     let [a, b] = [original_v[2], -original_u[2]];
-    let inclination = a.hypot(b);
+    let inclination = a.portable_hypot(b);
     let [cos, sin] = if inclination <= ANGULAR_TOLERANCE {
         [1., 0.]
     } else {
@@ -177,14 +177,14 @@ pub(super) fn spatial_rims(
     let major: Point = std::array::from_fn(|i| cos.mul_add(original_u[i], sin * original_v[i]));
     let minor: Point = std::array::from_fn(|i| (-sin).mul_add(original_u[i], cos * original_v[i]));
     let screen_u = [major[0], major[1]];
-    let minor_scale = minor[0].hypot(minor[1]);
+    let minor_scale = minor[0].portable_hypot(minor[1]);
     let screen_v = if minor_scale <= ANGULAR_TOLERANCE {
         [-screen_u[1], screen_u[0]]
     } else {
         [minor[0] / minor_scale, minor[1] / minor_scale]
     };
     let [u, v, depth] = point(frame.origin_mm);
-    let start = (start + sweep.min(0.) - sin.atan2(cos)).rem_euclid(TAU);
+    let start = (start + sweep.min(0.) - sin.portable_atan2(cos)).rem_euclid(TAU);
     let end = start + sweep.abs();
     [[start, end.min(TAU)], [0., end - TAU]]
         .into_iter()

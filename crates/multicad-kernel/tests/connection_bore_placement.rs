@@ -3,6 +3,7 @@ use multicad_kernel::{
     CircularPocketTool, GeometryErrorKind, GeometryPolicy, MeshOptions, PlaneFrame, RigidTransform,
     Solid,
 };
+use multicad_precision::PortableMath as _;
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-7, "{a} != {b}");
 }
@@ -15,8 +16,8 @@ fn point(pose: RigidTransform, p: [f64; 3]) -> [f64; 3] {
     std::array::from_fn(|i| q[i] + pose.translation_mm[i])
 }
 fn tool(pose: RigidTransform, roll: f64, tilt: f64) -> CircularPocketTool {
-    let (s, c) = roll.sin_cos();
-    let (st, ct) = tilt.sin_cos();
+    let (s, c) = roll.portable_sin_cos();
+    let (st, ct) = tilt.portable_sin_cos();
     let frame = PlaneFrame {
         origin: point(pose, [10., 10., 4.10001]),
         u: vector(pose, [c * ct, s * ct, st]),

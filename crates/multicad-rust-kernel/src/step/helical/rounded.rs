@@ -27,9 +27,9 @@ impl Spline {
     ) -> Result<Self, StepError> {
         // Use circle angle as the chart coordinate. It removes the square
         // root from the radial profile while preserving phase and radius.
-        let angles = phases.map(|p| ((p - circle.phase) / circle.radius).asin());
+        let angles = phases.map(|p| ((p - circle.phase) / circle.radius).portable_asin());
         let amplitude = sense * circle.radius / rate;
-        let log_error = error.ln();
+        let log_error = error.portable_ln();
         let span_limit = [1.5_f64, 2., 2.5, 3.]
             .into_iter()
             .map(|rho| {
@@ -38,9 +38,10 @@ impl Spline {
                 // is at most (C + R cosh rho) exp(|sR/rate| sinh rho).
                 // Cauchy bounds f^(12) by 12! times this norm / rho^12.
                 // Substitute into the Hermite remainder at half-span.
-                let log_bound = (circle.center_radius + circle.radius * rho.cosh()).ln()
-                    + amplitude.abs() * rho.sinh();
-                2. * rho * ((log_error - log_bound) / DERIVATIVE_ORDER).exp()
+                let log_bound = (circle.center_radius + circle.radius * rho.portable_cosh())
+                    .portable_ln()
+                    + amplitude.abs() * rho.portable_sinh();
+                2. * rho * ((log_error - log_bound) / DERIVATIVE_ORDER).portable_exp()
             })
             .fold(0., f64::max);
         let jet = |angle| rounded_jet(circle, angle, rate, sense);
@@ -61,10 +62,10 @@ impl Spline {
 }
 
 fn rounded_jet(circle: RootCircle, t: f64, rate: f64, sense: f64) -> [Complex; JETS] {
-    let (s, c) = t.sin_cos();
+    let (s, c) = t.portable_sin_cos();
     let trig = [[s, c], [c, -s], [-s, -c], [-c, s]];
     let amplitude = sense * circle.radius / rate;
-    let (sine, cosine) = (sense * ((circle.phase + circle.radius * s) / rate)).sin_cos();
+    let (sine, cosine) = (sense * ((circle.phase + circle.radius * s) / rate)).portable_sin_cos();
     let mut radius =
         std::array::from_fn::<_, JETS, _>(|i| -circle.radius * trig[i % 4][1] / FACTORIALS[i]);
     radius[0] += circle.center_radius;
@@ -143,9 +144,9 @@ mod tests {
                 for j in 0..=24 {
                     let u = j as f64 / 24.;
                     let angle = pair[0] + (pair[1] - pair[0]) * u;
-                    let phase = circle.phase + circle.radius * angle.sin();
+                    let phase = circle.phase + circle.radius * angle.portable_sin();
                     let radius = thread.radius_at_phase(phase);
-                    let (sin, cos) = (-phase / thread.helical_rate()).sin_cos();
+                    let (sin, cos) = (-phase / thread.helical_rate()).portable_sin_cos();
                     let mut controls: [Complex; DEGREE + 1] = root.poles
                         [i * DEGREE..=i * DEGREE + DEGREE]
                         .try_into()
@@ -158,7 +159,8 @@ mod tests {
                         }
                     }
                     assert!(
-                        (controls[0][0] - radius * cos).hypot(controls[0][1] - radius * sin)
+                        (controls[0][0] - radius * cos)
+                            .portable_hypot(controls[0][1] - radius * sin)
                             < 1e-7 / 8.
                     );
                 }

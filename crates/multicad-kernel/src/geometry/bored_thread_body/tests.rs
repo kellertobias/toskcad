@@ -104,7 +104,7 @@ fn buried_thread_splits_only_its_coaxial_bore_into_collars_steps_and_bands() {
         };
         let proof = certify(&local).unwrap();
         assert!(
-            (proof.signed_volume_mm3 - volume).abs() < 0.05 * volume.cbrt(),
+            (proof.signed_volume_mm3 - volume).abs() < 0.05 * volume.portable_cbrt(),
             "{} {volume}",
             proof.signed_volume_mm3
         );

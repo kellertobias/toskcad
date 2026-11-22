@@ -38,7 +38,7 @@ impl SemicircleEdge {
     pub(super) fn include_bounds(self, bounds: &mut [Point; 2]) {
         let endpoints = cross(self.radial_mid, self.normal);
         for (i, end) in endpoints.into_iter().enumerate() {
-            let extent = self.normal[(i + 1) % 3].hypot(self.normal[(i + 2) % 3]);
+            let extent = self.normal[(i + 1) % 3].portable_hypot(self.normal[(i + 2) % 3]);
             let radial = self.radial_mid[i];
             let offsets = [
                 if radial <= 0. { -extent } else { -end.abs() },
@@ -185,7 +185,7 @@ impl Shell<'_, '_> {
             let point = self.points[&id];
             let uv = project(point);
             if dot(sub(point, plane.origin), plane.normal).abs() > self.tolerance
-                || (uv[0] - target[0]).hypot(uv[1] - target[1]) > self.tolerance
+                || (uv[0] - target[0]).portable_hypot(uv[1] - target[1]) > self.tolerance
             {
                 return Err(ReadError::Invalid);
             }

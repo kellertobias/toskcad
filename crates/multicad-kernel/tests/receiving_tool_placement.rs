@@ -3,6 +3,7 @@ use multicad_kernel::{
     GeometryErrorKind, GeometryPolicy, HelicalThread, PlaneFrame, Solid,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
+use multicad_precision::PortableMath as _;
 fn request() -> HelicalThread {
     HelicalThread {
         major_radius_mm: 10_000.,
@@ -37,7 +38,7 @@ fn internal_receiving_clocking_certifies_radial_tool_extent_not_only_its_short_a
     let before = stock.topology_snapshot(feature, 0).unwrap();
     for (angle, admitted) in [(1e-6_f64, false), (1e-7, false), (1e-14, true), (0., true)] {
         let frame = PlaneFrame {
-            u: [angle.cos(), 0., angle.sin()],
+            u: [angle.portable_cos(), 0., angle.portable_sin()],
             ..Default::default()
         };
         assert!(

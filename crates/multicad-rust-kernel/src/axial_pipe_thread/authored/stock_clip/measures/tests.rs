@@ -254,7 +254,7 @@ fn tangent_cross_oracle(atlas: &StockClipPlan, face: StockClipFace, n: usize) ->
                     (1. - u) * (corners[2][a] - corners[0][a]) + u * (corners[3][a] - corners[1][a])
                 });
                 let theta = omega * (f[2] - f[1]);
-                let (sin, cos) = theta.sin_cos();
+                let (sin, cos) = theta.portable_sin_cos();
                 let tangent = |d: [f64; 3]| {
                     [
                         d[0] * cos - f[0] * sin * omega * (d[2] - d[1]),
@@ -269,7 +269,7 @@ fn tangent_cross_oracle(atlas: &StockClipPlan, face: StockClipFace, n: usize) ->
                     a[2] * b[0] - a[0] * b[2],
                     a[0] * b[1] - a[1] * b[0],
                 ];
-                let area = cross[0].hypot(cross[1]).hypot(cross[2]);
+                let area = cross[0].portable_hypot(cross[1]).portable_hypot(cross[2]);
                 let weight = |k| {
                     if k == 0 || k == n {
                         1.

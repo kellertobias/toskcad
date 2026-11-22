@@ -11,6 +11,7 @@ use multicad_core::{
     },
 };
 use multicad_model::{Compiler, Model};
+use multicad_precision::PortableMath as _;
 
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
@@ -86,15 +87,15 @@ fn a_tab_contact_is_found_on_the_exact_curved_and_flat_sides() {
     let c = m
         .fdm_tab_contact(knob, [107.98, 50.3, 4.], Some([1., 0.03]))
         .unwrap();
-    let r = (c.point_mm[0] - 100.).hypot(c.point_mm[1] - 50.);
+    let r = (c.point_mm[0] - 100.).portable_hypot(c.point_mm[1] - 50.);
     near(r, 8., 1e-6);
     near(c.point_mm[2], 1., 1e-9);
     // The outward direction is the radial normal through the contact point.
     let radial = (c.point_mm[1] - 50.)
-        .atan2(c.point_mm[0] - 100.)
+        .portable_atan2(c.point_mm[0] - 100.)
         .to_degrees();
     near(c.angle_deg, radial, 1e-3);
-    near(c.outward[0].hypot(c.outward[1]), 1., 1e-12);
+    near(c.outward[0].portable_hypot(c.outward[1]), 1., 1e-12);
     // The review's hand-computed contact for a +X tab.
     let c = m.fdm_tab_contact(knob, [112., 50., 9.], None).unwrap();
     // The probe is a 0.1 µm cube, so the direction holds to 0.001°.

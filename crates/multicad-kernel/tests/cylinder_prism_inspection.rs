@@ -4,6 +4,7 @@ use multicad_kernel::{
     Solid, SolidPairRelation,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
+use multicad_precision::PortableMath as _;
 type P = [f64; 2];
 fn rectangle(a: P, b: P) -> Vec<P> {
     vec![a, [b[0], a[1]], b, [a[0], b[1]]]
@@ -67,10 +68,10 @@ fn near(a: f64, b: f64) {
 }
 #[test]
 fn analytic_parallel_queries_keep_concavity_holes_pose_and_real_native_metrics() {
-    let (s, c) = 0.4_f64.sin_cos();
+    let (s, c) = 0.4_f64.portable_sin_cos();
     let mut hole = rectangle([-1., -1.], [1., 1.]);
     hole.reverse();
-    let segment = 4. * 0.5_f64.acos() - 3_f64.sqrt();
+    let segment = 4. * 0.5_f64.portable_acos() - 3_f64.sqrt();
     for frame in [
         PlaneFrame::default(),
         PlaneFrame {
@@ -129,7 +130,7 @@ fn analytic_parallel_queries_keep_concavity_holes_pose_and_real_native_metrics()
                 2. * segment,
             ),
         ] {
-            let (s, c) = 0.35_f64.sin_cos();
+            let (s, c) = 0.35_f64.portable_sin_cos();
             let pframe = PlaneFrame {
                 origin: std::array::from_fn(|i| frame.origin[i] + frame.normal()[i] * bottom),
                 u: std::array::from_fn(|i| frame.u[i] * c + frame.v[i] * s),
@@ -194,7 +195,7 @@ fn uncertain_tangency_and_long_thin_cap_tilt_are_refused_atomically() {
         .inspect_pair(&tangent, 1e-3, GeometryPolicy::default())
         .unwrap_err();
     assert_eq!(error.kind, GeometryErrorKind::Unsupported);
-    let (s, co) = 1e-8_f64.sin_cos();
+    let (s, co) = 1e-8_f64.portable_sin_cos();
     let frame = PlaneFrame {
         origin: [0.; 3],
         u: [co, 0., s],

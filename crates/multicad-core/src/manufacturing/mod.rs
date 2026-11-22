@@ -1,5 +1,6 @@
 //! Exact planar manufacturing contours. Coordinates remain model millimeters;
 //! units and file serialization belong to output providers, never viewport data.
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 pub const MAX_PLANAR_LOOPS: usize = 256;
 pub const MAX_PLANAR_EDGES: usize = 16_384;
@@ -19,7 +20,7 @@ pub enum PlanarEdge {
     },
 }
 fn distance(a: Point2, b: Point2) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+    (a[0] - b[0]).portable_hypot(a[1] - b[1])
 }
 fn cross(a: Point2, b: Point2) -> f64 {
     a[0] * b[1] - a[1] * b[0]
@@ -91,10 +92,10 @@ impl PlanarEdge {
                 if r <= tolerance || (distance(b, center) - r).abs() > tolerance {
                     return Err("Planar arc radius or endpoints are inconsistent".into());
                 }
-                let start = (a[1] - center[1]).atan2(a[0] - center[0]);
+                let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
                 let expected = [
-                    center[0] + r * (start + sweep_rad).cos(),
-                    center[1] + r * (start + sweep_rad).sin(),
+                    center[0] + r * (start + sweep_rad).portable_cos(),
+                    center[1] + r * (start + sweep_rad).portable_sin(),
                 ];
                 if distance(expected, b) > tolerance {
                     return Err("Planar arc sweep does not reach its finite endpoint".into());
@@ -113,7 +114,7 @@ impl PlanarEdge {
         } = *self
         {
             let r = distance(a, center);
-            let start = (a[1] - center[1]).atan2(a[0] - center[0]);
+            let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
             for (angle, unit) in [
                 (0., [1., 0.]),
                 (std::f64::consts::FRAC_PI_2, [0., 1.]),

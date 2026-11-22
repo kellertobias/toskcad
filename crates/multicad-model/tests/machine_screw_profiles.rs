@@ -12,6 +12,7 @@ use multicad_core::{
 };
 use multicad_kernel::{BooleanOperation, GeometryPolicy, RigidTransform, Solid};
 use multicad_model::{Compiler, EvaluationCache};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
@@ -282,9 +283,9 @@ fn body_volume(head: &ResolvedScrewHead, shank: f64, plain: f64) -> f64 {
             ..
         } => {
             let t = (included_angle_deg / 2.).to_radians();
-            let rim = k - (r - shank) / t.tan();
-            let center = n * (t / 2.).tan();
-            let tangent = center - n * t.sin();
+            let rim = k - (r - shank) / t.portable_tan();
+            let center = n * (t / 2.).portable_tan();
+            let tangent = center - n * t.portable_sin();
             knots.extend([-k + ch, -k + rim, tangent, center]);
             Box::new(move |z| {
                 if n > 0. && z > tangent && z < center {
@@ -294,7 +295,7 @@ fn body_volume(head: &ResolvedScrewHead, shank: f64, plain: f64) -> f64 {
                 } else if z < -k + ch {
                     r - ch + z + k
                 } else {
-                    r.min(shank - z * t.tan())
+                    r.min(shank - z * t.portable_tan())
                 }
             })
         }
@@ -326,24 +327,24 @@ fn torx_removed(major: f64, minor: f64, re: f64, depth: f64, angle: f64) -> f64 
         / (4. * b - 2. * 3_f64.sqrt() * a + (4. * 3_f64.sqrt() - 8.) * re);
     let ce = major - re;
     let d = minor + ri;
-    let dist = ((d * (PI / 6.).cos() - ce).powi(2) + (d / 2.).powi(2)).sqrt();
+    let dist = ((d * (PI / 6.).portable_cos() - ce).powi(2) + (d / 2.).powi(2)).sqrt();
     let q = [
-        ce + re * (d * (PI / 6.).cos() - ce) / dist,
+        ce + re * (d * (PI / 6.).portable_cos() - ce) / dist,
         re * d / 2. / dist,
     ];
-    let theta = q[1].atan2(q[0]);
+    let theta = q[1].portable_atan2(q[0]);
     let ray = |t: f64| {
         if t <= theta {
-            ce * t.cos() + (re * re - ce * ce * t.sin().powi(2)).sqrt()
+            ce * t.portable_cos() + (re * re - ce * ce * t.portable_sin().powi(2)).sqrt()
         } else {
             let u = PI / 6. - t;
-            d * u.cos() - (ri * ri - d * d * u.sin().powi(2)).sqrt()
+            d * u.portable_cos() - (ri * ri - d * d * u.portable_sin().powi(2)).sqrt()
         }
     };
     let f = |t: f64| {
         let r = ray(t);
-        (depth + major / (angle / 2.).to_radians().tan()) * r * r / 2.
-            - r.powi(3) / (3. * (angle / 2.).to_radians().tan())
+        (depth + major / (angle / 2.).to_radians().portable_tan()) * r * r / 2.
+            - r.powi(3) / (3. * (angle / 2.).to_radians().portable_tan())
     };
     12. * (integral(&f, 0., theta) + integral(&f, theta, PI / 6.))
 }
@@ -363,29 +364,29 @@ fn h_removed(p: &model::ResolvedPhillipsHParameters) -> Option<f64> {
     let m = p.mouth_diameter_mm;
     let r = p.mouth_radius_mm;
     let b = p.b_width_mm;
-    let tg = (m - p.g_diameter_mm) / (2. * a.tan());
-    let total = tg + p.g_diameter_mm / 2. * c.tan();
-    let tb = tg + (p.g_diameter_mm - b) / 2. * c.tan();
-    let join = r * (1. - a.sin());
-    let entry = m / 2. + r * (1. - a.sin()) / a.cos();
-    let de = e / (2. * alpha.tan() * beta.cos());
-    let first = 1. / (alpha.tan() * beta.cos());
-    let second = 1. / (theta.tan() * beta.cos());
+    let tg = (m - p.g_diameter_mm) / (2. * a.portable_tan());
+    let total = tg + p.g_diameter_mm / 2. * c.portable_tan();
+    let tb = tg + (p.g_diameter_mm - b) / 2. * c.portable_tan();
+    let join = r * (1. - a.portable_sin());
+    let entry = m / 2. + r * (1. - a.portable_sin()) / a.portable_cos();
+    let de = e / (2. * alpha.portable_tan() * beta.portable_cos());
+    let first = 1. / (alpha.portable_tan() * beta.portable_cos());
+    let second = 1. / (theta.portable_tan() * beta.portable_cos());
     let area = |depth: f64| {
         let rr = if depth <= join {
             entry - (r * r - (depth - r).powi(2)).max(0.).sqrt()
         } else if depth <= tg {
-            m / 2. - depth * a.tan()
+            m / 2. - depth * a.portable_tan()
         } else {
-            (total - depth).max(0.) / c.tan()
+            (total - depth).max(0.) / c.portable_tan()
         };
         if rr == 0. {
             return 0.;
         }
-        let rb = b / 2. + (tb - depth) * beta.tan();
+        let rb = b / 2. + (tb - depth) * beta.portable_tan();
         let primitive = |y: f64| {
             let y = y.clamp(0., rr);
-            (y * (rr * rr - y * y).max(0.).sqrt() + rr * rr * (y / rr).asin()) / 2.
+            (y * (rr * rr - y * y).max(0.).sqrt() + rr * rr * (y / rr).portable_asin()) / 2.
         };
         let part = |aa: f64, bb: f64, lo: f64, upper: f64| {
             let disc = rr * rr * (1. + bb * bb) - aa * aa;
@@ -690,23 +691,31 @@ fn true_cc_phillips_h0_through_h4_preserve_real_wings_rounding_depth_and_step() 
         let read = check_step(solid, dir.path(), index);
         let top = -head.height_mm();
         let tg = (p.mouth_diameter_mm - p.g_diameter_mm)
-            / (2. * p.outer_flank_angle_deg.to_radians().tan());
-        let tip = top + tg + p.g_diameter_mm / 2. * p.floor_angle_deg.to_radians().tan();
+            / (2. * p.outer_flank_angle_deg.to_radians().portable_tan());
+        let tip = top + tg + p.g_diameter_mm / 2. * p.floor_angle_deg.to_radians().portable_tan();
         for actual in [solid, &read] {
             for depth in [0.35 * tg, 0.65 * tg] {
-                let rho =
-                    p.mouth_diameter_mm / 2. - depth * p.outer_flank_angle_deg.to_radians().tan();
+                let rho = p.mouth_diameter_mm / 2.
+                    - depth * p.outer_flank_angle_deg.to_radians().portable_tan();
                 for i in 0..4 {
                     let t = PI / 4. + i as f64 * PI / 2.;
                     probe(
                         actual,
-                        [0.85 * rho * t.cos(), 0.85 * rho * t.sin(), top + depth],
+                        [
+                            0.85 * rho * t.portable_cos(),
+                            0.85 * rho * t.portable_sin(),
+                            top + depth,
+                        ],
                         false,
                     );
                     let t = i as f64 * PI / 2.;
                     probe(
                         actual,
-                        [0.85 * rho * t.cos(), 0.85 * rho * t.sin(), top + depth],
+                        [
+                            0.85 * rho * t.portable_cos(),
+                            0.85 * rho * t.portable_sin(),
+                            top + depth,
+                        ],
                         true,
                     );
                 }

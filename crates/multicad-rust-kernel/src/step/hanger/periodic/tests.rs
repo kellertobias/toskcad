@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 #[test]
 fn actual_both_handed_literal_templates_have_one_exact_periodic_xy_owner() {
     for left in [false, true] {
@@ -29,8 +30,8 @@ fn actual_both_handed_literal_templates_have_one_exact_periodic_xy_owner() {
                 let physical = ab[0] + (ab[1] - ab[0]) * t;
                 let theta = sign * std::f64::consts::TAU * physical;
                 assert!(
-                    (actual[0] - theta.cos()).abs()
-                        + (actual[1] - theta.sin()).abs()
+                    (actual[0] - theta.portable_cos()).abs()
+                        + (actual[1] - theta.portable_sin()).abs()
                         + (actual[2] - physical).abs()
                         <= q.position_error() + 1e-14
                 );
@@ -51,8 +52,9 @@ fn degree_and_projection_predicate_refuses_actual_double_wrap_and_tangent_fold_e
     // is tau*(1-1.2)<0, so C0 closeness alone does not prove a radial graph.
     let t = 0.125;
     let tau = std::f64::consts::TAU;
-    let angle_derivative =
-        tau + 1.2 * tau * (4. * tau * t).cos() / (1. + 0.09 * (4. * tau * t).sin().powi(2));
+    let angle_derivative = tau
+        + 1.2 * tau * (4. * tau * t).portable_cos()
+            / (1. + 0.09 * (4. * tau * t).portable_sin().powi(2));
     assert!(angle_derivative < 0.);
     assert_eq!(radial_proof(0.3, 1.5 * tau), Err(Error::Unresolved));
     assert!(radial_proof(0., 0.).unwrap() > 6.);

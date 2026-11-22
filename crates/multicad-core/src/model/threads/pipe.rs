@@ -165,12 +165,12 @@ pub struct ResolvedPipeThread {
 }
 pub(super) fn tapered_profile(pitch: f64, k: f64) -> (f64, f64) {
     let a = 27.5_f64.to_radians();
-    let m = 1. / a.tan();
-    let h = pitch / (3. * a.tan());
+    let m = 1. / a.portable_tan();
+    let h = pitch / (3. * a.portable_tan());
     let fundamental = pitch * (m * m - k * k) / (2. * m);
     (
         h,
-        (fundamental - h) / (2. * (1. / a.sin() - (1. + k * k).sqrt())),
+        (fundamental - h) / (2. * (1. / a.portable_sin() - (1. + k * k).sqrt())),
     )
 }
 pub(super) fn resolve_pipe(

@@ -151,9 +151,9 @@ impl Shell<'_, '_> {
             if *weight <= 0. {
                 return Err(ReadError::Invalid);
             }
-            let ideal_weight = (angle / 2.).cos();
+            let ideal_weight = (angle / 2.).portable_cos();
             let circle_point = |angle: f64, r| {
-                let (sin, cos) = angle.sin_cos();
+                let (sin, cos) = angle.portable_sin_cos();
                 lift(actual, [r * cos, r * sin, 0.])
             };
             let ideal = [

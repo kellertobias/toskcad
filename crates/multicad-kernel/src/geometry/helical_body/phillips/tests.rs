@@ -186,7 +186,8 @@ pub(in crate::geometry) fn fixture(index: usize, plain: f64, left: bool) -> Phil
         outer_corner_angle_deg: 92.,
         inner,
     };
-    let tip = (m - g) / (2. * 26.5_f64.to_radians().tan()) + g / 2. * 28_f64.to_radians().tan();
+    let tip = (m - g) / (2. * 26.5_f64.to_radians().portable_tan())
+        + g / 2. * 28_f64.to_radians().portable_tan();
     let cavity = source::Cavity::new(
         source::Cutter::new(
             spec,

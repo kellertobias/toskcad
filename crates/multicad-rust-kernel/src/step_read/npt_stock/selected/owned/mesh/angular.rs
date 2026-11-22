@@ -1,6 +1,7 @@
 //! Angular constraints steer a conforming UV triangulation. Admission uses
 //! only original-field full-triangle certificates, never sampled angles.
 use super::*;
+use multicad_precision::PortableMath as _;
 use spade::{
     ConstrainedDelaunayTriangulation, HasPosition, Point2, Triangulation,
     handles::FixedVertexHandle,
@@ -107,13 +108,13 @@ fn boundary(
         for index in 0..count - 1 {
             let sample = samples[if forward { index } else { count - index - 1 }];
             let local = registry.vertices[sample.vertex as usize].local;
-            let angle = local[1].atan2(local[0]);
+            let angle = local[1].portable_atan2(local[0]);
             if first {
                 phase = angle;
                 first = false;
             } else {
                 let delta = angle - previous;
-                phase += delta.sin().atan2(delta.cos());
+                phase += delta.portable_sin().portable_atan2(delta.portable_cos());
             }
             previous = angle;
             let ray = sample.ray.map(|bits| {
@@ -213,7 +214,7 @@ fn refine(
     let mut ray = ray.filter(|_| constraint.is_some());
     if let Some((_, bits)) = ray {
         let theta = f64::from_bits(bits);
-        let direction = [theta.cos(), theta.sin()];
+        let direction = [theta.portable_cos(), theta.portable_sin()];
         let axis = usize::from((na.uv[0] - nb.uv[0]).abs() >= (na.uv[1] - nb.uv[1]).abs());
         let evaluate = |value| {
             let mut at = uv;

@@ -7,6 +7,7 @@ use multicad_core::{
     project_file::{self, ProjectFile},
     symbols::{self, SymbolAuthorRequest, SymbolKind},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
@@ -89,10 +90,10 @@ fn bounded_roles_resolve_real_dimensions_without_rotary_aliases() {
                         assert_eq!(r.wheel_teeth, z as u32);
                         near(r.pitch_mm, PI * m);
                         near(r.lead_mm, PI * m);
-                        near(r.lead_angle_rad, 0.1_f64.atan());
+                        near(r.lead_angle_rad, 0.1_f64.portable_atan());
                         near(
                             r.axial_pressure_angle_rad,
-                            (20_f64.to_radians().tan() * 1.01_f64.sqrt()).atan(),
+                            (20_f64.to_radians().portable_tan() * 1.01_f64.sqrt()).portable_atan(),
                         );
                         near(
                             r.minimum_root_radius_mm,

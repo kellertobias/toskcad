@@ -31,7 +31,7 @@ fn place(placement: &Placement, [x, y, z]: Point) -> Point {
 
 fn distance(a: Point, b: Point) -> f64 {
     let [x, y, z] = std::array::from_fn(|i| a[i] - b[i]);
-    x.hypot(y).hypot(z)
+    x.portable_hypot(y).portable_hypot(z)
 }
 
 fn ellipse_edge(

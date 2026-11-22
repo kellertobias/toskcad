@@ -14,6 +14,7 @@ use crate::{
     },
     parameters::EvaluatedParameters,
 };
+use multicad_precision::PortableMath as _;
 
 pub const MACHINING_KIND: &str = "cabinetry.machining";
 pub const MACHINING_CAPABILITY: &str = "cabinetry.machining.1";
@@ -577,7 +578,7 @@ pub fn resolve_machining_face(
         Some(PanelSource::Carcass { carcass, .. }) => {
             let c = resolve_carcass(document, parameters, &read_carcass(document, carcass)?)?;
             let [w, h, d] = c.size_mm;
-            let (s, k) = c.rotation_rad.sin_cos();
+            let (s, k) = c.rotation_rad.portable_sin_cos();
             let local = [w / 2., d / 2., h / 2.];
             [
                 c.origin[0] + local[0] * k - local[1] * s,

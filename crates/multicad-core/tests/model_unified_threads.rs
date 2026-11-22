@@ -6,6 +6,7 @@ use multicad_core::{
     project_file::{self, ProjectFile},
     symbols::{self, SymbolAuthorRequest, SymbolKind},
 };
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -113,7 +114,7 @@ fn independently_transcribed_limits_and_mode_specific_profiles_cover_exactly_fou
                 ..p
             };
             let a = adjusted.resolve(s.parameters(), mode).unwrap();
-            let shift = 0.002 + 0.001 / 30_f64.to_radians().tan();
+            let shift = 0.002 + 0.001 / 30_f64.to_radians().portable_tan();
             let expected = f.pitch_diameter_mm
                 + if mode == ThreadMode::CutInternal {
                     shift

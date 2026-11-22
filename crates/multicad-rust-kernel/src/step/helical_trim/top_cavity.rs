@@ -2,6 +2,7 @@
 use super::{DEGREE, Point, Spline, StepError, helical};
 use crate::helical_tube_cut::{BoundaryEdge, Cut};
 use helical::{JETS, product};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 
 const FACTORIAL: [f64; 13] = [
@@ -34,7 +35,7 @@ impl TopCavity {
         let radius = spec.stock_radius_mm;
         let tube = spec.tube_radius_mm;
         let rise = spec.pitch_mm / TAU;
-        let hypotenuse = radius.hypot(rise);
+        let hypotenuse = radius.portable_hypot(rise);
         let tangent = rise / hypotenuse;
         let modulation = radius / hypotenuse * tube / rise;
         let height = spec.stock_height_mm;
@@ -60,7 +61,8 @@ impl TopCavity {
 
     pub fn spline(self) -> Result<Spline, StepError> {
         let [a, b] = self.domain;
-        let span_limit = 2. * (self.tolerance * 0.125 / self.derivative_bound).powf(1. / 12.);
+        let span_limit =
+            2. * (self.tolerance * 0.125 / self.derivative_bound).portable_powf(1. / 12.);
         let spline = helical::Spline::with_jets(a, b, span_limit, |angle| self.writer_jet(angle))?;
         Ok(Spline::from_hermite(spline, |_| self.height))
     }
@@ -86,9 +88,9 @@ impl TopCavity {
     }
 
     fn factors(self, angle: f64) -> ([Complex; JETS], Complex) {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let phase = self.modulation.mul_add(sin, self.phase);
-        let (rotation_sin, rotation_cos) = phase.sin_cos();
+        let (rotation_sin, rotation_cos) = phase.portable_sin_cos();
         let mut amplitude = std::array::from_fn(|i| {
             let [cos, sin] = trigonometric_derivative(cos, sin, i);
             [self.tube * cos, self.tangent * self.tube * sin]
@@ -99,7 +101,7 @@ impl TopCavity {
 
     fn writer_jet(self, angle: f64) -> [Complex; JETS] {
         let (amplitude, zeroth) = self.factors(angle);
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let mut exponential = [[0.; 2]; JETS];
         exponential[0] = zeroth;
         for n in 1..JETS {
@@ -125,7 +127,7 @@ impl TopCavity {
         // using Leibniz coefficients, independently of the writer's
         // normalized power series and Hermite pole conversion.
         let (amplitude, zeroth) = self.factors(angle);
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let mut exponential = [[0.; 2]; JETS];
         exponential[0] = zeroth;
         for n in 1..=index {

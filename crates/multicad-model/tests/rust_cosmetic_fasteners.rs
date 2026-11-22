@@ -10,6 +10,7 @@ use multicad_core::{
 };
 use multicad_kernel::{GeometryErrorKind, MeshOptions, PlaneFrame};
 use multicad_model::{Compiler, GeometryBackend};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn mm(dimension: &Dimension) -> f64 {
@@ -63,7 +64,8 @@ fn expected(parameters: &MechanicalPartParameters) -> (f64, [[f64; 3]; 2]) {
             let height = mm(&profile.height);
             let chamfer = mm(&profile.edge_chamfer);
             assert_eq!(mm(&profile.neck_radius), 0.);
-            let cone = (radius - r) / (mm(&profile.included_angle).to_radians() / 2.).tan();
+            let cone =
+                (radius - r) / (mm(&profile.included_angle).to_radians() / 2.).portable_tan();
             let land = height - cone;
             assert!(land > chamfer);
             let flats = mm(across_flats);

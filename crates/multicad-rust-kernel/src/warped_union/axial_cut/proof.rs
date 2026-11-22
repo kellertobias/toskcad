@@ -141,7 +141,7 @@ impl Tube {
             let [lo, hi] = face_range(shell, face, direction, self.start);
             lo.max(-hi).max(0.)
         });
-        a.hypot(b) > self.radius + tolerance
+        a.portable_hypot(b) > self.radius + tolerance
     }
 }
 
@@ -269,14 +269,14 @@ fn prove_recess(
     if polygon.iter().enumerate().any(|(i, &p)| {
         polygon[..i].iter().any(|&q| {
             let [x, y] = difference(p, q);
-            x.hypot(y) <= tolerance
+            x.portable_hypot(y) <= tolerance
         })
     }) {
         return Err(Error::Unsupported);
     }
     for (&a, &b) in polygon.iter().zip(polygon.iter().cycle().skip(1)) {
         let edge = difference(b, a);
-        let length = edge[0].hypot(edge[1]);
+        let length = edge[0].portable_hypot(edge[1]);
         if length <= tolerance
             || det(edge, a.map(|x| -x)) <= length * (tube.radius + tolerance)
             || polygon
@@ -287,7 +287,10 @@ fn prove_recess(
         }
     }
 
-    let radius = polygon.iter().map(|p| p[0].hypot(p[1])).fold(0., f64::max);
+    let radius = polygon
+        .iter()
+        .map(|p| p[0].portable_hypot(p[1]))
+        .fold(0., f64::max);
     let wider = Tube::new(tube.point(outer), tube.point(shoulder), radius, tolerance)?;
     let wider_path = wider.path(shell, tolerance)?;
     let face = if from_entry {

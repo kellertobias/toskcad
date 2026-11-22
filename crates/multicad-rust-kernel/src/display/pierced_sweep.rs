@@ -1,5 +1,6 @@
 use super::{DisplayMesh, MeshError, Point2, Tessellation, normal_sweep, triangulate_region, wall};
 use crate::normal_sweep::PiercedSweep;
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 
 type Point = [f64; 3];
@@ -150,7 +151,7 @@ fn append_patch(
 ) -> Result<(), MeshError> {
     let [a, b, c, _] = patch.corners;
     let [x, y] = [b[0] - a[0], b[1] - a[1]];
-    let length = x.hypot(y);
+    let length = x.portable_hypot(y);
     let [x, y] = [x / length, y / length];
     let along = |point: Point| x * point[0] + y * point[1];
     let origin = along(a);

@@ -3,6 +3,7 @@ use multicad_core::{
     model::{self, *},
     references::{self, Origin, Resolution},
 };
+use multicad_precision::PortableMath as _;
 
 #[test]
 fn shell_signed_walls_follow_parameters_and_linked_occurrences_with_native_failure_neutrality() {
@@ -83,7 +84,7 @@ fn draft_and_mirror_rebuild_current_geometry_and_saved_sources() {
         vec![side],
     );
     commit(&mut session, &request);
-    let volume = 6000. - 20. * 0.5 * 100. * 5f64.to_radians().tan();
+    let volume = 6000. - 20. * 0.5 * 100. * 5f64.to_radians().portable_tan();
     near(
         compile(&session)
             .solid(input.body)
@@ -93,7 +94,7 @@ fn draft_and_mirror_rebuild_current_geometry_and_saved_sources() {
         volume,
     );
     apply_parameter(&mut session, "draft", "-5");
-    let volume = 6000. + 20. * 0.5 * 100. * 5f64.to_radians().tan();
+    let volume = 6000. + 20. * 0.5 * 100. * 5f64.to_radians().portable_tan();
     persist_and_check(&mut session, input.body, volume, 1);
     let (mut session, input) = fixture();
     let mut frame = PrimitiveFrame::default();

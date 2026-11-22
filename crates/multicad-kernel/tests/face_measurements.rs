@@ -5,6 +5,7 @@ use multicad_core::{
     sketch_regions::{Edge, ExactCurve, RegionQueries},
 };
 use multicad_kernel::*;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 fn p() -> GeometryPolicy {
     Default::default()
@@ -58,7 +59,7 @@ fn rational_circle_frustum_cap_and_side_areas_use_adaptive_exact_surface_integra
     let solid = Solid::extrude_curved_profile_vector_tapered_named(
         &profile,
         [0., 0., 10.],
-        0.1_f64.atan(),
+        0.1_f64.portable_atan(),
         id,
         &origins(&profile),
         p(),
@@ -95,7 +96,7 @@ fn annular_rational_caps_and_oblique_centroids_retain_tight_area_accuracy() {
     let solid = Solid::extrude_curved_profile_vector_tapered_named(
         &profile,
         [6., 0., 8.],
-        0.1_f64.atan(),
+        0.1_f64.portable_atan(),
         id,
         &origins(&profile),
         p(),
@@ -134,7 +135,7 @@ fn sloped_planar_cap_area_matches_true_surface_not_projected_section() {
         center: [0., 0.],
         radius_mm: 1.,
     }]];
-    let length = 1_f64.hypot(0.3);
+    let length = 1_f64.portable_hypot(0.3);
     let target = PlaneFrame {
         origin: [0., 0., 10.],
         u: [1. / length, 0., 0.3 / length],

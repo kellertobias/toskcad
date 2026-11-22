@@ -158,7 +158,7 @@ pub fn sheet_outline(sheet: &ResolvedSheet) -> Option<SheetOutline> {
         .enumerate()
         .map(|(index, (a, b, straight))| {
             let d = [b[0] - a[0], b[1] - a[1]];
-            let length_mm = d[0].hypot(d[1]);
+            let length_mm = d[0].portable_hypot(d[1]);
             let along = [d[0] / length_mm.max(1e-12), d[1] / length_mm.max(1e-12)];
             // Outer loops run counterclockwise, so outward is to the right.
             let out = [along[1], -along[0]];
@@ -194,8 +194,8 @@ pub fn flange_section(f: &ResolvedFlange, thickness_mm: f64) -> FlangeGuideSecti
             StripSegment::Straight { length_mm } => {
                 let start = p;
                 p = [
-                    p[0] + length_mm * heading.cos(),
-                    p[1] + length_mm * heading.sin(),
+                    p[0] + length_mm * heading.portable_cos(),
+                    p[1] + length_mm * heading.portable_sin(),
                 ];
                 points.push(p);
                 leg = [start, p];
@@ -207,11 +207,11 @@ pub fn flange_section(f: &ResolvedFlange, thickness_mm: f64) -> FlangeGuideSecti
                 let r = radius_mm + t / 2.;
                 let side = angle_rad.signum();
                 let c = [
-                    p[0] - side * r * heading.sin(),
-                    p[1] + side * r * heading.cos(),
+                    p[0] - side * r * heading.portable_sin(),
+                    p[1] + side * r * heading.portable_cos(),
                 ];
                 let rotate = |q: [f64; 2], a: f64| {
-                    let (s, co) = a.sin_cos();
+                    let (s, co) = a.portable_sin_cos();
                     let d = [q[0] - c[0], q[1] - c[1]];
                     [c[0] + co * d[0] - s * d[1], c[1] + s * d[0] + co * d[1]]
                 };

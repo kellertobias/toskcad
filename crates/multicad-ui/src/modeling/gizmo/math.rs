@@ -3,6 +3,7 @@ use multicad_core::{
     model::{self, NumericTransform},
     parameters::{EvaluatedParameters, Unit},
 };
+use multicad_precision::PortableMath as _;
 pub(crate) type Point = [f64; 3];
 pub(crate) fn dot(a: Point, b: Point) -> f64 {
     a.into_iter().zip(b).map(|(a, b)| a * b).sum()
@@ -142,7 +143,7 @@ fn axis_angle(rotation: [[f64; 3]; 3]) -> Result<(Point, f64), String> {
     }
     Ok((
         [q[0] / sine, q[1] / sine, q[2] / sine],
-        (2. * sine.atan2(q[3])).to_degrees(),
+        (2. * sine.portable_atan2(q[3])).to_degrees(),
     ))
 }
 pub(crate) fn rotated(

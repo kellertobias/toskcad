@@ -3,6 +3,7 @@ use multicad_core::{
     model::*,
     parameters,
 };
+use multicad_precision::PortableMath as _;
 
 fn fixture(points: &[[f64; 2]], closed: bool) -> (Document, FenceConstruction, FencePath) {
     let material = Entity::new(
@@ -387,7 +388,10 @@ fn path_degeneracy_self_contact_and_unsupported_rectangular_corners_fail() {
         diameter: length(90.),
     };
     let layout = plan(&document, &construction, &path, &[]).unwrap();
-    near(layout.bays[1].clear_width_mm, 1000_f64.hypot(1000.) - 90.);
+    near(
+        layout.bays[1].clear_width_mm,
+        1000_f64.portable_hypot(1000.) - 90.,
+    );
 }
 
 #[test]

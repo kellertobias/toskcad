@@ -1,5 +1,6 @@
 use super::*;
 use crate::{commands::Session, document::Document};
+use multicad_precision::PortableMath as _;
 fn fixture(
     left: bool,
     m6: bool,
@@ -129,7 +130,7 @@ fn actual_nonquarter_pose_roll_tracks_handed_lead_and_large_world_rounding() {
         let expected =
             signed_turn(reference.2, authored_nut_station - reference.0, reference.1).unwrap();
         let local = inv.vector(nut.vector(parts[1].mount_pose().vector([1., 0., 0.])));
-        let (s, c) = expected.sin_cos();
+        let (s, c) = expected.portable_sin_cos();
         assert!((local[0] - c).abs() < 1e-10 && (local[1] - s).abs() < 1e-10);
         assert!(nut_at < if m6 { -4.2 } else { -2.6 });
         assert!(inv.point(ring.translation_mm)[2] < -0.2);

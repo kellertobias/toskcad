@@ -11,6 +11,7 @@ use multicad_core::{
     sketch_regions,
 };
 use multicad_model::{Compiler, Model};
+use multicad_precision::PortableMath as _;
 use serde_json::{Value, json};
 use std::{
     io::{Cursor, Write},
@@ -242,7 +243,10 @@ fn generate(directory: &Path) -> Result<(), Error> {
             AdvancedParameters::Draft(p) => {
                 p.angle = bound(session.document(), "draft", "deg")?;
                 captures.push(selected_face(&native, &input, [1., 0., 0.])?);
-                (24000. - 30. * 0.5 * 400. * 5f64.to_radians().tan(), 1)
+                (
+                    24000. - 30. * 0.5 * 400. * 5f64.to_radians().portable_tan(),
+                    1,
+                )
             }
             AdvancedParameters::Mirror(p) => {
                 p.plane.origin[2] = bound(session.document(), "mirror_z", "mm")?;

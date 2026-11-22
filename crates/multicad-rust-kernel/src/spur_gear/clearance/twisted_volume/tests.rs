@@ -1,6 +1,7 @@
 use super::*;
 use crate::spur_gear::clearance::{DiscSide, ResultKind, certify_herringbone, classify_spur_disc};
 use crate::spur_gear::herringbone::tests::fixture;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn pair(helical: bool) -> [Herringbone; 2] {
@@ -17,11 +18,11 @@ fn pair(helical: bool) -> [Herringbone; 2] {
 
 /// The 36-tooth gear on the +x axis turned by `phase`.
 fn placements(phase: f64) -> [Placement; 2] {
-    let (sin, cos) = phase.sin_cos();
+    let (sin, cos) = phase.portable_sin_cos();
     [
         Placement::default(),
         Placement {
-            center_mm: [60. / 15_f64.to_radians().cos(), 0.],
+            center_mm: [60. / 15_f64.to_radians().portable_cos(), 0.],
             axes: [[cos, sin], [-sin, cos]],
             uncertainty_mm: 0.,
         },
@@ -151,23 +152,23 @@ fn sections_through_a_thin_flank_sliver_follow_their_crossings() {
     use crate::spur_gear::Spec;
     let normal = |teeth: u32, beta: f64| {
         let module = 2.;
-        let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
-        let pitch = module * f64::from(teeth) / (2. * beta.cos());
+        let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+        let pitch = module * f64::from(teeth) / (2. * beta.portable_cos());
         let spec = Spec {
             teeth,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * pressure.cos(),
+            base_radius_mm: pitch * pressure.portable_cos(),
             tip_radius_mm: pitch + module,
             root_radius_mm: pitch - 1.25 * module,
             root_fillet_radius_mm: 0.2 * module,
-            half_base_angle_rad: PI / (2. * f64::from(teeth)) + pressure.tan()
+            half_base_angle_rad: PI / (2. * f64::from(teeth)) + pressure.portable_tan()
                 - pressure
                 - 0.05 / (2. * pitch),
             face_width_mm: 8.,
             bore_radius_mm: 2.,
         };
         (
-            Herringbone::new_helical(spec, beta.tan() / pitch, 1e-5, 1e7).unwrap(),
+            Herringbone::new_helical(spec, beta.portable_tan() / pitch, 1e-5, 1e7).unwrap(),
             pitch,
         )
     };

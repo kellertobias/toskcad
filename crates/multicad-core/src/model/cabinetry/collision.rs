@@ -4,6 +4,7 @@
 //! to their existing native panel validation.
 use super::*;
 use crate::parameters::EvaluatedParameters;
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 const EPS: f64 = 1e-6;
 
@@ -40,7 +41,7 @@ fn point_segment(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     } else {
         0.
     };
-    (p[0] - a[0] - t * d[0]).hypot(p[1] - a[1] - t * d[1])
+    (p[0] - a[0] - t * d[0]).portable_hypot(p[1] - a[1] - t * d[1])
 }
 fn segment_distance(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> f64 {
     let (r, s) = (delta(b, a), delta(d, c));

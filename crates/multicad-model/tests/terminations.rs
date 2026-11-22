@@ -13,6 +13,7 @@ use multicad_core::{
 };
 use multicad_kernel::{GeometryPolicy, Solid};
 use multicad_model::{Compiler, GeometryBackend, Model, ModelError, ShapeSnapshot};
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -79,7 +80,7 @@ impl Fixture {
             .unwrap();
     }
     fn plane(&mut self, height: f64, slope: f64, reverse: bool) -> EntityId {
-        let scale = 1_f64.hypot(slope);
+        let scale = 1_f64.portable_hypot(slope);
         let sign = if reverse { -1. } else { 1. };
         let entity = Entity::new(
             "Target plane",
@@ -193,7 +194,7 @@ fn plane_normal(slope: f64, reverse: bool) -> [f64; 3] {
 /// A construction plane has no intrinsic roll: its documented U is the
 /// horizontal (-ny, nx, 0) direction, or projected +X for a horizontal plane.
 fn plane_u(normal: [f64; 3]) -> [f64; 3] {
-    if normal[0].hypot(normal[1]) > 1e-7 {
+    if normal[0].portable_hypot(normal[1]) > 1e-7 {
         unit([-normal[1], normal[0], 0.])
     } else {
         unit([
@@ -473,7 +474,7 @@ fn nonparallel_plane_offset_and_later_plane_move_rebuild_real_geometry() {
     let source = model::read_extrude(&original, f.request.outputs[0].feature).unwrap();
     let first = f.compile();
     let shape = f.shape(&first);
-    let intercept = 12. + 2. * 1_f64.hypot(0.5);
+    let intercept = 12. + 2. * 1_f64.portable_hypot(0.5);
     near(shape.volume_mm3, 60. * (intercept + 2.5 - 3.));
     near(shape.bounds.min[2], 3.);
     near(shape.bounds.max[2], intercept + 5.);
@@ -486,7 +487,7 @@ fn nonparallel_plane_offset_and_later_plane_move_rebuild_real_geometry() {
         );
     }
     let sloped = |height: f64| {
-        let intercept = height + 2. * 1_f64.hypot(0.5);
+        let intercept = height + 2. * 1_f64.portable_hypot(0.5);
         Expected {
             volume: 60. * (intercept + 2.5 - 3.),
             min: [0., 0., 3.],
@@ -506,7 +507,7 @@ fn nonparallel_plane_offset_and_later_plane_move_rebuild_real_geometry() {
     assert_eq!(second.snapshot().bodies, first.snapshot().bodies);
     near(
         f.shape(&second).volume_mm3,
-        60. * (20. + 2. * 1_f64.hypot(0.5) + 2.5 - 3.),
+        60. * (20. + 2. * 1_f64.portable_hypot(0.5) + 2.5 - 3.),
     );
     f.verify(&second, &sloped(20.));
     assert_eq!(

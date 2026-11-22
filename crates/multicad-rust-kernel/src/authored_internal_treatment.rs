@@ -3,6 +3,7 @@
 use crate::authored_flat_thread::AuthoredThread;
 use crate::tapered_thread::interval::I;
 pub use crate::thread_internal_treatment::{Enclosure, Error, Intent, QueryOptions, Terminal};
+use multicad_precision::PortableMath as _;
 mod classify;
 mod material;
 mod mesh;
@@ -292,7 +293,8 @@ impl Cavity {
             return false;
         }
 
-        x.hypot(y) <= self.radius_mm(y.atan2(x), z.clamp(0., self.full_length_mm())) + tolerance
+        x.portable_hypot(y)
+            <= self.radius_mm(y.portable_atan2(x), z.clamp(0., self.full_length_mm())) + tolerance
     }
 }
 

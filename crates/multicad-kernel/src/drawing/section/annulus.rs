@@ -1,6 +1,7 @@
 //! Plane cuts of a finite circular annulus. The section curves stay analytic.
 //! Hatching uses a conservative chord approximation of the cut material.
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::curved_projection::{Curve, Ellipse};
 use std::f64::consts::TAU;
 
@@ -23,7 +24,7 @@ fn at(origin: Point, direction: Point, distance: f64) -> Point {
 }
 
 fn length(point: Point) -> f64 {
-    point[0].hypot(point[1])
+    point[0].portable_hypot(point[1])
 }
 
 fn perpendicular([x, y]: Point) -> Point {
@@ -162,9 +163,9 @@ fn circular_cut(
         placement.origin[i] - options.frame.origin[i]
     }));
     let axis = local(placement.normal());
-    let scale = axis[0].hypot(axis[1]).hypot(axis[2]);
+    let scale = axis[0].portable_hypot(axis[1]).portable_hypot(axis[2]);
     let [x, y, c] = axis.map(|coordinate| coordinate / scale);
-    let s = x.hypot(y);
+    let s = x.portable_hypot(y);
     let u = if s > ANGULAR_ROUNDOFF {
         [x / s, y / s]
     } else {
@@ -393,10 +394,10 @@ fn ellipse_trims(radii: Point, planes: &[Halfspace]) -> Vec<Span> {
     for plane in planes {
         let x = radii[0] * plane.normal[0];
         let y = radii[1] * plane.normal[1];
-        let relative = plane.max / x.hypot(y);
+        let relative = plane.max / x.portable_hypot(y);
         if relative.abs() < 1. {
-            let middle = y.atan2(x);
-            let angle = relative.acos();
+            let middle = y.portable_atan2(x);
+            let angle = relative.portable_acos();
             cuts.extend([middle - angle, middle + angle].map(|t| t.rem_euclid(TAU)));
         }
     }
@@ -404,7 +405,7 @@ fn ellipse_trims(radii: Point, planes: &[Halfspace]) -> Vec<Span> {
     cuts.dedup();
     let mut spans: Vec<Span> = Vec::new();
     for &[a, b] in cuts.array_windows() {
-        let (sin, cos) = a.midpoint(b).sin_cos();
+        let (sin, cos) = a.midpoint(b).portable_sin_cos();
         let point = [radii[0] * cos, radii[1] * sin];
         if planes
             .iter()
@@ -548,7 +549,7 @@ fn hatch_boundary(
     // The midpoint error of the circumscribed ring is bounded by twice
     // the same-angle sagitta. Also keep the two polygon rings nested.
     let target = deflection.min((outer[1] - inner[1]) / 4.);
-    let step = 4. * (target / (4. * outer[0])).sqrt().min(1.).asin();
+    let step = 4. * (target / (4. * outer[0])).sqrt().min(1.).portable_asin();
     let count = (TAU / step).ceil().max(8.);
     if count > MAX_HATCH_RIM_SEGMENTS as f64 {
         return Err(limit());
@@ -557,7 +558,7 @@ fn hatch_boundary(
     let sample = |radii: Point, scale| {
         clip_polygon(
             (0..count).map(|i| {
-                let (sin, cos) = (TAU * i as f64 / count as f64).sin_cos();
+                let (sin, cos) = (TAU * i as f64 / count as f64).portable_sin_cos();
                 [scale * radii[0] * cos, scale * radii[1] * sin]
             }),
             planes,
@@ -566,7 +567,10 @@ fn hatch_boundary(
     };
     let outer = sample(outer, 1.);
     let inner = if inner[1] > 0. {
-        sample(inner, 1. / (std::f64::consts::PI / count as f64).cos())
+        sample(
+            inner,
+            1. / (std::f64::consts::PI / count as f64).portable_cos(),
+        )
     } else {
         Vec::new()
     };

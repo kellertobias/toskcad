@@ -16,6 +16,7 @@ use multicad_kernel::{
     rust_kernel::{Rational, parse_length_mm, prism::Location},
 };
 use multicad_model::{Compiler, EvaluationCache, EvaluationScope, GeometryBackend, Model};
+use multicad_precision::PortableMath as _;
 use std::{f64::consts::PI, io::Cursor, sync::Arc};
 
 #[path = "support/rust_panel.rs"]
@@ -361,7 +362,7 @@ fn saved_front_panel_primitives_use_their_bound_placement_and_size_formulas() {
                 let mut max = [0.; 3];
                 for i in 0..3 {
                     let ends = [frame.origin[i], frame.origin[i] + height_mm * frame.n[i]];
-                    let rim = radius_mm * frame.u[i].hypot(frame.v[i]);
+                    let rim = radius_mm * frame.u[i].portable_hypot(frame.v[i]);
                     min[i] = ends[0].min(ends[1]) - rim;
                     max[i] = ends[0].max(ends[1]) + rim;
                 }
@@ -560,7 +561,7 @@ fn rust_revolve_rebuilds_signed_and_full_sketch_sweeps_with_holes_and_native_fac
         assert!(solid.uses_rust_geometry());
         assert_eq!(solid.solid_count().unwrap(), 1);
         near(actual.volume_mm3, 56. * degrees.to_radians().abs());
-        let (sin, cos) = (degrees.signum() * std::f64::consts::FRAC_PI_4).sin_cos();
+        let (sin, cos) = (degrees.signum() * std::f64::consts::FRAC_PI_4).portable_sin_cos();
         let occupied = |r, z| {
             solid
                 .rust_revolution_contains([1. + r * cos, r * sin, z])
@@ -706,7 +707,7 @@ fn rust_revolve_rebuilds_signed_and_full_sketch_sweeps_with_holes_and_native_fac
             };
             // The XZ sketch frame turned by the signed angle about the axis
             // x = 1, then offset 2 mm along its turned U.
-            let (sin, cos) = degrees.to_radians().sin_cos();
+            let (sin, cos) = degrees.to_radians().portable_sin_cos();
             let expected = [
                 [1. + 2. * cos - cos, 2. * sin - sin, 0.],
                 [cos, sin, 0.],
@@ -1054,7 +1055,7 @@ fn verify_torus_drawing_scene(torus: &multicad_kernel::Solid) {
             panic!("Expected straight hatch geometry");
         };
         let [u, v]: [f64; 2] = std::array::from_fn(|i| (a[i] + b[i]) / 2.);
-        assert!((4.199..=5.801).contains(&u.hypot(v)));
+        assert!((4.199..=5.801).contains(&u.portable_hypot(v)));
     }
 
     let windowed_axial = project(
@@ -1132,7 +1133,7 @@ fn verify_torus_drawing_scene(torus: &multicad_kernel::Solid) {
     let c = 0.1_f64;
     let s = 0.99_f64.sqrt();
     let cosine = -0.5;
-    let normal = c.hypot(s * cosine);
+    let normal = c.portable_hypot(s * cosine);
     let target = [
         -cosine * (c * 5. - 1. / normal),
         -0.75_f64.sqrt() * (5. - c / normal),
@@ -1143,7 +1144,7 @@ fn verify_torus_drawing_scene(torus: &multicad_kernel::Solid) {
             && edge
                 .preview_mm
                 .iter()
-                .any(|p| (p[0] - target[0]).hypot(p[1] - target[1]) < 0.025)
+                .any(|p| (p[0] - target[0]).portable_hypot(p[1] - target[1]) < 0.025)
     };
     assert!(steep.iter().any(|edge| touches(edge, VectorRole::Hidden)));
     let retained = project(
@@ -1383,10 +1384,10 @@ fn verify_oblique_torus_sections(
                 panic!("Expected bounded cut chords");
             };
             let [u, v]: [f64; 2] = std::array::from_fn(|i| a[i].midpoint(b[i]));
-            let radius = (c * u - s * depth).hypot(v);
+            let radius = (c * u - s * depth).portable_hypot(v);
             let axial = s * u + c * depth;
             assert!(
-                ((radius - 5.).hypot(axial) - 1.).abs() <= options.chord_tolerance_mm,
+                ((radius - 5.).portable_hypot(axial) - 1.).abs() <= options.chord_tolerance_mm,
                 "Inclination {s}, offset {depth}, chord midpoint ({u}, {v})"
             );
             signed_area += a[0] * b[1] - a[1] * b[0];
@@ -1406,7 +1407,7 @@ fn verify_oblique_torus_sections(
         // intersecting each tube angle with the plane before projecting.
         for step in 0..180 {
             let angle = f64::from(step) * std::f64::consts::TAU / 180.;
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = angle.portable_sin_cos();
             let radial = 5. + cos;
             let x = (c * sin - depth) / s;
             if x.abs() >= radial {
@@ -1423,7 +1424,7 @@ fn verify_oblique_torus_sections(
                         let [dx, dy] = [b[0] - a[0], b[1] - a[1]];
                         let [qx, qy] = [u - a[0], v - a[1]];
                         let t = ((qx * dx + qy * dy) / (dx * dx + dy * dy)).clamp(0., 1.);
-                        (qx - t * dx).hypot(qy - t * dy) <= options.chord_tolerance_mm
+                        (qx - t * dx).portable_hypot(qy - t * dy) <= options.chord_tolerance_mm
                     }),
                     "Inclination {s}, offset {depth}, exact cut point ({u}, {v})"
                 );
@@ -1456,7 +1457,7 @@ fn verify_oblique_torus_sections(
             panic!("Expected hatch lines");
         };
         let [u, v]: [f64; 2] = std::array::from_fn(|i| a[i].midpoint(b[i]));
-        assert!(((0.99_f64.sqrt() * u).hypot(v) - 5.).hypot(0.1 * u) <= 1.001);
+        assert!(((0.99_f64.sqrt() * u).portable_hypot(v) - 5.).portable_hypot(0.1 * u) <= 1.001);
     }
     assert!(
         project_drawing(&[input], view(0.6, 4.1))
@@ -1476,7 +1477,7 @@ fn verify_offset_torus_sections(
         let d: [f64; 2] = std::array::from_fn(|i| b[i] - a[i]);
         let q: [f64; 2] = std::array::from_fn(|i| p[i] - a[i]);
         let t = ((q[0] * d[0] + q[1] * d[1]) / (d[0] * d[0] + d[1] * d[1])).clamp(0., 1.);
-        (q[0] - t * d[0]).hypot(q[1] - t * d[1])
+        (q[0] - t * d[0]).portable_hypot(q[1] - t * d[1])
     };
     let input = DrawingSolid {
         solid: torus,
@@ -1513,7 +1514,8 @@ fn verify_offset_torus_sections(
             };
             let [u, v]: [f64; 2] = std::array::from_fn(|i| (a[i] + b[i]) / 2.);
             assert!(
-                ((u.hypot(offset) - 5.).hypot(v) - 1.).abs() <= options.chord_tolerance_mm,
+                ((u.portable_hypot(offset) - 5.).portable_hypot(v) - 1.).abs()
+                    <= options.chord_tolerance_mm,
                 "Offset {offset}, chord midpoint ({u}, {v})"
             );
             if *start.get_or_insert(a) == b {
@@ -1527,12 +1529,12 @@ fn verify_offset_torus_sections(
         // the cutting plane can actually reach.
         for step in 0..720 {
             let angle = f64::from(step) * std::f64::consts::TAU / 720.;
-            let radial = 5. + angle.cos();
+            let radial = 5. + angle.portable_cos();
             if radial < offset {
                 continue;
             }
             let x = ((radial - offset) * (radial + offset)).sqrt();
-            for point in [[x, angle.sin()], [-x, angle.sin()]] {
+            for point in [[x, angle.portable_sin()], [-x, angle.portable_sin()]] {
                 assert!(vectors.iter().any(|edge| matches!(edge.curve,
                     VectorCurve::Line { a, b } if distance(point, a, b) <= options.chord_tolerance_mm)),
                     "Offset {offset}, exact point {point:?}");
@@ -1574,7 +1576,7 @@ fn verify_offset_torus_sections(
                 };
                 let u = (a[0] + b[0]) / 2.;
                 let v = (a[1] + b[1]) / 2.;
-                (u.hypot(4.5) - 5.).hypot(v) < 1.001
+                (u.portable_hypot(4.5) - 5.).portable_hypot(v) < 1.001
             })
     );
     let error = project_drawing(
@@ -2133,7 +2135,7 @@ fn directed_draft_rebuilds_a_polygonal_hole_and_retains_cap_attachments() {
         let path_mm = (end - start).abs();
         let normal_component = std::f64::consts::FRAC_1_SQRT_2;
         // Offsetting the 12×10 outline by d and the 4×4 hole by -d gives area 104 + 60d.
-        let end_area = 104. + 60. * path_mm * taper.to_radians().tan();
+        let end_area = 104. + 60. * path_mm * taper.to_radians().portable_tan();
         near(
             actual.volume_mm3,
             path_mm * normal_component * 104_f64.midpoint(end_area),
@@ -2141,7 +2143,7 @@ fn directed_draft_rebuilds_a_polygonal_hole_and_retains_cap_attachments() {
         // Independent section geometry: the z = 2 section travels along
         // (1, 0, 1)/sqrt(2); the far section is offset by d (outline out,
         // hole in) and the near one is the sketch section.
-        let d = path_mm * taper.to_radians().tan();
+        let d = path_mm * taper.to_radians().portable_tan();
         let section = |travel: f64, d: f64| {
             let shift = [
                 normal_component * travel,
@@ -2212,7 +2214,7 @@ fn directed_draft_rebuilds_a_polygonal_hole_and_retains_cap_attachments() {
         )
         .unwrap();
     let half = |path: f64| {
-        let end_area = 104. + 60. * path * 5_f64.to_radians().tan();
+        let end_area = 104. + 60. * path * 5_f64.to_radians().portable_tan();
         path * std::f64::consts::FRAC_1_SQRT_2 * 104_f64.midpoint(end_area)
     };
     let solid = drafted.solid(feature).unwrap();
@@ -2566,7 +2568,10 @@ fn mixed_holes_keep_circular_caps_and_wall_ancestry_through_saved_edits() {
                 .unwrap();
             assert_eq!(start, end);
             assert_eq!(center, [9., 3.]);
-            near((start[0] - center[0]).hypot(start[1] - center[1]), radius);
+            near(
+                (start[0] - center[0]).portable_hypot(start[1] - center[1]),
+                radius,
+            );
             near(sweep, -2. * PI);
         }
 

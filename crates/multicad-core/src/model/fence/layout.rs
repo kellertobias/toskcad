@@ -2,6 +2,7 @@
 //! interiors are identified by their directed edge and ordinal. Rewired edges
 //! never silently inherit another edge's explicit post-position overrides.
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 
 pub const MAX_FENCE_PATH_POINTS: usize = 256;
@@ -243,7 +244,7 @@ pub fn plan_fence_posts(
     let mut edges = Vec::with_capacity(count);
     for i in 0..count {
         let delta = sub(points[(i + 1) % points.len()], points[i]);
-        let length = delta[0].hypot(delta[1]);
+        let length = delta[0].portable_hypot(delta[1]);
         if length <= EPS || length > 1e9 {
             return Err(invalid(
                 "Fence path contains a zero-length or oversized segment",

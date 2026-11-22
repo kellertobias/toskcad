@@ -18,6 +18,7 @@ use multicad_model::{
     Compiler, GeometryBackend, Model,
     export::{ExportWorker, Exporter},
 };
+use multicad_precision::PortableMath as _;
 use std::{
     path::Path,
     process::Command,
@@ -621,7 +622,7 @@ fn rust_worker_exports_both_annular_rims_with_bounded_paper_chords() {
 
     // Page serializers consume the same bounded preview chords.
     let check_chord = |[a, b]: [[f64; 2]; 2]| {
-        let radial = |p: [f64; 2]| (p[0] - center[0]).hypot(p[1] - center[1]);
+        let radial = |p: [f64; 2]| (p[0] - center[0]).portable_hypot(p[1] - center[1]);
         let index = exact_radii
             .iter()
             .position(|r| (radial(a) - r).abs() < 0.0002)

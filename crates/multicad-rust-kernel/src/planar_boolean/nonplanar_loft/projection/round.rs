@@ -61,7 +61,7 @@ fn arc(rim: Rim, trim: [f64; 2]) -> Curve {
 }
 
 fn spatial_arc(center: Point, point: impl Fn(f64) -> Point, [a, b]: [f64; 2]) -> Curve {
-    let weight = ((b - a) / 2.).cos();
+    let weight = ((b - a) / 2.).portable_cos();
     let pole = add(
         center,
         scale(sub(point(a.midpoint(b)), center), weight.recip()),
@@ -174,7 +174,8 @@ pub(super) fn trim_rim(rim: Rim, ends: [Point; 2]) -> crate::curved_projection::
     let sine_squared = dot(sine, sine);
     ellipse.trim = ends.map(|point| {
         let delta = sub(point, center);
-        let raw = (dot(delta, sine) / sine_squared).atan2(dot(delta, cosine) / cosine_squared);
+        let raw =
+            (dot(delta, sine) / sine_squared).portable_atan2(dot(delta, cosine) / cosine_squared);
         let turn = std::f64::consts::TAU;
         (raw + ((middle - raw) / turn).round() * turn).clamp(ellipse.trim[0], ellipse.trim[1])
     });

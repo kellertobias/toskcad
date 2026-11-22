@@ -6,6 +6,7 @@ use multicad_kernel::{
     BRepSelection, GeometryErrorKind, GeometryPolicy, PlaneFrame, Solid,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 
 fn cylinder(radius: i64, frame: PlaneFrame) -> Solid {
@@ -83,7 +84,7 @@ fn coaxial_circle_families_preserve_finite_world_witnesses_for_pose_and_axis_rev
                     };
                     let radial = |point: [f64; 3], origin: [f64; 3]| {
                         let d: [f64; 3] = std::array::from_fn(|i| point[i] - origin[i]);
-                        d[0].hypot(d[1]).hypot(d[2])
+                        d[0].portable_hypot(d[1]).portable_hypot(d[2])
                     };
                     assert!((radial(pa, frame.origin) - ra as f64).abs() < 1e-7);
                     assert!((radial(pb, center) - rb as f64).abs() < 1e-7);
@@ -98,7 +99,7 @@ fn coaxial_circle_families_preserve_finite_world_witnesses_for_pose_and_axis_rev
 fn eccentric_tilted_partial_and_missing_edges_are_not_misclassified_as_coaxial() {
     let a = cylinder(3, PlaneFrame::default());
     let sa = ring(&a, [0.; 3]);
-    let (s, c) = 0.2_f64.sin_cos();
+    let (s, c) = 0.2_f64.portable_sin_cos();
     for frame in [
         PlaneFrame {
             origin: [1., 0., 0.],

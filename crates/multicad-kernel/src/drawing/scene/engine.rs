@@ -3,6 +3,7 @@ use super::arrange::{Limit, Strand, arrange, clip, distance, locate};
 use super::paths::{Lift, ProfilePath, Segment, add, dot3, scaled};
 use super::publish::Output;
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{normal_sweep, spur_gear};
 use std::collections::HashMap;
 
@@ -138,7 +139,7 @@ pub(in crate::drawing) fn project(
     if let Some((center, radius)) = options.detail {
         limits.push(Limit {
             value: Box::new(move |p| {
-                let r = (p[0] - center[0]).hypot(p[1] - center[1]);
+                let r = (p[0] - center[0]).portable_hypot(p[1] - center[1]);
                 r - radius
             }),
             inward: None,
@@ -335,7 +336,7 @@ pub(in crate::drawing) fn project(
                         let [p, q] = [pair[0], pair[1]].map(|t| paper(border.path.point(t)));
                         let line = |x: P2| {
                             let d = [q[0] - p[0], q[1] - p[1]];
-                            let length = d[0].hypot(d[1]);
+                            let length = d[0].portable_hypot(d[1]);
                             ((x[0] - p[0]) * d[1] - (x[1] - p[1]) * d[0]).abs() / length
                         };
                         let m = paper(mid);

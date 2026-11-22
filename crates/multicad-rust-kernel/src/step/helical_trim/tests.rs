@@ -49,11 +49,11 @@ fn verifies_both_actual_cut_rails_across_lifted_seams_and_matches_sampled_geomet
                     let azimuth = angles[0] + (angles[1] - angles[0]) * t;
                     let u = pcurve.velocity[0].mul_add(azimuth, pcurve.origin[0]);
                     let z = pcurve.velocity[1].mul_add(azimuth, pcurve.origin[1]);
-                    let (sin, cos) = u.sin_cos();
+                    let (sin, cos) = u.portable_sin_cos();
                     let actual = eval(controls, t);
                     let error = (actual[0] - 8. * cos)
-                        .hypot(actual[1] - 8. * sin)
-                        .hypot(actual[2] - z);
+                        .portable_hypot(actual[1] - 8. * sin)
+                        .portable_hypot(actual[2] - z);
                     assert!(error <= bound, "{error} exceeds {bound}");
                 }
             }
@@ -204,7 +204,9 @@ fn top_cavity_is_certified_between_both_cylinder_rail_endpoints() {
 }
 
 fn distance(a: Point, b: Point) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1]).hypot(a[2] - b[2])
+    (a[0] - b[0])
+        .portable_hypot(a[1] - b[1])
+        .portable_hypot(a[2] - b[2])
 }
 
 #[test]
@@ -312,17 +314,17 @@ fn cavity_surface_covers_the_cap_floor_and_rails_on_the_same_support() {
             // recover the polar offset of the normal-profile point.
             let spec = cut.spec();
             let rise = spec.pitch_mm / TAU;
-            let norm = spec.stock_radius_mm.hypot(rise);
-            let radial = spec.stock_radius_mm + spec.tube_radius_mm * phi.cos();
-            let transverse = rise / norm * spec.tube_radius_mm * phi.sin();
+            let norm = spec.stock_radius_mm.portable_hypot(rise);
+            let radial = spec.stock_radius_mm + spec.tube_radius_mm * phi.portable_cos();
+            let transverse = rise / norm * spec.tube_radius_mm * phi.portable_sin();
             let t = end * 0.37;
-            let azimuth = t + phase + transverse.atan2(radial);
-            let rho = radial.hypot(transverse);
+            let azimuth = t + phase + transverse.portable_atan2(radial);
+            let rho = radial.portable_hypot(transverse);
             let exact = [
-                rho * azimuth.cos(),
-                rho * azimuth.sin(),
+                rho * azimuth.portable_cos(),
+                rho * azimuth.portable_sin(),
                 spec.start_height_mm + rise * t
-                    - spec.stock_radius_mm / norm * spec.tube_radius_mm * phi.sin(),
+                    - spec.stock_radius_mm / norm * spec.tube_radius_mm * phi.portable_sin(),
             ];
             assert!(distance(eval_surface(&surface, [phi, t]), exact) <= tolerance);
         }

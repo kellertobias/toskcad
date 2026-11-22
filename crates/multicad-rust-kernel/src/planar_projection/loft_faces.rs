@@ -47,7 +47,7 @@ impl TrimmedPlane {
             let edge = sub(b, a);
             let offset = sub(planar(point), a);
             let determinant = edge[0].mul_add(offset[1], -edge[1] * offset[0]);
-            let length = edge[0].hypot(edge[1]);
+            let length = edge[0].portable_hypot(edge[1]);
             if determinant.abs() <= tolerance * length
                 && dot(offset, edge) >= -tolerance * length
                 && dot(sub(planar(point), b), edge) <= tolerance * length

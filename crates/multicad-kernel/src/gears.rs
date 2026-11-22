@@ -2,6 +2,7 @@
 //! belong to the canonical model; this API accepts resolved geometric inputs.
 use crate::{GeometryError, GeometryErrorKind, GeometryPolicy, Solid, ffi};
 use multicad_core::document::EntityId;
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GearSweep {
@@ -117,7 +118,7 @@ impl InvoluteGear {
             ));
         }
         let tip_parameter = (self.tip_radius_mm.powi(2) / self.base_radius_mm.powi(2) - 1.).sqrt();
-        let tip_half = self.half_base_angle_rad - (tip_parameter - tip_parameter.atan());
+        let tip_half = self.half_base_angle_rad - (tip_parameter - tip_parameter.portable_atan());
         if tip_half * self.tip_radius_mm < policy.minimum_feature_mm {
             return Err(failure(
                 GeometryErrorKind::Input,
@@ -177,7 +178,7 @@ impl InvoluteGear {
             ));
         }
         let t = (self.tip_radius_mm.powi(2) / self.base_radius_mm.powi(2) - 1.).sqrt();
-        let half = self.half_base_angle_rad + t - t.atan();
+        let half = self.half_base_angle_rad + t - t.portable_atan();
         if half * self.tip_radius_mm < policy.minimum_feature_mm
             || half >= std::f64::consts::PI / f64::from(self.teeth)
         {

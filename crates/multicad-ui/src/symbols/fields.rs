@@ -8,6 +8,7 @@ use multicad_core::{
         configured_hardware_parts,
     },
 };
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct ValueInput {
@@ -558,10 +559,15 @@ impl PoseInputs {
         if n <= 1e-12 {
             return Err("Rotation axis must be nonzero".into());
         }
-        let s = (angle / 2.).sin() / n;
+        let s = (angle / 2.).portable_sin() / n;
         Ok(Placement {
             translation_mm: t,
-            rotation_xyzw: [axis[0] * s, axis[1] * s, axis[2] * s, (angle / 2.).cos()],
+            rotation_xyzw: [
+                axis[0] * s,
+                axis[1] * s,
+                axis[2] * s,
+                (angle / 2.).portable_cos(),
+            ],
         })
     }
 }

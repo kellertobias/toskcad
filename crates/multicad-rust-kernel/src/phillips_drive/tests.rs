@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::cell::Cell;
 pub(crate) fn fixture(index: usize) -> (Spec, Domain) {
     let (m, r, b, g, inner, beta, head_r, head_h) = match index {
@@ -89,7 +90,8 @@ pub(crate) fn fixture(index: usize) -> (Spec, Domain) {
         outer_corner_angle_deg: 92.,
         inner,
     };
-    let tip = (m - g) / (2. * 26.5_f64.to_radians().tan()) + g / 2. * 28_f64.to_radians().tan();
+    let tip = (m - g) / (2. * 26.5_f64.to_radians().portable_tan())
+        + g / 2. * 28_f64.to_radians().portable_tan();
     (
         spec,
         Domain {
@@ -116,20 +118,27 @@ fn rotate_point([x, y, z]: [f64; 3], quarter: usize) -> [f64; 3] {
 fn constants(s: Spec) -> [f64; 5] {
     let a = s.outer_flank_angle_deg.to_radians();
     let c = s.floor_angle_deg.to_radians();
-    let flank = (s.mouth_diameter_mm - s.g_diameter_mm) / (2. * a.tan());
-    let tip = flank + s.g_diameter_mm / 2. * c.tan();
-    let tb = flank + (s.g_diameter_mm - s.b_width_mm) / 2. * c.tan();
-    let entry = s.mouth_diameter_mm / 2. + s.mouth_radius_mm * (1. - a.sin()) / a.cos();
-    [entry, s.mouth_radius_mm * (1. - a.sin()), flank, tip, tb]
+    let flank = (s.mouth_diameter_mm - s.g_diameter_mm) / (2. * a.portable_tan());
+    let tip = flank + s.g_diameter_mm / 2. * c.portable_tan();
+    let tb = flank + (s.g_diameter_mm - s.b_width_mm) / 2. * c.portable_tan();
+    let entry =
+        s.mouth_diameter_mm / 2. + s.mouth_radius_mm * (1. - a.portable_sin()) / a.portable_cos();
+    [
+        entry,
+        s.mouth_radius_mm * (1. - a.portable_sin()),
+        flank,
+        tip,
+        tb,
+    ]
 }
 fn cc_world(s: Spec, d: Domain, [section_x, y, parameter]: [f64; 3]) -> [f64; 3] {
     let beta = s.tilt_angle_deg.to_radians();
     let tb = constants(s)[4];
-    let origin = s.b_width_mm / 2. + (tb - d.corner_start_depth_mm) * beta.tan();
+    let origin = s.b_width_mm / 2. + (tb - d.corner_start_depth_mm) * beta.portable_tan();
     [
-        origin + section_x * beta.cos() - parameter * beta.tan(),
+        origin + section_x * beta.portable_cos() - parameter * beta.portable_tan(),
         y,
-        d.corner_start_depth_mm + section_x * beta.sin() + parameter,
+        d.corner_start_depth_mm + section_x * beta.portable_sin() + parameter,
     ]
 }
 pub(super) fn oracle(s: Spec, domain: Domain, p: [f64; 3]) -> bool {
@@ -143,11 +152,11 @@ pub(super) fn oracle(s: Spec, domain: Domain, p: [f64; 3]) -> bool {
                 .max(0.)
                 .sqrt()
     } else if p[2] <= flank {
-        s.mouth_diameter_mm / 2. - p[2] * s.outer_flank_angle_deg.to_radians().tan()
+        s.mouth_diameter_mm / 2. - p[2] * s.outer_flank_angle_deg.to_radians().portable_tan()
     } else {
-        (tip - p[2]) / s.floor_angle_deg.to_radians().tan()
+        (tip - p[2]) / s.floor_angle_deg.to_radians().portable_tan()
     };
-    if p[0].hypot(p[1]) > radius {
+    if p[0].portable_hypot(p[1]) > radius {
         return false;
     }
     let beta = s.tilt_angle_deg.to_radians();
@@ -157,23 +166,24 @@ pub(super) fn oracle(s: Spec, domain: Domain, p: [f64; 3]) -> bool {
             angle_deg,
             e_width_mm,
         } => (
-            e_width_mm / (2. * (angle_deg / 2.).to_radians().tan()),
+            e_width_mm / (2. * (angle_deg / 2.).to_radians().portable_tan()),
             e_width_mm / 2.,
         ),
-        Inner::Rounded { radius_mm } => {
-            (radius_mm - radius_mm * theta.sin(), radius_mm * theta.cos())
-        }
+        Inner::Rounded { radius_mm } => (
+            radius_mm - radius_mm * theta.portable_sin(),
+            radius_mm * theta.portable_cos(),
+        ),
     };
-    let far = js + domain.corner_reach_mm * theta.cos();
+    let far = js + domain.corner_reach_mm * theta.portable_cos();
     for quarter in 0..4 {
         let angle = quarter as f64 * PI / 2.;
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let x = p[0] * cos + p[1] * sin;
         let y = -p[0] * sin + p[1] * cos;
-        let ox = s.b_width_mm / 2. + (tb - domain.corner_start_depth_mm) * beta.tan();
+        let ox = s.b_width_mm / 2. + (tb - domain.corner_start_depth_mm) * beta.portable_tan();
         let delta = [x - ox, y, p[2] - domain.corner_start_depth_mm];
-        let section_x = delta[0] * beta.cos() + delta[2] * beta.sin();
-        let parameter = delta[2] - section_x * beta.sin();
+        let section_x = delta[0] * beta.portable_cos() + delta[2] * beta.portable_sin();
+        let parameter = delta[2] - section_x * beta.portable_sin();
         if parameter < 0.
             || parameter > domain.corner_end_depth_mm - domain.corner_start_depth_mm
             || section_x > far
@@ -183,10 +193,12 @@ pub(super) fn oracle(s: Spec, domain: Domain, p: [f64; 3]) -> bool {
         let front = if y.abs() <= jy {
             match s.inner {
                 Inner::Rounded { radius_mm } => radius_mm - (radius_mm * radius_mm - y * y).sqrt(),
-                Inner::ShallowV { angle_deg, .. } => y.abs() / (angle_deg / 2.).to_radians().tan(),
+                Inner::ShallowV { angle_deg, .. } => {
+                    y.abs() / (angle_deg / 2.).to_radians().portable_tan()
+                }
             }
         } else {
-            js + (y.abs() - jy) / theta.tan()
+            js + (y.abs() - jy) / theta.portable_tan()
         };
         if section_x >= front {
             return false;
@@ -264,7 +276,7 @@ fn metric_sources_retain_real_meridians_sections_caps_and_orthogonal_corner_owne
                 }
             );
             let beta = spec.tilt_angle_deg.to_radians();
-            let axis = rotate_point([-beta.sin(), 0., beta.cos()], quarter);
+            let axis = rotate_point([-beta.portable_sin(), 0., beta.portable_cos()], quarter);
             for (bounds, value) in corner.extrusion_axis_bounds().into_iter().zip(axis) {
                 enclosed(bounds, value);
             }
@@ -339,18 +351,19 @@ fn finite_corner_closures_and_caps_change_the_actual_cutter_and_nonconvex_sectio
     let tb = constants(spec)[4];
     let s = 0.12;
     let nonconvex = [
-        spec.b_width_mm / 2. + (tb - 0.1) * beta.tan() + s / beta.cos(),
+        spec.b_width_mm / 2. + (tb - 0.1) * beta.portable_tan() + s / beta.portable_cos(),
         0.4,
         0.1,
     ];
-    assert!(s < 0.4 / (138_f64 / 2.).to_radians().tan());
+    assert!(s < 0.4 / (138_f64 / 2.).to_radians().portable_tan());
     assert_eq!(
         long.classify_point_mm(nonconvex).unwrap(),
         Classification::Outside
     );
     assert!(!oracle(spec, domain, nonconvex));
-    let cc_s = beta.cos() * (p[0] - spec.b_width_mm / 2.) + beta.sin() * (p[2] - tb);
-    let cap_depth = p[2] - cc_s * beta.sin();
+    let cc_s =
+        beta.portable_cos() * (p[0] - spec.b_width_mm / 2.) + beta.portable_sin() * (p[2] - tb);
+    let cap_depth = p[2] - cc_s * beta.portable_sin();
     let after = Cutter::new(
         spec,
         Domain {
@@ -419,9 +432,10 @@ fn rounded_h0_uses_the_true_normal_section_and_large_tilts_can_trim_before_the_e
     let tb = constants(spec)[4];
     let y = 0.15;
     let depth = 0.4;
-    let rb = spec.b_width_mm / 2. + (tb - depth) * beta.tan();
-    let true_front = rb + (r - (r * r - y * y).sqrt()) / beta.cos();
-    let projected_wrong = rb + r / beta.cos() - r * beta.cos() * (1. - y * y / (r * r)).sqrt();
+    let rb = spec.b_width_mm / 2. + (tb - depth) * beta.portable_tan();
+    let true_front = rb + (r - (r * r - y * y).sqrt()) / beta.portable_cos();
+    let projected_wrong =
+        rb + r / beta.portable_cos() - r * beta.portable_cos() * (1. - y * y / (r * r)).sqrt();
     assert!(projected_wrong - true_front > 0.002);
     let p = [(true_front + projected_wrong) / 2., y, depth];
     assert_eq!(
@@ -497,14 +511,20 @@ fn interval_classification_preserves_real_meridian_and_section_joins() {
         let beta = spec.tilt_angle_deg.to_radians();
         let theta = (spec.outer_corner_angle_deg / 2.).to_radians();
         let (js, jy) = match spec.inner {
-            Inner::Rounded { radius_mm: r } => (r - r * theta.sin(), r * theta.cos()),
+            Inner::Rounded { radius_mm: r } => {
+                (r - r * theta.portable_sin(), r * theta.portable_cos())
+            }
             Inner::ShallowV {
                 angle_deg,
                 e_width_mm: e,
-            } => (e / (2. * (angle_deg / 2.).to_radians().tan()), e / 2.),
+            } => (
+                e / (2. * (angle_deg / 2.).to_radians().portable_tan()),
+                e / 2.,
+            ),
         };
         for offset in -64_i32..=64 {
-            let mut x = spec.b_width_mm / 2. + (tb - 0.1) * beta.tan() + js / beta.cos();
+            let mut x =
+                spec.b_width_mm / 2. + (tb - 0.1) * beta.portable_tan() + js / beta.portable_cos();
             for _ in 0..offset.unsigned_abs() {
                 x = if offset < 0 {
                     x.next_down()
@@ -720,14 +740,18 @@ fn malformed_domains_source_dimensions_and_unresolved_constructions_are_explicit
         ),
         Err(Error::Unresolved)
     ));
-    let join = spec.mouth_radius_mm * (1. - spec.outer_flank_angle_deg.to_radians().sin());
+    let join = spec.mouth_radius_mm * (1. - spec.outer_flank_angle_deg.to_radians().portable_sin());
     let near = Spec {
         g_diameter_mm: spec.mouth_diameter_mm
-            - 2. * spec.outer_flank_angle_deg.to_radians().tan() * join,
+            - 2. * spec.outer_flank_angle_deg.to_radians().portable_tan() * join,
         ..spec
     };
     assert!(matches!(Cutter::new(near, domain), Err(Error::Unresolved)));
-    let radius = spec.b_width_mm / (2. * (spec.outer_corner_angle_deg / 2.).to_radians().cos());
+    let radius = spec.b_width_mm
+        / (2.
+            * (spec.outer_corner_angle_deg / 2.)
+                .to_radians()
+                .portable_cos());
     assert!(matches!(
         Cutter::new(
             Spec {

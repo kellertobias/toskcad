@@ -89,7 +89,7 @@ fn derivative_ratio(
             "The source derivative cone is unresolved",
         ));
     }
-    let norm = axis[0].hypot(axis[1]).next_up();
+    let norm = axis[0].portable_hypot(axis[1]).next_up();
     Ok((mul_up(error, norm) / lower).next_up())
 }
 pub(super) fn certify(
@@ -211,7 +211,7 @@ mod tests {
             let b = tangent(q, t);
             let angle = (a[0] * b[1] - a[1] * b[0])
                 .abs()
-                .atan2(a[0] * b[0] + a[1] * b[1]);
+                .portable_atan2(a[0] * b[0] + a[1] * b[1]);
             assert!(angle <= receipt.angle_rad);
         }
         let small = p.map(|p| p.map(|x| x * 1e-5));

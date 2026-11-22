@@ -78,7 +78,7 @@ impl Rim {
         let y = dot(radial, ellipse.minor_axis()) / semiaxes[1];
         let arc = EllipseArc::new(
             ellipse,
-            y.atan2(x),
+            y.portable_atan2(x),
             edge.signed_sweep_rad().ok_or(Error::Invalid)?,
         )
         .map_err(|_| Error::Unsupported)?;

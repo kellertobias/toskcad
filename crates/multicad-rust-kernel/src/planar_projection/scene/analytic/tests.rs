@@ -248,7 +248,7 @@ fn a_circular_witness_crosses_an_elliptic_hole_at_exact_harmonic_events() {
         options(),
     )
     .unwrap();
-    let angle = (64_f64 / 189.).sqrt().asin();
+    let angle = (64_f64 / 189.).sqrt().portable_asin();
     let a = std::f64::consts::PI;
     assert_eq!(output.len(), 5);
     for (segment, (hidden, expected)) in output.iter().zip([
@@ -381,7 +381,7 @@ fn exact_circle_crossings_clip_a_rim_through_a_finite_planar_face() {
         options(),
     )
     .unwrap();
-    let angle = 0.75_f64.acos();
+    let angle = 0.75_f64.portable_acos();
     assert_eq!(output.len(), 3);
     for (segment, (hidden, trim)) in output.iter().zip([
         (false, [0., angle]),
@@ -545,7 +545,7 @@ fn an_oblique_cap_clips_a_curved_witness_at_its_exact_projected_ellipse() {
         options(),
     )
     .unwrap();
-    let intersection = (-0.5625_f64).acos();
+    let intersection = (-0.5625_f64).portable_acos();
     assert_eq!(output.len(), 3);
     for (segment, (hidden, expected)) in output.iter().zip([
         (false, [0., intersection]),

@@ -4,6 +4,7 @@ use super::prism::{Band, Prism};
 use super::profile::Rings;
 use super::*;
 use multicad_core::references::{AnalyticGeometry, TopologyKind};
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{normal_sweep, spur_gear::Edge};
 use std::f64::consts::TAU;
 
@@ -190,7 +191,7 @@ fn caps(edges: &[AnalyticGeometry], axis: [f64; 3], tolerance: f64) -> Option<Ca
                 let [pa, pb] = [flat(a_mm), flat(b_mm)];
                 if (la - lb).abs() <= tolerance {
                     (la, normal_sweep::Edge::Line { a: pa, b: pb })
-                } else if (pa[0] - pb[0]).hypot(pa[1] - pb[1]) <= tolerance {
+                } else if (pa[0] - pb[0]).portable_hypot(pa[1] - pb[1]) <= tolerance {
                     continue;
                 } else {
                     return None;
@@ -207,7 +208,7 @@ fn caps(edges: &[AnalyticGeometry], axis: [f64; 3], tolerance: f64) -> Option<Ca
                     return None;
                 }
                 let at = |angle: f64| {
-                    let (sin, cos) = angle.sin_cos();
+                    let (sin, cos) = angle.portable_sin_cos();
                     flat(std::array::from_fn(|i| {
                         frame.origin_mm[i] + radius_mm * (cos * frame.u[i] + sin * frame.v[i])
                     }))
@@ -243,7 +244,8 @@ fn caps(edges: &[AnalyticGeometry], axis: [f64; 3], tolerance: f64) -> Option<Ca
     levels.sort_by(|a, b| a.0.total_cmp(&b.0));
     let [(low, base), (high, lid)] = <[_; 2]>::try_from(levels).ok()?;
     // Both caps must carry the same curves for the walls to be a prism's.
-    let near = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) <= 4. * tolerance;
+    let near =
+        |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).portable_hypot(a[1] - b[1]) <= 4. * tolerance;
     let same = |a: &normal_sweep::Edge, b: &normal_sweep::Edge| {
         std::mem::discriminant(a) == std::mem::discriminant(b)
             && a.radius_mm()

@@ -33,7 +33,7 @@ impl RoundedCylinder {
         if roundoff > options.deflection / 4.
             || self.fillets_mm.into_iter().zip(&counts).any(|(f, count)| {
                 f.zip(*count).is_some_and(|(f, n)| {
-                    let chord = 2. * f * (FRAC_PI_2 / (2. * n as f64)).sin();
+                    let chord = 2. * f * (FRAC_PI_2 / (2. * n as f64)).portable_sin();
                     roundoff > chord * options.angle / 64.
                 })
             })
@@ -53,7 +53,10 @@ impl RoundedCylinder {
                 meridian.push(if i == count {
                     [self.radius_mm, f]
                 } else {
-                    [self.radius_mm - f + f * phase.cos(), f + f * phase.sin()]
+                    [
+                        self.radius_mm - f + f * phase.portable_cos(),
+                        f + f * phase.portable_sin(),
+                    ]
                 });
                 faces.push(face);
             }
@@ -72,8 +75,8 @@ impl RoundedCylinder {
                     [self.radius_mm - f, self.height_mm]
                 } else {
                     [
-                        self.radius_mm - f + f * phase.cos(),
-                        self.height_mm - f + f * phase.sin(),
+                        self.radius_mm - f + f * phase.portable_cos(),
+                        self.height_mm - f + f * phase.portable_sin(),
                     ]
                 });
                 faces.push(face);
@@ -87,7 +90,7 @@ impl RoundedCylinder {
         mesh.vertices.extend([0., 0., 0., 0., 0., self.height_mm]);
         for &[r, z] in &meridian {
             for station in 0..u {
-                let (sin, cos) = (TAU * station as f64 / u as f64).sin_cos();
+                let (sin, cos) = (TAU * station as f64 / u as f64).portable_sin_cos();
                 mesh.vertices.extend([r * cos, r * sin, z]);
             }
         }

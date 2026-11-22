@@ -3,6 +3,7 @@ use multicad_core::{
     references::{GeometryIntent, Resolution, TopologyKind, resolve},
 };
 use multicad_kernel::{GeometryPolicy, HelicalThread, MeshOptions, PlaneFrame, Solid};
+use multicad_precision::PortableMath as _;
 fn request(left: bool) -> (HelicalThread, f64) {
     let root = 1. / (4. * 3_f64.sqrt());
     (
@@ -10,7 +11,7 @@ fn request(left: bool) -> (HelicalThread, f64) {
             major_radius_mm: 3.,
             pitch_mm: 1.,
             length_mm: 6.6,
-            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().tan()) - root,
+            depth_mm: (1. - 0.125) / (2. * 30_f64.to_radians().portable_tan()) - root,
             crest_width_mm: 0.125,
             lower_flank_deg: 30.,
             upper_flank_deg: 30.,

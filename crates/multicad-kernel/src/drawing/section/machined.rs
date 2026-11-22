@@ -1,5 +1,6 @@
 //! Exact plane intersections of independent machined stock and insert bodies.
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     curved_projection::{Curve, Edge as ProjectedEdge, Ellipse},
     orthogonal_section::{self, Edge, Options, SectionError},
@@ -383,7 +384,7 @@ impl SliceFrame {
                 start_rad,
                 sweep_rad,
             } => {
-                let (sin, cos) = start_rad.sin_cos();
+                let (sin, cos) = start_rad.portable_sin_cos();
                 let sign = sweep_rad.signum();
                 Curve::Ellipse(Ellipse {
                     center: self.point(center),
@@ -502,7 +503,7 @@ fn hatch_segments(
         for index in 0..count {
             let end = segments[first + index][1];
             let next = &mut segments[first + (index + 1) % count][0];
-            let gap = (end[0] - next[0]).hypot(end[1] - next[1]);
+            let gap = (end[0] - next[0]).portable_hypot(end[1] - next[1]);
             if gap > deflection {
                 return Err(err(
                     GeometryErrorKind::InvalidResult,
@@ -534,7 +535,10 @@ fn hatch_ring(
             } => {
                 // Keep chord approximations within material. A void uses the
                 // outer tangent polygon, while an insert uses inner chords.
-                let target = 4. * (deflection / (4. * (radius + deflection))).sqrt().asin();
+                let target = 4.
+                    * (deflection / (4. * (radius + deflection)))
+                        .sqrt()
+                        .portable_asin();
                 let count = (sweep_rad.abs() / target.min(FRAC_PI_2)).ceil() as usize;
                 let points = if enlarge_voids { 2 } else { 1 };
                 if count > (LIMIT - segments.len()) / points {
@@ -542,7 +546,7 @@ fn hatch_ring(
                 }
                 let step = sweep_rad / count as f64;
                 let at = |angle: f64, radius: f64| {
-                    let (sin, cos) = angle.sin_cos();
+                    let (sin, cos) = angle.portable_sin_cos();
                     frame.point([
                         radius.mul_add(cos, center[0]),
                         radius.mul_add(sin, center[1]),
@@ -553,7 +557,7 @@ fn hatch_ring(
                     let start = step.mul_add(i as f64, start_rad);
                     let next = at(step.mul_add((i + 1) as f64, start_rad), radius);
                     if enlarge_voids {
-                        let tip = at(start + step / 2., radius / (step / 2.).cos());
+                        let tip = at(start + step / 2., radius / (step / 2.).portable_cos());
                         segments.push([last, tip]);
                         last = tip;
                     }

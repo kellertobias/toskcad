@@ -1,5 +1,6 @@
 //! Actual five-band geometry and adversarial controls through public stages.
 use super::*;
+use multicad_precision::PortableMath as _;
 
 pub(crate) fn graph(profile: &[[f64; 2]], root_arc: bool) -> BoundaryInput {
     let bands = if root_arc {
@@ -448,7 +449,7 @@ fn five_positive_strips_keep_actual_exposed_cone_and_incidence_collars() {
         .unwrap()
         .certify_material(1e-7, None)
         .unwrap();
-    let expected = 4. * (37. + 25. / 2. * (std::f64::consts::TAU - 2. * 4_f64.atan2(3.)));
+    let expected = 4. * (37. + 25. / 2. * (std::f64::consts::TAU - 2. * 4_f64.portable_atan2(3.)));
     let volume = body.volume_with_interrupt(1e-5, None).unwrap();
     assert!(volume.volume_mm3[0] <= expected && expected <= volume.volume_mm3[1]);
     assert_eq!(input, original);
@@ -535,7 +536,7 @@ fn locally_positive_five_bands_cannot_publish_a_double_winding_cap() {
     let profile = (0..5)
         .map(|i| {
             let angle = std::f64::consts::TAU * (2 * i) as f64 / 5.;
-            [5. * angle.cos(), 5. * angle.sin()]
+            [5. * angle.portable_cos(), 5. * angle.portable_sin()]
         })
         .collect::<Vec<_>>();
     let input = graph(&profile, false);

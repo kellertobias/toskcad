@@ -13,6 +13,7 @@ use multicad_core::{
 };
 use multicad_kernel::{BooleanOperation, GeometryPolicy, RigidTransform, Solid};
 use multicad_model::{Compiler, EvaluationCache, export::Exporter};
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeMap, f64::consts::PI};
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
@@ -560,7 +561,7 @@ fn rust_wood_envelope_retains_a_complete_independently_decoded_stock_boundary() 
                     for vertex in shell.edges()[edge.edge].vertices {
                         let p = shell.vertices()[vertex];
                         let world: [f64; 3] = std::array::from_fn(|i| p[i] + imported.origin_mm[i]);
-                        assert!((world[0].hypot(world[1]) - d / 2.).abs() < 1e-7);
+                        assert!((world[0].portable_hypot(world[1]) - d / 2.).abs() < 1e-7);
                         assert!(world[2].abs() < 1e-7 || (world[2] - l).abs() < 1e-7);
                         levels.push(world[2]);
                     }

@@ -10,6 +10,7 @@ use multicad_core::{
 };
 use multicad_kernel::{GeometryPolicy, Solid};
 use multicad_model::{Compiler, GeometryBackend, Model};
+use multicad_precision::PortableMath as _;
 
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() <= 1e-7 * b.abs().max(1.), "{a} != {b}");
@@ -218,7 +219,7 @@ fn check_inset_sections(solid: &Solid) {
         }
     }
     let chord = |radius: f64| (radius * radius - offset * offset).sqrt();
-    let angle = |radius: f64| (offset / radius).acos();
+    let angle = |radius: f64| (offset / radius).portable_acos();
     let area = |radius| 0.5 * (radius * radius * angle(radius) - offset * chord(radius));
     near(connector, chord(3.) - chord(1.5));
     for (actual, radius) in bend_sweeps.into_iter().zip([1.5, 3.]) {
@@ -373,7 +374,7 @@ fn check_inset_elevations(sheet: &Solid) {
         witness_visible
             .iter()
             .flat_map(|v| &v.preview_mm)
-            .all(|[x, y]| (x - 23.).hypot(y - 90.) <= 4.00001),
+            .all(|[x, y]| (x - 23.).portable_hypot(y - 90.) <= 4.00001),
         "Unexpected visible edges behind the web: {witness_visible:?}"
     );
     let chord = 15_f64.sqrt();
@@ -918,7 +919,7 @@ fn prepare_sheet_rectangle(
         let [origin, end_u, _, end_v] = leg.quad;
         let unit = |end: [f64; 2]| {
             let delta = [end[0] - origin[0], end[1] - origin[1]];
-            let length = delta[0].hypot(delta[1]);
+            let length = delta[0].portable_hypot(delta[1]);
             delta.map(|v| v / length)
         };
         let [u, v] = [unit(end_u), unit(end_v)];

@@ -12,6 +12,7 @@ publish.workspace = true
 # not regain OpenCascade through this crate's development dependencies.
 
 [dependencies]
+multicad-precision.workspace = true
 eframe.workspace = true
 multicad-core.workspace = true
 multicad-solver.workspace = true

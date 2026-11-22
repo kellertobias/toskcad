@@ -1,4 +1,5 @@
 //! Canonical involute gear intent. Native receipts still gate geometry Apply.
+use multicad_precision::PortableMath as _;
 mod bevel;
 mod coverage;
 mod pair;
@@ -344,29 +345,29 @@ impl GearParameters {
             }
             GearModuleSystem::Normal => (
                 module,
-                module / beta.cos(),
+                module / beta.portable_cos(),
                 pressure,
-                (pressure.tan() / beta.cos()).atan(),
+                (pressure.portable_tan() / beta.portable_cos()).portable_atan(),
             ),
             GearModuleSystem::Transverse => (
-                module * beta.cos(),
+                module * beta.portable_cos(),
                 module,
-                (pressure.tan() * beta.cos()).atan(),
+                (pressure.portable_tan() * beta.portable_cos()).portable_atan(),
                 pressure,
             ),
         };
         // Conservative unshifted policy: no virtual-tooth helix credit or
         // generated undercut relief is assumed by this direct-design model.
-        let minimum = (2. / an.sin().powi(2)).ceil() as u32;
+        let minimum = (2. / an.portable_sin().powi(2)).ceil() as u32;
         let expanded_shift_intent = shift != 0. || self.shift_mate.is_some();
         // Regalado, Gear Technology June 2007, Eq14, basic active rack y=1.
         // This is direct transverse rack projection, not a virtual tooth count;
         // the native custom circular fillet is not a cutter/hob radius.
         let minimum_shift = 1.
-            - count * at.sin().powi(2)
+            - count * at.portable_sin().powi(2)
                 / (2.
                     * if self.module_system == GearModuleSystem::Normal {
-                        beta.cos()
+                        beta.portable_cos()
                     } else {
                         1.
                     });
@@ -395,7 +396,7 @@ impl GearParameters {
             ));
         }
         let pitch = mt * count / 2.;
-        let base = pitch * at.cos();
+        let base = pitch * at.portable_cos();
         let shortening = self.shift_shortening(parameters, count, shift, pressure, at, beta)?;
         let tip = pitch
             + if internal {
@@ -412,15 +413,15 @@ impl GearParameters {
         let nominal = if shift == 0. {
             PI * mt / 2.
         } else {
-            mt * (PI / 2. + 2. * shift * pressure.tan())
+            mt * (PI / 2. + 2. * shift * pressure.portable_tan())
         };
         let design = nominal - backlash;
         let physical = design - allowance;
         let half_base = physical / (2. * pitch)
             + if internal {
-                at - at.tan()
+                at - at.portable_tan()
             } else {
-                at.tan() - at
+                at.portable_tan() - at
             };
         let ta = (tip.powi(2) / base.powi(2) - 1.).sqrt();
         let root_fillet = fillet * module;
@@ -435,7 +436,7 @@ impl GearParameters {
             if tip <= base
                 || outer - root < wall
                 || physical <= 0.
-                || half_base + ta - ta.atan() <= 1e-5 / tip
+                || half_base + ta - ta.portable_atan() <= 1e-5 / tip
                 || root - root_fillet <= base
             {
                 return Err(invalid(
@@ -444,7 +445,7 @@ impl GearParameters {
             }
         } else if root - bore / 2. < wall
             || physical <= 0.
-            || half_base - (ta - ta.atan()) <= 1e-5 / tip
+            || half_base - (ta - ta.portable_atan()) <= 1e-5 / tip
         {
             return Err(invalid(
                 "Gear bore leaves insufficient root wall, or clearance leaves a pointed/missing tooth",
@@ -455,7 +456,7 @@ impl GearParameters {
         }
         let hub = self.resolve_hub(parameters, root, bore / 2., wall, width)?;
         let sign = if self.hand == GearHand::Left { -1. } else { 1. };
-        let twist = sign * beta.tan() / pitch;
+        let twist = sign * beta.portable_tan() / pitch;
         if (twist * width).abs() > PI {
             return Err(invalid(
                 "Gear face width and helix angle exceed the bounded half-turn sweep",

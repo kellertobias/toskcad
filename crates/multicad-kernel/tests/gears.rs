@@ -6,28 +6,29 @@ use multicad_kernel::{
     BooleanOperation, GearHub, GearSweep, GeometryPolicy, InvoluteGear, MeshOptions,
     RigidTransform, Solid,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 fn normal(teeth: u32, beta: f64, sweep: GearSweep) -> InvoluteGear {
     // KHK normal-system basic dimensions: mt=mn/cos(beta),
     // tan(alpha_t)=tan(alpha_n)/cos(beta), ha=mn, hf=1.25*mn.
     let module = 2.;
-    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let pitch = module * f64::from(teeth) / (2. * beta.cos());
+    let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let pitch = module * f64::from(teeth) / (2. * beta.portable_cos());
     InvoluteGear {
         teeth,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * pressure.cos(),
+        base_radius_mm: pitch * pressure.portable_cos(),
         tip_radius_mm: pitch + module,
         root_radius_mm: pitch - 1.25 * module,
         root_fillet_radius_mm: 0.2 * module,
-        half_base_angle_rad: PI / (2. * f64::from(teeth)) + pressure.tan()
+        half_base_angle_rad: PI / (2. * f64::from(teeth)) + pressure.portable_tan()
             - pressure
             - 0.05 / (2. * pitch),
         face_width_mm: 8.,
         bore_radius_mm: 2.,
         hub: None,
-        twist_rad_per_mm: beta.tan() / pitch,
+        twist_rad_per_mm: beta.portable_tan() / pitch,
         sweep,
     }
 }
@@ -229,7 +230,8 @@ fn rust_spur_flank_projects_into_sketch_with_bounded_curve_error() {
         });
         let actual = spline.evaluate(t, policy).unwrap().point;
         assert!(
-            (actual[0] - expected[0]).hypot(actual[1] - expected[1]) < policy.linear_tolerance_mm
+            (actual[0] - expected[0]).portable_hypot(actual[1] - expected[1])
+                < policy.linear_tolerance_mm
         );
     }
     assert!(
@@ -503,7 +505,7 @@ fn coincident_or_hidden_hub_caps_preserve_every_surviving_face_and_gear_end() {
 }
 fn probe(solid: &Solid, r: f64, a: f64, z: f64) -> f64 {
     let size = 0.005;
-    let center = [r * a.cos(), r * a.sin(), z];
+    let center = [r * a.portable_cos(), r * a.portable_sin(), z];
     let cube = Solid::box_solid([size; 3], GeometryPolicy::default())
         .unwrap()
         .transformed(RigidTransform {
@@ -529,8 +531,8 @@ fn overlap(a: &Solid, b: &Solid) -> f64 {
 fn rotated(s: &Solid, angle: f64, x: f64) -> Solid {
     s.transformed(RigidTransform {
         rotation: [
-            [angle.cos(), -angle.sin(), 0.],
-            [angle.sin(), angle.cos(), 0.],
+            [angle.portable_cos(), -angle.portable_sin(), 0.],
+            [angle.portable_sin(), angle.portable_cos(), 0.],
             [0., 0., 1.],
         ],
         translation_mm: [x, 0., 0.],
@@ -557,7 +559,7 @@ fn spur_has_measured_involute_width_native_circular_fillets_and_complete_provena
         21.,
     ] {
         let t = (r * r / spec.base_radius_mm.powi(2) - 1.).sqrt();
-        let half = spec.half_base_angle_rad - (t - t.atan());
+        let half = spec.half_base_angle_rad - (t - t.portable_atan());
         for sign in [-1., 1.] {
             assert!(probe(&solid, r, sign * (half - 0.003), 3.37) > 0.999);
             assert!(probe(&solid, r, sign * (half + 0.003), 3.37) < 1e-5);

@@ -5,6 +5,7 @@ use super::{
 };
 use crate::helical_tube_cut::{BoundaryEdge, Cut};
 use helical::product;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::TAU;
 
 // Reserve the other STEP entities for trims, stock faces, and shell incidence.
@@ -54,14 +55,14 @@ impl CavitySurface {
             return Err(StepError::InvalidGeometry);
         }
         let rise = spec.pitch_mm / TAU;
-        let length = radius.hypot(rise);
+        let length = radius.portable_hypot(rise);
         let tangent = rise / length;
         let vertical = radius / length;
         let phase = spec.start_angle_rad;
         let start = spec.start_height_mm;
         let height = spec.stock_height_mm;
         let profile = cut.edge_domain(BoundaryEdge::TopCavity);
-        let end = (height - start + vertical * tube * profile[0].sin()) / rise;
+        let end = (height - start + vertical * tube * profile[0].portable_sin()) / rise;
         let roundoff =
             256. * f64::EPSILON * ((radius + tube) * (1. + phase.abs() + end) + height + 1.);
         if roundoff >= tolerance * 0.25 {
@@ -91,7 +92,8 @@ impl CavitySurface {
     pub fn top_parameter(self, profile_angle: f64) -> Option<f64> {
         let [lo, hi] = self.domains[0];
         (lo..=hi).contains(&profile_angle).then(|| {
-            (self.height - self.start + self.vertical * self.tube * profile_angle.sin()) / self.rise
+            (self.height - self.start + self.vertical * self.tube * profile_angle.portable_sin())
+                / self.rise
         })
     }
 
@@ -106,7 +108,7 @@ impl CavitySurface {
             self.tolerance / (64. * (self.radius + self.tube)),
         )?;
         let count = pole_budget([circle.poles.len(), sweep.poles.len()])?;
-        let (sin, cos) = self.phase.sin_cos();
+        let (sin, cos) = self.phase.portable_sin_cos();
         let spin: Vec<_> = sweep
             .poles
             .into_iter()
@@ -159,8 +161,8 @@ impl CavitySurface {
             for (actual, &(rotation, t)) in row.iter().zip(&spin) {
                 let expected = self.point(profile, rotation, t);
                 let error = (actual[0] - expected[0])
-                    .hypot(actual[1] - expected[1])
-                    .hypot(actual[2] - expected[2]);
+                    .portable_hypot(actual[1] - expected[1])
+                    .portable_hypot(actual[2] - expected[2]);
                 if (actual[2] - expected[2]).abs() > self.roundoff {
                     return Err(StepError::InvalidGeometry);
                 }
@@ -173,7 +175,7 @@ impl CavitySurface {
         // error is bounded by the two individual errors and the cross term.
         let xy = radial + (self.radius + self.tube + radial) * e_sweep;
         let z = self.vertical * radial;
-        let bound = xy.hypot(z) + difference + self.roundoff;
+        let bound = xy.portable_hypot(z) + difference + self.roundoff;
         if bound > self.tolerance {
             return Err(StepError::InvalidGeometry);
         }

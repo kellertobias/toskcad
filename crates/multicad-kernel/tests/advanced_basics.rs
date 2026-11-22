@@ -1,5 +1,6 @@
 use multicad_core::{document::EntityId, references::*};
 use multicad_kernel::*;
+use multicad_precision::PortableMath as _;
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-5, "{a} != {b}");
 }
@@ -78,7 +79,7 @@ fn asymmetric_chamfer_uses_the_explicit_face_and_distance_angle() {
         .unwrap();
     near(
         angled.volume_mm3().unwrap(),
-        72000. - 0.5 * 2. * (2. * angle.tan()) * 30.,
+        72000. - 0.5 * 2. * (2. * angle.portable_tan()) * 30.,
     );
     let snapshot = angled.topology_snapshot(feature, 0).unwrap();
     let face = snapshot
@@ -89,7 +90,7 @@ fn asymmetric_chamfer_uses_the_explicit_face_and_distance_angle() {
     let Some(AnalyticGeometry::Plane { frame }) = face.geometry else {
         panic!("angled chamfer lost its exact plane")
     };
-    near(frame.normal()[0].abs(), angle.cos());
+    near(frame.normal()[0].abs(), angle.portable_cos());
     selection.reference_face = side(&source, owner, [1., 0., 0.]);
     assert!(
         source

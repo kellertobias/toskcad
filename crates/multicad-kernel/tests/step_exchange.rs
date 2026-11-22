@@ -1,4 +1,5 @@
 use multicad_kernel::{GeometryPolicy, RigidTransform, Solid};
+use multicad_precision::PortableMath as _;
 use std::sync::{Arc, Barrier};
 
 #[test]
@@ -22,7 +23,7 @@ fn rust_step_reopens_a_placed_reversed_concave_prism_with_a_straight_hole() {
         exact(3),
     )
     .unwrap();
-    let (sin, cos) = 0.37_f64.sin_cos();
+    let (sin, cos) = 0.37_f64.portable_sin_cos();
     let frame = PlaneFrame {
         origin: [3., 5., 11.],
         u: [cos, sin, 0.],
@@ -171,7 +172,7 @@ fn rust_step_preserves_a_fractional_cylinder_and_its_analytic_cap_circles() {
         exact(11, 3),
     )
     .unwrap();
-    let (sin, cos) = 0.83_f64.sin_cos();
+    let (sin, cos) = 0.83_f64.portable_sin_cos();
     let policy = GeometryPolicy::default();
     let source = Solid::from_axial_cylinder(
         cylinder,

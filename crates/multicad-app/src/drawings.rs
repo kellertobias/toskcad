@@ -232,6 +232,7 @@ mod tests {
         model::{self, PrimitiveFrame, PrimitiveParameters, PrimitiveRequest, length},
         schedules::ScheduleKind,
     };
+    use multicad_precision::PortableMath as _;
     use multicad_ui::drawings::{DrawingEditor, DrawingTool, ScheduleStatus};
     use std::time::{Duration, Instant};
 
@@ -1146,9 +1147,9 @@ mod tests {
             && v.role == VectorRole::Section
             && matches!(v.curve, VectorCurve::Line { a, b }
             if [a,b].into_iter().all(|[u,v]| {
-                let radius = 0.8_f64.mul_add(u, -2.1).hypot(v);
+                let radius = 0.8_f64.mul_add(u, -2.1).portable_hypot(v);
                 let axial = 0.6_f64.mul_add(u, 2.8);
-                ((radius - 5.).hypot(axial) - 1.).abs() < 1e-7
+                ((radius - 5.).portable_hypot(axial) - 1.).abs() < 1e-7
             }))));
         let ViewEvaluation::Ready { vectors, .. } = &result.views[&tilted_id] else {
             panic!("{:?}", result.views[&tilted_id]);
@@ -1170,7 +1171,7 @@ mod tests {
                 && edge
                     .preview_mm
                     .iter()
-                    .any(|[u, v]| (u + 0.736).hypot(v + 4.159) < 0.05)
+                    .any(|[u, v]| (u + 0.736).portable_hypot(v + 4.159) < 0.05)
         }));
         assert!(vectors.iter().any(|edge| edge.role == VectorRole::Visible
             && matches!(edge.curve, VectorCurve::Line { a,b }
@@ -1362,7 +1363,7 @@ mod tests {
             detail
                 .iter()
                 .flat_map(|v| &v.preview_mm)
-                .all(|[x, y]| { (x - 4.).hypot(y - 2.) <= 2.5 + 1e-9 })
+                .all(|[x, y]| { (x - 4.).portable_hypot(y - 2.) <= 2.5 + 1e-9 })
         );
         assert_eq!(
             worker
@@ -1488,12 +1489,9 @@ mod tests {
             );
         }
         assert!(view(detail).iter().any(|vector| is_bore(&vector.curve)));
-        assert!(
-            view(detail)
-                .iter()
-                .flat_map(|v| &v.preview_mm)
-                .all(|p| { (p[0] - detail_center[0]).hypot(p[1] - detail_center[1]) <= 1. + 1e-9 })
-        );
+        assert!(view(detail).iter().flat_map(|v| &v.preview_mm).all(|p| {
+            (p[0] - detail_center[0]).portable_hypot(p[1] - detail_center[1]) <= 1. + 1e-9
+        }));
         assert_eq!(
             worker
                 .runtime
@@ -1942,7 +1940,7 @@ mod tests {
                         let key =
                             [center[0], center[1], major_mm].map(|mm| (mm * 1000.).round() as i64);
                         let direction = (u[0] * v[1] - u[1] * v[0]).signum();
-                        let base = u[1].atan2(u[0]);
+                        let base = u[1].portable_atan2(u[0]);
                         let [a, b] = [start_rad, end_rad]
                             .map(|parameter| direction.mul_add(parameter, base));
                         let start = a.min(b).rem_euclid(TAU);

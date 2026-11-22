@@ -349,7 +349,7 @@ fn placed_arc(
 }
 
 fn arc_midpoint(arc: ArcEdge) -> Point {
-    let (sin, cos) = (arc.sweep_rad * 0.5).sin_cos();
+    let (sin, cos) = (arc.sweep_rad * 0.5).portable_sin_cos();
     let tangent = cross(arc.normal, arc.radial_start);
     std::array::from_fn(|i| {
         arc.center_mm[i] + arc.radius_mm * (cos * arc.radial_start[i] + sin * tangent[i])

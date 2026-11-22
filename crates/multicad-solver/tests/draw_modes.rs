@@ -7,6 +7,7 @@ use multicad_core::{
     sketch::Datum,
     sketch_draw::{DrawInput, DrawRequest, PointInput},
 };
+use multicad_precision::PortableMath as _;
 use multicad_solver::{draw::prepare_draw, prepare_edit};
 
 fn actor() -> Actor {
@@ -59,7 +60,8 @@ fn assert_rectangle(sketch: &Sketch, lines: &[EntityId], corners: [[f64; 2]; 4])
         assert!(close(b, corners[(i + 1) % 4]));
         let (c, d) = line_ends(sketch, lines[(i + 1) % 4]);
         let (u, v) = ([b[0] - a[0], b[1] - a[1]], [d[0] - c[0], d[1] - c[1]]);
-        let cosine = (u[0] * v[0] + u[1] * v[1]) / (u[0].hypot(u[1]) * v[0].hypot(v[1]));
+        let cosine =
+            (u[0] * v[0] + u[1] * v[1]) / (u[0].portable_hypot(u[1]) * v[0].portable_hypot(v[1]));
         assert!(
             cosine.abs() < 1e-6,
             "edges {i} and next are not perpendicular"
@@ -171,7 +173,7 @@ fn rotated_rectangles_stay_rectangular_when_the_solver_changes_an_edge() {
     let edit = prepare_edit(&session, session.revision(), actor(), id, source).unwrap();
     let solved = edit.evaluation.candidate.expect("solvable rectangle edit");
     let ends: Vec<_> = lines.iter().map(|l| line_ends(&solved, *l)).collect();
-    let length = |(a, b): ([f64; 2], [f64; 2])| (b[0] - a[0]).hypot(b[1] - a[1]);
+    let length = |(a, b): ([f64; 2], [f64; 2])| (b[0] - a[0]).portable_hypot(b[1] - a[1]);
     assert!((length(ends[0]) - 50.).abs() < 1e-6);
     assert!((length(ends[0]) - length(ends[2])).abs() < 1e-6);
     assert!((length(ends[1]) - length(ends[3])).abs() < 1e-6);

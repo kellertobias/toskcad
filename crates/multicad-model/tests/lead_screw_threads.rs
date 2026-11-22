@@ -13,6 +13,7 @@ use multicad_model::{
     Compiler,
     export::{Exporter, mesh},
 };
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -108,7 +109,7 @@ fn measured_crest_center(
     around: f64,
     pitch: f64,
 ) -> f64 {
-    let point = |z| [radius * phi.cos(), radius * phi.sin(), z];
+    let point = |z| [radius * phi.portable_cos(), radius * phi.portable_sin(), z];
     let start = around - 0.45 * pitch;
     let step = 0.9 * pitch / 64.;
     let mut changes = vec![];
@@ -171,7 +172,7 @@ fn sourced_pairs_and_left_hand_multi_start_have_measured_flanks_lead_step_print_
                     let z = center
                         + sign
                             * (r.profile.crest_width_mm / 2.
-                                + drop * (row.included_angle_deg / 2.).to_radians().tan());
+                                + drop * (row.included_angle_deg / 2.).to_radians().portable_tan());
                     let boundary = r.major_radius_mm - drop;
                     for (offset, below) in [(-0.001, true), (0.001, false)] {
                         let wanted = if i == 0 { below } else { !below };
@@ -299,7 +300,8 @@ fn sourced_pairs_and_left_hand_multi_start_have_measured_flanks_lead_step_print_
                     let shifted =
                         measured_crest_center(&raw, radius, phi, 2. * row.pitch_mm, row.pitch_mm);
                     let measured_lead = (shifted - z0) * std::f64::consts::TAU / phi;
-                    let axial_error = 2. * chord / (row.included_angle_deg / 2.).to_radians().cos();
+                    let axial_error =
+                        2. * chord / (row.included_angle_deg / 2.).to_radians().portable_cos();
                     assert!((z1 - z0 - row.pitch_mm).abs() < axial_error);
                     assert!(
                         (measured_lead + row.pitch_mm * 2.).abs()

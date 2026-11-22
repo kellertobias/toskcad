@@ -1,6 +1,7 @@
 //! Retain planar stock and project exact blind cap profiles in one visibility
 //! scene with the other sectioned parts and any circular hardware.
 use super::*;
+use multicad_precision::PortableMath as _;
 use multicad_rust_kernel::{
     planar_projection::{
         self, Body, FaceOpening, LineCandidate, RimCandidate, SceneExtras, StadiumOpening,
@@ -222,7 +223,7 @@ impl Volume {
         let [u, v, base] = self.point(frame.origin);
         let [x, y, z] = self.vector(planar::view_axes(frame)[2]);
         let [[left, right], [bottom, top], [far, near]] = self.bounds;
-        if x.hypot(y) > AXIS_TOLERANCE
+        if x.portable_hypot(y) > AXIS_TOLERANCE
             || u - radius < left - self.tolerance
             || u + radius > right + self.tolerance
             || v - radius < bottom - self.tolerance
@@ -313,7 +314,7 @@ impl<'a> Scene<'a> {
             return Ok(());
         }
         if normal[2].abs() <= AXIS_TOLERANCE
-            || (normal[2] < 0. && normal[0].hypot(normal[1]) <= AXIS_TOLERANCE)
+            || (normal[2] < 0. && normal[0].portable_hypot(normal[1]) <= AXIS_TOLERANCE)
         {
             // A side-on or back-facing opening preserves every first hit
             // only while the retained volume leaves the opening intact.
@@ -323,7 +324,7 @@ impl<'a> Scene<'a> {
                 Err(unsupported())
             };
         }
-        if normal[2] <= 0. || normal[0].hypot(normal[1]) > AXIS_TOLERANCE {
+        if normal[2] <= 0. || normal[0].portable_hypot(normal[1]) > AXIS_TOLERANCE {
             return Err(unsupported());
         }
         let mouth_depth = shape.depth().min(volume.bounds[2][1]);
@@ -371,7 +372,7 @@ impl<'a> Scene<'a> {
         if !volume.overlaps(bounds) {
             return Ok(());
         }
-        if normal[0].hypot(normal[1]) > AXIS_TOLERANCE {
+        if normal[0].portable_hypot(normal[1]) > AXIS_TOLERANCE {
             // An edge-on or inclined bore is hidden inside the solid proxy
             // only while the retained volume leaves it intact.
             return if normal[2] <= AXIS_TOLERANCE && volume.contains(bounds) {
@@ -486,7 +487,7 @@ impl<'a> Scene<'a> {
                     for (i, corner) in [(0, 3), (1, 1)] {
                         let center = centers[i];
                         let start = (corners[corner][1] - center[1])
-                            .atan2(corners[corner][0] - center[0])
+                            .portable_atan2(corners[corner][0] - center[0])
                             .rem_euclid(TAU);
                         let end = start + PI;
                         for trim in [[start, end.min(TAU)], [0., end - TAU]] {
@@ -547,7 +548,7 @@ fn exit_face(
 ) -> Result<usize, GeometryError> {
     for (i, face) in body.faces.iter().enumerate() {
         if face.normal[2] >= 0.
-            || face.normal[0].hypot(face.normal[1]) > AXIS_TOLERANCE
+            || face.normal[0].portable_hypot(face.normal[1]) > AXIS_TOLERANCE
             || (depth - face.point[2]).abs() > tolerance
         {
             continue;
@@ -573,7 +574,7 @@ fn mouth_face(
 ) -> Result<usize, GeometryError> {
     for (i, face) in body.faces.iter().enumerate() {
         if face.normal[2] <= 0.
-            || face.normal[0].hypot(face.normal[1]) > AXIS_TOLERANCE
+            || face.normal[0].portable_hypot(face.normal[1]) > AXIS_TOLERANCE
             || (depth - face.point[2]).abs() > tolerance
         {
             continue;

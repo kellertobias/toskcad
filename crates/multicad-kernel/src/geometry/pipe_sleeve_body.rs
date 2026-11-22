@@ -221,9 +221,9 @@ impl Solid {
                 ));
             };
             let matches = |a: multicad_rust_kernel::radial_tensor::Axis| {
-                a.origin[0].hypot(a.origin[1]) <= tolerance
+                a.origin[0].portable_hypot(a.origin[1]) <= tolerance
                     && (a.origin[2] - z).abs() <= tolerance
-                    && a.normal[0].hypot(a.normal[1]) <= 1e-12
+                    && a.normal[0].portable_hypot(a.normal[1]) <= 1e-12
             };
             if !matches(axis) || !matches(axes[end]) {
                 return Err(failure(
@@ -252,7 +252,11 @@ impl Solid {
             for k in 0..32 {
                 let angle = std::f64::consts::TAU * k as f64 / 32.;
                 let [_, hi] = boundary
-                    .support_bounds([angle.cos(), angle.sin(), 0.], tolerance, None)
+                    .support_bounds(
+                        [angle.portable_cos(), angle.portable_sin(), 0.],
+                        tolerance,
+                        None,
+                    )
                     .map_err(|cause| {
                         failure(
                             GeometryErrorKind::Unsupported,
@@ -262,7 +266,7 @@ impl Solid {
                 support = support.max(hi);
             }
             // A circumscribed 32-gon of the supports: r <= h / cos(pi/32).
-            (support / (PI / 32.).cos() * (1. + 1e-12)).next_up()
+            (support / (PI / 32.).portable_cos() * (1. + 1e-12)).next_up()
         };
         let wall = radius_mm - reach;
         if wall.is_nan() || wall <= policy.minimum_feature_mm {

@@ -220,7 +220,7 @@ fn actual_head_circle_near_semicircle_uses_conservative_sag_and_finite_fields() 
         I::point(0.),
     ];
     let (sag, d) = geometry::minor_arc_sag(a, b, gamma).unwrap();
-    assert!(sag.hi >= 1. - alpha.cos() && sag.hi <= 1.);
+    assert!(sag.hi >= 1. - alpha.portable_cos() && sag.hi <= 1.);
     assert!(d[0].lo <= 1. && d[0].hi >= 1.);
     // This genuine actual-circle enclosure is deliberately too broad to earn
     // the minor branch. The production policy asks for U refinement, without

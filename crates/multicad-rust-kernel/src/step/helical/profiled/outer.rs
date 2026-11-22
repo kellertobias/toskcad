@@ -78,10 +78,10 @@ pub(super) fn admission(data: Data<'_>, origin: Point, tolerance: f64) -> Result
             if r <= 10. * tolerance {
                 return Err(StepError::Limit);
             }
-            let a = (segment.start[1] - center[1]).atan2(segment.start[0] - center[0]);
+            let a = (segment.start[1] - center[1]).portable_atan2(segment.start[0] - center[0]);
             let b = a + sweep;
-            let error = (center[0] + r * b.cos() - segment.end[0])
-                .hypot(center[1] + r * b.sin() - segment.end[1]);
+            let error = (center[0] + r * b.portable_cos() - segment.end[0])
+                .portable_hypot(center[1] + r * b.portable_sin() - segment.end[1]);
             if error + data.profile.rounding_error_mm() > tolerance / 8. {
                 return Err(StepError::Limit);
             }
@@ -93,7 +93,7 @@ pub(super) fn admission(data: Data<'_>, origin: Point, tolerance: f64) -> Result
     Ok(())
 }
 pub(super) fn placement(data: Data<'_>, p: &Placement, tolerance: f64) -> Result<(), StepError> {
-    let norm = |v: Point| v[0].hypot(v[1]).hypot(v[2]);
+    let norm = |v: Point| v[0].portable_hypot(v[1]).portable_hypot(v[2]);
     let n = p.normal.map(|v| v / norm(p.normal));
     let projection: f64 = p.u.into_iter().zip(n).map(|(a, b)| a * b).sum();
     let u: Point = std::array::from_fn(|i| p.u[i] - projection * n[i]);
@@ -204,7 +204,7 @@ pub(super) fn shell(
                                     next.radius,
                                 )
                             };
-                            let angle = dr.abs().atan2(dz);
+                            let angle = dr.abs().portable_atan2(dz);
                             file.entity(format_args!(
                                 "CONICAL_SURFACE('',{axis},{r:.16E},{angle:.16E})"
                             ))
@@ -241,7 +241,8 @@ pub(super) fn shell(
                         let circle_center = file.point(center3);
                         let circle_axis = file.axis(circle_center, normal, ref3);
                         let circle = file.entity(format_args!("CIRCLE('',{circle_axis},{r:.16E})"));
-                        let a = (segment.start[1] - center[1]).atan2(segment.start[0] - center[0]);
+                        let a = (segment.start[1] - center[1])
+                            .portable_atan2(segment.start[0] - center[0]);
                         let seam = seam(
                             file,
                             surface,

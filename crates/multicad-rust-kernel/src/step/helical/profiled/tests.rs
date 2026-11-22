@@ -41,7 +41,7 @@ fn corners(file: &mut StepFile, thread: &Thread, p: &Placement) -> Vec<[Vertex; 
             [first, last].map(|phase| {
                 let angle =
                     -(phase + f64::from(k) * thread.spec().pitch_mm) / thread.helical_rate();
-                let (s, c) = angle.sin_cos();
+                let (s, c) = angle.portable_sin_cos();
                 file.vertex(p.point_f64(
                     [
                         thread.spec().major_radius_mm * c,
@@ -235,8 +235,8 @@ fn shared_step_outer_preserves_frozen_existing_head_file_bytes() {
                     let canonical = HexDrive::canonical(2., 1e-12).unwrap();
                     let corners = canonical.corners_mm().map(|[x, y]| {
                         [
-                            x * angle.cos() - y * angle.sin(),
-                            x * angle.sin() + y * angle.cos(),
+                            x * angle.portable_cos() - y * angle.portable_sin(),
+                            x * angle.portable_sin() + y * angle.portable_cos(),
                         ]
                     });
                     Recess::flat_hex(

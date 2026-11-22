@@ -23,7 +23,7 @@ fn options() -> SourceOptions {
     }
 }
 fn norm(p: [f64; 3]) -> f64 {
-    p[0].hypot(p[1]).hypot(p[2])
+    p[0].portable_hypot(p[1]).portable_hypot(p[2])
 }
 fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [
@@ -98,7 +98,11 @@ fn actual_stored_affine_discrepancy_and_whole_band_angle_are_inside_derived_rece
                         };
                         let old_theta = (z - q) / legacy.helical_rate();
                         let sample = source.point_in_band(band, 0, u, z).unwrap();
-                        let old_point = [old_r * old_theta.cos(), old_r * old_theta.sin(), z];
+                        let old_point = [
+                            old_r * old_theta.portable_cos(),
+                            old_r * old_theta.portable_sin(),
+                            z,
+                        ];
                         assert!(
                             norm(std::array::from_fn(|i| old_point[i] - sample.point_mm[i]))
                                 <= receipt.bands[band].position_error_mm + sample.error_mm
@@ -109,7 +113,11 @@ fn actual_stored_affine_discrepancy_and_whole_band_angle_are_inside_derived_rece
                             (if left { -1. } else { 1. }) * spec.pitch_mm * f64::from(starts)
                                 / std::f64::consts::TAU;
                         let normal = |t: f64, beta: f64, d: f64| {
-                            [t.cos() - beta * t.sin(), t.sin() + beta * t.cos(), -d]
+                            [
+                                t.portable_cos() - beta * t.portable_sin(),
+                                t.portable_sin() + beta * t.portable_cos(),
+                                -d,
+                            ]
                         };
                         let n = normal(theta, rate * slope / r, slope);
                         let o = normal(
@@ -117,8 +125,8 @@ fn actual_stored_affine_discrepancy_and_whole_band_angle_are_inside_derived_rece
                             legacy.helical_rate() * old_slope / old_r,
                             old_slope,
                         );
-                        let angle =
-                            norm(cross(n, o)).atan2(n.into_iter().zip(o).map(|(x, y)| x * y).sum());
+                        let angle = norm(cross(n, o))
+                            .portable_atan2(n.into_iter().zip(o).map(|(x, y)| x * y).sum());
                         assert!(
                             angle <= receipt.bands[band].normal_angle_error_rad,
                             "{angle} {receipt:?}"

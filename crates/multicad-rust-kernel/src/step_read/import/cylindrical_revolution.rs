@@ -226,7 +226,7 @@ fn matches_readback(
     let surface_area: f64 = meridian
         .iter()
         .zip(meridian.iter().cycle().skip(1))
-        .map(|(&[a, z0], &[b, z1])| PI * (a + b) * (a - b).hypot(z1 - z0))
+        .map(|(&[a, z0], &[b, z1])| PI * (a + b) * (a - b).portable_hypot(z1 - z0))
         .sum();
     let volume = revolution.volume_mm3();
     if (volume - readback.volume_mm3).abs()

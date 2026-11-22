@@ -49,7 +49,7 @@ fn original_mixed_orders_include_bilinear_angular_coupling_and_match_independent
             let omega = std::f64::consts::TAU / saved.spec().pitch_mm;
             let theta: [f64; 4] = std::array::from_fn(|k| omega * (fields[2][k] - fields[1][k]));
             coupled |= theta[3].abs() > 1e-8;
-            let phase = [theta[0].cos(), theta[0].sin()];
+            let phase = [theta[0].portable_cos(), theta[0].portable_sin()];
             let actual = law
                 .taylor([u, u], [v, v], Default::default(), None)
                 .unwrap();

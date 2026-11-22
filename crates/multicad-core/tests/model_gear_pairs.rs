@@ -6,6 +6,7 @@ use multicad_core::{
     parameters::BoundExpression,
     project_file::{self, ProjectFile},
 };
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Mcp)
 }
@@ -74,7 +75,7 @@ fn pair_is_one_source_neutral_transaction_with_existing_assembly_relationships_a
     near(b.translation_mm[0], 50.);
     near(
         b.rotation[0][0],
-        (std::f64::consts::PI + std::f64::consts::PI / 30.).cos(),
+        (std::f64::consts::PI + std::f64::consts::PI / 30.).portable_cos(),
     );
     let saved = s.document().clone();
     s.undo(1, actor()).unwrap();
@@ -269,7 +270,7 @@ fn all_supported_parallel_families_keep_opposite_hand_and_gap_semantics() {
             if family == GearFamily::Spur {
                 50.
             } else {
-                50. / 15_f64.to_radians().cos()
+                50. / 15_f64.to_radians().portable_cos()
             },
         );
         if family != GearFamily::Spur {

@@ -93,7 +93,8 @@ fn distance_to(point: P2, vectors: &[&ProjectedVector]) -> f64 {
             let along = (((point[0] - a[0]) * u + (point[1] - a[1]) * v)
                 / (u * u + v * v).max(1e-300))
             .clamp(0., 1.);
-            best = best.min((point[0] - a[0] - along * u).hypot(point[1] - a[1] - along * v));
+            best =
+                best.min((point[0] - a[0] - along * u).portable_hypot(point[1] - a[1] - along * v));
         }
     }
     best
@@ -107,13 +108,13 @@ fn nearest(point: P2, direction: P2, vectors: &[&ProjectedVector]) -> (f64, f64)
         for pair in vector.preview_mm.windows(2) {
             let [a, b] = [pair[0], pair[1]];
             let [u, v] = [b[0] - a[0], b[1] - a[1]];
-            let length = u.hypot(v);
+            let length = u.portable_hypot(v);
             if length == 0. {
                 continue;
             }
             let along =
                 (((point[0] - a[0]) * u + (point[1] - a[1]) * v) / (length * length)).clamp(0., 1.);
-            let gap = (point[0] - a[0] - along * u).hypot(point[1] - a[1] - along * v);
+            let gap = (point[0] - a[0] - along * u).portable_hypot(point[1] - a[1] - along * v);
             if gap < best.0 {
                 best = (gap, ((u * direction[1] - v * direction[0]) / length).abs());
             }
@@ -174,7 +175,7 @@ fn check(label: &str, solids: &[&Solid], options: DrawingProjection) -> Report {
             .all(|(k, w)| w.is_none_or(|[a, b]| a + margin <= p[k] && p[k] <= b - margin))
             && options
                 .detail
-                .is_none_or(|(c, r)| (p[0] - c[0]).hypot(p[1] - c[1]) <= r - margin)
+                .is_none_or(|(c, r)| (p[0] - c[0]).portable_hypot(p[1] - c[1]) <= r - margin)
     };
     let tolerance = 3. * options.chord_tolerance_mm;
     let mut report = Report::default();
@@ -230,7 +231,7 @@ fn check(label: &str, solids: &[&Solid], options: DrawingProjection) -> Report {
                         (index + 1).min(projected.len() - 1),
                     ]
                     .map(|k| projected[k]);
-                    let span = (b[0] - a[0]).hypot(b[1] - a[1]);
+                    let span = (b[0] - a[0]).portable_hypot(b[1] - a[1]);
                     let direction = if span > 0. {
                         [(b[0] - a[0]) / span, (b[1] - a[1]) / span]
                     } else {
@@ -264,7 +265,10 @@ fn check(label: &str, solids: &[&Solid], options: DrawingProjection) -> Report {
                             // Under a visible curve along it, not merely
                             // crossing it.
                             let (gap, sine) = nearest(paper, direction, &visible);
-                            if gap <= tolerance && span > 0. && sine <= 10_f64.to_radians().sin() {
+                            if gap <= tolerance
+                                && span > 0.
+                                && sine <= 10_f64.to_radians().portable_sin()
+                            {
                                 report.hidden_drawn_visible += 1;
                                 covered.push(p);
                             }
@@ -284,10 +288,11 @@ fn check(label: &str, solids: &[&Solid], options: DrawingProjection) -> Report {
                     let along = (((paper[0] - a[0]) * u + (paper[1] - a[1]) * v)
                         / (u * u + v * v).max(1e-300))
                     .clamp(0., 1.);
-                    (paper[0] - a[0] - along * u).hypot(paper[1] - a[1] - along * v) <= tolerance
+                    (paper[0] - a[0] - along * u).portable_hypot(paper[1] - a[1] - along * v)
+                        <= tolerance
                 });
                 let silhouette = (0..16).any(|k| {
-                    let (sin, cos) = (f64::from(k) * TAU / 16.).sin_cos();
+                    let (sin, cos) = (f64::from(k) * TAU / 16.).portable_sin_cos();
                     front([
                         point[0] + tolerance * cos,
                         point[1] + tolerance * sin,
@@ -317,7 +322,7 @@ fn check(label: &str, solids: &[&Solid], options: DrawingProjection) -> Report {
                 let mut states = [false; 2];
                 for radius in [4e-3, 1e-3, 1e-4, 1e-5] {
                     for k in 0..64 {
-                        let (sin, cos) = (f64::from(k) * TAU / 64.).sin_cos();
+                        let (sin, cos) = (f64::from(k) * TAU / 64.).portable_sin_cos();
                         states[usize::from(region([q[0] + radius * cos, q[1] + radius * sin]))] =
                             true;
                     }

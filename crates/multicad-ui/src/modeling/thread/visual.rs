@@ -3,6 +3,7 @@
 //! dimension labels carry the actual staged values.
 use super::super::diagram::{Diagram, Key, Line, Notation, legible};
 use multicad_core::model::{ThreadFamily, ThreadHand, ThreadMode};
+use multicad_precision::PortableMath as _;
 
 pub(in crate::modeling) const DIAMETER: Key = "thread.diameter";
 pub(in crate::modeling) const PITCH: Key = "thread.pitch";
@@ -102,7 +103,7 @@ pub(in crate::modeling) struct Variant {
 /// profile inward for an internal thread.
 fn silhouette(form: &Form, pitch: f32, length: f32, root: f32, sign: f32) -> Vec<[f32; 2]> {
     let depth = form.depth * pitch;
-    let rise = |angle: f32| depth * angle.to_radians().tan();
+    let rise = |angle: f32| depth * angle.to_radians().portable_tan();
     let (a, b) = (rise(form.lower), rise(form.upper));
     let flats = (pitch - a - b).max(0.1 * pitch);
     let (crest, bottom) = (flats * 0.4, flats * 0.6);

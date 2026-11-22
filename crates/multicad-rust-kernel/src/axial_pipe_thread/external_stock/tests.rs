@@ -1,5 +1,6 @@
 use super::super::authored::{AuthoredSection, AuthoredSpec, AuthoredThread};
 use super::*;
+use multicad_precision::PortableMath as _;
 fn source(quarter: bool) -> StockClipPlan {
     let (tpi, e1, l1, l2, od, max) = if quarter {
         (18., 0.49163, 0.2278, 0.4018, 0.540, 0.088)
@@ -230,7 +231,12 @@ fn real_external_pipe_cut_keeps_original_owners_and_one_manifold_stock_tail_boun
                     cut.stock_radius_mm() * 1.01,
                 ] {
                     for angle in [0.13_f64, 1.72, 4.51] {
-                        let point = [radius * angle.cos(), radius * angle.sin(), z].map(|v| [v, v]);
+                        let point = [
+                            radius * angle.portable_cos(),
+                            radius * angle.portable_sin(),
+                            z,
+                        ]
+                        .map(|v| [v, v]);
                         let old = thread
                             .classify_box(point, Default::default(), None)
                             .unwrap()
@@ -414,7 +420,7 @@ fn actual_tail_mesh_replaces_the_internal_cap_and_has_one_connected_indexed_shel
         assert_eq!(candidate.source().stock_length_mm(), cut.stock_length_mm());
         assert!(candidate.connectivity().signed_volume_mm3 > 0.);
         assert!(candidate.source_distance_mm() <= q.deflection);
-        assert!(candidate.normal_chord() <= 2. * (q.angle / 2.).sin());
+        assert!(candidate.normal_chord() <= 2. * (q.angle / 2.).portable_sin());
         assert!(candidate.mesh().face_indices.iter().all(|v| *v < 9));
         for face in 0..9 {
             assert!(candidate.mesh().face_indices.contains(&face));

@@ -127,16 +127,19 @@ impl<'a> Field<'a> {
         let m = wheel.module_mm();
         let (x, y, v) = (x / m, y / m, z / m);
         let h = wheel.half_width();
-        let radius = x.hypot(y);
+        let radius = x.portable_hypot(y);
         let blank = wheel.blank();
-        let outside = (radius - blank).max(0.).hypot((v.abs() - h).max(0.)) * m;
+        let outside = (radius - blank)
+            .max(0.)
+            .portable_hypot((v.abs() - h).max(0.))
+            * m;
         let scale = if radius > blank { blank / radius } else { 1. };
         let (x, y, v, radius) = (x * scale, y * scale, v.clamp(-h, h), radius * scale);
         let combine = |inner: f64, node| {
             if inner <= 0. && outside <= 0. {
                 Probe::Material
             } else {
-                Probe::Clear(outside.hypot(inner.max(0.)), node)
+                Probe::Clear(outside.portable_hypot(inner.max(0.)), node)
             }
         };
         if let Some(bore) = wheel.bore_radius_mm()
@@ -145,7 +148,7 @@ impl<'a> Field<'a> {
             return combine(bore - radius * m, None);
         }
         let pitch = 2. * wheel.span();
-        let theta = y.atan2(x);
+        let theta = y.portable_atan2(x);
         let index = (theta / pitch).round();
         let local = rotate_z([x, y, 0.], -index * pitch);
         let sector = (index as i64).rem_euclid(i64::from(wheel.teeth())) as u32;
@@ -153,8 +156,8 @@ impl<'a> Field<'a> {
             .round()
             .clamp(0., STATIONS as f64) as usize;
         let chain = &self.nodes[j];
-        let angle = local[1].atan2(local[0]);
-        let angles = |p: &[f64; 2]| p[1].atan2(p[0]);
+        let angle = local[1].portable_atan2(local[0]);
+        let angles = |p: &[f64; 2]| p[1].portable_atan2(p[0]);
         if angle <= angles(&chain[0]) || angle >= angles(chain.last().expect("chain")) {
             return combine(0., None);
         }
@@ -163,7 +166,7 @@ impl<'a> Field<'a> {
             .clamp(1, chain.len() - 1);
         let [a, b] = [chain[k - 1], chain[k]];
         // Radius of the chord along the ray at `angle`.
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         let d = [b[0] - a[0], b[1] - a[1]];
         let along = (a[0] * d[1] - a[1] * d[0]) / (c * d[1] - s * d[0]);
         let mut nearest = (f64::INFINITY, 0);
@@ -171,7 +174,7 @@ impl<'a> Field<'a> {
             let e = [pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]];
             let w = [local[0] - pair[0][0], local[1] - pair[0][1]];
             let t = ((w[0] * e[0] + w[1] * e[1]) / (e[0] * e[0] + e[1] * e[1])).clamp(0., 1.);
-            let gap = (w[0] - t * e[0]).hypot(w[1] - t * e[1]);
+            let gap = (w[0] - t * e[0]).portable_hypot(w[1] - t * e[1]);
             if gap < nearest.0 {
                 nearest = (gap, if t < 0.5 { i } else { i + 1 });
             }
@@ -182,7 +185,7 @@ impl<'a> Field<'a> {
             return combine(0., None);
         }
         combine(
-            gap / self.lipschitz.hypot(1.) * m,
+            gap / self.lipschitz.portable_hypot(1.) * m,
             Some((j, nearest.1, sector)),
         )
     }
@@ -198,15 +201,15 @@ impl<'a> Field<'a> {
             .round()
             .clamp(0., STATIONS as f64) as usize;
         let chain = &self.nodes[j];
-        let angles = |p: &[f64; 2]| p[1].atan2(p[0]);
-        let angle = local[1].atan2(local[0]);
-        let radius = x.hypot(y);
+        let angles = |p: &[f64; 2]| p[1].portable_atan2(p[0]);
+        let angle = local[1].portable_atan2(local[0]);
+        let radius = x.portable_hypot(y);
         let mut nearest = f64::INFINITY;
         for pair in chain.windows(2) {
             let e = [pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]];
             let w = [local[0] - pair[0][0], local[1] - pair[0][1]];
             let t = ((w[0] * e[0] + w[1] * e[1]) / (e[0] * e[0] + e[1] * e[1])).clamp(0., 1.);
-            nearest = nearest.min((w[0] - t * e[0]).hypot(w[1] - t * e[1]));
+            nearest = nearest.min((w[0] - t * e[0]).portable_hypot(w[1] - t * e[1]));
         }
         let gap = nearest - self.chord - self.lipschitz * (v - self.stations[j]).abs();
         if angle > angles(&chain[0]) && angle < angles(chain.last().expect("chain")) {
@@ -214,7 +217,7 @@ impl<'a> Field<'a> {
                 .partition_point(|p| angles(p) < angle)
                 .clamp(1, chain.len() - 1);
             let [a, b] = [chain[k - 1], chain[k]];
-            let (s, c) = angle.sin_cos();
+            let (s, c) = angle.portable_sin_cos();
             let d = [b[0] - a[0], b[1] - a[1]];
             let along = (a[0] * d[1] - a[1] * d[0]) / (c * d[1] - s * d[0]);
             // Beyond the chord with a positive gap the point is in the space.
@@ -222,7 +225,7 @@ impl<'a> Field<'a> {
                 return None;
             }
         }
-        Some(gap / self.lipschitz.hypot(1.))
+        Some(gap / self.lipschitz.portable_hypot(1.))
     }
 
     /// Exact boundary point of a node in mm, and its surface parameters.
@@ -306,11 +309,11 @@ impl WormSide<'_> {
                 let outer = worm.thread().radius(q, z);
                 let inner = worm.bore_radius_mm().unwrap_or(0.);
                 let r = inner + (outer - inner) * p;
-                [r * q.cos(), r * q.sin(), z]
+                [r * q.portable_cos(), r * q.portable_sin(), z]
             }
             Patch::Bore => {
                 let r = worm.bore_radius_mm().unwrap_or(0.);
-                [r * p.cos(), r * p.sin(), q]
+                [r * p.portable_cos(), r * p.portable_sin(), q]
             }
         }
     }
@@ -334,13 +337,13 @@ impl WormSide<'_> {
         let [x, y, z] = thread;
         match patch {
             Patch::Band { .. } => {
-                let r = x.hypot(y);
+                let r = x.portable_hypot(y);
                 let k = (r - delta) / r;
                 [x * k, y * k, z]
             }
             Patch::Cap(cap) => [x, y, if cap == 0 { z + delta } else { z - delta }],
             Patch::Bore => {
-                let r = x.hypot(y);
+                let r = x.portable_hypot(y);
                 let k = (r + delta) / r;
                 [x * k, y * k, z]
             }
@@ -377,18 +380,18 @@ pub fn classify_wheel_ball(
         });
     }
     let [x, y, z] = center_mm.map(|v| v / m);
-    let (r, h, reach) = (x.hypot(y), wheel.half_width(), reach / m);
+    let (r, h, reach) = (x.portable_hypot(y), wheel.half_width(), reach / m);
     let bore = wheel.bore_radius_mm().map_or(0., |b| b / m);
     let pitch = 2. * wheel.span();
     // The ball stays within the three nearest sectors.
     if wheel.blank() - r <= reach
         || h - z.abs() <= reach
         || (bore > 0. && r - bore <= reach)
-        || reach >= r * (pitch / 2.).sin()
+        || reach >= r * (pitch / 2.).portable_sin()
     {
         return Ok(UnresolvedBoundary);
     }
-    let index = (y.atan2(x) / pitch).round();
+    let index = (y.portable_atan2(x) / pitch).round();
     for offset in [-1., 0., 1.] {
         match field.space_gap([x, y, z], index + offset) {
             Some(gap) if gap > reach => {}
@@ -447,7 +450,10 @@ fn certify_within(
         worm,
         placement: worm_at,
         rates: [
-            [slope.hypot(major / rate), (major / rate).hypot(1.)],
+            [
+                slope.portable_hypot(major / rate),
+                (major / rate).portable_hypot(1.),
+            ],
             [major - bore, major + rate * slope],
             [bore, 1.],
         ],
@@ -511,7 +517,7 @@ fn certify_within(
             Probe::Material => {
                 let margin = wheel.margin(local);
                 let depth = match rectangle.patch {
-                    Patch::Band { .. } => thread[0].hypot(thread[1]) - bore,
+                    Patch::Band { .. } => thread[0].portable_hypot(thread[1]) - bore,
                     Patch::Cap(_) => length,
                     Patch::Bore => major,
                 };
@@ -641,12 +647,12 @@ mod tests {
     /// along wheel +Y at center distance `(teeth/2 + 5) m`, both at drive.
     fn pose(teeth: u32, m: f64, drive: f64, extra: f64) -> [Placement; 2] {
         let center = (f64::from(teeth) / 2. + 5.) * m;
-        let (sw, cw) = drive.sin_cos();
+        let (sw, cw) = drive.portable_sin_cos();
         // Worm local +Z is wheel +Y and local X starts on wheel +X, so the
         // worm's -X crest faces the wheel axis. Drive turns it about +Y.
         let worm_axes = [[cw, 0., -sw], [-sw, 0., -cw], [0., 1., 0.]];
         let turn = -drive / f64::from(teeth) + extra;
-        let (s, c) = turn.sin_cos();
+        let (s, c) = turn.portable_sin_cos();
         [
             Placement {
                 origin_mm: [center, 0., 0.],
@@ -670,7 +676,12 @@ mod tests {
         use crate::helical_thread::BoxClassification::*;
         let (_, wheel) = members(32, [0., 2.], 0.05);
         let at = |r: f64, a: f64, z: f64, radius| {
-            classify_wheel_ball(&wheel, [r * a.cos(), r * a.sin(), z], radius).unwrap()
+            classify_wheel_ball(
+                &wheel,
+                [r * a.portable_cos(), r * a.portable_sin(), z],
+                radius,
+            )
+            .unwrap()
         };
         let pitch = std::f64::consts::PI / 32.;
         // A tooth spans each sector boundary; a space is centred on +x.

@@ -3,6 +3,7 @@ use multicad_kernel::{
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
     *,
 };
+use multicad_precision::PortableMath as _;
 
 fn n(value: i64) -> Rational {
     Rational::new(value, 1).unwrap()
@@ -113,7 +114,7 @@ fn rust_cylinder_chamfers_preserve_cap_frames_and_untouched_rim_identity() {
                         let treatment = if mode == 3 {
                             SidedChamfer::DistanceAngle {
                                 distance_mm: 2.,
-                                angle_rad: 0.5_f64.atan(),
+                                angle_rad: 0.5_f64.portable_atan(),
                             }
                         } else {
                             SidedChamfer::Distances {

@@ -58,12 +58,12 @@ fn nth<'m, 's>(
 fn malformed_finite_face_graph_and_support_controls_refuse_without_publishing() {
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     let t = Thread::new(crate::rounded_thread::Spec {
         major_radius_mm: 3.175,
         pitch_mm: p,
         length_mm: 3.7 * p,
-        depth_mm: p / (3. * a.tan()),
+        depth_mm: p / (3. * a.portable_tan()),
         crest_radius_mm: r,
         root_radius_mm: r,
         flank_angle_deg: 27.5,
@@ -202,12 +202,12 @@ fn malformed_finite_face_graph_and_support_controls_refuse_without_publishing() 
 fn untrusted_tensor_size_and_unproved_reparameterizations_fail_with_typed_limits() {
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     let t = Thread::new(crate::rounded_thread::Spec {
         major_radius_mm: 3.175,
         pitch_mm: p,
         length_mm: 3.7 * p,
-        depth_mm: p / (3. * a.tan()),
+        depth_mm: p / (3. * a.portable_tan()),
         crest_radius_mm: r,
         root_radius_mm: r,
         flank_angle_deg: 27.5,

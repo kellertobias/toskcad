@@ -1,6 +1,7 @@
 use super::super::gizmo::math::{Point, add, axis_parameter, cross, dot, mul, plane_point, sub};
 use crate::{camera::Camera, egui, viewport::Ray};
 use multicad_core::{model::ResolvedPrimitive, sketch::Frame};
+use multicad_precision::PortableMath as _;
 
 const GUIDE: egui::Color32 = egui::Color32::from_rgb(90, 190, 240);
 const MIN_SIZE_MM: f64 = 0.001;
@@ -511,7 +512,7 @@ fn paint_curves(
     let frame = frame(shape);
     let circle = |center, u, v, radius| {
         let point = |step| {
-            let (sin, cos) = (f64::from(step) * std::f64::consts::TAU / 32.).sin_cos();
+            let (sin, cos) = (f64::from(step) * std::f64::consts::TAU / 32.).portable_sin_cos();
             add(center, add(mul(u, radius * cos), mul(v, radius * sin)))
         };
         for step in 0..32 {

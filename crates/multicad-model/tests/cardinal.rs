@@ -9,6 +9,7 @@ use multicad_core::{
     sketch_regions,
 };
 use multicad_model::Compiler;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::FRAC_PI_2;
 
 fn build(elevation: Dimension, reverse: bool) -> multicad_model::ShapeSnapshot {
@@ -79,7 +80,7 @@ fn native_perpendicular_prism_keeps_exact_integer_in_plane_bounds() {
 fn native_near_perpendicular_prism_keeps_its_authored_tilt() {
     let shape = build(angle(89.9999), false);
     assert!(shape.bounds.max[0] > 30.0001);
-    let expected = 30. + 100. * 89.9999_f64.to_radians().cos();
+    let expected = 30. + 100. * 89.9999_f64.to_radians().portable_cos();
     assert!((shape.bounds.max[0] - expected).abs() < 1e-10);
     assert_eq!(shape.bounds.max[1], 30.);
 }

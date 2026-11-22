@@ -30,17 +30,20 @@ impl PartialCylinder {
         sign * self.height
             * self.radius
             * (self.sweep * self.radius
-                + 2. * (self.sweep * 0.5).sin() * dot(sub(self.center, anchor), self.radial_mid))
+                + 2. * (self.sweep * 0.5).portable_sin()
+                    * dot(sub(self.center, anchor), self.radial_mid))
     }
 }
 
 fn arc_angle(normal: Point, a: Point, b: Point) -> f64 {
-    dot(cross(a, b), normal).atan2(dot(a, b)).rem_euclid(TAU)
+    dot(cross(a, b), normal)
+        .portable_atan2(dot(a, b))
+        .rem_euclid(TAU)
 }
 
 impl ArcEdge {
     fn radial_mid(self) -> Point {
-        let (sin, cos) = (self.sweep_rad * 0.5).sin_cos();
+        let (sin, cos) = (self.sweep_rad * 0.5).portable_sin_cos();
         let side = cross(self.normal, self.radial_start);
         std::array::from_fn(|i| cos * self.radial_start[i] + sin * side[i])
     }

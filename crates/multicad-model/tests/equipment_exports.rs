@@ -1,3 +1,4 @@
+use multicad_precision::PortableMath as _;
 #[allow(dead_code)]
 #[path = "../../multicad-app/examples/equipment_review.rs"]
 mod apartment;
@@ -51,7 +52,7 @@ fn check_mark(points: &[[f64; 2]], denominator: f64) {
         points
             .iter()
             .copied()
-            .filter(|p| (p[0] - center[0]).hypot(p[1] - center[1]) < 1.80),
+            .filter(|p| (p[0] - center[0]).portable_hypot(p[1] - center[1]) < 1.80),
     );
     assert!(
         (b[2] - b[0] - 3.5).abs() < 0.025,

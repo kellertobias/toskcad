@@ -104,7 +104,7 @@ fn retained_encoder_keeps_actual_controls_post_supports_and_original_cone_angle(
             .cone()
             .depth_per_radius
             .recip()
-            .atan()
+            .portable_atan()
             .to_bits()
     );
     assert!(file.data.contains(&format!(",0.,{angle:.16E})")));
@@ -181,7 +181,8 @@ fn torx_encoder_retains_real_surfaces_contacts_and_apex() {
         let xy = arc.start_mm;
         for z in [
             -2.4,
-            -2.4 + source.cone().tip_depth_mm - source.cone().depth_per_radius * xy[0].hypot(xy[1]),
+            -2.4 + source.cone().tip_depth_mm
+                - source.cone().depth_per_radius * xy[0].portable_hypot(xy[1]),
         ] {
             let point = p.point_f64(xy, z).map(|v| if v == 0. { 0. } else { v });
             assert!(file.points.contains_key(&point.map(f64::to_bits)));

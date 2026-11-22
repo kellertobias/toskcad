@@ -135,6 +135,7 @@ impl Thread {
 mod tests {
     use super::super::Spec;
     use super::*;
+    use multicad_precision::PortableMath as _;
 
     /// A Whitworth-like 55 degree form scaled by its major radius.
     fn thread(major: f64, depth: f64, crest: f64, root: f64) -> Thread {
@@ -158,7 +159,7 @@ mod tests {
     /// Depth consistent with the pitch, flank angle and roundings.
     fn depth(crest: f64, root: f64) -> f64 {
         let angle = 27.5_f64.to_radians();
-        1. / (2. * angle.tan()) - (crest + root) * (1. / angle.sin() - 1.)
+        1. / (2. * angle.portable_tan()) - (crest + root) * (1. / angle.portable_sin() - 1.)
     }
 
     #[test]
@@ -213,7 +214,7 @@ mod tests {
         // A real pitch difference is a different thread, not roundoff.
         let closed = |pitch: f64| {
             let angle = 27.5_f64.to_radians();
-            pitch / (2. * angle.tan()) - 0.274 * (1. / angle.sin() - 1.)
+            pitch / (2. * angle.portable_tan()) - 0.274 * (1. / angle.portable_sin() - 1.)
         };
         let mut other = spec(5.05, closed(1.0001), 0.137, 0.137);
         other.pitch_mm = 1.0001;
@@ -243,7 +244,8 @@ mod tests {
         let mut coarse = spec(5.05, 0., 0.137, 0.137);
         coarse.pitch_mm = 2.;
         let angle = 27.5_f64.to_radians();
-        coarse.depth_mm = 2. / (2. * angle.tan()) - 0.274 * (1. / angle.sin() - 1.);
+        coarse.depth_mm =
+            2. / (2. * angle.portable_tan()) - 0.274 * (1. / angle.portable_sin() - 1.);
         let coarse = Thread::new(coarse).unwrap();
         assert_eq!(external.prove_clearance(&coarse, 0.), Err(Error::Invalid));
         let cavity = thread(5.05, d, 0.137, 0.137);

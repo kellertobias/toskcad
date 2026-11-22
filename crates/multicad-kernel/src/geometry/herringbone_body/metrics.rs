@@ -31,7 +31,7 @@ fn transverse_metrics(edge: Edge, rate: f64) -> ([f64; 2], f64) {
         Edge::Involute(flank) => {
             return (
                 edge.centroid(),
-                length * (rate * flank.base_radius_mm()).hypot(1.),
+                length * (rate * flank.base_radius_mm()).portable_hypot(1.),
             );
         }
         Edge::Planar(normal_sweep::Edge::Arc {
@@ -47,7 +47,7 @@ fn transverse_metrics(edge: Edge, rate: f64) -> ([f64; 2], f64) {
         for fraction in [(1. - abscissa) / 2., (1. + abscissa) / 2.] {
             let [x, y] = edge.point(fraction);
             let [tx, ty] = edge.tangent(fraction);
-            let weight = weight * (rate * (x * tx + y * ty)).hypot(1.) / 2.;
+            let weight = weight * (rate * (x * tx + y * ty)).portable_hypot(1.) / 2.;
             measure += weight;
             moment[0] += weight * x;
             moment[1] += weight * y;
@@ -95,8 +95,8 @@ pub(super) fn local_faces(gear: &Herringbone, topology: &Topology) -> Vec<Face> 
                     let ([x, y], area) = wall[(i - 2) % wall.len()];
                     let phases = [lo, hi].map(|z| gear.phase_at(z));
                     let half = (phases[1] - phases[0]) / 2.;
-                    let mean = half.sin() / half;
-                    let (sin, cos) = phases[0].midpoint(phases[1]).sin_cos();
+                    let mean = half.portable_sin() / half;
+                    let (sin, cos) = phases[0].midpoint(phases[1]).portable_sin_cos();
                     (
                         None,
                         [
@@ -135,7 +135,7 @@ pub(super) fn local_faces(gear: &Herringbone, topology: &Topology) -> Vec<Face> 
                     // Each tooth end is symmetric about its own center ray.
                     let angle =
                         TAU * f64::from(*tooth) / f64::from(gear.teeth()) + gear.phase_at(z);
-                    let (sin, cos) = angle.sin_cos();
+                    let (sin, cos) = angle.portable_sin_cos();
                     let origin = [radial * cos, radial * sin, z];
                     (
                         Some((origin, [0., 0., if *upper { -1. } else { 1. }])),
@@ -208,7 +208,7 @@ fn shoulder_area(gear: &Herringbone) -> (f64, f64) {
     // foot: ∫ x²/2 dy = r³/2 ∫ cos³ = r³/2 (sin − sin³/3).
     let [from, to] = gear.under_tooth_angles(0);
     let primitive = |t: f64| {
-        let sin = t.sin();
+        let sin = t.portable_sin();
         r.powi(3) / 2. * (sin - sin.powi(3) / 3.)
     };
     moment += primitive(to) - primitive(from);

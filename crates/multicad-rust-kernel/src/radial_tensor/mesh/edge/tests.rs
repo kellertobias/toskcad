@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 use std::cell::Cell;
 
 fn qualify(input: BoundaryInput) -> RadialBoundary {
@@ -54,7 +55,7 @@ fn actual_point(input: &BoundaryInput, edge: &Edge, t: f64) -> Point {
             ];
             let phase = |i: usize| {
                 let p = std::array::from_fn(|k| input.vertices[i][k] - axis.origin[k]);
-                dot(p, v).atan2(dot(p, u))
+                dot(p, v).portable_atan2(dot(p, u))
             };
             let a = phase(edge.vertices[0]);
             let b = phase(edge.vertices[1]);
@@ -65,7 +66,8 @@ fn actual_point(input: &BoundaryInput, edge: &Edge, t: f64) -> Point {
             };
             let angle = a + t * sweep;
             std::array::from_fn(|k| {
-                axis.origin[k] + radius_mm * (u[k] * angle.cos() + v[k] * angle.sin())
+                axis.origin[k]
+                    + radius_mm * (u[k] * angle.portable_cos() + v[k] * angle.portable_sin())
             })
         }
     }

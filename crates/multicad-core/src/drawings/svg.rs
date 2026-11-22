@@ -4,6 +4,7 @@
 use super::DrawingEvaluation;
 use super::render::{PageRender, render_page};
 use crate::document::{Document, EntityId};
+use multicad_precision::PortableMath as _;
 use std::fmt::Write;
 
 fn color(rgb: Option<[u8; 3]>) -> String {
@@ -101,7 +102,12 @@ pub fn render_svg(page: &PageRender) -> String {
                 arc.width_mm
             );
         } else {
-            let p = |a: f64| [arc.center[0] + r * a.cos(), arc.center[1] + r * a.sin()];
+            let p = |a: f64| {
+                [
+                    arc.center[0] + r * a.portable_cos(),
+                    arc.center[1] + r * a.portable_sin(),
+                ]
+            };
             let (s, e) = (p(arc.start_rad), p(arc.end_rad));
             let large = u8::from(sweep.abs() > std::f64::consts::PI);
             let positive = u8::from(sweep > 0.);

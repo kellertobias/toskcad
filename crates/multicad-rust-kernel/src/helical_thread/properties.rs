@@ -448,8 +448,8 @@ mod tests {
             let radius = 0.05;
             let a = 30_f64.to_radians();
             spec.root_radius_mm = Some(radius);
-            spec.depth_mm = (spec.pitch_mm - spec.crest_width_mm) / (2. * a.tan())
-                - radius * (1. / a.sin() - 1.);
+            spec.depth_mm = (spec.pitch_mm - spec.crest_width_mm) / (2. * a.portable_tan())
+                - radius * (1. / a.portable_sin() - 1.);
         }
         Thread::new(spec).unwrap()
     }
@@ -602,7 +602,7 @@ mod tests {
     fn actual_tiny_retained_root_can_refuse_the_directed_precision_floor_without_mutation() {
         let r = 2_f64.powi(-52).next_up();
         let a = 1_f64.to_radians();
-        let depth = (0.5 - 0.0625) / (2. * a.tan()) - r * (1. / a.sin() - 1.);
+        let depth = (0.5 - 0.0625) / (2. * a.portable_tan()) - r * (1. / a.portable_sin() - 1.);
         let t = Thread::new(Spec {
             major_radius_mm: 20.,
             pitch_mm: 0.5,

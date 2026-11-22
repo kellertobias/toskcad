@@ -3,12 +3,12 @@ use crate::rounded_thread::{Spec, Thread};
 fn thread(scale: f64) -> Thread {
     let p = 1.27 * scale;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     Thread::new(Spec {
         major_radius_mm: 3.175 * scale,
         pitch_mm: p,
         length_mm: 3.7 * p,
-        depth_mm: p / (3. * a.tan()),
+        depth_mm: p / (3. * a.portable_tan()),
         crest_radius_mm: r,
         root_radius_mm: r,
         flank_angle_deg: 27.5,

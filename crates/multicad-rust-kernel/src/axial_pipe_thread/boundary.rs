@@ -42,7 +42,7 @@ mod tests {
             "This fixture must contain actual distinct literal incident supports"
         );
         let angle = -std::f64::consts::TAU * q / p;
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let right_radius = anchor - k * q;
         assert_eq!(right_radius, spec.major_radius_mm);
         let left = [spec.major_radius_mm * cos, spec.major_radius_mm * sin, 0.];
@@ -84,10 +84,10 @@ mod tests {
         );
         let a = 27.5_f64.to_radians();
         let p = 25.4 / 28.;
-        let m = 1. / a.tan();
-        let depth = p / (3. * a.tan());
-        let r =
-            (p * (m * m - k * k) / (2. * m) - depth) / (2. * (1. / a.sin() - (1. + k * k).sqrt()));
+        let m = 1. / a.portable_tan();
+        let depth = p / (3. * a.portable_tan());
+        let r = (p * (m * m - k * k) / (2. * m) - depth)
+            / (2. * (1. / a.portable_sin() - (1. + k * k).sqrt()));
         let spec = Spec {
             major_radius_mm: 9.728 / 2. - k * 4.,
             pitch_mm: p,
@@ -106,7 +106,7 @@ mod tests {
             let a = t.unclipped(i, I::point(q), I::point(0.));
             let b = t.unclipped(next, I::point(if next == 0 { 0. } else { q }), I::point(0.));
             let angle = -std::f64::consts::TAU * q / spec.pitch_mm;
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = angle.portable_sin_cos();
             let a = [a.midpoint() * cos, a.midpoint() * sin, 0.];
             let b = [b.midpoint() * cos, b.midpoint() * sin, 0.];
             println!(

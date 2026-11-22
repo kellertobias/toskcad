@@ -12,8 +12,8 @@ fn quadrature(profile: &Profile) -> f64 {
                         radius_mm,
                         sweep,
                     } => {
-                        let a = (s.start[1] - center[1]).atan2(s.start[0] - center[0]);
-                        radius_mm * (a + sweep * t).cos() * sweep
+                        let a = (s.start[1] - center[1]).portable_atan2(s.start[0] - center[0]);
+                        radius_mm * (a + sweep * t).portable_cos() * sweep
                     }
                 };
                 PI * r * r * dz

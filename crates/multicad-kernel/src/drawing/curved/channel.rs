@@ -47,7 +47,7 @@ pub(super) fn add(
     let view = View::new(options.frame);
     let sweep_axis = unit(frame.normal());
     let axis = view.vector(sweep_axis.map(|value| value * height.signum()));
-    let axial = axis[0].hypot(axis[1]) <= ANGULAR;
+    let axial = axis[0].portable_hypot(axis[1]) <= ANGULAR;
     if !axial && axis[2].abs() > ANGULAR {
         return Err(unsupported(
             "Rust mixed bent-sweep drawing requires an axial or transverse view",
@@ -235,7 +235,7 @@ pub(super) fn add(
                             rim_frame.origin_mm[i] + shift[0] * frame.u[i] + shift[1] * frame.v[i]
                         });
                         radius_mm = radius;
-                        start_rad = y.atan2(x);
+                        start_rad = y.portable_atan2(x);
                         sweep_rad = std::f64::consts::FRAC_PI_2.copysign(sweep_rad);
                     }
                     for mut rim in stadium::spatial_rims(
@@ -285,14 +285,14 @@ fn slot_walls(
 ) -> Vec<[Point; 2]> {
     let depth = |axis: Point| view.vector(axis)[2];
     let [du, dv] = [depth(frame.u), depth(frame.v)];
-    let length = du.hypot(dv);
+    let length = du.portable_hypot(dv);
     // The section direction that stays in the drawing plane.
     let across = [dv / length, -du / length];
     let reach = |[x, y]: [f64; 2]| x * across[0] + y * across[1];
     let [c0, c1] = hole.centers;
     let spine = [c1[0] - c0[0], c1[1] - c0[1]];
     let normal = {
-        let n = spine[0].hypot(spine[1]);
+        let n = spine[0].portable_hypot(spine[1]);
         [-spine[1] / n, spine[0] / n]
     };
     let at = |[x, y]: [f64; 2], offset: f64, level: f64| {
@@ -352,7 +352,8 @@ fn host(
         ] = outline
         {
             let origin = projection(face_point(faces[0], *center));
-            let r = radius_mm * dot(direction, faces[0].u).hypot(dot(direction, faces[0].v));
+            let r =
+                radius_mm * dot(direction, faces[0].u).portable_hypot(dot(direction, faces[0].v));
             return [origin - r, origin + r];
         }
         outline

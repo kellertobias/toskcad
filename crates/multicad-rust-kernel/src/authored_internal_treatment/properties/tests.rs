@@ -167,7 +167,7 @@ fn profile_caps_keep_their_non_axis_centroids_and_actual_end_rotation() {
     let end = endbody
         .local_face_properties(FaceKey::EndCap, FacePropertyOptions::default())
         .unwrap();
-    assert!(mid(start.centroid_mm[0]).hypot(mid(start.centroid_mm[1])) > 1e-4);
+    assert!(mid(start.centroid_mm[0]).portable_hypot(mid(start.centroid_mm[1])) > 1e-4);
     near(end.area_mm2, mid(start.area_mm2));
     near(end.first_moment_mm3[0], -mid(start.first_moment_mm3[1]));
     near(end.first_moment_mm3[1], mid(start.first_moment_mm3[0]));
@@ -192,8 +192,8 @@ fn flank_and_clipped_cone_areas_match_independent_antiderivatives() {
             let b = bands[index];
             let m = (b.radius_mm[1] - b.radius_mm[0]) / (b.phase_mm[1] - b.phase_mm[0]);
             let d = (m * s).abs() / (1. + m * m).sqrt();
-            let p0 = |r: f64| 0.5 * (r * (r * r + d * d).sqrt() + d * d * (r / d).asinh());
-            let p1 = |r: f64| (r * r + d * d).powf(1.5) / 3.;
+            let p0 = |r: f64| 0.5 * (r * (r * r + d * d).sqrt() + d * d * (r / d).portable_asinh());
+            let p1 = |r: f64| (r * r + d * d).portable_powf(1.5) / 3.;
             let [r0, r1] = b.radius_mm;
             let expected = (1. + m * m).sqrt() / s / m
                 * ((f - a / k) * (p0(r1) - p0(r0)) + (p1(r1) - p1(r0)) / k);
@@ -265,7 +265,7 @@ fn handedness_and_each_actual_start_transform_first_moments() {
                     )
                     .unwrap();
                 let a = std::f64::consts::TAU / f64::from(starts);
-                let (s, c) = a.sin_cos();
+                let (s, c) = a.portable_sin_cos();
                 near(
                     next.first_moment_mm3[0],
                     c * mid(r.first_moment_mm3[0]) - s * mid(r.first_moment_mm3[1]),
@@ -410,7 +410,7 @@ fn interval_series_enclose_actual_linear_angle_and_square_root_derivatives() {
             if n > 0 {
                 power *= -2. / n as f64;
             }
-            let (ss, cc) = angle.sin_cos();
+            let (ss, cc) = angle.portable_sin_cos();
             let expected_s = power * [ss, cc, -ss, -cc][n % 4];
             let expected_c = power * [cc, -ss, -cc, ss][n % 4];
             assert!(s.0[n].lo <= expected_s && expected_s <= s.0[n].hi);

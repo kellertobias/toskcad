@@ -12,6 +12,7 @@ use multicad_kernel::{
     Solid, project_drawing,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 const RADIUS: f64 = 5.;
@@ -52,7 +53,7 @@ fn draw(solid: &Solid, options: DrawingProjection, pattern: HatchPattern) -> Vec
 /// A frame through `origin` whose normal is tilted by `tilt` from the
 /// cylinder axis toward -Y; paper u is world X.
 fn tilted(origin: [f64; 3], tilt: f64) -> PlaneFrame {
-    let (sin, cos) = tilt.sin_cos();
+    let (sin, cos) = tilt.portable_sin_cos();
     PlaneFrame {
         origin,
         u: [1., 0., 0.],
@@ -80,7 +81,7 @@ fn triangles(vectors: &[ProjectedVector]) -> f64 {
 #[test]
 fn a_retained_oblique_cylinder_section_has_exact_conics_and_generators() {
     let tilt = 0.35_f64;
-    let (sin, cos) = tilt.sin_cos();
+    let (sin, cos) = tilt.portable_sin_cos();
     let solid = cylinder();
     let frame = tilted([0., 0., HEIGHT / 2.], tilt);
     let options = DrawingProjection {
@@ -108,7 +109,7 @@ fn a_retained_oblique_cylinder_section_has_exact_conics_and_generators() {
     let face = conics(VectorRole::Section);
     assert!(!face.is_empty());
     for (center, major, minor) in face {
-        assert!(center[0].hypot(center[1]) < 1e-9);
+        assert!(center[0].portable_hypot(center[1]) < 1e-9);
         assert!((major - RADIUS / cos).abs() < 1e-9 && (minor - RADIUS).abs() < 1e-9);
     }
     // The whole wall ellipse lies between the caps here, so the cut face is
@@ -186,13 +187,15 @@ fn an_oblique_section_of_a_rounded_slot_keeps_exact_elliptical_ends() {
             major_mm, minor_mm, ..
         } = vector.curve
         {
-            assert!((major_mm - 2. / tilt.cos()).abs() < 1e-9 && (minor_mm - 2.).abs() < 1e-9);
+            assert!(
+                (major_mm - 2. / tilt.portable_cos()).abs() < 1e-9 && (minor_mm - 2.).abs() < 1e-9
+            );
             ends += 1;
         }
     }
     assert!(ends >= 2);
     // Stadium area: a 6 x 4 rectangle and a circle of radius 2, over cos.
-    let exact = (24. + 4. * PI) / tilt.cos();
+    let exact = (24. + 4. * PI) / tilt.portable_cos();
     let area = triangles(&vectors);
     assert!((area - exact).abs() < 2e-4 * exact, "{area} {exact}");
 }
@@ -354,7 +357,7 @@ fn a_rim_grazing_the_window_is_clipped_at_both_exact_crossings() {
         },
         HatchPattern::None,
     );
-    let half = (border / RADIUS).acos();
+    let half = (border / RADIUS).portable_acos();
     assert!(half < 0.01);
     let sweep: f64 = arcs(&vectors, VectorRole::Section, 0)
         .iter()
@@ -416,7 +419,7 @@ fn a_rim_tangent_to_an_occluding_bore_publishes_no_degenerate_arc() {
         // |p - (2, 0)| > 6 on the rim: cos(angle) < -7 / 20.
         let visible = arcs(&vectors, VectorRole::Visible, 0);
         assert_eq!(visible.len(), 1);
-        let exact = 2. * PI - 2. * (-0.35_f64).acos();
+        let exact = 2. * PI - 2. * (-0.35_f64).portable_acos();
         assert!((visible[0].1 - exact).abs() < 1e-9, "{visible:?}");
     }
 }
@@ -434,11 +437,11 @@ fn an_edge_piercing_another_body_changes_visibility_at_the_exact_entry() {
             hub: None,
             teeth: 24,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * a.cos(),
+            base_radius_mm: pitch * a.portable_cos(),
             tip_radius_mm: pitch + 1.,
             root_radius_mm: pitch - 1.25,
             root_fillet_radius_mm: 0.2,
-            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.portable_tan() - a,
             face_width_mm: 4.,
             bore_radius_mm: 3.,
             twist_rad_per_mm: 0.,
@@ -493,7 +496,7 @@ fn an_edge_piercing_another_body_changes_visibility_at_the_exact_entry() {
             (VectorRole::Visible, [4., 9.5]),
         ] {
             let [from, to] = [paper([x, y, low]), paper([x, y, high])];
-            let near = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-9;
+            let near = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).portable_hypot(p[1] - q[1]) < 1e-9;
             let found = vectors
                 .iter()
                 .filter(|vector| vector.source_index == 1 && vector.role == role)
@@ -520,11 +523,11 @@ fn spur(offset: f64) -> Solid {
             hub: None,
             teeth: 24,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * a.cos(),
+            base_radius_mm: pitch * a.portable_cos(),
             tip_radius_mm: pitch + 1.,
             root_radius_mm: pitch - 1.25,
             root_fillet_radius_mm: 0.2,
-            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.portable_tan() - a,
             face_width_mm: 4.,
             bore_radius_mm: 3.,
             twist_rad_per_mm: 0.,
@@ -658,7 +661,7 @@ fn block_in_cylinder_visibility_agrees_with_membership_marching_in_both_provider
         let steps = 20_000;
         (1..steps).any(|i| {
             let ahead = y - 20. * f64::from(i) / f64::from(steps);
-            let in_cylinder = x.hypot(ahead) < RADIUS && z > 0. && z < HEIGHT;
+            let in_cylinder = x.portable_hypot(ahead) < RADIUS && z > 0. && z < HEIGHT;
             let in_block = x > -4.4 && x < 4.9 && ahead > -depth && ahead < -2. && z > 2. && z < 4.;
             (in_cylinder || in_block) && y - ahead > 1e-3
         })

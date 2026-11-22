@@ -6,6 +6,7 @@ use multicad_kernel::{
     BooleanOperation, DrawingProjection, DrawingSolid, GeometryErrorKind, GeometryPolicy,
     PlaneFrame, ProjectedVector, RigidTransform, Solid, project_drawing, rust_kernel::Rational,
 };
+use multicad_precision::PortableMath as _;
 
 fn box_solid(rust: bool, size: [i64; 3], origin: [f64; 3]) -> Solid {
     let policy = GeometryPolicy::default();
@@ -153,7 +154,7 @@ fn oblique_section_is_exact_in_its_own_plane_and_matches_native_geometry() {
     assert_eq!(rust.len(), 3);
     assert_same_lines(&section_lines(&rust), &section_lines(&native));
     for [[x, y], [u, v]] in section_lines(&rust) {
-        assert!(((x - u).hypot(y - v) - 1.2 * 6_f64.sqrt()).abs() < 1e-7);
+        assert!(((x - u).portable_hypot(y - v) - 1.2 * 6_f64.sqrt()).abs() < 1e-7);
     }
 }
 

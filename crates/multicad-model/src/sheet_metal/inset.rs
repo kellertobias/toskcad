@@ -301,7 +301,7 @@ fn crossing(outline: &[PlanarEdge]) -> bool {
                 let u = [back[0] - corner[0], back[1] - corner[1]];
                 let v = [next[0] - corner[0], next[1] - corner[1]];
                 return (u[0] * v[1] - u[1] * v[0]).abs()
-                    <= 1e-9 * u[0].hypot(u[1]) * v[0].hypot(v[1])
+                    <= 1e-9 * u[0].portable_hypot(u[1]) * v[0].portable_hypot(v[1])
                     && u[0] * v[0] + u[1] * v[1] > 0.;
             }
             segments_meet(p, q, r, s)
@@ -324,7 +324,7 @@ fn inside(outline: &[CurvedEdge2d], web: &[[[f64; 2]; 2]], clearance: f64) -> bo
         let d = [b[0] - a[0], b[1] - a[1]];
         let t = (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / (d[0] * d[0] + d[1] * d[1]))
             .clamp(0., 1.);
-        (p[0] - a[0] - t * d[0]).hypot(p[1] - a[1] - t * d[1])
+        (p[0] - a[0] - t * d[0]).portable_hypot(p[1] - a[1] - t * d[1])
     };
     outline.iter().all(|edge| match *edge {
         CurvedEdge2d::Circle { center, radius_mm } => {
@@ -406,7 +406,7 @@ fn folded_web(layout: &SheetLayout) -> Result<Vec<WebEdge>, String> {
     let flange = |index: usize| layout.flanges.iter().find(|f| f.flange.edge == index);
     let direction = |index: usize| {
         let (a, b) = edges[index];
-        let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+        let length = (b[0] - a[0]).portable_hypot(b[1] - a[1]);
         ([(b[0] - a[0]) / length, (b[1] - a[1]) / length], length)
     };
     // Depth of a corner-flush relief on `index` at its start or end corner,
@@ -510,7 +510,7 @@ fn folded_web(layout: &SheetLayout) -> Result<Vec<WebEdge>, String> {
             if !own_flush[1] {
                 points.push(at(limit, 0.));
             }
-            points.dedup_by(|p, q| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-9);
+            points.dedup_by(|p, q| (p[0] - q[0]).portable_hypot(p[1] - q[1]) < 1e-9);
             let hinge = points.windows(2).position(|pair| pair == root);
             Ok(WebEdge {
                 points,
@@ -645,7 +645,7 @@ pub(super) fn edge_points(
         }
     }
     points.push(b);
-    points.dedup_by(|p, q| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-9);
+    points.dedup_by(|p, q| (p[0] - q[0]).portable_hypot(p[1] - q[1]) < 1e-9);
     Ok(points)
 }
 

@@ -115,7 +115,7 @@ fn a_partial_radius_three_bend_keeps_the_exact_trim_and_adds_a_directed_wall() {
     let loops = clip_section_loops(loops, Z, &[cut], TOL, 20).unwrap();
     assert_eq!(loops.len(), 1);
     let root = 5_f64.sqrt();
-    let expected_area = (2. * root + 9. * (2_f64 / 3.).asin()) / 2. - 2.25 * FRAC_PI_4;
+    let expected_area = (2. * root + 9. * (2_f64 / 3.).portable_asin()) / 2. - 2.25 * FRAC_PI_4;
     assert!((area(&loops) - expected_area).abs() < TOL);
     let generated_wall = loops[0]
         .iter()
@@ -130,7 +130,7 @@ fn a_partial_radius_three_bend_keeps_the_exact_trim_and_adds_a_directed_wall() {
             _ => None,
         })
         .unwrap();
-    assert!((outer_trim.start_rad() - (2_f64 / 3.).acos()).abs() < TOL);
+    assert!((outer_trim.start_rad() - (2_f64 / 3.).portable_acos()).abs() < TOL);
     assert!((outer_trim.start_rad() + outer_trim.sweep_rad() - FRAC_PI_2).abs() < TOL);
 }
 
@@ -145,7 +145,7 @@ fn genuine_ellipse_is_retained_on_both_sides_of_its_parameter_seam() {
     assert_eq!(loops.len(), 1);
     assert_eq!(loops[0].len(), 3);
     let ratio = 1_f64 / 3.;
-    let expected = 6. * (ratio.acos() - ratio * (1. - ratio * ratio).sqrt());
+    let expected = 6. * (ratio.portable_acos() - ratio * (1. - ratio * ratio).sqrt());
     assert!((area(&loops) - expected).abs() < TOL);
     assert_eq!(
         clip_section_loops(closed_ellipse(), Z, &[cut], TOL, 1),

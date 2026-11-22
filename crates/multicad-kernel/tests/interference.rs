@@ -1,5 +1,6 @@
 use multicad_core::document::EntityId;
 use multicad_kernel::*;
+use multicad_precision::PortableMath as _;
 fn p() -> GeometryPolicy {
     GeometryPolicy::default()
 }
@@ -235,7 +236,7 @@ fn overlapping_compound_members_count_actual_common_occupied_volume_once() {
 fn rotated_intersecting_solids_keep_only_consistent_native_witnesses() {
     let a = Solid::box_solid([10.; 3], p()).unwrap();
     let angle: f64 = 1.;
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     let b = a
         .transformed(RigidTransform {
             rotation: [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]],

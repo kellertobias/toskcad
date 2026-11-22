@@ -56,7 +56,7 @@ pub(super) fn ensure_coplanar(picks: &[ProfileFacePick]) -> Result<(), String> {
             n[2] * m[0] - n[0] * m[2],
             n[0] * m[1] - n[1] * m[0],
         ];
-        let angle = dot(cross, cross).sqrt().atan2(dot(n, m));
+        let angle = dot(cross, cross).sqrt().portable_atan2(dot(n, m));
         let offset = dot(sub(pick.frame.origin, first.frame.origin), n);
         let count = picks.len();
         let face = index + 1;
@@ -700,7 +700,7 @@ mod tests {
         assert!(error.contains("mm from the plane"), "{error}");
         let mut tilted = pick.clone();
         let a: f64 = 0.01;
-        tilted.frame.n = [a.sin(), 0., a.cos()];
+        tilted.frame.n = [a.portable_sin(), 0., a.portable_cos()];
         let error = ensure_coplanar(&[pick.clone(), tilted]).unwrap_err();
         assert!(error.contains("tilted 0.573°"), "{error}");
         let mut opposite = pick.clone();

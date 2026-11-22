@@ -9,6 +9,7 @@ use multicad_kernel::{
         prism::{Location, Prism},
     },
 };
+use multicad_precision::PortableMath as _;
 
 fn integer(value: i64) -> Rational {
     Rational::new(value, 1).unwrap()
@@ -323,7 +324,7 @@ fn placed_box_side_has_exact_contours_and_refuses_a_misaligned_bore() {
 
 #[test]
 fn rotated_box_bounds_and_mesh_follow_the_same_rigid_placement() {
-    let (sin, cos) = 0.7_f64.sin_cos();
+    let (sin, cos) = 0.7_f64.portable_sin_cos();
     let placement = PlaneFrame {
         origin: [-5., 3., -2.],
         u: [cos, sin, 0.],
@@ -831,7 +832,7 @@ fn exact_contours_preserve_both_bores_and_match_picking_edge_keys() {
             .planar_face_contours(1, PlaneFrame::default())
             .is_err()
     );
-    let (sin, cos) = 1e-6_f64.sin_cos();
+    let (sin, cos) = 1e-6_f64.portable_sin_cos();
     let tilted = PlaneFrame {
         origin: [0., 0., 8.],
         u: [cos, 0., sin],
@@ -892,7 +893,7 @@ fn cylinder_contours_are_analytic_at_both_caps_regardless_of_display_density() {
             })
             .is_err()
     );
-    let (sin, cos) = 1e-6_f64.sin_cos();
+    let (sin, cos) = 1e-6_f64.portable_sin_cos();
     let tilted = PlaneFrame {
         origin: [5., 6., 3.],
         u: [cos, 0., sin],

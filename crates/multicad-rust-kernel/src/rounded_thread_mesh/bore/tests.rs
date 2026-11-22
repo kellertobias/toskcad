@@ -7,13 +7,13 @@ use std::{
 fn bore(left_hand: bool) -> ThroughBore {
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     ThroughBore::new(
         Thread::new(Spec {
             major_radius_mm: 3.175,
             pitch_mm: p,
             length_mm: 3.7 * p,
-            depth_mm: p / (3. * a.tan()),
+            depth_mm: p / (3. * a.portable_tan()),
             crest_radius_mm: r,
             root_radius_mm: r,
             flank_angle_deg: 27.5,
@@ -257,7 +257,7 @@ fn cap_fixture(
         let count = if ring == 0 { inner_count } else { 64 };
         for i in 0..count {
             let angle = TAU * i as f64 / count as f64;
-            let (s, c) = angle.sin_cos();
+            let (s, c) = angle.portable_sin_cos();
             let id = builder.mesh.vertices.len() as u32 / 3;
             builder.mesh.vertices.extend([radius * c, radius * s, 0.]);
             builder.parameters.push([angle, 0.]);

@@ -4,6 +4,7 @@ use crate::{
     Error,
     display::{DisplayMesh, MeshError, Tessellation},
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 const MAX_DIMENSION_MM: f64 = 1e7;
@@ -70,7 +71,7 @@ impl Annulus {
         }
         let scale = direction.into_iter().map(f64::abs).fold(1., f64::max);
         let [x, y, z] = direction.map(|component| component / scale);
-        (x.hypot(y) * self.outer_radius_mm + z.max(0.) * self.height_mm) * scale
+        (x.portable_hypot(y) * self.outer_radius_mm + z.max(0.) * self.height_mm) * scale
     }
 
     /// Test the closed annular material with an optional radial and axial tolerance.
@@ -81,7 +82,7 @@ impl Annulus {
         {
             return false;
         }
-        let radius = x.hypot(y);
+        let radius = x.portable_hypot(y);
         z >= -tolerance_mm
             && z <= self.height_mm + tolerance_mm
             && radius >= self.inner_radius_mm - tolerance_mm
@@ -102,7 +103,11 @@ pub fn tessellate(annulus: &Annulus, options: Tessellation) -> Result<DisplayMes
     let outer = annulus.outer_radius_mm;
     let inner = annulus.inner_radius_mm;
     let height = annulus.height_mm;
-    let sagitta_angle = 4. * (options.deflection / (2. * outer)).sqrt().min(1.).asin();
+    let sagitta_angle = 4.
+        * (options.deflection / (2. * outer))
+            .sqrt()
+            .min(1.)
+            .portable_asin();
     let sectors = (TAU / options.angle.min(sagitta_angle)).ceil();
     if sectors > (options.triangle_limit / 8) as f64 {
         return Err(MeshError::BudgetExceeded);
@@ -114,7 +119,7 @@ pub fn tessellate(annulus: &Annulus, options: Tessellation) -> Result<DisplayMes
         face_indices: Vec::with_capacity(sectors * 8),
     };
     for sector in 0..sectors {
-        let (sin, cos) = (TAU * sector as f64 / sectors as f64).sin_cos();
+        let (sin, cos) = (TAU * sector as f64 / sectors as f64).portable_sin_cos();
         let [ox, oy] = [outer * cos, outer * sin];
         let [ix, iy] = [inner * cos, inner * sin];
         mesh.vertices

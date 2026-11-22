@@ -9,7 +9,7 @@ use std::f64::consts::TAU;
 
 /// Uniform chord count of a circular arc with sagitta at most `tolerance`.
 fn arc_count(radius: f64, sweep: f64, tolerance: f64) -> f64 {
-    let step = 2. * (1. - tolerance / radius).max(-1.).acos();
+    let step = 2. * (1. - tolerance / radius).max(-1.).portable_acos();
     (sweep / step).ceil().max(1.)
 }
 
@@ -65,7 +65,7 @@ impl Worm {
             .into_iter()
             .map(|t| {
                 let r = thread.radius(t, height);
-                let (s, c) = (t + self.phase_rad()).sin_cos();
+                let (s, c) = (t + self.phase_rad()).portable_sin_cos();
                 [r * c, r * s]
             })
             .collect())
@@ -151,7 +151,8 @@ impl Worm {
             self.ring_through(z, tolerance_mm, limit, phases)
                 .map_err(|_| ViewError::Limit)
         };
-        let on = |p: [f64; 2], radius: f64| (p[0].hypot(p[1]) - radius).abs() <= 1e-9 * radius;
+        let on =
+            |p: [f64; 2], radius: f64| (p[0].portable_hypot(p[1]) - radius).abs() <= 1e-9 * radius;
         // Segments not lying on any of the given circles.
         let segments = |ring: &[[f64; 2]], circles: &[f64]| {
             (0..ring.len())
@@ -192,13 +193,13 @@ impl Worm {
         let thread_far = far_mm + half;
         for [a, b] in segments(&ring, &[major, root]) {
             let middle = [(a[0] + b[0]) / 2., (a[1] + b[1]) / 2.];
-            let theta = middle[1].atan2(middle[0]) - self.phase_rad();
+            let theta = middle[1].portable_atan2(middle[0]) - self.phase_rad();
             let phase =
                 (thread_far - rate * theta.rem_euclid(std::f64::consts::TAU)).rem_euclid(pitch);
             let seen = phase > band[0]
                 && phase < band[1]
                 // The threshold vertex itself rounds within a few ulps.
-                && [a, b].iter().all(|p| p[0].hypot(p[1]) >= threshold - 1e-12 * major);
+                && [a, b].iter().all(|p| p[0].portable_hypot(p[1]) >= threshold - 1e-12 * major);
             if seen || hidden {
                 view.push(polyline([a, b], far_mm, !seen));
             }
@@ -255,7 +256,7 @@ impl Wheel {
             .ok_or(MeshError::BudgetExceeded)?;
         let arc = |ring: &mut Vec<[f64; 2]>, radius: f64, start: f64, sweep: f64, count: f64| {
             ring.extend((0..count as usize).map(|i| {
-                let (s, c) = (start + sweep * i as f64 / count).sin_cos();
+                let (s, c) = (start + sweep * i as f64 / count).portable_sin_cos();
                 [radius * c, radius * s]
             }));
         };
@@ -296,8 +297,8 @@ mod tests {
             for k in 1..8 {
                 let t = f64::from(k) / 8.;
                 let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-                let angle = p[1].atan2(p[0]);
-                worst = worst.max((p[0].hypot(p[1]) - radius(angle)).abs());
+                let angle = p[1].portable_atan2(p[0]);
+                worst = worst.max((p[0].portable_hypot(p[1]) - radius(angle)).abs());
             }
         }
         worst

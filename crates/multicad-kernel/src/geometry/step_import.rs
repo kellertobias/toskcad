@@ -1029,7 +1029,7 @@ fn match_arcs(expected: &[ArcEdge], actual: &[ArcEdge], tolerance: f64) -> bool 
     };
     let mid = |rim: &ArcEdge| {
         let tangent = cross(rim.normal, rim.radial_start);
-        let (s, c) = (rim.sweep_rad * 0.5).sin_cos();
+        let (s, c) = (rim.sweep_rad * 0.5).portable_sin_cos();
         std::array::from_fn(|i| c.mul_add(rim.radial_start[i], s * tangent[i]))
     };
     match_round_edges(expected, actual, tolerance, |rim, candidate| {
@@ -1277,7 +1277,7 @@ impl Solid {
 
 fn arc_edge(frame: ReferenceFrame, radius_mm: f64, start_rad: f64, sweep_rad: f64) -> ArcEdge {
     let radial = |angle: f64| {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = angle.portable_sin_cos();
         std::array::from_fn(|i| c.mul_add(frame.u[i], s * frame.v[i]))
     };
     let (start, end) = if sweep_rad > 0. {
@@ -1340,7 +1340,7 @@ fn compare_topology<'a>(
                     sweep_rad,
                 }),
             ) if (sweep_rad.abs() - PI).abs() < 1e-9 => {
-                let (sin, cos) = (start_rad + sweep_rad * 0.5).sin_cos();
+                let (sin, cos) = (start_rad + sweep_rad * 0.5).portable_sin_cos();
                 semicircles.push(SemicircleEdge {
                     center_mm: frame.origin_mm,
                     normal: frame.normal(),

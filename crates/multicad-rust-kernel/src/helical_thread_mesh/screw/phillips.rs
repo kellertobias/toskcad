@@ -244,7 +244,7 @@ fn mouth_ring(
     ring.reverse();
     let angle = |id| {
         let [x, y, _] = point(mesh, id);
-        y.atan2(x).rem_euclid(TAU)
+        y.portable_atan2(x).rem_euclid(TAU)
     };
     let first = (0..ring.len())
         .min_by(|&a, &b| angle(ring[a]).total_cmp(&angle(ring[b])))

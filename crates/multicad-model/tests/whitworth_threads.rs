@@ -14,6 +14,7 @@ use multicad_model::{
     Compiler,
     export::{Exporter, mesh},
 };
+use multicad_precision::PortableMath as _;
 use std::{f64::consts::PI, path::Path};
 
 fn actor() -> Actor {
@@ -144,15 +145,15 @@ fn material_at(solid: &Solid, radius: f64, z: f64, inside: bool, offset: f64) {
 fn independent_form(pitch: f64) -> (f64, f64) {
     let theta = 27.5_f64.to_radians();
     (
-        pitch / (3. * theta.tan()),
-        pitch * theta.cos() / (12. * (1. - theta.sin())),
+        pitch / (3. * theta.portable_tan()),
+        pitch * theta.portable_cos() / (12. * (1. - theta.portable_sin())),
     )
 }
 fn verify_true_circular_crest_and_valley(solid: &Solid, resolved: &ResolvedThread, internal: bool) {
     let p = resolved.pitch_mm;
     let major = resolved.major_radius_mm;
     let (depth, r) = independent_form(p);
-    let a = r * 27.5_f64.to_radians().cos();
+    let a = r * 27.5_f64.to_radians().portable_cos();
     let offset = (0.02 * r).min(0.002);
     assert!((resolved.profile.rounding_radius_mm.unwrap() - r).abs() < 1e-12);
     assert!((resolved.profile.depth_mm - depth).abs() < 1e-12);
@@ -241,7 +242,7 @@ fn verify_fit(case: &Case, resolved: &ResolvedThread, internal: bool) {
 fn radial_section(z: f64, p: f64, major: f64) -> f64 {
     let (h, r) = independent_form(p);
     let theta = 27.5_f64.to_radians();
-    let a = r * theta.cos();
+    let a = r * theta.portable_cos();
     let q = z.rem_euclid(p).min(p - z.rem_euclid(p));
     if q <= a {
         major - r + (r * r - q * q).sqrt()
@@ -249,7 +250,7 @@ fn radial_section(z: f64, p: f64, major: f64) -> f64 {
         let dz = p / 2. - q;
         major - h + r - (r * r - dz * dz).sqrt()
     } else {
-        major - r * (1. - theta.sin()) - (q - a) / theta.tan()
+        major - r * (1. - theta.portable_sin()) - (q - a) / theta.portable_tan()
     }
 }
 fn independent_area(p: f64, major: f64) -> f64 {
@@ -352,8 +353,8 @@ fn check_step(solid: &Solid, path: &Path) -> Solid {
     back
 }
 fn mesh_material(mesh: &mesh::ReadMesh, radius: f64, angle: f64, z: f64) -> bool {
-    let x = radius * angle.cos();
-    let y = radius * angle.sin();
+    let x = radius * angle.portable_cos();
+    let y = radius * angle.portable_sin();
     let mut crossings = 0;
     // Section actual exported triangles and classify by 2D crossing parity.
     // Neither the native classifier nor receipts supply material membership.

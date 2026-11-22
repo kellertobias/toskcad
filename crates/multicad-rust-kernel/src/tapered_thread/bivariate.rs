@@ -201,6 +201,7 @@ impl<const U: usize, const Z: usize> Div for Bi<U, Z> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use multicad_precision::PortableMath as _;
     #[test]
     fn mixed_derivatives_enclose_independent_elementary_formulas_and_refuse_singular_data() {
         type B = Bi<5, 5>;
@@ -210,9 +211,9 @@ mod tests {
         for (value, sign) in [(q[0], 1.), (q[1], -1.)] {
             value.checked().unwrap();
             let derivative = if sign > 0. {
-                -0.5f64.sin()
+                -0.5f64.portable_sin()
             } else {
-                -0.5f64.cos()
+                -0.5f64.portable_cos()
             };
             assert!(value.c[1][1].lo <= derivative && value.c[1][1].hi >= derivative);
         }

@@ -8,6 +8,7 @@ use crate::{
     project_file::ContentHash,
     references::{GeometryIntent, Origin},
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub const OCCURRENCE_SCHEMA: u32 = 2;
@@ -159,7 +160,9 @@ impl ExternalGeometry {
                 Err(invalid("External circle has an invalid radius"))
             }
             Self::BSpline { poles_mm, basis } => basis.validate(poles_mm.len()),
-            Self::Line { a_mm, b_mm } if (a_mm[0] - b_mm[0]).hypot(a_mm[1] - b_mm[1]) <= 1e-9 => {
+            Self::Line { a_mm, b_mm }
+                if (a_mm[0] - b_mm[0]).portable_hypot(a_mm[1] - b_mm[1]) <= 1e-9 =>
+            {
                 Err(invalid("External line is degenerate"))
             }
             Self::Arc {
@@ -168,11 +171,11 @@ impl ExternalGeometry {
                 b_mm,
                 ..
             } => {
-                let radius = (a_mm[0] - center_mm[0]).hypot(a_mm[1] - center_mm[1]);
-                let other = (b_mm[0] - center_mm[0]).hypot(b_mm[1] - center_mm[1]);
+                let radius = (a_mm[0] - center_mm[0]).portable_hypot(a_mm[1] - center_mm[1]);
+                let other = (b_mm[0] - center_mm[0]).portable_hypot(b_mm[1] - center_mm[1]);
                 if radius <= 1e-9
                     || (radius - other).abs() > 1e-7
-                    || (a_mm[0] - b_mm[0]).hypot(a_mm[1] - b_mm[1]) <= 1e-9
+                    || (a_mm[0] - b_mm[0]).portable_hypot(a_mm[1] - b_mm[1]) <= 1e-9
                 {
                     Err(invalid(
                         "External arc is degenerate or has inconsistent radii",

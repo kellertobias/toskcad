@@ -1,5 +1,6 @@
 use super::*;
 use crate::step_read::owned_insert::DocumentOptions;
+use multicad_precision::PortableMath as _;
 use num_rational::BigRational as Q;
 
 pub(super) fn detached_geometry(
@@ -163,8 +164,8 @@ fn actual_constant_angle_generators_have_whole_original_field_triangle_proofs() 
     let rays = [
         [a[0], a[1]],
         [
-            delta.cos() * a[0] - delta.sin() * a[1],
-            delta.sin() * a[0] + delta.cos() * a[1],
+            delta.portable_cos() * a[0] - delta.portable_sin() * a[1],
+            delta.portable_sin() * a[0] + delta.portable_cos() * a[1],
         ],
     ];
     let solve = |u: f64, ray: [f64; 2]| {

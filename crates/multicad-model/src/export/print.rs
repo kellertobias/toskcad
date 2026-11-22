@@ -16,6 +16,7 @@ use multicad_core::{
     project_file::ContentHash,
 };
 use multicad_kernel::{BooleanOperation, GeometryErrorKind, GeometryPolicy, RigidTransform, Solid};
+use multicad_precision::PortableMath as _;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
@@ -309,7 +310,7 @@ fn upright_cylinder_clearance(
         let [min, max] = object.bounds_mm;
         [min[0].midpoint(max[0]), min[1].midpoint(max[1])]
     });
-    let distance = (a[0] - b[0]).hypot(a[1] - b[1]);
+    let distance = (a[0] - b[0]).portable_hypot(a[1] - b[1]);
     // Around tangency the computed distance cannot certify either result at
     // the modeling tolerance. Preserve the blocked preview in that case.
     Some(if distance < combined - tolerance {

@@ -34,7 +34,7 @@ pub(super) fn endpoint_separation(a: &Piece, ai: usize, b: &Piece, bi: usize) ->
             (p[i].lo + p[i].hi) * 0.5 - (endpoint[i].lo + endpoint[i].hi) * 0.5
         })
     };
-    let length = |p: [f64; 2]| p[0].hypot(p[1]);
+    let length = |p: [f64; 2]| p[0].portable_hypot(p[1]);
     // A repeated end control is a stationary end derivative; the first
     // distinct control gives the actual leaving direction. The strict
     // control-side test below certifies whichever direction is chosen.
@@ -86,7 +86,7 @@ pub(super) fn collinear_overlap(a: &Piece, b: &Piece, tolerance: f64) -> bool {
     let end = normalized(a.controls[a.degree]);
     let d = [end[0] - start[0], end[1] - start[1]];
     let middle = |v: Interval| (v.lo + v.hi) * 0.5;
-    let length = middle(d[0]).hypot(middle(d[1]));
+    let length = middle(d[0]).portable_hypot(middle(d[1]));
     if !length.is_finite() || length <= tolerance {
         return false;
     }
@@ -176,7 +176,7 @@ pub(crate) fn self_contacts(
                     &mut budget,
                 )? {
                     if contacts.iter().any(|previous| {
-                        (point[0] - previous[0]).hypot(point[1] - previous[1])
+                        (point[0] - previous[0]).portable_hypot(point[1] - previous[1])
                             <= policy.linear_tolerance_mm * 2.
                     }) {
                         return Err(uncertain());

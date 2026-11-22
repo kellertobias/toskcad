@@ -149,7 +149,7 @@ fn phase_interference_nonexact_axes_prefix_penetration_and_short_overlap_refuse(
             1 => frame.origin_mm[0] = f64::MIN_POSITIVE,
             2 => frame.origin_mm[2] = 0.001,
             3 => {
-                let (s, c) = 0.13_f64.sin_cos();
+                let (s, c) = 0.13_f64.portable_sin_cos();
                 frame.axes = [[c, s, 0.], [-s, c, 0.], [0., 0., 1.]];
             }
             4 => {
@@ -400,7 +400,7 @@ fn source_owned_inner_envelope_and_genuine_admitted_tiny_root_have_honest_outcom
         crest_width_mm: 0.0625,
         lower_flank_deg: 1.,
         upper_flank_deg: 1.,
-        depth_mm: (0.5 - 0.0625) / (2. * a.tan()) - r * (1. / a.sin() - 1.),
+        depth_mm: (0.5 - 0.0625) / (2. * a.portable_tan()) - r * (1. / a.portable_sin() - 1.),
         root_radius_mm: Some(r),
         starts: 1,
         left_hand: false,

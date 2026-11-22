@@ -7,6 +7,7 @@
 use super::{Budget, Proof, Result, difference, norm, vector};
 use crate::brep::{Curve, Edge, Frame, Point, Surface};
 use crate::tapered_thread::interval::I;
+use multicad_precision::PortableMath as _;
 
 type V = [I; 3];
 #[derive(Clone, Copy)]
@@ -356,7 +357,7 @@ pub(super) fn periodic_map(
     let (xu, xv) = (d(xm, um), d(xm, vm));
     let c = (xu * vv - xv * uv) / determinant;
     let s = (xv * uu - xu * uv) / determinant;
-    let phi = s.atan2(c) + phase_shift;
+    let phi = s.portable_atan2(c) + phase_shift;
     if !phi.is_finite() {
         return Ok(None);
     }

@@ -7,6 +7,7 @@ use multicad_core::{
     document::{Document, EntityData, EntityId, Mutation},
     references::ReferenceReport,
 };
+use multicad_precision::PortableMath as _;
 #[cfg(test)]
 use multicad_solver::prepare_edit;
 use multicad_solver::{EvaluatedSketch, SketchEdit, SolveState, prepare_edit_with_report};
@@ -376,11 +377,11 @@ impl ConstraintEditor {
             .find(|g| g.id() == element)
             .map(|g| match g {
                 multicad_core::sketch::Geometry::Line { a, b, .. } => {
-                    (b[0] - a[0]).hypot(b[1] - a[1])
+                    (b[0] - a[0]).portable_hypot(b[1] - a[1])
                 }
                 multicad_core::sketch::Geometry::Circle { radius_mm, .. } => *radius_mm,
                 multicad_core::sketch::Geometry::Arc { center, a, .. } => {
-                    (a[0] - center[0]).hypot(a[1] - center[1])
+                    (a[0] - center[0]).portable_hypot(a[1] - center[1])
                 }
                 _ => 0.,
             })

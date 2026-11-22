@@ -85,7 +85,7 @@ impl ExternalStock {
                 for pair in breaks.windows(2) {
                     let part = integral(pair[0], pair[1], |phase| {
                         let r = thread.radius_at_phase(phase);
-                        let (sin, cos) = ((z - shift - phase) / rate).sin_cos();
+                        let (sin, cos) = ((z - shift - phase) / rate).portable_sin_cos();
                         [
                             (shaft.radius_mm() - r) * (shaft.radius_mm() + r) / 2.,
                             (shaft.radius_mm() - r)
@@ -198,7 +198,7 @@ impl Solid {
         let start = position(source_frame, [0., 0., if reversed { height } else { 0. }]);
         let distance = |a: Point, b: Point| {
             let [x, y, z] = std::array::from_fn(|i| a[i] - b[i]);
-            x.hypot(y).hypot(z)
+            x.portable_hypot(y).portable_hypot(z)
         };
         if self.policy != policy
             || policy.boolean_fuzzy_mm != 0.
@@ -213,7 +213,7 @@ impl Solid {
         }
         let chart = stock_frame::Chart::new(source_frame);
         let [x, y, _] = chart.vector(frame.u);
-        let norm = x.hypot(y);
+        let norm = x.portable_hypot(y);
         let [c, s] = [x / norm, y / norm];
         let sign = if reversed { -1. } else { 1. };
         let placed = PlaneFrame {

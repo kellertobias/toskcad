@@ -136,7 +136,8 @@ fn operating(
     transverse_alpha: f64,
     transverse_factor: f64,
 ) -> Result<(f64, f64, f64), DocumentError> {
-    let target = transverse_alpha.tan() - transverse_alpha + 2. * sum * alpha.tan() / z;
+    let target =
+        transverse_alpha.portable_tan() - transverse_alpha + 2. * sum * alpha.portable_tan() / z;
     if target <= 0. || !target.is_finite() {
         return Err(invalid(
             "Shift sum has no positive acute working pressure angle",
@@ -145,14 +146,14 @@ fn operating(
     let (mut lo, mut hi) = (0., std::f64::consts::FRAC_PI_2 - 1e-6);
     for _ in 0..80 {
         let mid = (lo + hi) / 2.;
-        if mid.tan() - mid < target {
+        if mid.portable_tan() - mid < target {
             lo = mid;
         } else {
             hi = mid;
         }
     }
     let aw = (lo + hi) / 2.;
-    let y = z / 2. * transverse_factor * (transverse_alpha.cos() / aw.cos() - 1.);
+    let y = z / 2. * transverse_factor * (transverse_alpha.portable_cos() / aw.portable_cos() - 1.);
     Ok((aw, y, sum - y))
 }
 impl GearParameters {
@@ -212,7 +213,7 @@ impl GearParameters {
             alpha,
             transverse_alpha,
             if self.module_system == GearModuleSystem::Normal {
-                1. / beta.cos()
+                1. / beta.portable_cos()
             } else {
                 1.
             },
@@ -289,7 +290,7 @@ pub fn shifted_gear_pair_geometry(
         },
         alpha,
         if a.module_system == GearModuleSystem::Normal {
-            1. / a.helix_angle_rad.cos()
+            1. / a.helix_angle_rad.portable_cos()
         } else {
             1.
         },
@@ -303,15 +304,15 @@ pub fn shifted_gear_pair_geometry(
     let rw2 = center * f64::from(b.teeth) / z;
     let q1 = (a.tip_radius_mm.powi(2) - a.base_radius_mm.powi(2)).sqrt();
     let q2 = (b.tip_radius_mm.powi(2) - b.base_radius_mm.powi(2)).sqrt();
-    let approach = q2 - rw2 * aw.sin();
-    let recess = q1 - rw1 * aw.sin();
-    let contact = (approach + recess) / (PI * a.transverse_module_mm * alpha.cos());
+    let approach = q2 - rw2 * aw.portable_sin();
+    let recess = q1 - rw1 * aw.portable_sin();
+    let contact = (approach + recess) / (PI * a.transverse_module_mm * alpha.portable_cos());
     if !contact.is_finite()
         || contact <= 1.
         || approach <= 0.
         || recess <= 0.
-        || rw1 * aw.sin() - approach < a.base_radius_mm * flank_start(a)
-        || rw2 * aw.sin() - recess < b.base_radius_mm * flank_start(b)
+        || rw1 * aw.portable_sin() - approach < a.base_radius_mm * flank_start(a)
+        || rw2 * aw.portable_sin() - recess < b.base_radius_mm * flank_start(b)
     {
         return Err(invalid(
             "Shifted pair needs contact ratio >1 and full active contact above both actual circular-fillet joins",
@@ -333,14 +334,20 @@ pub(super) fn validate_shifted_profile(g: &ResolvedGear) -> Result<(), DocumentE
     let t0 = flank_start(g);
     let ta = (g.tip_radius_mm.powi(2) / b.powi(2) - 1.).sqrt();
     let root_half = if foot < b {
-        g.half_base_angle_rad + (f / (root + f)).asin()
+        g.half_base_angle_rad + (f / (root + f)).portable_asin()
     } else {
         let angle = t0 - g.half_base_angle_rad;
-        let px = b * (t0.cos() + t0 * t0.sin()) * g.half_base_angle_rad.cos()
-            + b * (t0.sin() - t0 * t0.cos()) * g.half_base_angle_rad.sin();
-        let py = -b * (t0.cos() + t0 * t0.sin()) * g.half_base_angle_rad.sin()
-            + b * (t0.sin() - t0 * t0.cos()) * g.half_base_angle_rad.cos();
-        -(py - f * (angle + PI / 2.).sin()).atan2(px - f * (angle + PI / 2.).cos())
+        let px =
+            b * (t0.portable_cos() + t0 * t0.portable_sin()) * g.half_base_angle_rad.portable_cos()
+                + b * (t0.portable_sin() - t0 * t0.portable_cos())
+                    * g.half_base_angle_rad.portable_sin();
+        let py = -b
+            * (t0.portable_cos() + t0 * t0.portable_sin())
+            * g.half_base_angle_rad.portable_sin()
+            + b * (t0.portable_sin() - t0 * t0.portable_cos())
+                * g.half_base_angle_rad.portable_cos();
+        -(py - f * (angle + PI / 2.).portable_sin())
+            .portable_atan2(px - f * (angle + PI / 2.).portable_cos())
     };
     if !t0.is_finite()
         || !root_half.is_finite()

@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Band {
@@ -50,7 +51,8 @@ impl Herringbone {
         let per_tooth = outline.len() / self.teeth() as usize;
         let first = &outline[tooth as usize * per_tooth];
         let last = &outline[tooth as usize * per_tooth + per_tooth - 1];
-        let [right, left] = [last.edge.point(0.), first.edge.point(0.)].map(|[x, y]| y.atan2(x));
+        let [right, left] =
+            [last.edge.point(0.), first.edge.point(0.)].map(|[x, y]| y.portable_atan2(x));
         // The left foot precedes the right foot by less than one pitch.
         [right, right - (right - left).rem_euclid(TAU)]
     }
@@ -172,7 +174,10 @@ impl Curve {
             } => {
                 let angle = (to - from).mul_add(fraction, from);
                 gear.section_point(
-                    [radius_mm * angle.cos(), radius_mm * angle.sin()],
+                    [
+                        radius_mm * angle.portable_cos(),
+                        radius_mm * angle.portable_sin(),
+                    ],
                     gear.ring_height_mm(ring),
                 )
             }

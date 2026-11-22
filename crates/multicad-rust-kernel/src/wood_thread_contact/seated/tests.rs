@@ -197,8 +197,8 @@ fn real_source_precision_limits_and_frame_orientation_remain_explicit() {
     let original = screw(false, 1);
     let rounded = Thread::new(Spec {
         root_radius_mm: Some(0.1),
-        depth_mm: (2. - 0.4) / (2. * 30_f64.to_radians().tan())
-            - 0.1 * (1. / 30_f64.to_radians().sin() - 1.),
+        depth_mm: (2. - 0.4) / (2. * 30_f64.to_radians().portable_tan())
+            - 0.1 * (1. / 30_f64.to_radians().portable_sin() - 1.),
         ..original.thread().spec()
     })
     .unwrap();

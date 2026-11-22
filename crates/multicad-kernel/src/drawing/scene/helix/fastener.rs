@@ -118,7 +118,7 @@ impl Thread {
         let Some(nut) = &self.hex else {
             return self.disc_chord(n, c, level, self.cap_reach(level));
         };
-        let nxy = n[0].hypot(n[1]);
+        let nxy = n[0].portable_hypot(n[1]);
         let d = [n[1] / nxy, -n[0] / nxy];
         let offset = (c - n[2] * level) / (nxy * nxy);
         let s = [n[0] * offset, n[1] * offset];
@@ -161,7 +161,7 @@ fn hex_chord(nut: &Nut, s: [f64; 2], d: [f64; 2]) -> Option<[f64; 2]> {
     let half = 0.5 * nut.across_flats_mm();
     let [mut lo, mut hi] = [f64::NEG_INFINITY, f64::INFINITY];
     for k in 0..6 {
-        let (sin, cos) = (f64::from(k) * PI / 3.).sin_cos();
+        let (sin, cos) = (f64::from(k) * PI / 3.).portable_sin_cos();
         let value = s[0] * cos + s[1] * sin;
         let rate = d[0] * cos + d[1] * sin;
         if rate.abs() <= 1e-15 {

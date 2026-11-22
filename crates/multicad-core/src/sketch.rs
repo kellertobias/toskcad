@@ -7,6 +7,7 @@ use crate::{
         TopologyKey, TopologyKind, TopologySnapshot,
     },
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub const TYPE: &str = "core.datum_sketch";
@@ -114,7 +115,7 @@ impl PlaneOptions {
     pub fn apply(self, frame: Frame) -> Result<Frame, DocumentError> {
         self.validate()?;
         validate_frame(frame)?;
-        let (s, c) = self.angle_rad.sin_cos();
+        let (s, c) = self.angle_rad.portable_sin_cos();
         let frame = Frame {
             origin: std::array::from_fn(|i| frame.origin[i] + frame.n[i] * self.normal_offset_mm),
             u: std::array::from_fn(|i| frame.u[i] * c + frame.v[i] * s),
@@ -173,7 +174,7 @@ fn plane_basis(normal: [f64; 3]) -> Result<[f64; 3], DocumentError> {
     if normal.iter().any(|v| !v.is_finite()) || (dot(normal, normal) - 1.).abs() > 1e-9 {
         return Err(invalid("Construction plane has an invalid normal"));
     }
-    let raw = if normal[0].hypot(normal[1]) > 1e-7 {
+    let raw = if normal[0].portable_hypot(normal[1]) > 1e-7 {
         [-normal[1], normal[0], 0.]
     } else {
         let projection = normal[0];
@@ -328,7 +329,7 @@ pub fn prepare_new(
                 );
                 let id = offset.id;
                 edits.extend([Mutation::Insert(parent), Mutation::Insert(offset)]);
-                let (s, c) = options.angle_rad.sin_cos();
+                let (s, c) = options.angle_rad.portable_sin_cos();
                 (id, [c, s, 0.], frame)
             }
         }
@@ -378,7 +379,7 @@ pub fn prepare_new(
                 );
                 let id = offset.id;
                 edits.push(Mutation::Insert(offset));
-                let (s, c) = options.angle_rad.sin_cos();
+                let (s, c) = options.angle_rad.portable_sin_cos();
                 (id, [c, s, 0.], frame)
             }
         }
@@ -561,8 +562,8 @@ impl Geometry {
                 clockwise,
                 ..
             } => {
-                let start = (a[1] - center[1]).atan2(a[0] - center[0]);
-                let end = (b[1] - center[1]).atan2(b[0] - center[0]);
+                let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
+                let end = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
                 let sweep = if clockwise {
                     -((start - end).rem_euclid(std::f64::consts::TAU))
                 } else {
@@ -570,7 +571,7 @@ impl Geometry {
                 };
                 arc_segments(
                     center,
-                    (a[0] - center[0]).hypot(a[1] - center[1]),
+                    (a[0] - center[0]).portable_hypot(a[1] - center[1]),
                     start,
                     sweep,
                 )
@@ -611,8 +612,8 @@ impl Geometry {
             id, center, a, b, ..
         } = self
         {
-            let r = (a[0] - center[0]).hypot(a[1] - center[1]);
-            let s = (b[0] - center[0]).hypot(b[1] - center[1]);
+            let r = (a[0] - center[0]).portable_hypot(a[1] - center[1]);
+            let s = (b[0] - center[0]).portable_hypot(b[1] - center[1]);
             if id.is_nil()
                 || center
                     .iter()
@@ -621,7 +622,7 @@ impl Geometry {
                     .any(|v| !v.is_finite() || v.abs() > 1e9)
                 || r < 1e-7
                 || (r - s).abs() > 1e-7
-                || (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-7
+                || (a[0] - b[0]).portable_hypot(a[1] - b[1]) < 1e-7
             {
                 return Err(invalid("Invalid circular arc"));
             }
@@ -642,7 +643,9 @@ impl Geometry {
             ));
         }
         let d = [b[0] - a[0], b[1] - a[1]];
-        if (rectangle && (d[0].abs() < 1e-7 || d[1].abs() < 1e-7)) || d[0].hypot(d[1]) < 1e-7 {
+        if (rectangle && (d[0].abs() < 1e-7 || d[1].abs() < 1e-7))
+            || d[0].portable_hypot(d[1]) < 1e-7
+        {
             return Err(invalid(
                 "Line length and rectangle sides must be greater than 0.0000001 mm",
             ));
@@ -656,8 +659,8 @@ fn arc_segments(center: [f64; 2], radius: f64, start: f64, sweep: f64) -> Vec<[[
     let point = |i: usize| {
         let angle = start + sweep * i as f64 / count as f64;
         [
-            center[0] + radius * angle.cos(),
-            center[1] + radius * angle.sin(),
+            center[0] + radius * angle.portable_cos(),
+            center[1] + radius * angle.portable_sin(),
         ]
     };
     (0..count).map(|i| [point(i), point(i + 1)]).collect()

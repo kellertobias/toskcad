@@ -173,7 +173,7 @@ pub(super) fn read(
     let apex_mm = relative(apex);
     let cone = Cone {
         tip_depth_mm: apex_mm[2],
-        depth_per_radius: angle.cos() / angle.sin(),
+        depth_per_radius: angle.portable_cos() / angle.portable_sin(),
     };
     let mut arcs = Vec::new();
     let mut vertices = FiniteVertices {
@@ -203,8 +203,8 @@ pub(super) fn read(
             zero([square - adjacent(radius).square()])?;
             endpoints[j] = [local[j][0], local[j][1]];
         }
-        let start = (endpoints[0][1] - center[1]).atan2(endpoints[0][0] - center[0]);
-        let end = (endpoints[1][1] - center[1]).atan2(endpoints[1][0] - center[0]);
+        let start = (endpoints[0][1] - center[1]).portable_atan2(endpoints[0][0] - center[0]);
+        let end = (endpoints[1][1] - center[1]).portable_atan2(endpoints[1][0] - center[0]);
         let positive = (dot(circle.normal, frame.n) > 0.) == cell.circle_forward;
         let sweep = if positive {
             (end - start).rem_euclid(TAU)

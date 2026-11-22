@@ -8,6 +8,7 @@ use multicad_core::{
     sketch::{self, Geometry},
     symbols,
 };
+use multicad_precision::PortableMath as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
 pub(crate) struct PlantPlan {
@@ -141,7 +142,7 @@ pub(crate) fn project_sketch(
     let circle = |center: [f64; 2], radius: f64, start: f64, end: f64| {
         let tolerance = view.paper_chord_tolerance_mm * view.scale.denominator as f64
             / view.scale.numerator as f64;
-        let angle = 2. * (1. - (tolerance / (radius * model_scale)).min(1.)).acos();
+        let angle = 2. * (1. - (tolerance / (radius * model_scale)).min(1.)).portable_acos();
         let count = ((end - start).abs() / angle.max(1e-12)).ceil() as usize;
         if count > 8192 {
             return Err(error(
@@ -153,7 +154,10 @@ pub(crate) fn project_sketch(
         let preview = (0..=count)
             .map(|i| {
                 let t = start + (end - start) * i as f64 / count as f64;
-                project([center[0] + radius * t.cos(), center[1] + radius * t.sin()])
+                project([
+                    center[0] + radius * t.portable_cos(),
+                    center[1] + radius * t.portable_sin(),
+                ])
             })
             .collect();
         Ok((
@@ -188,8 +192,8 @@ pub(crate) fn project_sketch(
                 clockwise,
                 ..
             } => {
-                let start = (a[1] - center[1]).atan2(a[0] - center[0]);
-                let mut end = (b[1] - center[1]).atan2(b[0] - center[0]);
+                let start = (a[1] - center[1]).portable_atan2(a[0] - center[0]);
+                let mut end = (b[1] - center[1]).portable_atan2(b[0] - center[0]);
                 if clockwise {
                     while end >= start {
                         end -= TAU;
@@ -199,7 +203,7 @@ pub(crate) fn project_sketch(
                         end += TAU;
                     }
                 }
-                let radius = (a[0] - center[0]).hypot(a[1] - center[1]);
+                let radius = (a[0] - center[0]).portable_hypot(a[1] - center[1]);
                 let (c, p) = circle(center, radius, start, end)?;
                 line(c, p);
             }

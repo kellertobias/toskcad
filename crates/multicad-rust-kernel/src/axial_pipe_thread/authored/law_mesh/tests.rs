@@ -114,8 +114,8 @@ fn print_quality_law_solids_meet_chord_and_angle_bounds_and_enclose_the_exact_vo
                 let a = 3 * rim[i] as usize;
                 let b = 3 * rim[(i + 1) % rim.len()] as usize;
                 assert_eq!(law.mesh.vertices[a + 2], z);
-                let ta = law.mesh.vertices[a + 1].atan2(law.mesh.vertices[a]);
-                let tb = law.mesh.vertices[b + 1].atan2(law.mesh.vertices[b]);
+                let ta = law.mesh.vertices[a + 1].portable_atan2(law.mesh.vertices[a]);
+                let tb = law.mesh.vertices[b + 1].portable_atan2(law.mesh.vertices[b]);
                 let step = (tb - ta).rem_euclid(std::f64::consts::TAU);
                 assert!(step > 0. && step < 0.1);
                 turned += step;
@@ -221,7 +221,7 @@ fn law_bores_join_print_quality_cylindrical_stock_into_one_closed_shell() {
         let cavity = retained_volume(&thread);
         let n = crate::axial_pipe_thread::authored::hardware::mesh::sleeve_segments(radius, print())
             .unwrap() as f64;
-        let polygon = 0.5 * n * radius * radius * (std::f64::consts::TAU / n).sin();
+        let polygon = 0.5 * n * radius * radius * (std::f64::consts::TAU / n).portable_sin();
         let expected = polygon * length - (cavity[0] + cavity[1]) / 2.;
         assert!(
             (proof.signed_volume_mm3 - expected).abs()

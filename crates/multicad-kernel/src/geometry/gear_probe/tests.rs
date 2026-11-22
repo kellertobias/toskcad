@@ -9,20 +9,20 @@ fn p() -> GeometryPolicy {
 fn spec(beta: f64, sweep: GearSweep) -> InvoluteGear {
     let module = 2.;
     let teeth = 20;
-    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let pitch = module * f64::from(teeth) / (2. * beta.cos());
+    let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let pitch = module * f64::from(teeth) / (2. * beta.portable_cos());
     InvoluteGear {
         teeth,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * pressure.cos(),
+        base_radius_mm: pitch * pressure.portable_cos(),
         tip_radius_mm: pitch + module,
         root_radius_mm: pitch - 1.25 * module,
         root_fillet_radius_mm: 0.2 * module,
-        half_base_angle_rad: PI / (2. * f64::from(teeth)) + pressure.tan() - pressure,
+        half_base_angle_rad: PI / (2. * f64::from(teeth)) + pressure.portable_tan() - pressure,
         face_width_mm: 8.,
         bore_radius_mm: 2.,
         hub: None,
-        twist_rad_per_mm: beta.tan() / pitch,
+        twist_rad_per_mm: beta.portable_tan() / pitch,
         sweep,
     }
 }
@@ -38,7 +38,7 @@ fn cube(center: [f64; 3], side: f64) -> Solid {
 }
 
 fn polar(r: f64, a: f64, z: f64) -> [f64; 3] {
-    [r * a.cos(), r * a.sin(), z]
+    [r * a.portable_cos(), r * a.portable_sin(), z]
 }
 
 fn intersect(a: &Solid, b: &Solid) -> Option<Result<Option<Solid>, GeometryError>> {
@@ -157,11 +157,11 @@ fn internal_ring_material_is_between_cavity_and_rim() {
         InvoluteGear {
             teeth: 48,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * a.cos(),
+            base_radius_mm: pitch * a.portable_cos(),
             tip_radius_mm: pitch - 1.,
             root_radius_mm: pitch + 1.25,
             root_fillet_radius_mm: 0.2,
-            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.tan() + a,
+            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) - a.portable_tan() + a,
             face_width_mm: 2.,
             bore_radius_mm: 0.,
             hub: None,
@@ -188,10 +188,10 @@ fn certified_gear_pairs_settle_disjoint_poses_and_refuse_interference() {
     let b = InvoluteGear {
         teeth: 30,
         pitch_radius_mm: 30.,
-        base_radius_mm: 30. * 20_f64.to_radians().cos(),
+        base_radius_mm: 30. * 20_f64.to_radians().portable_cos(),
         tip_radius_mm: 32.,
         root_radius_mm: 27.5,
-        half_base_angle_rad: PI / 60. + 20_f64.to_radians().tan()
+        half_base_angle_rad: PI / 60. + 20_f64.to_radians().portable_tan()
             - 20_f64.to_radians()
             - 0.05 / 60.,
         ..a
@@ -205,8 +205,8 @@ fn certified_gear_pairs_settle_disjoint_poses_and_refuse_interference() {
     let place = |angle: f64| {
         two.transformed(RigidTransform {
             rotation: [
-                [angle.cos(), -angle.sin(), 0.],
-                [angle.sin(), angle.cos(), 0.],
+                [angle.portable_cos(), -angle.portable_sin(), 0.],
+                [angle.portable_sin(), angle.portable_cos(), 0.],
                 [0., 0., 1.],
             ],
             translation_mm: [50., 0., 0.],

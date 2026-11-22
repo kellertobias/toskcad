@@ -1,5 +1,6 @@
 //! A straight through receiver retains both literal stock and cutter domains.
 use super::{Error, Thread, support};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -48,11 +49,11 @@ impl ThroughBore {
             && y.is_finite()
             && z >= -tolerance
             && z <= self.length_mm() + tolerance
-            && x.hypot(y) <= self.radius + tolerance
-            && x.hypot(y)
+            && x.portable_hypot(y) <= self.radius + tolerance
+            && x.portable_hypot(y)
                 >= self
                     .thread
-                    .radius(y.atan2(x), z.clamp(0., self.length_mm()))
+                    .radius(y.portable_atan2(x), z.clamp(0., self.length_mm()))
                     - tolerance
     }
     /// Every outer cylindrical support point is occupied material; the hole

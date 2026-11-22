@@ -9,6 +9,7 @@ use multicad_kernel::{
     PlaneFrame, RigidTransform, Solid, TreatmentEdge,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder, polygon::PolygonPrism},
 };
+use multicad_precision::PortableMath as _;
 use std::{
     cell::Cell,
     collections::BTreeSet,
@@ -168,7 +169,7 @@ fn removed_volume(size: V, tool: PlaneFrame, radius: f64, height: f64) -> f64 {
     for i in 0..rings {
         let r = radius * (i as f64 + 0.5) / rings as f64;
         for j in 0..turns {
-            let (sin, cos) = (TAU * (j as f64 + 0.5) / turns as f64).sin_cos();
+            let (sin, cos) = (TAU * (j as f64 + 0.5) / turns as f64).portable_sin_cos();
             let start: V =
                 std::array::from_fn(|k| tool.origin[k] + r * (cos * tool.u[k] + sin * tool.v[k]));
             let mut range = [0., height];
@@ -509,7 +510,7 @@ fn surviving_stock_faces_keep_their_origins_and_the_bore_names_the_tool() {
 
 fn rotation(axis: V, angle: f64) -> [[f64; 3]; 3] {
     let [x, y, z] = normalized(axis);
-    let (s, c) = angle.sin_cos();
+    let (s, c) = angle.portable_sin_cos();
     let t = 1. - c;
     [
         [t * x * x + c, t * x * y - s * z, t * x * z + s * y],

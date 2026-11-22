@@ -1,5 +1,6 @@
 //! Configured screw profiles. Source tables and gauge acceptance are separate.
 use super::*;
+use multicad_precision::PortableMath as _;
 pub const SCREW_PROFILES_CAPABILITY: &str = "model.mechanical_part.screw_profiles.1";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -220,7 +221,7 @@ impl ResolvedPhillipsHParameters {
     pub fn derived_e_width_mm(&self) -> f64 {
         match self.inner {
             ResolvedPhillipsInnerForm::Rounded { radius_mm } => {
-                2. * radius_mm * (self.outer_corner_angle_deg.to_radians() / 2.).cos()
+                2. * radius_mm * (self.outer_corner_angle_deg.to_radians() / 2.).portable_cos()
             }
             ResolvedPhillipsInnerForm::ShallowV { e_width_mm, .. } => e_width_mm,
         }
@@ -228,26 +229,27 @@ impl ResolvedPhillipsHParameters {
     /// Retained mouth diameter is the theoretical sharp-support diameter.
     pub fn entry_radius_mm(&self) -> f64 {
         let a = self.outer_flank_angle_deg.to_radians();
-        self.mouth_diameter_mm / 2. + self.mouth_radius_mm * (1. - a.sin()) / a.cos()
+        self.mouth_diameter_mm / 2.
+            + self.mouth_radius_mm * (1. - a.portable_sin()) / a.portable_cos()
     }
     pub fn removed_depth_mm(&self) -> f64 {
         (self.mouth_diameter_mm - self.g_diameter_mm)
-            / (2. * self.outer_flank_angle_deg.to_radians().tan())
-            + self.g_diameter_mm / 2. * self.floor_angle_deg.to_radians().tan()
+            / (2. * self.outer_flank_angle_deg.to_radians().portable_tan())
+            + self.g_diameter_mm / 2. * self.floor_angle_deg.to_radians().portable_tan()
     }
     /// Exact radial wing extrema; corner prisms remove material within this envelope.
     pub fn radial_envelope_mm(&self, depth: f64) -> f64 {
         let a = self.outer_flank_angle_deg.to_radians();
         let c = self.floor_angle_deg.to_radians();
         let r = self.mouth_radius_mm;
-        let join = r * (1. - a.sin());
-        let tg = (self.mouth_diameter_mm - self.g_diameter_mm) / (2. * a.tan());
+        let join = r * (1. - a.portable_sin());
+        let tg = (self.mouth_diameter_mm - self.g_diameter_mm) / (2. * a.portable_tan());
         if depth <= join {
             self.entry_radius_mm() - (r * r - (depth - r).powi(2)).max(0.).sqrt()
         } else if depth <= tg {
-            self.mouth_diameter_mm / 2. - depth * a.tan()
+            self.mouth_diameter_mm / 2. - depth * a.portable_tan()
         } else {
-            (self.removed_depth_mm() - depth).max(0.) / c.tan()
+            (self.removed_depth_mm() - depth).max(0.) / c.portable_tan()
         }
     }
 }
@@ -273,7 +275,7 @@ impl ResolvedScrewDrive {
                 depth_mm,
                 bottom_angle_deg,
                 ..
-            } => depth_mm + major_radius_mm / (bottom_angle_deg.to_radians() / 2.).tan(),
+            } => depth_mm + major_radius_mm / (bottom_angle_deg.to_radians() / 2.).portable_tan(),
             Self::PhillipsH { profile } => profile.removed_depth_mm(),
         }
     }
@@ -293,7 +295,7 @@ impl ResolvedScrewDrive {
                     *major_radius_mm
                 } else {
                     (major_radius_mm
-                        - (depth - depth_mm) * (bottom_angle_deg.to_radians() / 2.).tan())
+                        - (depth - depth_mm) * (bottom_angle_deg.to_radians() / 2.).portable_tan())
                     .max(0.)
                 }
             }
@@ -304,9 +306,10 @@ impl ResolvedScrewDrive {
         match self {
             Self::Hexalobular { depth_mm, .. } => vec![*depth_mm],
             Self::PhillipsH { profile } => vec![
-                profile.mouth_radius_mm * (1. - profile.outer_flank_angle_deg.to_radians().sin()),
+                profile.mouth_radius_mm
+                    * (1. - profile.outer_flank_angle_deg.to_radians().portable_sin()),
                 (profile.mouth_diameter_mm - profile.g_diameter_mm)
-                    / (2. * profile.outer_flank_angle_deg.to_radians().tan()),
+                    / (2. * profile.outer_flank_angle_deg.to_radians().portable_tan()),
             ],
             _ => vec![],
         }
@@ -344,7 +347,7 @@ impl ResolvedScrewHead {
             let center_z = match self {
                 Self::Countersunk {
                     included_angle_deg, ..
-                } => neck * (included_angle_deg.to_radians() / 4.).tan(),
+                } => neck * (included_angle_deg.to_radians() / 4.).portable_tan(),
                 _ => neck,
             };
             if neck > 0. && z < center_z {
@@ -387,9 +390,9 @@ impl ResolvedScrewHead {
             } => {
                 let theta = included_angle_deg.to_radians() / 2.;
                 let top = -height_mm;
-                let unblended = radius_mm.min(shank - z * theta.tan());
-                let center_z = neck * (theta / 2.).tan();
-                let cone_z = center_z - neck * theta.sin();
+                let unblended = radius_mm.min(shank - z * theta.portable_tan());
+                let center_z = neck * (theta / 2.).portable_tan();
+                let cone_z = center_z - neck * theta.portable_sin();
                 if neck > 0. && z > cone_z {
                     shank + neck - (neck * neck - (z - center_z).powi(2)).max(0.).sqrt()
                 } else if z < top + edge_chamfer_mm {
@@ -467,12 +470,12 @@ pub fn validate_screw_profile_envelope(
                 return Err(fail());
             }
             let theta = included_angle_deg.to_radians() / 2.;
-            let rim = k - (radius - shank) / theta.tan();
-            let center = n * (theta / 2.).tan();
+            let rim = k - (radius - shank) / theta.portable_tan();
+            let center = n * (theta / 2.).portable_tan();
             if !rim.is_finite() || rim < 0. || *e >= radius || *e > rim || center >= underhead {
                 return Err(fail());
             }
-            let cone_z = center - n * theta.sin();
+            let cone_z = center - n * theta.portable_sin();
             if cone_z < -k + rim {
                 return Err(fail());
             }
@@ -508,10 +511,10 @@ pub fn validate_screw_profile_envelope(
         }
         ResolvedScrewDrive::PhillipsH { profile } => {
             profile.validate()?;
-            let entry_join =
-                profile.mouth_radius_mm * (1. - profile.outer_flank_angle_deg.to_radians().sin());
+            let entry_join = profile.mouth_radius_mm
+                * (1. - profile.outer_flank_angle_deg.to_radians().portable_sin());
             let flank_join = (profile.mouth_diameter_mm - profile.g_diameter_mm)
-                / (2. * profile.outer_flank_angle_deg.to_radians().tan());
+                / (2. * profile.outer_flank_angle_deg.to_radians().portable_tan());
             if entry_join >= flank_join {
                 return Err(invalid(
                     "Phillips entry roundover must finish before the outer-flank/floor junction",

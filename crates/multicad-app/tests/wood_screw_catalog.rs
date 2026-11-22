@@ -1,3 +1,4 @@
+use multicad_precision::PortableMath as _;
 #[allow(dead_code)]
 #[path = "../examples/mechanical_library.rs"]
 mod generator;
@@ -288,7 +289,7 @@ fn five_native_envelopes_have_sourced_hex_and_flat_tip_not_a_recovered_thread_or
         let flats: Vec<_> = faces
             .iter()
             .filter_map(|f| f.plane)
-            .filter(|(_, n)| n[2].abs() < 1e-8 && n[0].hypot(n[1]) > 0.99)
+            .filter(|(_, n)| n[2].abs() < 1e-8 && n[0].portable_hypot(n[1]) > 0.99)
             .collect();
         assert_eq!(flats.len(), 6);
         for (o, n) in flats {

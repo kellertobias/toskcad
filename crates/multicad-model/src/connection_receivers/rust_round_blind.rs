@@ -1,6 +1,7 @@
 //! Plain blind round receivers retain actual pocket material and source charts.
 use super::*;
 use multicad_kernel::CircularPocketTool;
+use multicad_precision::PortableMath as _;
 pub(super) fn build(
     inputs: Inputs<'_>,
     id: EntityId,
@@ -111,8 +112,8 @@ pub(super) fn build(
         .rust_connection_blind_bore(&tool, resolved.minimum_wall_mm, floor, inputs.policy)
         .map_err(|cause| error(Some(id), cause))?;
     let distance = (mouth[0] - frame.origin[0])
-        .hypot(mouth[1] - frame.origin[1])
-        .hypot(mouth[2] - frame.origin[2]);
+        .portable_hypot(mouth[1] - frame.origin[1])
+        .portable_hypot(mouth[2] - frame.origin[2]);
     if distance > inputs.policy.linear_tolerance_mm {
         return Err(fail(
             "Blind receiving station does not match the actual stock entry face",

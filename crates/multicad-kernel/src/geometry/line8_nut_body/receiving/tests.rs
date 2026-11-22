@@ -19,7 +19,7 @@ fn resolved(start: Point, end: Point) -> ResolvedMember {
         },
     };
     let delta = std::array::from_fn::<_, 3, _>(|i| end[i] - start[i]);
-    let length = delta[0].hypot(delta[1]).hypot(delta[2]);
+    let length = delta[0].portable_hypot(delta[1]).portable_hypot(delta[2]);
     ResolvedMember {
         stock: EntityId::new(),
         section: ProfileSection::from_stock(&stock).unwrap(),
@@ -151,11 +151,11 @@ fn actual_nut(member: &ResolvedMember) -> Result<Solid, GeometryError> {
     let external_start = -5. + height + 1.25;
     let station: f64 = 4.5 - external_start;
     let angle = std::f64::consts::TAU * station.rem_euclid(pitch) / pitch;
-    let (s, c) = angle.sin_cos();
-    let raw = s.atan2(c);
+    let (s, c) = angle.portable_sin_cos();
+    let raw = s.portable_atan2(c);
     let roll = (raw + std::f64::consts::TAU / 2.).rem_euclid(std::f64::consts::TAU)
         - std::f64::consts::TAU / 2.;
-    let (s, c) = roll.sin_cos();
+    let (s, c) = roll.portable_sin_cos();
     let u = std::array::from_fn(|i| inward.u[i] * c + inward.v[i] * s);
     let v = std::array::from_fn(|i| inward.u[i] * -s + inward.v[i] * c);
     blank.rust_cut_line8_nut(
@@ -304,7 +304,7 @@ fn original_model_member_sections_and_both_occurrences_earn_separate_nut_clearan
         if !rotated {
             let points = (0..300)
                 .map(|i| {
-                    let (s, c) = (std::f64::consts::TAU * i as f64 / 300.).sin_cos();
+                    let (s, c) = (std::f64::consts::TAU * i as f64 / 300.).portable_sin_cos();
                     [20. * c, 20. * s]
                 })
                 .collect::<Vec<_>>();

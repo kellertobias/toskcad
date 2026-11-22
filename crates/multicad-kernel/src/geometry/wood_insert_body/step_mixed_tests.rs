@@ -33,23 +33,23 @@ fn compound(a: &Solid, b: &Solid) -> Solid {
 }
 fn gear(sweep: GearSweep, teeth: u32) -> Solid {
     let beta = 15_f64.to_radians();
-    let pressure = (20_f64.to_radians().tan() / beta.cos()).atan();
-    let module = 2. / beta.cos();
+    let pressure = (20_f64.to_radians().portable_tan() / beta.portable_cos()).portable_atan();
+    let module = 2. / beta.portable_cos();
     let pitch = module * f64::from(teeth) / 2.;
     let spec = InvoluteGear {
         teeth,
         pitch_radius_mm: pitch,
-        base_radius_mm: pitch * pressure.cos(),
+        base_radius_mm: pitch * pressure.portable_cos(),
         tip_radius_mm: pitch + 2.,
         root_radius_mm: pitch - 2.5,
         root_fillet_radius_mm: 0.4,
         half_base_angle_rad: (std::f64::consts::PI * module / 2. - 0.05) / (2. * pitch)
-            + pressure.tan()
+            + pressure.portable_tan()
             - pressure,
         face_width_mm: 4.,
         bore_radius_mm: 4.,
         hub: None,
-        twist_rad_per_mm: beta.tan() / pitch,
+        twist_rad_per_mm: beta.portable_tan() / pitch,
         sweep,
     };
     let build = if sweep == GearSweep::Chevron {

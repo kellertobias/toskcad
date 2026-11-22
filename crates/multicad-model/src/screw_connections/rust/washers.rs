@@ -57,7 +57,11 @@ pub(super) fn actual_dimensions(
     // A generated Part can still have a placement. Check its actual retained
     // chart against the current source mount, at the full physical extent.
     let expected = placed_frame(&row.part, row.pose);
-    let distance = |a: [f64; 3], b: [f64; 3]| (a[0] - b[0]).hypot(a[1] - b[1]).hypot(a[2] - b[2]);
+    let distance = |a: [f64; 3], b: [f64; 3]| {
+        (a[0] - b[0])
+            .portable_hypot(a[1] - b[1])
+            .portable_hypot(a[2] - b[2])
+    };
     let normal = actual.normal();
     let residual = distance(actual.origin, expected.origin_mm)
         + outside_radius_mm * (distance(actual.u, expected.u) + distance(actual.v, expected.v))

@@ -100,7 +100,7 @@ fn midpoint(v: [f64; 2]) -> f64 {
     v[0] + (v[1] - v[0]) * 0.5
 }
 fn length(v: [f64; 3]) -> f64 {
-    v[0].hypot(v[1]).hypot(v[2])
+    v[0].portable_hypot(v[1]).portable_hypot(v[2])
 }
 #[test]
 fn actual_phase_source_and_independent_differential_normals_match_each_chart() {

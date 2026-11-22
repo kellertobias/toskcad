@@ -79,7 +79,7 @@ fn retained_drive_orientation_controls_material_and_conforming_manufacturing_mes
                     -std::f64::consts::PI / 6.,
                     -0.03125 / original.thread().helical_rate() - std::f64::consts::PI / 6.,
                 ] {
-                    let (s, c) = angle.sin_cos();
+                    let (s, c) = angle.portable_sin_cos();
                     let points = crate::headed_screw::hex_vertices(2.)
                         .map(|[x, y]| [c * x - s * y + 1e-14, s * x + c * y]);
                     let retained = if union {
@@ -382,7 +382,7 @@ fn malformed_options_and_excess_profile_refinement_fail_without_poisoning_source
 #[test]
 fn profile_triangles_track_real_cone_crown_neck_and_bearing_geometry() {
     use crate::head_profile::Curve;
-    let distance = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
+    let distance = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).portable_hypot(a[1] - b[1]);
     for crowned in [false, true] {
         let screw = Screw::new(thread(1, false), spec(crowned)).unwrap();
         let mesh = tessellate_profiled_screw(&screw, options()).unwrap();
@@ -403,7 +403,7 @@ fn profile_triangles_track_real_cone_crown_neck_and_bearing_geometry() {
             let [a, b, c] = triangle.map(|i| vertices[i as usize]);
             let center: [f64; 3] = std::array::from_fn(|i| (a[i] + b[i] + c[i]) / 3.);
             let p = [
-                center[0].hypot(center[1]),
+                center[0].portable_hypot(center[1]),
                 center[2] + screw.spec().shank_length_mm,
             ];
             let d = match segment.curve {
@@ -420,8 +420,9 @@ fn profile_triangles_track_real_cone_crown_neck_and_bearing_geometry() {
                     radius_mm: radius,
                     sweep,
                 } => {
-                    let angle = (p[1] - center[1]).atan2(p[0] - center[0]);
-                    let start = (segment.start[1] - center[1]).atan2(segment.start[0] - center[0]);
+                    let angle = (p[1] - center[1]).portable_atan2(p[0] - center[0]);
+                    let start =
+                        (segment.start[1] - center[1]).portable_atan2(segment.start[0] - center[0]);
                     let advance = if sweep > 0. {
                         (angle - start).rem_euclid(std::f64::consts::TAU)
                     } else {
@@ -442,7 +443,9 @@ fn profile_triangles_track_real_cone_crown_neck_and_bearing_geometry() {
                 u[2] * v[0] - u[0] * v[2],
                 u[0] * v[1] - u[1] * v[0],
             ];
-            let norm = normal[0].hypot(normal[1]).hypot(normal[2]);
+            let norm = normal[0]
+                .portable_hypot(normal[1])
+                .portable_hypot(normal[2]);
             for vertex in [a, b, c] {
                 let [radial, axial] = match segment.curve {
                     Curve::Line => [
@@ -450,14 +453,20 @@ fn profile_triangles_track_real_cone_crown_neck_and_bearing_geometry() {
                         segment.start[0] - segment.end[0],
                     ],
                     Curve::Arc { center, sweep, .. } => [
-                        (vertex[0].hypot(vertex[1]) - center[0]) * sweep.signum(),
+                        (vertex[0].portable_hypot(vertex[1]) - center[0]) * sweep.signum(),
                         (vertex[2] + screw.spec().shank_length_mm - center[1]) * sweep.signum(),
                     ],
                 };
-                let theta = vertex[1].atan2(vertex[0]);
-                let target = [radial * theta.cos(), radial * theta.sin(), axial];
+                let theta = vertex[1].portable_atan2(vertex[0]);
+                let target = [
+                    radial * theta.portable_cos(),
+                    radial * theta.portable_sin(),
+                    axial,
+                ];
                 let dot: f64 = normal.into_iter().zip(target).map(|(a, b)| a * b).sum();
-                let angle = (dot / (norm * radial.hypot(axial))).clamp(-1., 1.).acos();
+                let angle = (dot / (norm * radial.portable_hypot(axial)))
+                    .clamp(-1., 1.)
+                    .portable_acos();
                 assert!(
                     angle <= options().angle,
                     "{:?}: normal {angle}",
@@ -582,8 +591,10 @@ fn opt_in_union_retains_full_thread_phase_and_actual_neck_material() {
                                 let [x, y, z] = vertices[id as usize];
                                 assert!(z >= lo);
                                 if z == lo {
-                                    let theta = y.atan2(x);
-                                    assert!((x.hypot(y) - t.radius(theta, lo)).abs() < 1e-12);
+                                    let theta = y.portable_atan2(x);
+                                    assert!(
+                                        (x.portable_hypot(y) - t.radius(theta, lo)).abs() < 1e-12
+                                    );
                                     phase_changed |=
                                         (t.radius(theta, lo) - t.radius(theta, 0.)).abs() > 1e-4;
                                 }
@@ -845,7 +856,11 @@ fn metric_pan_torx_uses_twelve_real_lobes_and_a_conical_floor_without_changing_t
     assert!(screw.contains([1.25, 0., top + 1.3], 0.));
     assert!(!screw.contains([1.2, 0., top + 0.1], 0.));
     assert!(screw.contains(
-        [1.2 * (std::f64::consts::PI / 6.).cos(), 0.6, top + 0.1],
+        [
+            1.2 * (std::f64::consts::PI / 6.).portable_cos(),
+            0.6,
+            top + 0.1
+        ],
         0.
     ));
     let [lo, hi] = recess.volume_bounds_mm3();
@@ -1180,8 +1195,8 @@ fn outer_shell_refactor_preserves_frozen_hex_and_torx_mesh_bytes() {
                     let canonical = HexDrive::canonical(2., 1e-12).unwrap();
                     let corners = canonical.corners_mm().map(|[x, y]| {
                         [
-                            x * angle.cos() - y * angle.sin(),
-                            x * angle.sin() + y * angle.cos(),
+                            x * angle.portable_cos() - y * angle.portable_sin(),
+                            x * angle.portable_sin() + y * angle.portable_cos(),
                         ]
                     });
                     Recess::flat_hex(

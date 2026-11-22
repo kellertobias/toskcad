@@ -1,5 +1,6 @@
 use multicad_core::{document::EntityId, references::*};
 use multicad_kernel::*;
+use multicad_precision::PortableMath as _;
 fn profile() -> CurvedProfile {
     let line = |a, b| CurvedEdge2d::Line { a, b };
     let points = [[2., 4.], [3., 5.], [4., 4.], [3., 3.]];
@@ -56,7 +57,7 @@ fn real_quadratic_counters_keep_cap_material_source_frames_and_finite_face_selec
     let origins = origins(&profile);
     let feature = EntityId::new();
     let area = 80. - 10. / 3. - std::f64::consts::PI / 4.;
-    let perimeter = 36. + 4. * (1. + 1_f64.asinh() / 2_f64.sqrt()) + std::f64::consts::PI;
+    let perimeter = 36. + 4. * (1. + 1_f64.portable_asinh() / 2_f64.sqrt()) + std::f64::consts::PI;
     for height in [3., -3.] {
         let solid =
             Solid::rust_extrude_spline_profile_named(&profile, height, feature, &origins, policy)

@@ -5,6 +5,7 @@
 //! junction, not an approximation of the helical thread.
 
 use crate::helical_thread::ThreadError;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 mod repaired;
 pub(crate) use repaired::proposal_rotation;
@@ -84,15 +85,15 @@ impl Segment {
             } => {
                 let angle = self.angle(center) + sweep * fraction;
                 [
-                    center[0] + radius * angle.cos(),
-                    center[1] + radius * angle.sin(),
+                    center[0] + radius * angle.portable_cos(),
+                    center[1] + radius * angle.portable_sin(),
                 ]
             }
         }
     }
 
     fn angle(self, center: [f64; 2]) -> f64 {
-        (self.start[1] - center[1]).atan2(self.start[0] - center[0])
+        (self.start[1] - center[1]).portable_atan2(self.start[0] - center[0])
     }
 
     /// Analytic disk integral, without tessellation or numerical quadrature.
@@ -110,17 +111,20 @@ impl Segment {
             } => {
                 let start = self.angle([c, z]);
                 if c == 0. {
-                    let dz = 2. * radius * (start + sweep / 2.).cos() * (sweep / 2.).sin();
+                    let dz = 2.
+                        * radius
+                        * (start + sweep / 2.).portable_cos()
+                        * (sweep / 2.).portable_sin();
                     return PI
                         * dz
-                        * ((radius * start.cos()).powi(2)
-                            - radius * start.sin() * dz
+                        * ((radius * start.portable_cos()).powi(2)
+                            - radius * start.portable_sin() * dz
                             - dz.powi(2) / 3.);
                 }
                 let integral = |t: f64| {
-                    let s = t.sin();
+                    let s = t.portable_sin();
                     radius * c * c * s
-                        + c * radius * radius * (t + (2. * t).sin() / 2.)
+                        + c * radius * radius * (t + (2. * t).portable_sin() / 2.)
                         + radius.powi(3) * (s - s.powi(3) / 3.)
                 };
                 PI * (integral(start + sweep) - integral(start))
@@ -133,7 +137,7 @@ impl Segment {
         match self.curve {
             Curve::Line => {
                 PI * (self.start[0] + self.end[0])
-                    * (self.end[0] - self.start[0]).hypot(self.end[1] - self.start[1])
+                    * (self.end[0] - self.start[0]).portable_hypot(self.end[1] - self.start[1])
             }
             Curve::Arc {
                 center,
@@ -144,10 +148,16 @@ impl Segment {
                 if center[0] == 0. {
                     return TAU
                         * radius
-                        * (2. * radius * (angle + sweep / 2.).cos() * (sweep / 2.).sin()).abs();
+                        * (2.
+                            * radius
+                            * (angle + sweep / 2.).portable_cos()
+                            * (sweep / 2.).portable_sin())
+                        .abs();
                 }
                 TAU * radius
-                    * (center[0] * sweep + radius * ((angle + sweep).sin() - angle.sin())).abs()
+                    * (center[0] * sweep
+                        + radius * ((angle + sweep).portable_sin() - angle.portable_sin()))
+                    .abs()
             }
         }
     }
@@ -167,13 +177,14 @@ impl Segment {
             } => {
                 let a = self.angle([c, z]);
                 if c == 0. {
-                    let dz = 2. * radius * (a + sweep / 2.).cos() * (sweep / 2.).sin();
-                    return [0., 0., z + radius * a.sin() + dz / 2.];
+                    let dz =
+                        2. * radius * (a + sweep / 2.).portable_cos() * (sweep / 2.).portable_sin();
+                    return [0., 0., z + radius * a.portable_sin() + dz / 2.];
                 }
                 let b = a + sweep;
-                let denominator = c * sweep + radius * (b.sin() - a.sin());
-                z + (radius * c * (a.cos() - b.cos())
-                    + radius * radius * (b.sin().powi(2) - a.sin().powi(2)) / 2.)
+                let denominator = c * sweep + radius * (b.portable_sin() - a.portable_sin());
+                z + (radius * c * (a.portable_cos() - b.portable_cos())
+                    + radius * radius * (b.portable_sin().powi(2) - a.portable_sin().powi(2)) / 2.)
                     / denominator
             }
         };
@@ -193,18 +204,18 @@ impl Segment {
             let start = self.angle(center);
             for angle in [start, start + sweep] {
                 value = value.max(dot([
-                    center[0] + radius * angle.cos(),
-                    center[1] + radius * angle.sin(),
+                    center[0] + radius * angle.portable_cos(),
+                    center[1] + radius * angle.portable_sin(),
                 ]));
             }
-            let candidate = axial.atan2(radial);
+            let candidate = axial.portable_atan2(radial);
             let advance = if sweep > 0. {
                 (candidate - start).rem_euclid(TAU)
             } else {
                 (start - candidate).rem_euclid(TAU)
             };
             if advance <= sweep.abs() {
-                value = value.max(dot(center) + radius * radial.hypot(axial));
+                value = value.max(dot(center) + radius * radial.portable_hypot(axial));
             }
         }
         value
@@ -491,14 +502,14 @@ impl Profile {
                     return Err(ThreadError::Invalid);
                 }
                 let theta = included_angle_deg.to_radians() / 2.;
-                let rim = height - (radius - shank) / theta.tan();
-                let neck_z = neck * (theta / 2.).tan();
+                let rim = height - (radius - shank) / theta.portable_tan();
+                let neck_z = neck * (theta / 2.).portable_tan();
                 let plain = if union { plain.max(neck_z) } else { plain };
                 result.end[1] = plain;
                 let center = [shank + neck, neck_z];
                 let tangent = [
-                    center[0] - neck * theta.cos(),
-                    center[1] - neck * theta.sin(),
+                    center[0] - neck * theta.portable_cos(),
+                    center[1] - neck * theta.portable_sin(),
                 ];
                 if rim < ch || plain < neck_z || top_z + rim > tangent[1] || radius <= tangent[0] {
                     return Err(ThreadError::Invalid);
@@ -559,8 +570,8 @@ impl Profile {
                     return Err(ThreadError::Invalid);
                 }
                 result.top[0] = land;
-                let start_angle = (top_z - center_z).atan2(land);
-                let end_angle = (skirt_z - center_z).atan2(radius);
+                let start_angle = (top_z - center_z).portable_atan2(land);
+                let end_angle = (skirt_z - center_z).portable_atan2(radius);
                 push(
                     result.top,
                     [radius, skirt_z],
@@ -645,7 +656,7 @@ impl Profile {
     }
 
     pub fn support(&self, direction: [f64; 3]) -> f64 {
-        let radial = direction[0].hypot(direction[1]);
+        let radial = direction[0].portable_hypot(direction[1]);
         self.segments()
             .map(|s| s.support(radial, direction[2]))
             .fold(f64::NEG_INFINITY, f64::max)
@@ -717,7 +728,8 @@ fn retained_segment_valid(segment: Segment, reserve: f64) -> bool {
             if !sweep.is_finite() || center[0] < 0. || dz <= reserve {
                 return false;
             }
-            let start_radius = (segment.start[0] - center[0]).hypot(segment.start[1] - center[1]);
+            let start_radius =
+                (segment.start[0] - center[0]).portable_hypot(segment.start[1] - center[1]);
             if radius <= reserve || radius > 1e7 || (start_radius - radius).abs() > reserve {
                 return false;
             }
@@ -740,8 +752,11 @@ fn retained_segment_valid(segment: Segment, reserve: f64) -> bool {
             if !domain {
                 return false;
             }
-            let target = [center[0] + radius * b.cos(), center[1] + radius * b.sin()];
-            (target[0] - segment.end[0]).hypot(target[1] - segment.end[1]) <= reserve
+            let target = [
+                center[0] + radius * b.portable_cos(),
+                center[1] + radius * b.portable_sin(),
+            ];
+            (target[0] - segment.end[0]).portable_hypot(target[1] - segment.end[1]) <= reserve
         }
     }
 }

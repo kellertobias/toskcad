@@ -80,7 +80,7 @@ struct Side<'a> {
 }
 
 fn angle(a: Point, b: Point) -> f64 {
-    norm(cross(a, b)).atan2(dot(a, b))
+    norm(cross(a, b)).portable_atan2(dot(a, b))
 }
 
 /// Closest points between segments `p0 p1` and `q0 q1` as parameters.
@@ -179,7 +179,7 @@ impl<'a> Side<'a> {
     /// Back-cone distance interval along one world direction.
     fn interval(&self, direction: Point) -> [f64; 2] {
         let local = self.placement.local(direction);
-        let gamma = local[2].clamp(-1., 1.).acos();
+        let gamma = local[2].clamp(-1., 1.).portable_acos();
         [End::Toe, End::Heel].map(|end| self.gear.end_distance_along(end, gamma))
     }
 
@@ -354,8 +354,8 @@ mod tests {
         });
         let [za, zb] = counts.map(f64::from);
         let phase = PI - PI / zb - drive * za / zb + extra;
-        let (s0, c0) = drive.sin_cos();
-        let (s1, c1) = phase.sin_cos();
+        let (s0, c0) = drive.portable_sin_cos();
+        let (s1, c1) = phase.portable_sin_cos();
         let placements = [
             Placement {
                 apex_mm: [0.; 3],

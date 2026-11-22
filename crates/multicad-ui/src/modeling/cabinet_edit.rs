@@ -9,6 +9,7 @@ use multicad_core::{
     model::{self, CarcassDefinition, PanelRole, PanelSource},
     parameters,
 };
+use multicad_precision::PortableMath as _;
 
 /// The carcass a selection belongs to, and the panel feature that opens its
 /// saved controls through the ordinary feature-edit path.
@@ -155,7 +156,7 @@ pub fn carcass_guide(
     let p = parameters::evaluate(document).map_err(|e| e.to_string())?;
     let r = model::resolve_carcass(document, &p, definition).map_err(|e| e.to_string())?;
     let [w, h, d] = r.size_mm;
-    let (s, c) = r.rotation_rad.sin_cos();
+    let (s, c) = r.rotation_rad.portable_sin_cos();
     let (x, y, z) = ([c, s, 0.], [-s, c, 0.], [0., 0., 1.]);
     let at = |u: f64, v: f64, e: f64| add(add(add(r.origin, mul(x, u)), mul(y, v)), mul(z, e));
     let mut edges = vec![];

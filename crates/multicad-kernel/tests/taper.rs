@@ -3,6 +3,7 @@ use multicad_core::{
     references::{Origin, TopologyKind},
 };
 use multicad_kernel::*;
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI};
 fn p() -> GeometryPolicy {
     Default::default()
@@ -52,7 +53,7 @@ fn named(profile: &CurvedProfile, d: [f64; 3], delta: f64) -> (EntityId, Solid) 
     let s = Solid::extrude_curved_profile_vector_tapered_named(
         profile,
         d,
-        (delta / length).atan(),
+        (delta / length).portable_atan(),
         id,
         &origins(profile),
         p(),
@@ -255,7 +256,7 @@ fn collapse_topology_changes_concavity_and_unsupported_offsets_fail_without_sour
         -FRAC_PI_2,
         f64::NAN,
         f64::INFINITY,
-        (-0.4_f64).atan(),
+        (-0.4_f64).portable_atan(),
         1e-10,
     ] {
         assert!(
@@ -354,7 +355,7 @@ fn two_tapered_halves_start_at_original_section_and_keep_only_genuine_far_caps()
     let profile = circle(3.);
     let id = EntityId::new();
     let curves = origins(&profile);
-    let alpha = 0.1_f64.atan();
+    let alpha = 0.1_f64.portable_atan();
     let forward = Solid::extrude_curved_profile_vector_tapered_named(
         &profile,
         [0., 0., 10.],

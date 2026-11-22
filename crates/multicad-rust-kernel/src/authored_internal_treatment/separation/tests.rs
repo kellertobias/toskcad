@@ -97,10 +97,14 @@ fn whole_actual_profiles_and_both_treatments_earn_positive_gap_in_finite_overlap
             for z in [0., 0.1, 1., 3.49, 3.6, 3.79] {
                 for theta in [0., 0.43, 2.1, 6.0] {
                     let radius = a.radius(theta, z);
-                    assert!(
-                        b.cavity()
-                            .contains_void([radius * theta.cos(), radius * theta.sin(), z], 0.)
-                    );
+                    assert!(b.cavity().contains_void(
+                        [
+                            radius * theta.portable_cos(),
+                            radius * theta.portable_sin(),
+                            z
+                        ],
+                        0.
+                    ));
                 }
             }
             assert_eq!((a, b), before);
@@ -251,11 +255,10 @@ fn entry_only_actual_receiver_earns_whole_pair_gap_without_a_terminal_cylinder()
         // the whole-profile certificate above, not these samples, is authority.
         for theta in [0., 0.43, 2.1, 6.] {
             let r = external.radius(theta, 3.8);
-            assert!(
-                receiving
-                    .cavity()
-                    .contains_void([r * theta.cos(), r * theta.sin(), 3.8], 0.)
-            );
+            assert!(receiving.cavity().contains_void(
+                [r * theta.portable_cos(), r * theta.portable_sin(), 3.8],
+                0.
+            ));
         }
     }
 }

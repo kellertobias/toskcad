@@ -1,6 +1,6 @@
 use super::*;
 fn norm(v: Point) -> f64 {
-    v[0].hypot(v[1]).hypot(v[2])
+    v[0].portable_hypot(v[1]).portable_hypot(v[2])
 }
 fn sub(a: Point, b: Point) -> Point {
     std::array::from_fn(|i| a[i] - b[i])
@@ -54,13 +54,13 @@ impl RoundedCylinderBody {
         }
         let delta = sub(point, frame.origin);
         let local = [dot(delta, u), dot(delta, v), dot(delta, n)];
-        let rho = local[0].hypot(local[1]);
+        let rho = local[0].portable_hypot(local[1]);
         let z = local[2];
         let [a, b] = self.geometry.fillet_radii_mm().map(|f| f.unwrap_or(0.));
         let mut best = [0.; 2];
         let mut distance = f64::INFINITY;
         let mut visit = |candidate: [f64; 2]| {
-            let d = (rho - candidate[0]).hypot(z - candidate[1]);
+            let d = (rho - candidate[0]).portable_hypot(z - candidate[1]);
             if d < distance {
                 distance = d;
                 best = candidate;
@@ -77,7 +77,7 @@ impl RoundedCylinderBody {
                 meridian_rad: span,
             }) = self.geometry.surface(role)
             {
-                let phase = (z - center).atan2(rho - major);
+                let phase = (z - center).portable_atan2(rho - major);
                 for phase in [
                     Some(span[0]),
                     Some(span[1]),
@@ -86,7 +86,10 @@ impl RoundedCylinderBody {
                 .into_iter()
                 .flatten()
                 {
-                    visit([major + f * phase.cos(), center + f * phase.sin()]);
+                    visit([
+                        major + f * phase.portable_cos(),
+                        center + f * phase.portable_sin(),
+                    ]);
                 }
             }
         }

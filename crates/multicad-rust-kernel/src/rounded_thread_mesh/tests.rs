@@ -8,12 +8,12 @@ use std::{
 fn thread(left_hand: bool) -> Thread {
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     Thread::new(Spec {
         major_radius_mm: 3.175,
         pitch_mm: p,
         length_mm: 3.7 * p,
-        depth_mm: p / (3. * a.tan()),
+        depth_mm: p / (3. * a.portable_tan()),
         crest_radius_mm: r,
         root_radius_mm: r,
         flank_angle_deg: 27.5,
@@ -25,9 +25,9 @@ fn thread(left_hand: bool) -> Thread {
 fn rd(internal: bool, left_hand: bool) -> Thread {
     let p = 3.175;
     let a = 15_f64.to_radians();
-    let r = p * (a.cos() - a.sin()) / (4. * (1. - a.sin()));
+    let r = p * (a.portable_cos() - a.portable_sin()) / (4. * (1. - a.portable_sin()));
     let d = if internal {
-        0.05 * p * a.sin() / (1. - a.sin())
+        0.05 * p * a.portable_sin() / (1. - a.portable_sin())
     } else {
         0.
     };
@@ -81,7 +81,7 @@ fn verify(t: &Thread, o: Tessellation) -> DisplayMesh {
         assert!((0. ..=t.spec().length_mm).contains(&p[2]));
         if p[0] != 0. || p[1] != 0. {
             assert!(
-                (p[0].hypot(p[1]) - t.radius(p[1].atan2(p[0]), p[2])).abs()
+                (p[0].portable_hypot(p[1]) - t.radius(p[1].portable_atan2(p[0]), p[2])).abs()
                     <= receipt.point_error * 2.
             );
         }
@@ -104,7 +104,7 @@ fn verify(t: &Thread, o: Tessellation) -> DisplayMesh {
             u[2] * v[0] - u[0] * v[2],
             u[0] * v[1] - u[1] * v[0],
         ];
-        let length = n[0].hypot(n[1]).hypot(n[2]);
+        let length = n[0].portable_hypot(n[1]).portable_hypot(n[2]);
         let n = n.map(|x| x / length);
         if face < 2 {
             assert!(
@@ -115,8 +115,9 @@ fn verify(t: &Thread, o: Tessellation) -> DisplayMesh {
             assert_eq!(n, [0., 0., if face == 0 { -1. } else { 1. }]);
             continue;
         }
-        let first = points[0][1].atan2(points[0][0]);
-        let angles = points.map(|p| first + (p[1].atan2(p[0]) - first + PI).rem_euclid(TAU) - PI);
+        let first = points[0][1].portable_atan2(points[0][0]);
+        let angles =
+            points.map(|p| first + (p[1].portable_atan2(p[0]) - first + PI).rem_euclid(TAU) - PI);
         for weights in [
             [1. / 3.; 3],
             [0.6, 0.2, 0.2],
@@ -127,7 +128,10 @@ fn verify(t: &Thread, o: Tessellation) -> DisplayMesh {
             let p: [f64; 3] =
                 std::array::from_fn(|j| (0..3).map(|i| weights[i] * points[i][j]).sum());
             let r = t.radius(a, p[2]);
-            assert!((p[0] - r * a.cos()).hypot(p[1] - r * a.sin()) <= o.deflection);
+            assert!(
+                (p[0] - r * a.portable_cos()).portable_hypot(p[1] - r * a.portable_sin())
+                    <= o.deflection
+            );
             let expected = t.normal(a, p[2]);
             let dot = n
                 .into_iter()
@@ -136,9 +140,9 @@ fn verify(t: &Thread, o: Tessellation) -> DisplayMesh {
                 .sum::<f64>()
                 .clamp(-1., 1.);
             assert!(
-                dot.acos() <= o.angle + 1e-10,
+                dot.portable_acos() <= o.angle + 1e-10,
                 "facet angle {} > {}",
-                dot.acos(),
+                dot.portable_acos(),
                 o.angle
             );
         }
@@ -165,9 +169,9 @@ fn mirror_stations(mesh: &DisplayMesh, left: bool, length: f64) -> Vec<Vec<[f64;
             })
             .collect();
         rim.sort_by(|a, b| {
-            a[1].atan2(a[0])
+            a[1].portable_atan2(a[0])
                 .rem_euclid(TAU)
-                .total_cmp(&b[1].atan2(b[0]).rem_euclid(TAU))
+                .total_cmp(&b[1].portable_atan2(b[0]).rem_euclid(TAU))
         });
         groups.push(rim);
     }
@@ -186,13 +190,13 @@ fn mirror_stations(mesh: &DisplayMesh, left: bool, length: f64) -> Vec<Vec<[f64;
         })
         .collect();
     inside.sort_by(|a, b| {
-        a[1].atan2(a[0])
+        a[1].portable_atan2(a[0])
             .rem_euclid(TAU)
-            .total_cmp(&b[1].atan2(b[0]).rem_euclid(TAU))
+            .total_cmp(&b[1].portable_atan2(b[0]).rem_euclid(TAU))
     });
     let mut last = f64::NAN;
     for p in inside {
-        let angle = p[1].atan2(p[0]).rem_euclid(TAU);
+        let angle = p[1].portable_atan2(p[0]).rem_euclid(TAU);
         if !last.is_finite() || (angle - last).abs() > 1e-11 {
             groups.push(vec![]);
             last = angle;
@@ -544,7 +548,7 @@ fn hex_nut_and_head_close_one_certified_shell_with_exact_planar_stock() {
                     let angle = PI / 3. * (side + 1.);
                     for &v in triangle {
                         let [x, y, _] = vertices[v as usize];
-                        let distance = x * angle.cos() + y * angle.sin();
+                        let distance = x * angle.portable_cos() + y * angle.portable_sin();
                         assert!((distance - 15.).abs() < 1e-12, "{face} {distance}");
                     }
                 }

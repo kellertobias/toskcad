@@ -93,7 +93,7 @@ fn slope(thread: &AuthoredThread) -> Option<f64> {
     }
     let along = flank + 2. * k;
     let around = (flank + k) * spec.pitch_mm / (2. * PI * minor);
-    let g = along.hypot(around) * (1. + 1e-12);
+    let g = along.portable_hypot(around) * (1. + 1e-12);
     g.is_finite().then_some(g)
 }
 /// Lower bound of the cavity minus male radius over the complete phase
@@ -161,7 +161,7 @@ fn prove(male: Law, cavity: Law, height: f64, tolerance: f64) -> Option<f64> {
     let station = dot(offset, nm);
     let radial: [f64; 3] = std::array::from_fn(|i| offset[i] - nm[i] * station);
     let lateral = dot(radial, radial).sqrt();
-    let phi = dot(cavity.frame.u, male.frame.v).atan2(dot(cavity.frame.u, male.frame.u));
+    let phi = dot(cavity.frame.u, male.frame.v).portable_atan2(dot(cavity.frame.u, male.frame.u));
     // Exact pose errors are carried by the misalignment reserve below; the
     // floating phase constant gets its own directed enclosure.
     let c0 = station - phi * p / (2. * PI);

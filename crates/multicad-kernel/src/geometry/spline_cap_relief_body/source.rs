@@ -214,7 +214,7 @@ fn analytic(
                     } if a == b && sweep_rad.abs() == std::f64::consts::TAU => {
                         AnalyticEdge::Circle {
                             center,
-                            radius_mm: (a[0] - center[0]).hypot(a[1] - center[1]),
+                            radius_mm: (a[0] - center[0]).portable_hypot(a[1] - center[1]),
                             clockwise: sweep_rad < 0.,
                         }
                     }

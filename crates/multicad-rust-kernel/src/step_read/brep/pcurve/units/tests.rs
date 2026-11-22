@@ -1,4 +1,5 @@
 use super::*;
+use multicad_precision::PortableMath as _;
 const INPUT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../multicad-app/tests/fixtures/exchange/corpus/occt-cone-frustum.step"
@@ -41,7 +42,7 @@ fn a_near_degree_unit_is_used_literally_and_cannot_heal_inconsistent_geometry() 
     let input = fixture("1.745329301994E-02", "21.8014094863518", "-360.");
     let source = Source::parse(&input, TOL).unwrap();
     let (p, _) = source.surface(43).unwrap().evaluate([0., -10.]);
-    let expected = 8. - 10. * (21.8014094863518_f64 * 1.745329301994E-02).tan();
+    let expected = 8. - 10. * (21.8014094863518_f64 * 1.745329301994E-02).portable_tan();
     assert!((p[0] - expected).abs() < 1e-12);
     assert!((p[0] - 4.).abs() > TOL);
     let error = validate_pcurves(&input, TOL).unwrap_err();

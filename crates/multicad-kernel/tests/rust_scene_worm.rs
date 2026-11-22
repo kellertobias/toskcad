@@ -12,6 +12,7 @@ use multicad_kernel::{
         worm_gear::{Containment, Wheel, WheelSpec, Worm, WormSpec},
     },
 };
+use multicad_precision::PortableMath as _;
 
 fn worm(bore: f64) -> Solid {
     Solid::rust_za_worm_named(
@@ -333,7 +334,7 @@ fn a_plate_in_front_hides_the_gear_and_crops_bound_the_drawing() {
                 .iter()
                 .filter(|v| v.source_index == source && role.is_none_or(|role| v.role == role))
                 .flat_map(|v| v.preview_mm.windows(2))
-                .map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]))
+                .map(|pair| (pair[1][0] - pair[0][0]).portable_hypot(pair[1][1] - pair[0][1]))
                 .sum::<f64>()
         };
         let same = |a: f64, b: f64| (a - b).abs() <= 1e-6 * a.max(b).max(1.);
@@ -378,7 +379,7 @@ fn a_plate_in_front_hides_the_gear_and_crops_bound_the_drawing() {
         for vector in &detail {
             for p in &vector.preview_mm {
                 assert!(
-                    (p[0] - centre[0]).hypot(p[1] - centre[1]) <= 3. + 1e-5,
+                    (p[0] - centre[0]).portable_hypot(p[1] - centre[1]) <= 3. + 1e-5,
                     "{label}"
                 );
             }

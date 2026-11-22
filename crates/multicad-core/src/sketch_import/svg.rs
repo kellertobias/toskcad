@@ -6,6 +6,7 @@ use super::{
     Artwork, Collector, Diagnostics, Format, ImportError, UnitChoice, fail,
     geometry::{Affine, P, Segment, bezier, ellipse_arc, transform},
 };
+use multicad_precision::PortableMath as _;
 use quick_xml::{Reader, XmlVersion, events::BytesStart, events::Event};
 use std::{
     collections::BTreeMap,
@@ -389,8 +390,8 @@ pub(crate) fn parse_transform(value: &str) -> Result<Affine, ImportError> {
             ("rotate", [a, x, y]) => Affine::translate(*x, *y)
                 .then_after(Affine::rotate(a.to_radians()))
                 .then_after(Affine::translate(-x, -y)),
-            ("skewX", [a]) => Affine([1., 0., a.to_radians().tan(), 1., 0., 0.]),
-            ("skewY", [a]) => Affine([1., a.to_radians().tan(), 0., 1., 0., 0.]),
+            ("skewX", [a]) => Affine([1., 0., a.to_radians().portable_tan(), 1., 0., 0.]),
+            ("skewY", [a]) => Affine([1., a.to_radians().portable_tan(), 0., 1., 0., 0.]),
             _ => return fail(format!("Unsupported SVG transform {name}")),
         };
         result = result.then_after(m);
@@ -515,7 +516,7 @@ fn length(attrs: &BTreeMap<String, String>, key: &str) -> Result<Option<f64>, Sk
 }
 
 fn line(a: P, b: P) -> Option<Segment> {
-    ((a[0] - b[0]).hypot(a[1] - b[1]) > 1e-12).then_some(Segment::Line { a, b })
+    ((a[0] - b[0]).portable_hypot(a[1] - b[1]) > 1e-12).then_some(Segment::Line { a, b })
 }
 
 fn shape(name: &str, attrs: &BTreeMap<String, String>) -> Result<Shape, Skip> {
@@ -645,7 +646,7 @@ fn rectangle(x: f64, y: f64, w: f64, h: f64, rx: f64, ry: f64) -> Vec<Segment> {
 /// parameterization with out-of-range radii scaled up.
 #[allow(clippy::too_many_arguments)]
 fn arc(p0: P, rx: f64, ry: f64, phi_deg: f64, large: bool, sweep: bool, p1: P) -> Option<Segment> {
-    if (p0[0] - p1[0]).hypot(p0[1] - p1[1]) <= 1e-12 {
+    if (p0[0] - p1[0]).portable_hypot(p0[1] - p1[1]) <= 1e-12 {
         return None;
     }
     let (mut rx, mut ry) = (rx.abs(), ry.abs());
@@ -653,7 +654,7 @@ fn arc(p0: P, rx: f64, ry: f64, phi_deg: f64, large: bool, sweep: bool, p1: P) -
         return line(p0, p1);
     }
     let phi = phi_deg.to_radians();
-    let (s, c) = phi.sin_cos();
+    let (s, c) = phi.portable_sin_cos();
     let dx = (p0[0] - p1[0]) / 2.;
     let dy = (p0[1] - p1[1]) / 2.;
     let x1 = c * dx + s * dy;
@@ -676,7 +677,7 @@ fn arc(p0: P, rx: f64, ry: f64, phi_deg: f64, large: bool, sweep: bool, p1: P) -
         c * cx1 - s * cy1 + (p0[0] + p1[0]) / 2.,
         s * cx1 + c * cy1 + (p0[1] + p1[1]) / 2.,
     ];
-    let angle = |ux: f64, uy: f64| uy.atan2(ux);
+    let angle = |ux: f64, uy: f64| uy.portable_atan2(ux);
     let t0 = angle((x1 - cx1) / rx, (y1 - cy1) / ry);
     let t1 = angle((-x1 - cx1) / rx, (-y1 - cy1) / ry);
     let mut dt = t1 - t0;
@@ -770,10 +771,10 @@ pub(crate) fn path_data(d: &str) -> Result<Shape, ImportError> {
                 };
                 let c2 = off([n.number()?, n.number()?], pen);
                 let p = off([n.number()?, n.number()?], pen);
-                if (pen[0] - p[0]).hypot(pen[1] - p[1]) > 1e-12
+                if (pen[0] - p[0]).portable_hypot(pen[1] - p[1]) > 1e-12
                     || [c1, c2]
                         .iter()
-                        .any(|c| (c[0] - p[0]).hypot(c[1] - p[1]) > 1e-12)
+                        .any(|c| (c[0] - p[0]).portable_hypot(c[1] - p[1]) > 1e-12)
                 {
                     current.push(bezier(vec![pen, c1, c2, p]));
                 }
@@ -787,7 +788,7 @@ pub(crate) fn path_data(d: &str) -> Result<Shape, ImportError> {
                     last_quad.map_or(pen, |c| [2. * pen[0] - c[0], 2. * pen[1] - c[1]])
                 };
                 let p = off([n.number()?, n.number()?], pen);
-                if (pen[0] - p[0]).hypot(pen[1] - p[1]) > 1e-12 {
+                if (pen[0] - p[0]).portable_hypot(pen[1] - p[1]) > 1e-12 {
                     current.push(bezier(vec![pen, c1, p]));
                 }
                 quad = Some(c1);

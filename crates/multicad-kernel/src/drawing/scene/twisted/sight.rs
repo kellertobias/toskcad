@@ -5,6 +5,7 @@ use super::super::*;
 use super::flank::{Flank, Shape, rotate};
 use super::solve::{Search, isolate_touching};
 use super::{Band, Gear, Region};
+use multicad_precision::PortableMath as _;
 use std::f64::consts::{PI, TAU};
 
 /// Relative distance from a coaxial circle within which a point is on it.
@@ -20,7 +21,10 @@ fn wrap(angle: f64) -> f64 {
 
 /// Polar angle of the involute frame's x axis and its handedness.
 fn involute_frame(x: P2, y: P2) -> (f64, f64) {
-    (x[1].atan2(x[0]), (x[0] * y[1] - x[1] * y[0]).signum())
+    (
+        x[1].portable_atan2(x[0]),
+        (x[0] * y[1] - x[1] * y[0]).signum(),
+    )
 }
 
 /// Angles at which a flank meets the circle of a radius about the axis, and
@@ -45,7 +49,7 @@ fn circle_hits(flank: &Flank, radius: f64, output: &mut Vec<(f64, bool)>) {
                     let p = [a[0] + s * d[0], a[1] + s * d[1]];
                     let outward = dot2(p, d);
                     if outward != 0. {
-                        output.push((p[1].atan2(p[0]), outward > 0.));
+                        output.push((p[1].portable_atan2(p[0]), outward > 0.));
                     }
                 }
             }
@@ -56,7 +60,7 @@ fn circle_hits(flank: &Flank, radius: f64, output: &mut Vec<(f64, bool)>) {
             start,
             sweep,
         } => {
-            let offset = center[0].hypot(center[1]);
+            let offset = center[0].portable_hypot(center[1]);
             if offset == 0. {
                 return;
             }
@@ -64,13 +68,14 @@ fn circle_hits(flank: &Flank, radius: f64, output: &mut Vec<(f64, bool)>) {
             if cosine.abs() > 1. {
                 return;
             }
-            let toward = center[1].atan2(center[0]);
+            let toward = center[1].portable_atan2(center[0]);
             for sign in [-1., 1.] {
-                let angle = toward + sign * cosine.acos();
-                let (sin, cos) = angle.sin_cos();
+                let angle = toward + sign * cosine.portable_acos();
+                let (sin, cos) = angle.portable_sin_cos();
                 let p = [radius * cos, radius * sin];
                 let spoke = [p[0] - center[0], p[1] - center[1]];
-                let travel = ((spoke[1].atan2(spoke[0]) - start) * sweep.signum()).rem_euclid(TAU);
+                let travel =
+                    ((spoke[1].portable_atan2(spoke[0]) - start) * sweep.signum()).rem_euclid(TAU);
                 let slack = 1e-12;
                 if travel <= sweep.abs() + slack || TAU - travel <= slack {
                     let outward = sweep.signum() * (p[1] * spoke[0] - p[0] * spoke[1]);
@@ -85,7 +90,7 @@ fn circle_hits(flank: &Flank, radius: f64, output: &mut Vec<(f64, bool)>) {
         } => {
             let (zero, hand) = involute_frame(x, y);
             let t = ((radius / base).powi(2) - 1.).max(0.).sqrt();
-            output.push((zero + hand * (t - t.atan()), span > 0.));
+            output.push((zero + hand * (t - t.portable_atan()), span > 0.));
         }
     }
 }
@@ -94,8 +99,8 @@ impl Gear {
     /// Whether a point of the profile plane is strictly inside the tooth
     /// outline: at its radius, the next flank counterclockwise is left.
     pub(super) fn contains_profile(&self, point: P2) -> bool {
-        let radius = point[0].hypot(point[1]);
-        let angle = point[1].atan2(point[0]);
+        let radius = point[0].portable_hypot(point[1]);
+        let angle = point[1].portable_atan2(point[0]);
         // On the root circle, within rounding, a point lies on a root arc
         // (the boundary) or under a tooth (inside).
         if (radius - self.radius[0]).abs() <= ON_CIRCLE * self.radius[0] {
@@ -149,7 +154,7 @@ impl Gear {
     /// Whether a point in gear coordinates is strictly inside the solid:
     /// material on both sides of its axial level.
     pub(super) fn contains(&self, [x, y, z]: P3) -> bool {
-        let radius = x.hypot(y);
+        let radius = x.portable_hypot(y);
         // Points within rounding of a coaxial cylinder lie on its surface.
         radius > self.bore * (1. + ON_CIRCLE)
             && [-1., 1.]
@@ -212,7 +217,7 @@ impl Gear {
         // where its profile angle passes one of the arc's ends.
         if !transverse && rise != 0. {
             let radius = closest2.sqrt();
-            let angle = a[1].atan2(a[0]);
+            let angle = a[1].portable_atan2(a[0]);
             for band in &self.bands {
                 for flank in &self.flanks {
                     let (Some(own), Shape::Arc { start, sweep, .. }) =
@@ -293,9 +298,10 @@ impl Gear {
                     // swing of its azimuth at the window's start.
                     let at = |t: f64| [a[0] + t * b[0], a[1] + t * b[1]];
                     let [p, q] = [at(window[0]), at(window[1])];
-                    let swing = (p[0] * q[1] - p[1] * q[0]).atan2(dot2(p, q)).abs()
+                    let swing = (p[0] * q[1] - p[1] * q[0]).portable_atan2(dot2(p, q)).abs()
                         + (band.twist * rise * (window[1] - window[0])).abs();
-                    let start = p[1].atan2(p[0]) - band.phase_at(base[2] + window[0] * rise);
+                    let start =
+                        p[1].portable_atan2(p[0]) - band.phase_at(base[2] + window[0] * rise);
                     if wrap(flank.azimuth[0] - start).abs() > swing + flank.azimuth[1] + 1e-9 {
                         continue;
                     }
@@ -369,7 +375,7 @@ impl Gear {
         let hi = corners.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let d = direction;
         let ruling = |a: f64| {
-            let (sin, cos) = a.sin_cos();
+            let (sin, cos) = a.portable_sin_cos();
             (
                 [circle * cos, circle * sin, height(a)],
                 [-circle * k * sin, circle * k * cos, 1.],
@@ -407,12 +413,12 @@ impl Gear {
                 .then_some(t)
         };
         // A line parallel to a ruling: along it when it passes through it.
-        let planar = d[0].hypot(d[1]);
+        let planar = d[0].portable_hypot(d[1]);
         let pitch = circle * k.abs() * d[2].abs();
         if (planar - pitch).abs() <= 1e-12 * (1. + planar) && d[2] != 0. {
             // J e(a) = d_xy / (b k d_z), so e(a) = -J (d_xy) / (b k d_z).
             let scale = circle * k * d[2];
-            let a0 = (-d[0] / scale).atan2(d[1] / scale);
+            let a0 = (-d[0] / scale).portable_atan2(d[1] / scale);
             let turns = ((lo - a0) / std::f64::consts::TAU).ceil();
             let mut a = a0 + turns * std::f64::consts::TAU;
             while a <= hi {
@@ -508,7 +514,7 @@ impl Gear {
         (stops, found): (&mut Vec<f64>, &mut Vec<[f64; 2]>),
     ) -> Result<(), GeometryError> {
         let mut contacts = Vec::new();
-        let slope = direction[0].hypot(direction[1]);
+        let slope = direction[0].portable_hypot(direction[1]);
         // Speed of the line's image in profile coordinates.
         let speed = slope + (band.twist * direction[2]).abs() * outer;
         let image = |t: f64| {
@@ -525,7 +531,7 @@ impl Gear {
         let result = match flank.shape {
             Shape::Line { a, b } => {
                 let d = [b[0] - a[0], b[1] - a[1]];
-                let length = d[0].hypot(d[1]);
+                let length = d[0].portable_hypot(d[1]);
                 let normal = [d[1] / length, -d[0] / length];
                 isolate_touching(
                     &mut |t| {
@@ -549,14 +555,15 @@ impl Gear {
             Shape::Arc { center, radius, .. } => isolate_touching(
                 &mut |t| {
                     let p = image(t);
-                    (p[0] - center[0]).hypot(p[1] - center[1]) - radius
+                    (p[0] - center[0]).portable_hypot(p[1] - center[1]) - radius
                 },
                 &Search {
                     slope: speed,
                     leaf,
                     noise: GRAZING * outer,
                     // Of the squared distance from the center.
-                    second: 2. * speed * speed + 2. * (outer + center[0].hypot(center[1])) * bend,
+                    second: 2. * speed * speed
+                        + 2. * (outer + center[0].portable_hypot(center[1])) * bend,
                     lift: radius,
                     wrapped: false,
                 },

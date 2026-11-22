@@ -1,5 +1,6 @@
 //! Coaxial cylinder minus a circular normal-profile helical tube.
 //! Provides analytic material queries and trim extents for a bounded class.
+use multicad_precision::PortableMath as _;
 mod mesh;
 
 use crate::prism::Location;
@@ -83,11 +84,11 @@ impl Cut {
         if rise > radius {
             return Err(Error::UnsupportedGeometry);
         }
-        let length = radius.hypot(rise);
+        let length = radius.portable_hypot(rise);
         let tangent = rise / length;
         let vertical = radius / length;
         let half_height = vertical * tube;
-        let angle_shift = (tangent * tube / (radius - tube)).asin();
+        let angle_shift = (tangent * tube / (radius - tube)).portable_asin();
         // At fixed world radius and azimuth, the normal-disk parameter can
         // shift height by at most half_height + rise * angle_shift. A strict
         // gap excludes any second branch from the neighboring turn.
@@ -117,7 +118,7 @@ impl Cut {
     pub fn cylinder_trims(self) -> [CylinderTrim; 2] {
         let [x, y] = self.rim;
         [-y, y].map(|y| {
-            let shift = (self.tangent * y).atan2(self.spec.stock_radius_mm + x);
+            let shift = (self.tangent * y).portable_atan2(self.spec.stock_radius_mm + x);
             let start_z = self.spec.start_height_mm - self.vertical * y;
             let azimuth = self.spec.start_angle_rad + shift;
             CylinderTrim {
@@ -136,7 +137,7 @@ impl Cut {
         let y = self.rim[1];
         let sqrt_integral = |radius: f64, factor: f64| {
             let ratio = factor * y / radius;
-            0.5 * radius * y * ((1. - ratio * ratio).sqrt() + ratio.asin() / ratio)
+            0.5 * radius * y * ((1. - ratio * ratio).sqrt() + ratio.portable_asin() / ratio)
         };
         let disk = sqrt_integral(tube, 1.);
         let radial = sqrt_integral(radius, self.tangent) - radius * y + disk;
@@ -160,14 +161,14 @@ impl Cut {
         if point.iter().any(|&v| !v.is_finite()) {
             return Err(Error::InvalidInput);
         }
-        let radial = x.hypot(y);
+        let radial = x.portable_hypot(y);
         let stock_gap = (radial - self.spec.stock_radius_mm)
             .max(z - self.spec.stock_height_mm)
             .max(-z);
         if stock_gap > self.tolerance {
             return Ok(Location::Exterior);
         }
-        Ok(match self.tool_location(radial, y.atan2(x), z) {
+        Ok(match self.tool_location(radial, y.portable_atan2(x), z) {
             Location::Interior => Location::Exterior,
             Location::Boundary => Location::Boundary,
             Location::Exterior if stock_gap >= -self.tolerance => Location::Boundary,
@@ -185,7 +186,7 @@ impl Cut {
         let turn =
             ((z - self.spec.start_height_mm - self.rise * relative) / self.spec.pitch_mm).round();
         let base_angle = relative + turn * TAU;
-        let angle = |y: f64| base_angle - (self.tangent * y / radius).asin();
+        let angle = |y: f64| base_angle - (self.tangent * y / radius).portable_asin();
         let height = |y: f64| self.spec.start_height_mm + self.rise * angle(y) - self.vertical * y;
         let [mut lo, mut hi] = [-tube - guard, tube + guard];
         if z < height(hi) || z > height(lo) {
@@ -204,7 +205,7 @@ impl Cut {
         let y = (lo + hi) * 0.5;
         let t = angle(y);
         let x = (radius * radius - (self.tangent * y).powi(2)).sqrt() - self.spec.stock_radius_mm;
-        let disk_gap = x.hypot(y) - tube;
+        let disk_gap = x.portable_hypot(y) - tube;
         // The axial chart boundaries are planes normal to the helix.
         // Convert the local angular margin to millimeters at the radius.
         let end_gap = (-t).max(t - self.angle_limit) * self.spec.stock_radius_mm;

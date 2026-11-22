@@ -11,6 +11,7 @@
 //! of nine anchors on that box sits at `position_mm`. Lines align left,
 //! center or right inside the box.
 use crate::document::{DocumentError, EntityId};
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -573,7 +574,7 @@ fn exact_sin_cos(degrees: f64) -> (f64, f64) {
             _ => (-1., 0.),
         }
     } else {
-        degrees.to_radians().sin_cos()
+        degrees.to_radians().portable_sin_cos()
     }
 }
 

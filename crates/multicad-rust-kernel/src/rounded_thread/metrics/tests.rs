@@ -3,12 +3,12 @@ use crate::rounded_thread::Spec;
 fn thread(turns: f64, left_hand: bool) -> Thread {
     let p = 1.27;
     let a = 27.5_f64.to_radians();
-    let r = p * a.cos() / (12. * (1. - a.sin()));
+    let r = p * a.portable_cos() / (12. * (1. - a.portable_sin()));
     Thread::new(Spec {
         major_radius_mm: 3.175,
         pitch_mm: p,
         length_mm: turns * p,
-        depth_mm: p / (3. * a.tan()),
+        depth_mm: p / (3. * a.portable_tan()),
         crest_radius_mm: r,
         root_radius_mm: r,
         flank_angle_deg: 27.5,
@@ -48,10 +48,10 @@ fn fractional_turns_keep_centroid_and_all_mixed_moments_with_hand_reflection() {
             }
         }
         if turns.fract() == 0. {
-            assert!(r.centroid_mm[0].hypot(r.centroid_mm[1]) < 1e-12);
+            assert!(r.centroid_mm[0].portable_hypot(r.centroid_mm[1]) < 1e-12);
             assert!(r.central_second_moment_mm5[1][2].abs() > 1e-4);
         } else {
-            assert!(r.centroid_mm[0].hypot(r.centroid_mm[1]) > 1e-4);
+            assert!(r.centroid_mm[0].portable_hypot(r.centroid_mm[1]) > 1e-4);
         }
         for ((a, x), (b, y)) in r.faces.iter().zip(&l.faces) {
             assert!((x - y).abs() < 1e-10);
@@ -83,7 +83,7 @@ fn independent_polar_volume_quadrature_checks_fractional_centroid_and_tensor() {
         };
         for i in 0..nt {
             let angle = (i as f64 + 0.5) * dt;
-            let (si, co) = angle.sin_cos();
+            let (si, co) = angle.portable_sin_cos();
             let r = t.radius(angle, z);
             let area = r * r / 2.;
             let m = r.powi(3) / 3.;

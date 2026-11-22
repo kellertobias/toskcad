@@ -20,6 +20,7 @@ use multicad_kernel::{
         prism::Prism,
     },
 };
+use multicad_precision::PortableMath as _;
 
 mod exact_length;
 use exact_length::exact_length;
@@ -657,7 +658,7 @@ fn normal_profile(
             ] = hole.as_slice() =>
         {
             let [dx, dy] = std::array::from_fn(|i| bore_center[i] - center[i]);
-            if dx.hypot(dy) > policy.linear_tolerance_mm {
+            if dx.portable_hypot(dy) > policy.linear_tolerance_mm {
                 return Err(error(
                     Some(id),
                     "Rust annular extrusion requires concentric circles",

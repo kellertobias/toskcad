@@ -17,6 +17,7 @@ use crate::{
     commands::{Actor, CommandError, Session},
     document::{Document, DocumentError, EntityId, Mutation},
 };
+use multicad_precision::PortableMath as _;
 
 /// One change to a wall's openings.
 #[derive(Clone, Debug, PartialEq)]
@@ -203,7 +204,7 @@ pub fn locate_on_wall(plan: &WallPlan, point: [f64; 2], tolerance_mm: f64) -> Op
         let across = d[0] * seg.normal[0] + d[1] * seg.normal[1];
         let outside_along = (-along).max(along - seg.length_mm).max(0.);
         let outside_across = (low - across).max(across - high).max(0.);
-        let miss = outside_along.hypot(outside_across);
+        let miss = outside_along.portable_hypot(outside_across);
         if miss > tolerance_mm {
             continue;
         }

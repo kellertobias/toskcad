@@ -1,24 +1,28 @@
 use multicad_core::{document::EntityId, references::TopologyKind};
 use multicad_kernel::{GeometryPolicy, MeshOptions, RigidTransform, Solid, SphericalBevelGear};
+use multicad_precision::PortableMath as _;
 use std::{collections::BTreeSet, f64::consts::PI};
 
 /// The canonical 90° spherical-involute resolver with 0.05 mm backlash.
 fn specification(module: f64, teeth: u32, mate: u32, width: f64, bore: f64) -> SphericalBevelGear {
     let (z, mate) = (f64::from(teeth), f64::from(mate));
     let alpha = 20_f64.to_radians();
-    let delta = 1_f64.atan2(mate / z);
-    let distance = module * z / (2. * delta.sin());
-    let beta = (delta.sin() * alpha.cos()).asin();
+    let delta = 1_f64.portable_atan2(mate / z);
+    let distance = module * z / (2. * delta.portable_sin());
+    let beta = (delta.portable_sin() * alpha.portable_cos()).portable_asin();
     let inv = |g: f64| {
-        let sigma = (g.cos() / beta.cos()).acos();
-        sigma / beta.sin() - sigma.sin().atan2(beta.sin() * sigma.cos())
+        let sigma = (g.portable_cos() / beta.portable_cos()).portable_acos();
+        sigma / beta.portable_sin()
+            - sigma
+                .portable_sin()
+                .portable_atan2(beta.portable_sin() * sigma.portable_cos())
     };
     SphericalBevelGear {
         teeth,
         pitch_cone_angle_rad: delta,
         base_cone_angle_rad: beta,
-        tip_cone_angle_rad: delta + (module / distance).atan(),
-        root_cone_angle_rad: delta - (1.25 * module / distance).atan(),
+        tip_cone_angle_rad: delta + (module / distance).portable_atan(),
+        root_cone_angle_rad: delta - (1.25 * module / distance).portable_atan(),
         outer_cone_distance_mm: distance,
         face_width_mm: width,
         bore_radius_mm: bore,
@@ -125,8 +129,8 @@ fn sliver_meridian_specs_build_like_native_without_meridian_faces() {
     let root = base.root_cone_angle_rad;
     let beta = base.base_cone_angle_rad;
     let length = |fillet: f64| {
-        let rho = (fillet / distance).asin();
-        beta - ((root + rho).cos() / rho.cos()).acos()
+        let rho = (fillet / distance).portable_asin();
+        beta - ((root + rho).portable_cos() / rho.portable_cos()).portable_acos()
     };
     let fillet_for = |target: f64| {
         let (mut lo, mut hi) = (base.root_fillet_radius_mm, distance * 0.5);

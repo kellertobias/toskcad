@@ -74,7 +74,10 @@ fn reads_complete_helical_shell_in_distinct_frames_and_periodic_lifts() {
         .unwrap();
         assert!(path_height_mm < cut.spec().path_height_mm);
         for theta in [TAU - 0.01, TAU + 0.01] {
-            let [sine, cosine] = [(theta + phase).sin(), (theta + phase).cos()];
+            let [sine, cosine] = [
+                (theta + phase).portable_sin(),
+                (theta + phase).portable_cos(),
+            ];
             for (r, expected) in [
                 (7.7, Location::Exterior),
                 (7.4, Location::Boundary),

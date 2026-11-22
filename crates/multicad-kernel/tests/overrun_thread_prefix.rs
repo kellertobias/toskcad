@@ -13,6 +13,7 @@ use multicad_kernel::{
         helical_thread::{Spec, Thread},
     },
 };
+use multicad_precision::PortableMath as _;
 fn point(f: PlaneFrame, p: [f64; 3]) -> [f64; 3] {
     std::array::from_fn(|i| f.origin[i] + f.u[i] * p[0] + f.v[i] * p[1] + f.normal()[i] * p[2])
 }
@@ -164,7 +165,7 @@ fn sourced_overrun_tools_keep_literal_length_and_only_thread_the_stock_prefix() 
                     }
                     for (phase, expected) in phases {
                         let z = phase + analytic.helical_rate() * theta + pitch;
-                        let local = [r * theta.cos(), r * theta.sin(), z];
+                        let local = [r * theta.portable_cos(), r * theta.portable_sin(), z];
                         let p = point(entry, local);
                         assert_eq!(cut.rust_thread_contains(p).unwrap(), expected);
                         assert_eq!(imported.rust_thread_contains(p).unwrap(), expected);

@@ -13,6 +13,7 @@ use multicad_model::{
     GeometryBackend,
     export::{ExportWorker, Exporter},
 };
+use multicad_precision::PortableMath as _;
 use std::{
     path::Path,
     time::{Duration, Instant},
@@ -176,7 +177,7 @@ fn real_step_bundle_rebuilds_exact_geometry_and_reuses_identical_reopened_source
 fn explicit_assembly_scope_exports_each_exact_world_occurrence_without_collapsing_component_identity()
  {
     let mut f = Fixture::new();
-    let q = (std::f64::consts::FRAC_PI_4).sin();
+    let q = (std::f64::consts::FRAC_PI_4).portable_sin();
     let instances = [
         Entity::new(
             "Rotated copy",

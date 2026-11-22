@@ -71,8 +71,8 @@ fn signed_area(wire: &[Edge]) -> f64 {
             } => {
                 let end = start_rad + sweep_rad;
                 radius
-                    * (radius * sweep_rad + x * (end.sin() - start_rad.sin())
-                        - y * (end.cos() - start_rad.cos()))
+                    * (radius * sweep_rad + x * (end.portable_sin() - start_rad.portable_sin())
+                        - y * (end.portable_cos() - start_rad.portable_cos()))
             }
         })
         .sum::<f64>()

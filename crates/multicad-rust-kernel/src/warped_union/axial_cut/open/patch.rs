@@ -64,7 +64,7 @@ impl Opening {
         let mid = self.tube.point(self.entry_level.midpoint(self.tube.length));
         for i in 0..arc_count {
             let angle = self.segment.start_rad + (i as f64 + 0.5) * sweep;
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = angle.portable_sin_cos();
             let point_mm = std::array::from_fn(|j| {
                 mid[j] + radius * (cos * self.segment.normal[j] + sin * self.segment.tangent[j])
             });

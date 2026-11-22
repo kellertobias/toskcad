@@ -150,7 +150,7 @@ fn angle_quadrants_axis_crossings_and_seam_keep_true_directions() {
         (0., 0.),
     ] {
         let r = angle(I::point(x), I::point(y));
-        let a = y.atan2(x);
+        let a = y.portable_atan2(x);
         assert!(r.lo <= a && a <= r.hi);
     }
     let r = angle(I::new(-1., 1.), I::new(-1., 1.));

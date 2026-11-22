@@ -36,10 +36,10 @@ fn bspt(k: f64, quarter: bool) -> Spec {
     };
     let p = 25.4 / tpi;
     let a = 27.5_f64.to_radians();
-    let m = 1. / a.tan();
-    let depth = p / (3. * a.tan());
+    let m = 1. / a.portable_tan();
+    let depth = p / (3. * a.portable_tan());
     let h = p * (m * m - k * k) / (2. * m);
-    let rounding = (h - depth) / (2. * (1. / a.sin() - (1. + k * k).sqrt()));
+    let rounding = (h - depth) / (2. * (1. / a.portable_sin() - (1. + k * k).sqrt()));
     Spec {
         major_radius_mm: major / 2. - k * if k > 0. { gauge } else { p / 2. },
         pitch_mm: p,
@@ -110,8 +110,8 @@ fn all_core_pipe_rows_retain_real_axial_slopes_circles_and_closed_junctions() {
                     );
                     let point = t.surface_point_bounds(band, [q; 2], [z; 2]).unwrap();
                     let theta = std::f64::consts::TAU * (z - q) / spec.pitch_mm;
-                    contains(point[0], expected * theta.cos());
-                    contains(point[1], expected * theta.sin());
+                    contains(point[0], expected * theta.portable_cos());
+                    contains(point[1], expected * theta.portable_sin());
                     contains(point[2], z);
                     // At fixed theta, q and z advance together. Actual axial
                     // sections keep unsheared lines and literal circular radii.
@@ -231,7 +231,7 @@ fn mass_and_support_bound_independent_section_integration_and_actual_points() {
                             )
                             .midpoint();
                             let theta = std::f64::consts::TAU * (z - q) / spec.pitch_mm;
-                            assert!(r * theta.cos() + 0.3 * z <= bound[1]);
+                            assert!(r * theta.portable_cos() + 0.3 * z <= bound[1]);
                         }
                     }
                 }
@@ -361,7 +361,7 @@ fn independent_gauge_cones_and_axial_flat_mass_match_core_conventions() {
             else {
                 panic!()
             };
-            let m = 1. / 27.5_f64.to_radians().tan();
+            let m = 1. / 27.5_f64.to_radians().portable_tan();
             let normal = (1. + k * k).sqrt();
             let h = spec.pitch_mm * (m * m - k * k) / (2. * m);
             let z = if k > 0. {
@@ -546,10 +546,10 @@ fn whole_sections_all_clipped_crests_and_intrinsic_junction_limit_remain_honest(
         panic!()
     };
     let angle = 27.5_f64.to_radians();
-    let m = 1. / angle.tan();
+    let m = 1. / angle.portable_tan();
     let k = base.radial_taper;
     let expected = base.pitch_mm * (m * m - k * k) / (2. * m)
-        - 2. * r * (1. / angle.sin() - (1. + k * k).sqrt());
+        - 2. * r * (1. / angle.portable_sin() - (1. + k * k).sqrt());
     let mut refused = false;
     for scale in [0.99, 0.995, 0.999, 0.9999, 1.] {
         let spec = Spec {

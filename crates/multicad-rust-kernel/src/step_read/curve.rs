@@ -239,7 +239,7 @@ impl Shell<'_, '_> {
         let (plane, radius) = self.cylinder(pcurve.surface)?;
         let [angle, height, _] = pcurve.origin;
         let [dx, dy, _] = pcurve.direction;
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = angle.portable_sin_cos();
         let radial = std::array::from_fn(|i| cos * plane.u[i] + sin * plane.v[i]);
         let center = std::array::from_fn(|i| plane.origin[i] + height * plane.normal[i]);
         if dx == 0. {

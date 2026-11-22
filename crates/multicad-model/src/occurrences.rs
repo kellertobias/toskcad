@@ -7,6 +7,7 @@ use multicad_core::{
     references::{AnalyticGeometry, ReferenceFrame, TopologySnapshot},
 };
 use multicad_kernel::{Bounds, GeometryPolicy, RigidTransform, Solid};
+use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 pub const MAX_MODEL_OCCURRENCES: usize = multicad_core::model::MAX_PLACED_INSTANCES;
 #[derive(Clone, Debug)]
@@ -45,7 +46,7 @@ fn plane_equivalent(a: ReferenceFrame, b: ReferenceFrame, tolerance: f64) -> boo
             <= tolerance
 }
 fn curve_point(frame: ReferenceFrame, radius: f64, angle: f64) -> [f64; 3] {
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = angle.portable_sin_cos();
     std::array::from_fn(|i| frame.origin_mm[i] + radius * (frame.u[i] * cos + frame.v[i] * sin))
 }
 fn equivalent(a: Option<AnalyticGeometry>, b: Option<AnalyticGeometry>, tolerance: f64) -> bool {

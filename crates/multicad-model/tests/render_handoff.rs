@@ -16,6 +16,7 @@ use multicad_core::{
     project_file::{self, ProjectFile},
 };
 use multicad_model::{Compiler, export::Exporter};
+use multicad_precision::PortableMath as _;
 use serde_json::Value;
 use std::{f64::consts::PI, path::Path};
 
@@ -83,7 +84,7 @@ fn fixture() -> Fixture {
         .unwrap(),
     )
     .unwrap();
-    let q = (PI / 4.).sin();
+    let q = (PI / 4.).portable_sin();
     let instances = [
         Entity::new(
             "Rotated copy",
@@ -255,7 +256,7 @@ fn handoff_glb_carries_camera_lights_instances_and_appearances() {
     let bg = extras["multicad_background_linear"].as_array().unwrap();
     near(
         bg[2].as_f64().unwrap(),
-        ((90. / 255. + 0.055) / 1.055f64).powf(2.4),
+        ((90. / 255. + 0.055) / 1.055f64).portable_powf(2.4),
         1e-12,
     );
 
@@ -514,7 +515,7 @@ fn blender_imports_the_handoff_with_scale_hierarchy_instances_camera_and_lights(
     near(pin["roughness"].as_f64().unwrap(), 0.3, 1e-6);
     near(
         pin["base_color"][0].as_f64().unwrap(),
-        ((200. / 255. + 0.055) / 1.055f64).powf(2.4),
+        ((200. / 255. + 0.055) / 1.055f64).portable_powf(2.4),
         1e-4,
     );
     // Camera: perspective, 40° vertical, at the eye, looking at the target.
@@ -553,7 +554,7 @@ fn blender_imports_the_handoff_with_scale_hierarchy_instances_camera_and_lights(
     assert_eq!(props["multicad_display"], "shaded_edges");
     near(
         props["multicad_background_linear"][2].as_f64().unwrap(),
-        ((90. / 255. + 0.055) / 1.055f64).powf(2.4),
+        ((90. / 255. + 0.055) / 1.055f64).portable_powf(2.4),
         1e-6,
     );
 }

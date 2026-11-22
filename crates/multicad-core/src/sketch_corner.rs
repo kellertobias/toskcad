@@ -20,6 +20,7 @@ use crate::{
     constraint_sketch::{Axis, ConstraintKind, Curve, CurveKind, Dimension, source::Source},
     document::{DocumentError, EntityId},
 };
+use multicad_precision::PortableMath as _;
 use serde::{Deserialize, Serialize};
 use std::f64::consts::{PI, TAU};
 
@@ -72,17 +73,17 @@ fn cross(a: V, b: V) -> f64 {
     a[0] * b[1] - a[1] * b[0]
 }
 fn norm(a: V) -> f64 {
-    a[0].hypot(a[1])
+    a[0].portable_hypot(a[1])
 }
 /// Counter-clockwise perpendicular.
 fn perp(a: V) -> V {
     [-a[1], a[0]]
 }
 fn angle(a: V) -> f64 {
-    a[1].atan2(a[0])
+    a[1].portable_atan2(a[0])
 }
 fn rotate(a: V, by: f64) -> V {
-    let (s, c) = by.sin_cos();
+    let (s, c) = by.portable_sin_cos();
     [a[0] * c - a[1] * s, a[0] * s + a[1] * c]
 }
 
@@ -196,7 +197,7 @@ impl Edge {
                 if d >= 2. * radius {
                     return None;
                 }
-                let phi = 2. * (d / (2. * radius)).asin();
+                let phi = 2. * (d / (2. * radius)).portable_asin();
                 add(center, rotate(sub(self.corner, center), away * phi))
             }
         };
@@ -428,7 +429,7 @@ pub fn corner_draft(
     ];
     let between = dot(edges[0].away(at), edges[1].away(at))
         .clamp(-1., 1.)
-        .acos();
+        .portable_acos();
     if !(MIN_ANGLE..=PI - MIN_ANGLE).contains(&between) {
         return Err(invalid(
             "Fillet and chamfer need two curves meeting at an angle; these meet tangentially or are collinear",

@@ -5,6 +5,7 @@ use multicad_core::{
 use multicad_kernel::{
     CircularPocketTool, GeometryPolicy, PlaneFrame, Solid, rust_kernel::Rational,
 };
+use multicad_precision::PortableMath as _;
 fn point(f: PlaneFrame, p: [f64; 3]) -> [f64; 3] {
     std::array::from_fn(|i| f.origin[i] + f.u[i] * p[0] + f.v[i] * p[1] + f.normal()[i] * p[2])
 }
@@ -136,7 +137,7 @@ fn declared_wall_floor_prior_cuts_and_oblique_tools_cannot_publish_a_blind_recei
                 let a: f64 = 0.01;
                 let tilted = PlaneFrame {
                     origin: entry.origin,
-                    u: [a.cos(), 0., a.sin()],
+                    u: [a.portable_cos(), 0., a.portable_sin()],
                     v: entry.v,
                 };
                 t = tool(tilted, 4.);

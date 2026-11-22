@@ -7,7 +7,7 @@ mod filled;
 type Point = [f64; 3];
 type Section = (Vec<Vec<[f64; 2]>>, f64, PlaneFrame, bool);
 fn norm(p: Point) -> f64 {
-    p[0].hypot(p[1]).hypot(p[2])
+    p[0].portable_hypot(p[1]).portable_hypot(p[2])
 }
 fn difference(a: Point, b: Point) -> Point {
     std::array::from_fn(|i| a[i] - b[i])
@@ -91,7 +91,7 @@ impl Solid {
             let length = rings
                 .iter()
                 .flatten()
-                .map(|p| p[0].hypot(p[1]))
+                .map(|p| p[0].portable_hypot(p[1]))
                 .fold(radius.max(ch).max(height).max(1.), f64::max);
             let magnitude = pframe
                 .origin

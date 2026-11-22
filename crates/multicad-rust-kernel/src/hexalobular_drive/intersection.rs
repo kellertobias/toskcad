@@ -149,7 +149,7 @@ impl Drive {
                         point[0],
                         point[1],
                         self.cone.tip_depth_mm
-                            - self.cone.depth_per_radius * point[0].hypot(point[1]),
+                            - self.cone.depth_per_radius * point[0].portable_hypot(point[1]),
                     ];
                 }
             }

@@ -143,7 +143,7 @@ fn hex_head_has_its_six_native_flats_and_no_separate_shank_when_fully_threaded()
     assert!((screw.volume_mm3() - thread.volume_mm3() - area * 5.3).abs() < 1e-10);
     for (index, [x, y]) in vertices.into_iter().enumerate() {
         let theta = FRAC_PI_6 + index as f64 * TAU / 6.;
-        assert!((screw.head_radius(theta) - x.hypot(y)).abs() < 1e-12);
+        assert!((screw.head_radius(theta) - x.portable_hypot(y)).abs() < 1e-12);
     }
     let faces = screw.faces();
     assert_eq!(faces[0], ScrewFace::ThreadShoulder);

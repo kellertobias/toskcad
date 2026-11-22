@@ -1,6 +1,7 @@
 //! Original vector symbols on a consistent 24-point grid. No platform glyphs.
 use crate::svg_icon::SvgIcon;
 use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
+use multicad_precision::PortableMath as _;
 #[derive(Clone, Copy)]
 pub enum Icon {
     User,
@@ -719,7 +720,11 @@ pub(crate) fn paint_sized(ui: &egui::Ui, icon: Icon, center: Pos2, color: Color3
                 std::f32::consts::PI,
                 3. * std::f32::consts::FRAC_PI_2,
             ] {
-                circle(12. + 8. * f32::cos(angle), 12. + 8. * f32::sin(angle), 2.);
+                circle(
+                    12. + 8. * f32::portable_cos(angle),
+                    12. + 8. * f32::portable_sin(angle),
+                    2.,
+                );
             }
         }
         Icon::Trim => {
@@ -856,7 +861,10 @@ pub(crate) fn paint_sized(ui: &egui::Ui, icon: Icon, center: Pos2, color: Color3
             let points: Vec<_> = (0..=24)
                 .map(|i| {
                     let angle = std::f32::consts::PI * (0.15 + i as f32 / 24. * 1.4);
-                    [12. + 8. * angle.cos(), 12. - 8. * angle.sin()]
+                    [
+                        12. + 8. * angle.portable_cos(),
+                        12. - 8. * angle.portable_sin(),
+                    ]
                 })
                 .collect();
             path(&points);
@@ -924,7 +932,10 @@ pub(crate) fn paint_sized(ui: &egui::Ui, icon: Icon, center: Pos2, color: Color3
                 let points = (0..=32)
                     .map(|step| {
                         let angle = step as f32 * std::f32::consts::TAU / 32.;
-                        v(12. + x * angle.cos(), 12. + y * angle.sin())
+                        v(
+                            12. + x * angle.portable_cos(),
+                            12. + y * angle.portable_sin(),
+                        )
                     })
                     .collect();
                 p.add(egui::Shape::line(points, stroke));
@@ -935,7 +946,10 @@ pub(crate) fn paint_sized(ui: &egui::Ui, icon: Icon, center: Pos2, color: Color3
                 let points = (start..=end)
                     .map(|step| {
                         let angle = step as f32 * std::f32::consts::TAU / 32.;
-                        v(12. + 8. * angle.cos(), cy + 3. * angle.sin())
+                        v(
+                            12. + 8. * angle.portable_cos(),
+                            cy + 3. * angle.portable_sin(),
+                        )
                     })
                     .collect();
                 p.add(egui::Shape::line(points, stroke));
@@ -1000,7 +1014,10 @@ pub(crate) fn paint_sized(ui: &egui::Ui, icon: Icon, center: Pos2, color: Color3
             let points = (0..=20)
                 .map(|i| {
                     let a = std::f32::consts::PI + i as f32 / 20.0 * std::f32::consts::FRAC_PI_2;
-                    v(20.0 + a.cos() * 12.0, 4.0 - a.sin() * 12.0)
+                    v(
+                        20.0 + a.portable_cos() * 12.0,
+                        4.0 - a.portable_sin() * 12.0,
+                    )
                 })
                 .collect();
             p.add(egui::Shape::line(points, stroke));
@@ -1190,7 +1207,7 @@ pub(crate) fn paint_sized(ui: &egui::Ui, icon: Icon, center: Pos2, color: Color3
                 .map(|i| {
                     let a = i as f32 / 32.0 * std::f32::consts::TAU;
                     let r = if i % 4 == 0 || i % 4 == 1 { 10.0 } else { 7.5 };
-                    v(12.0 + r * a.cos(), 12.0 + r * a.sin())
+                    v(12.0 + r * a.portable_cos(), 12.0 + r * a.portable_sin())
                 })
                 .collect();
             p.add(egui::Shape::line(points, stroke));

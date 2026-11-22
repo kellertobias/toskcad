@@ -11,6 +11,7 @@ use multicad_kernel::{
     BooleanOperation, CurvedEdge2d, CurvedProfile, GeometryErrorKind, GeometryPolicy, PlaneFrame,
     RigidTransform, Solid,
 };
+use multicad_precision::PortableMath as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
@@ -35,13 +36,13 @@ fn box_solid(
     let d = item.rectangle.depth;
     let height = item.top_mm - item.bottom_mm;
     let (s, c) = match backend {
-        GeometryBackend::OpenCascade => item.rectangle.rotation_deg.to_radians().sin_cos(),
+        GeometryBackend::OpenCascade => item.rectangle.rotation_deg.to_radians().portable_sin_cos(),
         GeometryBackend::Rust => match item.rectangle.rotation_deg.rem_euclid(360.) {
             0. => (0., 1.),
             90. => (1., 0.),
             180. => (0., -1.),
             270. => (-1., 0.),
-            angle => angle.to_radians().sin_cos(),
+            angle => angle.to_radians().portable_sin_cos(),
         },
     };
     let origin = [

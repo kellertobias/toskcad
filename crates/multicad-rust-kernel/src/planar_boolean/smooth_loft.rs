@@ -4,6 +4,7 @@
 //! of the rail points at one parameter. Each wall is the ruled surface
 //! between two neighboring rails: an exact degree (1, 3) B-spline surface.
 use super::*;
+use multicad_precision::PortableMath as _;
 
 const MAX_EDGES: usize = 64;
 const MAX_STATIONS: usize = 16;
@@ -284,8 +285,14 @@ impl SmoothLoft {
                                     / BINOMIAL6[a + b];
                         }
                     }
-                    let length = edge.iter().map(|v| v[0].hypot(v[1])).fold(0., f64::max);
-                    let reach = offset.iter().map(|v| v[0].hypot(v[1])).fold(0., f64::max);
+                    let length = edge
+                        .iter()
+                        .map(|v| v[0].portable_hypot(v[1]))
+                        .fold(0., f64::max);
+                    let reach = offset
+                        .iter()
+                        .map(|v| v[0].portable_hypot(v[1]))
+                        .fold(0., f64::max);
                     let guard = tolerance * length
                         + 16. * coordinate_error * (length + reach + coordinate_error);
                     positive(coefficients, guard, &mut budget)?;
@@ -391,7 +398,7 @@ impl SmoothLoft {
                         .map(|n| {
                             let [x, y] =
                                 std::array::from_fn(|i| c[n + 2][i] - 2. * c[n + 1][i] + c[n][i]);
-                            6. * x.hypot(y)
+                            6. * x.portable_hypot(y)
                         })
                         .fold(0., f64::max)
                 })
@@ -405,7 +412,7 @@ impl SmoothLoft {
                                 (controls[j][n + 1][axis] - controls[i][n + 1][axis])
                                     - (controls[j][n][axis] - controls[i][n][axis])
                             });
-                            3. * x.hypot(y)
+                            3. * x.portable_hypot(y)
                         })
                         .fold(0., f64::max)
                 })
@@ -413,7 +420,7 @@ impl SmoothLoft {
             let step = self.step(segment);
             let chord = (curvature / (4. * options.deflection)).sqrt();
             let skew = twist / (2. * options.deflection);
-            let rotation = (curvature + twist) / (step * (options.angle * 0.5).sin());
+            let rotation = (curvature + twist) / (step * (options.angle * 0.5).portable_sin());
             let divisions = chord.max(skew).max(rotation).max(1.).ceil();
             if !divisions.is_finite()
                 || 2. * count as f64 * divisions > options.triangle_limit as f64

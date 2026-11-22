@@ -1,6 +1,7 @@
 //! Exact round through receivers with optional certified flat or conical seats.
 use super::*;
 use multicad_kernel::CircularPocketTool;
+use multicad_precision::PortableMath as _;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct HeadSeatProof {
@@ -118,7 +119,7 @@ pub(crate) fn build(
         .zip(expected)
         .any(|(actual, required)| {
             let [x, y, z] = std::array::from_fn(|i| actual[i] - required[i]);
-            x.hypot(y).hypot(z) > tolerance
+            x.portable_hypot(y).portable_hypot(z) > tolerance
         })
     {
         return Err(fail(

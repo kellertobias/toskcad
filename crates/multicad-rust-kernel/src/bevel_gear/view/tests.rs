@@ -96,7 +96,7 @@ fn samples(item: &ViewItem) -> Vec<Point> {
         ViewCurve::Radial { phi, radii } => (0..=8)
             .map(|i| {
                 let r = radii[0] + (radii[1] - radii[0]) * f64::from(i) / 8.;
-                [r * phi.cos(), r * phi.sin(), f64::NAN]
+                [r * phi.portable_cos(), r * phi.portable_sin(), f64::NAN]
             })
             .collect(),
         ViewCurve::Arc {
@@ -106,7 +106,11 @@ fn samples(item: &ViewItem) -> Vec<Point> {
         } => (0..=16)
             .map(|i| {
                 let a = start + sweep * f64::from(i) / 16.;
-                [radius * a.cos(), radius * a.sin(), f64::NAN]
+                [
+                    radius * a.portable_cos(),
+                    radius * a.portable_sin(),
+                    f64::NAN,
+                ]
             })
             .collect(),
         ViewCurve::Spline { samples, .. } => samples.clone(),
@@ -152,7 +156,7 @@ fn edge_visibility_matches_independent_classification_beside_each_point() {
             for item in &items {
                 if let (Role::Hidden, ViewCurve::Radial { phi, radii }) = (item.role, &item.curve) {
                     let r = (radii[0] + radii[1]) / 2.;
-                    let [x, y] = [r * phi.cos(), r * phi.sin()];
+                    let [x, y] = [r * phi.portable_cos(), r * phi.portable_sin()];
                     let heel = gear.back_cone_height_mm(End::Heel, r);
                     assert_eq!(
                         gear.classify([x, y, heel - 1e-4], 1e-9),
@@ -203,7 +207,7 @@ fn heel_views_draw_heel_rims_and_hide_toe_rims_and_rays() {
                 End::Toe
             };
             for p in samples {
-                let height = gear.back_cone_height_mm(end, p[0].hypot(p[1]));
+                let height = gear.back_cone_height_mm(end, p[0].portable_hypot(p[1]));
                 assert!((p[2] - height).abs() < 1e-9);
             }
         }
@@ -281,7 +285,7 @@ fn meridian_rays_merge_and_hidden_overlaps_are_removed() {
 fn retained_slabs_clip_edges_and_sections_close_their_boundary() {
     for gear in [meridian(), bored()] {
         let mid = (gear.end_distance_mm(End::Toe) + gear.end_distance_mm(End::Heel)) / 2.;
-        let cut = mid * gear.spec().pitch_cone_angle_rad.cos();
+        let cut = mid * gear.spec().pitch_cone_angle_rad.portable_cos();
         for heel_side in [true, false] {
             let slab = if heel_side {
                 [f64::NEG_INFINITY, cut]
@@ -313,7 +317,9 @@ fn retained_slabs_clip_edges_and_sections_close_their_boundary() {
             for item in &section {
                 match &item.curve {
                     ViewCurve::Radial { phi, radii } => {
-                        ends.extend(radii.map(|r| [r * phi.cos(), r * phi.sin()]));
+                        ends.extend(
+                            radii.map(|r| [r * phi.portable_cos(), r * phi.portable_sin()]),
+                        );
                     }
                     ViewCurve::Arc {
                         radius,
@@ -321,7 +327,8 @@ fn retained_slabs_clip_edges_and_sections_close_their_boundary() {
                         sweep,
                     } if *sweep < TAU => {
                         ends.extend(
-                            [*start, start + sweep].map(|a| [radius * a.cos(), radius * a.sin()]),
+                            [*start, start + sweep]
+                                .map(|a| [radius * a.portable_cos(), radius * a.portable_sin()]),
                         );
                     }
                     ViewCurve::Arc { .. } => {}
@@ -337,7 +344,7 @@ fn retained_slabs_clip_edges_and_sections_close_their_boundary() {
                 let partners = ends
                     .iter()
                     .enumerate()
-                    .filter(|(j, b)| *j != i && (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-7)
+                    .filter(|(j, b)| *j != i && (a[0] - b[0]).portable_hypot(a[1] - b[1]) < 1e-7)
                     .count();
                 assert_eq!(partners, 1, "{a:?}");
             }
@@ -423,9 +430,9 @@ fn sections_cover_full_rings_tooth_islands_and_beyond_tip_cases() {
         // Near the toe apex the bore and toe cone stay inside the root.
         gear.back_cone_apex_mm(End::Toe) * 0.98,
         // A low plane passes the inner circle through the teeth.
-        gear.end_distance_mm(End::Toe) * gear.root_gamma().cos() * 1.01,
+        gear.end_distance_mm(End::Toe) * gear.root_gamma().portable_cos() * 1.01,
         // A plane just under the heel tip corner keeps only tooth tops.
-        gear.end_radius(End::Heel, gear.tip_gamma()) / gear.tip_gamma().tan() * 1.001,
+        gear.end_radius(End::Heel, gear.tip_gamma()) / gear.tip_gamma().portable_tan() * 1.001,
     ];
     for height in cases {
         let items = gear
@@ -502,7 +509,7 @@ fn invalid_requests_and_budgets_are_refused() {
     let mid = (gear.end_distance_mm(End::Toe) + gear.end_distance_mm(End::Heel)) / 2.;
     assert_eq!(
         gear.axial_view(&AxialView {
-            section: Some(mid * gear.spec().pitch_cone_angle_rad.cos()),
+            section: Some(mid * gear.spec().pitch_cone_angle_rad.portable_cos()),
             section_only: true,
             max_points: 10,
             ..view(true)

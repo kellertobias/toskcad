@@ -78,7 +78,7 @@ fn finite_trim_boundaries_retain_two_or_four_distinct_branches() {
                             .contains(&parameter)
                     );
                 }
-                near((u - 0.5).hypot(v - 0.5), 0.25);
+                near((u - 0.5).portable_hypot(v - 0.5), 0.25);
                 near(z, 0.0625);
             }
         }

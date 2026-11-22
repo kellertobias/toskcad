@@ -1,3 +1,4 @@
+use multicad_precision::PortableMath as _;
 use super::*;
 use multicad_core::{
     commands::{Actor, Channel, Session},
@@ -147,7 +148,7 @@ fn shifted_controls(cases: &[(GearFamily, [u32; 2])]) {
             (PI / f64::from(counts[1]), 0., "overlaps"),
             (0., 1000., "engagement proximity"),
         ] {
-            let (sin, cos) = angle.sin_cos();
+            let (sin, cos) = angle.portable_sin_cos();
             let bad = solids[1]
                 .transformed(RigidTransform {
                     rotation: [[cos, -sin, 0.], [sin, cos, 0.], [0., 0., 1.]],

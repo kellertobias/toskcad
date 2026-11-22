@@ -208,13 +208,16 @@ impl Solid {
         };
         let spec = body.cut.spec();
         let stock_extent = spec.stock_height_mm + spec.stock_radius_mm;
-        let distance =
-            |a: [f64; 3], b: [f64; 3]| (a[0] - b[0]).hypot(a[1] - b[1]).hypot(a[2] - b[2]);
+        let distance = |a: [f64; 3], b: [f64; 3]| {
+            (a[0] - b[0])
+                .portable_hypot(a[1] - b[1])
+                .portable_hypot(a[2] - b[2])
+        };
         let start_error = (start_height_mm - spec.start_height_mm).abs();
         let pitch_error = (pitch_mm - spec.pitch_mm).abs();
         let turns = (spec.stock_height_mm - spec.start_height_mm) / spec.pitch_mm;
         let angular_error = (start_angle_rad - spec.start_angle_rad) * 0.5;
-        let phase_error = 2. * spec.stock_radius_mm * angular_error.sin().abs();
+        let phase_error = 2. * spec.stock_radius_mm * angular_error.portable_sin().abs();
         let azimuth_drift =
             std::f64::consts::TAU * spec.stock_radius_mm * (start_error + turns * pitch_error)
                 / spec.pitch_mm;

@@ -6,6 +6,7 @@ use crate::{
     model::{self, PlacementBase, RigidPose},
     parameters::EvaluatedParameters,
 };
+use multicad_precision::PortableMath as _;
 pub const ATTACHMENT_TYPE: &str = "architecture.equipment_attachment";
 pub const ATTACHMENT_CAPABILITY: &str = "architecture.equipment_attachment.1";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,7 +121,11 @@ impl Attachment {
         }
         let delta =
             std::array::from_fn::<_, 3, _>(|i| new.translation_mm[i] - old.translation_mm[i]);
-        let yaw = |p: model::RigidPose| p.rotation[1][0].atan2(p.rotation[0][0]).to_degrees();
+        let yaw = |p: model::RigidPose| {
+            p.rotation[1][0]
+                .portable_atan2(p.rotation[0][0])
+                .to_degrees()
+        };
         let mm = |d: &Dimension| {
             d.value_in(Unit::Millimeter, Some(parameters))
                 .map_err(invalid)
@@ -164,7 +169,7 @@ impl Attachment {
                 let resolved = model::resolve_wall(document, parameters, &source)?;
                 let a = resolved.points[*segment];
                 let b = resolved.points[(*segment + 1) % resolved.points.len()];
-                let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+                let length = (b[0] - a[0]).portable_hypot(b[1] - a[1]);
                 let t = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
                 let normal_delta = -t[1] * delta[0] + t[0] * delta[1];
                 *along = model::length(mm(along)? + t[0] * delta[0] + t[1] * delta[1]);
@@ -334,7 +339,7 @@ impl Attachment {
                 let a = resolved.points[*segment];
                 let b = resolved.points[(*segment + 1) % resolved.points.len()];
                 let d = [b[0] - a[0], b[1] - a[1]];
-                let length = d[0].hypot(d[1]);
+                let length = d[0].portable_hypot(d[1]);
                 let along = mm(along)?;
                 let standoff = mm(standoff)?;
                 let above = mm(height)?;
@@ -394,7 +399,7 @@ impl Attachment {
                 let xy = std::array::from_fn(|i| a[i] + tangent[i] * along + normal[i] * offset);
                 // Object fronts are local −Y. The left face reverses local X so the
                 // upright frame stays right-handed while its front points out of the wall.
-                let host_angle = tangent[1].atan2(tangent[0]).to_degrees()
+                let host_angle = tangent[1].portable_atan2(tangent[0]).to_degrees()
                     + if *side == WallSide::Left { 180. } else { 0. };
                 (xy, above, host_angle + degrees(rotation)?)
             }

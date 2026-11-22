@@ -56,7 +56,7 @@ pub(in crate::drawing::curved) fn analytic_stock(
 }
 
 fn is_oblique([x, y, z]: Point) -> bool {
-    x.hypot(y) > ANGULAR && z.abs() > ANGULAR
+    x.portable_hypot(y) > ANGULAR && z.abs() > ANGULAR
 }
 
 fn oblique_hex(
@@ -192,7 +192,7 @@ fn append_cut(
 ) -> Result<(), GeometryError> {
     let axis = cut.outward.map(|value| -value);
     let [x, y, z] = axis;
-    let projected = x.hypot(y);
+    let projected = x.portable_hypot(y);
     let u = if projected > ANGULAR {
         [-y / projected, x / projected, 0.]
     } else {

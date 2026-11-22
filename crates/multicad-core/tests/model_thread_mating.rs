@@ -1,4 +1,5 @@
 use multicad_core::{commands::Session, document::Document, model::*, references::ReferenceFrame};
+use multicad_precision::PortableMath as _;
 fn frame(z: f64) -> ReferenceFrame {
     ReferenceFrame {
         origin_mm: [0., 0., z],
@@ -93,7 +94,7 @@ fn axes_profiles_and_endpoint_treatments_are_not_replaced_by_fit_intent() {
     assert!(resolve_metric_thread_mating(&a, frame(0.), &b, off, 2., 1e-7).is_err());
     let tilt = 1e-5_f64;
     let mut off = frame(5.);
-    off.u = [tilt.cos(), 0., -tilt.sin()];
+    off.u = [tilt.portable_cos(), 0., -tilt.portable_sin()];
     assert!(resolve_metric_thread_mating(&a, frame(0.), &b, off, 2., 1e-7).is_err());
     let mut wrong = b.clone();
     wrong.hand = ThreadHand::Left;

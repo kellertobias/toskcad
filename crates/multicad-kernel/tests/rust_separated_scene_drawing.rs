@@ -9,6 +9,7 @@ use multicad_kernel::{
     DrawingProjection, DrawingSolid, GearSweep, GeometryErrorKind, GeometryPolicy, InvoluteGear,
     PlaneFrame, ProjectedVector, RigidTransform, Solid, project_drawing,
 };
+use multicad_precision::PortableMath as _;
 use std::f64::consts::PI;
 
 fn spur() -> Solid {
@@ -19,11 +20,11 @@ fn spur() -> Solid {
             hub: None,
             teeth: 24,
             pitch_radius_mm: pitch,
-            base_radius_mm: pitch * a.cos(),
+            base_radius_mm: pitch * a.portable_cos(),
             tip_radius_mm: pitch + 1.,
             root_radius_mm: pitch - 1.25,
             root_fillet_radius_mm: 0.2,
-            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.tan() - a,
+            half_base_angle_rad: (PI / 2. - 0.05) / (2. * pitch) + a.portable_tan() - a,
             face_width_mm: 4.,
             bore_radius_mm: 3.,
             twist_rad_per_mm: 0.,

@@ -133,8 +133,8 @@ fn half_cross_bore(r: f64, big: f64) -> f64 {
     (0..n)
         .map(|k| {
             let t = -FRAC_PI_2 + (k as f64 + 0.5) * h;
-            let y = r * t.sin();
-            2. * r * t.cos() * (big * big - y * y).sqrt() * r * t.cos()
+            let y = r * t.portable_sin();
+            2. * r * t.portable_cos() * (big * big - y * y).sqrt() * r * t.portable_cos()
         })
         .sum::<f64>()
         * h

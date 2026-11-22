@@ -3,6 +3,7 @@ use multicad_kernel::{
     GeometryErrorKind, GeometryPolicy, PlaneFrame, RigidTransform, Solid,
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
 };
+use multicad_precision::PortableMath as _;
 fn descriptor(radius: i64) -> AxialCylinder {
     let n = |n| Rational::new(n, 1).unwrap();
     AxialCylinder::new(
@@ -30,7 +31,7 @@ fn cylinder_refuses_large_metric_distortion_but_accepts_residual_within_budget()
     let small =
         Solid::from_axial_cylinder(descriptor(4), frame(), GeometryPolicy::default()).unwrap();
     assert!((small.volume_mm3().unwrap() - std::f64::consts::PI * 160.).abs() < 1e-10);
-    let (s, c) = 0.4_f64.sin_cos();
+    let (s, c) = 0.4_f64.portable_sin_cos();
     let proper = PlaneFrame {
         u: [c, s, 0.],
         v: [-s, c, 0.],

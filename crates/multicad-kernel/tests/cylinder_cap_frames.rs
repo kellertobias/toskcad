@@ -3,6 +3,7 @@ use multicad_kernel::{
     rust_kernel::{Circle, Rational, cylinder::AxialCylinder},
     *,
 };
+use multicad_precision::PortableMath as _;
 
 fn near_point(actual: [f64; 3], expected: [f64; 3]) {
     for (a, b) in actual.into_iter().zip(expected) {
@@ -204,7 +205,7 @@ fn verify_geometry(stock: &Solid, result: &Solid, frame: PlaneFrame, operation: 
             0 => 25. * 8. - 0.5 * (5. * 0.5 - 0.25 / 3.),
             1 => 25. * 8. - 4.5_f64.powi(2) * 7.5,
             _ => {
-                let r = 5. - 8. * angle.tan();
+                let r = 5. - 8. * angle.portable_tan();
                 8. / 3. * (25. + 5. * r + r * r)
             }
         };
