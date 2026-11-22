@@ -241,12 +241,14 @@ fn default_native_nominal_and_six_h_meshes_keep_manufacturing_embedding_and_orig
             assert_eq!(solid.rust_internal_thread_treatment_data().unwrap(), data);
             if matches!(fit, ThreadFit::Metric6HInternal) {
                 // Captured from the original successful64-row implementation,
-                // including literal vertices, indices and face identities.
+                // including literal vertices, indices and face identities;
+                // re-recorded under portable maths (identical topology,
+                // vertices within 4e-15 mm of the host-libm capture).
                 let expected = match (entry, tail, posed) {
-                    (true, true, false) => 0xc8d6834bec289e5c,
-                    (true, true, true) => 0x091fdf1ec200c558,
-                    (true, false, false) => 0xfd492d49b3f3bef3,
-                    (false, true, false) => 0x7574f20e3ec4298e,
+                    (true, true, false) => 0xcce4d796eeb63a86,
+                    (true, true, true) => 0x00e6800d93532b9b,
+                    (true, false, false) => 0x4f52b26f299de29f,
+                    (false, true, false) => 0x6c7cff25535a9fef,
                     _ => unreachable!(),
                 };
                 assert_eq!(mesh_hash(&display), expected);
@@ -268,7 +270,7 @@ fn default_native_nominal_and_six_h_meshes_keep_manufacturing_embedding_and_orig
     let solid = body(p, true, true);
     let display = solid.mesh(MeshOptions::default()).unwrap();
     unique(&display);
-    assert_eq!(mesh_hash(&display), 0x09b1cf46b5c1cc7b);
+    assert_eq!(mesh_hash(&display), 0x021a74c4470c2556);
     let manufacturing = solid
         .manufacturing_mesh_with_receipt(MeshOptions::default())
         .unwrap();
