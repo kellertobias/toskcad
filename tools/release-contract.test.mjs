@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { githubRepositoryUrl, requirePublicationEnvironment, requireVersion } from './release-policy.mjs';
-import {exampleGeneratorFilter,packageTestArguments,workspaceTestArguments} from './native-test-shard.mjs';
+import {exampleGeneratorFilter,nextestVersion,packageTestArguments,workspaceDocTestArguments,workspaceTestArguments} from './native-test-shard.mjs';
 
 const require = createRequire(import.meta.url);
 const config = require('../release.config.cjs');
@@ -97,7 +97,8 @@ test('native regression suites are read-only and gate publication on every platf
   assert.match(regression,/^permissions:\n {2}contents: read$/m);
   assert.doesNotMatch(regression,/secrets\.|: *write|npm publish|semantic-release|git push|git tag/);
   for(const os of ['ubuntu-24\\.04','macos-15','windows-2025'])assert.match(regression,new RegExp(`- os: ${os}\\n`));
-  for(const suite of ['--bin multicad files::','--test release_hardening','--test project_file','--test drawing_exports','--test control_desk','cargo test --workspace --locked --no-fail-fast'])assert(regression.includes(suite),suite);
+  for(const suite of ['--bin multicad files::','--test release_hardening','--test project_file','--test drawing_exports','--test control_desk','cargo nextest run --workspace --locked --no-fail-fast'])assert(regression.includes(suite),suite);
+  assert.doesNotMatch(regression,/cargo test /);
   assert.match(release,/regression:\n {4}name: Native regression suites\n {4}uses: \.\/\.github\/workflows\/native-regression\.yml/);
   assert.match(release,/needs: \[metadata, quality, build, owned-kernel, regression, windows_generators\]/);
   const packaging=readFileSync(new URL('./package-release.mjs',import.meta.url),'utf8');
@@ -105,7 +106,12 @@ test('native regression suites are read-only and gate publication on every platf
   assert.match(regression,/packaging_runs_full_workspace:[\s\S]*?type: boolean\n {8}default: false/);
   assert.match(regression,/name: Complete workspace tests\n {8}if: \$\{\{ !inputs\.packaging_runs_full_workspace \}\}/);
   assert.match(packaging,/const testArgs=packageTestArguments\(process\.env\.MULTICAD_NATIVE_TEST_SHARD\?\?'full'\)/);
-  assert.match(packaging,/run\('cargo',testArgs,\{env,stdio:'inherit'\}\)/);
+  assert.match(packaging,/run\('cargo',testArgs,\{env,stdio:'inherit'\}\);\n  run\('cargo',workspaceDocTestArguments\(\),\{env,stdio:'inherit'\}\)/);
+  assert.deepEqual(workspaceDocTestArguments(),['test','--workspace','--doc','--profile','ci','--locked']);
+  const install=`- name: Install pinned cargo-nextest\n        run: cargo install cargo-nextest --version ${nextestVersion} --locked\n`;
+  assert.equal(regression.split(install).length-1,1);
+  assert.equal(release.split(install).length-1,2);
+  assert(release.includes(`${install}      - name: Regenerate every matching shipped example`));
   const cargo=readFileSync(new URL('../Cargo.toml',import.meta.url),'utf8');
   const profile=cargo.split('[profile.ci]')[1]?.split(/\n\[/)[0];
   assert(profile,'An optimized CI test profile must exist');
@@ -131,10 +137,10 @@ test('active build instructions do not direct developers to the retired provider
 
 test('Windows generator and package jobs partition the full suite and both gate publication',()=>{
   const release=readFileSync(new URL('../.github/workflows/release.yml',import.meta.url),'utf8');
-  const base=['test','--workspace','--profile','ci','--locked'];
+  const base=['nextest','run','--workspace','--cargo-profile','ci','--locked','--no-fail-fast'];
   assert.deepEqual(workspaceTestArguments(),base);
-  assert.deepEqual(workspaceTestArguments('generators'),[...base,exampleGeneratorFilter]);
-  assert.deepEqual(workspaceTestArguments('remaining'),[...base,'--','--skip',exampleGeneratorFilter]);
+  assert.deepEqual(workspaceTestArguments('generators'),[...base,'-E',`test(${exampleGeneratorFilter})`]);
+  assert.deepEqual(workspaceTestArguments('remaining'),[...base,'-E',`not test(${exampleGeneratorFilter})`]);
   assert.throws(()=>workspaceTestArguments('typo'));
   for(const platform of ['win32','darwin','linux']){
     assert.deepEqual(packageTestArguments('full',platform),base);

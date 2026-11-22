@@ -50,6 +50,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
+`cargo test` runs one test binary at a time. CI uses [cargo-nextest](https://nexte.st), which runs every test in parallel across all cores: install it with `cargo install cargo-nextest --version 0.9.152 --locked` and run `cargo nextest run --workspace --locked` (plus `cargo test --workspace --doc --locked` for doctests). On macOS, add your terminal app under System Settings → Privacy & Security → Developer Tools and restart it; otherwise the system security scan can delay every test process launch by many seconds.
+
 With no arguments `multicad` opens the native host. `--self-test` checks a Rust solid, Boolean cut, tessellation and STEP round-trip, and opens the bundled examples. It is a packaged runtime smoke check; complete CAD workflows require their own tests.
 
 ## Components and limits
