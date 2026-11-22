@@ -72,5 +72,14 @@ pub(super) fn short_literal_edge(points: [[f64; 3]; 3], errors: [f64; 3]) -> boo
     })
 }
 
+/// A literal edge shorter than a fixed multiple of the binary64 spacing at
+/// its coordinates: its incident facets cannot have resolvable orientation
+/// or separation against facets of ordinary size. A partition proposal only.
+pub(super) fn conditioning_edge(points: [[f64; 3]; 2]) -> bool {
+    let scale = points.iter().flatten().fold(1f64, |m, x| m.max(x.abs()));
+    let edge = (0..3).fold(0., |sum, k| sum + (points[0][k] - points[1][k]).abs());
+    edge <= 1024. * f64::EPSILON * scale
+}
+
 #[cfg(test)]
 mod tests;
