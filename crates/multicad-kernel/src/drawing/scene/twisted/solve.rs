@@ -77,6 +77,7 @@ pub(super) fn isolate_touching(
     if hi <= lo || !(hi - lo).is_finite() {
         return Ok(());
     }
+    let first = output.len();
     let mut stack = vec![(lo, f(lo), hi, f(hi))];
     while let Some((a, fa, b, fb)) = stack.pop() {
         *budget = budget.checked_sub(1).ok_or_else(limit)?;
@@ -126,5 +127,41 @@ pub(super) fn isolate_touching(
         stack.push((mid, fm, b, fb));
         stack.push((a, fa, mid, fm));
     }
+    if let Some(kept) = graze(f, search.noise, &mut output[first..]) {
+        output.truncate(first + kept);
+    }
     Ok(())
+}
+
+/// Drop each pair of adjacent roots between which the function stays within
+/// the grazing magnitude: the two sign changes of a double root that
+/// rounding split, which bound nothing. Whether the subdivision happens to
+/// enclose both in one interval within that magnitude must not decide it.
+/// Returns how many roots are kept at the front of `roots`, or nothing when
+/// no pair is dropped.
+fn graze(f: &mut dyn FnMut(f64) -> f64, noise: f64, roots: &mut [f64]) -> Option<usize> {
+    if noise <= 0. || roots.len() < 2 {
+        return None;
+    }
+    roots.sort_by(f64::total_cmp);
+    let mut kept = 0;
+    let mut index = 0;
+    let mut dropped = false;
+    while index < roots.len() {
+        if index + 1 < roots.len() {
+            let [a, b] = [roots[index], roots[index + 1]];
+            if [0.25, 0.5, 0.75]
+                .into_iter()
+                .all(|t| f(a + t * (b - a)).abs() <= noise)
+            {
+                index += 2;
+                dropped = true;
+                continue;
+            }
+        }
+        roots[kept] = roots[index];
+        kept += 1;
+        index += 1;
+    }
+    dropped.then_some(kept)
 }

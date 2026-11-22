@@ -1155,3 +1155,67 @@ fn material_along_arbitrary_lines_matches_the_oracle() {
     assert!(ends > 500, "only {ends} ends");
     println!("{{\"line_ends\":{ends},\"worst_relative_residual\":{worst:e}}}");
 }
+
+/// A double root that rounding splits into two sign changes is one grazing
+/// contact wherever the subdivision falls, while simple roots and a dip
+/// deeper than the grazing magnitude keep both crossings.
+#[test]
+fn split_double_roots_graze_wherever_the_subdivision_falls() {
+    use super::solve::{Search, isolate};
+    let search = |noise: f64| Search {
+        slope: 4.,
+        leaf: 1e-13,
+        noise,
+        second: 2.,
+        lift: 0.,
+        wrapped: false,
+    };
+    // Roots 2e-7 apart under a dip of 1e-14, against a grazing magnitude
+    // of 1e-12, at centers that place them anywhere in the dyadic grid.
+    for k in 0..64 {
+        let center = 0.3 + 0.37 * f64::from(k) / 64.;
+        let mut grazing = |x: f64| (x - center).powi(2) - 1e-14;
+        let mut roots = Vec::new();
+        isolate(
+            &mut grazing,
+            &search(1e-12),
+            [0., 1.],
+            &mut 1_000_000,
+            &mut roots,
+        )
+        .unwrap();
+        assert!(roots.is_empty(), "{center}: {roots:?}");
+    }
+    // The same split double root next to a simple root keeps the simple one.
+    let mut mixed = |x: f64| ((x - 0.5).powi(2) - 1e-14) * (x - 0.9);
+    let mut roots = vec![-1.];
+    isolate(
+        &mut mixed,
+        &search(1e-12),
+        [0., 1.],
+        &mut 1_000_000,
+        &mut roots,
+    )
+    .unwrap();
+    assert_eq!(roots.len(), 2, "{roots:?}");
+    assert_eq!(roots[0], -1.);
+    assert!((roots[1] - 0.9).abs() < 1e-12);
+    // A dip deeper than the grazing magnitude is two real crossings, and
+    // without a grazing magnitude every sign change stays.
+    for (dip, noise) in [(1e-10, 1e-12), (1e-14, 0.)] {
+        let mut deep = |x: f64| (x - 0.5).powi(2) - dip;
+        let mut roots = Vec::new();
+        isolate(
+            &mut deep,
+            &search(noise),
+            [0., 1.],
+            &mut 1_000_000,
+            &mut roots,
+        )
+        .unwrap();
+        assert_eq!(roots.len(), 2, "dip {dip} noise {noise}: {roots:?}");
+        let half = dip.sqrt();
+        assert!((roots[0] - (0.5 - half)).abs() < 1e-12);
+        assert!((roots[1] - (0.5 + half)).abs() < 1e-12);
+    }
+}
