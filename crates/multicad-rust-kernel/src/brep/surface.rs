@@ -3,6 +3,9 @@ use super::curve::{PANEL, uniform};
 use super::{Curve, NurbsSurface, Point, add, cross, distance, dot, nearest, norm, scale, sub};
 use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
+mod prepared_inverse;
+use prepared_inverse::Candidate;
+pub(crate) use prepared_inverse::PreparedInverse;
 
 /// A right-handed orthonormal placement.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -251,6 +254,15 @@ impl Surface {
     /// Parameters of the surface point closest to `point`. A seed selects
     /// the periodic representative and the free coordinate at a pole.
     pub fn invert(&self, point: Point, seed: Option<[f64; 2]>) -> [f64; 2] {
+        self.invert_prepared(point, seed, None)
+    }
+
+    fn invert_prepared(
+        &self,
+        point: Point,
+        seed: Option<[f64; 2]>,
+        prepared: Option<&PreparedInverse<'_>>,
+    ) -> [f64; 2] {
         let free = seed.map_or(0., |seed| seed[0]);
         let angle = |frame: &Frame, flip: bool| {
             let l = frame.local(point);
@@ -291,7 +303,7 @@ impl Surface {
                         .rem_euclid(TAU),
                 ]
             }
-            _ => self.closest(point, seed),
+            _ => self.closest(point, seed, prepared),
         };
         let periods = self.periods();
         seed.map_or(uv, |seed| {
@@ -342,16 +354,27 @@ impl Surface {
         }
     }
 
-    fn closest(&self, point: Point, seed: Option<[f64; 2]>) -> [f64; 2] {
+    fn closest(
+        &self,
+        point: Point,
+        seed: Option<[f64; 2]>,
+        prepared: Option<&PreparedInverse<'_>>,
+    ) -> [f64; 2] {
         let residual = |uv: [f64; 2]| distance(self.evaluate(uv).0, point);
         // Newton from the few candidates nearest the point: evaluating every
         // candidate is cheap, refining every one is not.
         let global = || {
-            let mut ranked: Vec<(f64, [f64; 2])> = self
-                .candidates(point)
-                .into_iter()
-                .map(|uv| (residual(uv), uv))
-                .collect();
+            let mut ranked: Vec<(f64, [f64; 2])> = match prepared.and_then(|p| p.candidates()) {
+                Some(candidates) => candidates
+                    .iter()
+                    .map(|Candidate { uv, position }| (distance(*position, point), *uv))
+                    .collect(),
+                None => self
+                    .candidates(point)
+                    .into_iter()
+                    .map(|uv| (residual(uv), uv))
+                    .collect(),
+            };
             ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
             let mut best = (f64::INFINITY, [0.; 2]);
             for &(_, candidate) in ranked.iter().take(4) {

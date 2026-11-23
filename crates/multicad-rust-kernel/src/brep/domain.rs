@@ -3,6 +3,7 @@
 //! Loops are stored counter-clockwise about the surface normal, whatever
 //! the face sense. Periodic parameters are continuous along a loop; a loop
 //! that closes one period away from its start winds about the surface.
+use super::surface::PreparedInverse;
 use super::{
     Boundary, Error, Point, Result, Surface, add, cross, distance, dot, ensure, nearest, norm, sub,
 };
@@ -58,6 +59,7 @@ impl UvLoop {
     /// sign; Gauss quadrature of `(u dv - v du) / 2` along each edge does
     /// not. Rows across a pole are straight in the parameter plane.
     pub fn exact_area(&self, boundary: &Boundary, surface: &Surface) -> f64 {
+        let inverse = PreparedInverse::new(surface);
         let periods = surface.periods();
         let mut total = 0.;
         for (i, segment) in self.segments.iter().enumerate() {
@@ -78,7 +80,7 @@ impl UvLoop {
                     let (point, tangent) = curve.evaluate(t);
                     let seed =
                         [0, 1].map(|axis| ends[0][axis] + (ends[1][axis] - ends[0][axis]) * along);
-                    let uv = surface.invert(point, Some(seed));
+                    let uv = inverse.invert(point, Some(seed));
                     let (_, [su, sv]) = surface.evaluate(uv);
                     let (a, b, c) = (dot(su, su), dot(su, sv), dot(sv, sv));
                     let (ru, rv) = (dot(tangent, su), dot(tangent, sv));
@@ -214,11 +216,21 @@ fn walk_incidence(
     surface: &Surface,
     points: &[Raw],
     tolerance: f64,
+    visit: impl FnMut([f64; 2]),
+) -> Result<()> {
+    let inverse = PreparedInverse::new(surface);
+    walk_incidence_prepared(surface, &inverse, points, tolerance, visit)
+}
+fn walk_incidence_prepared(
+    surface: &Surface,
+    inverse: &PreparedInverse<'_>,
+    points: &[Raw],
+    tolerance: f64,
     mut visit: impl FnMut([f64; 2]),
 ) -> Result<()> {
     let mut previous: Option<[f64; 2]> = None;
     for point in points {
-        let uv = surface.invert(point.position, previous);
+        let uv = inverse.invert(point.position, previous);
         previous = Some(uv);
         ensure(
             distance(surface.evaluate(uv).0, point.position) <= tolerance,
@@ -236,11 +248,12 @@ pub(crate) fn unroll(
     mut points: Vec<Raw>,
     tolerance: f64,
 ) -> Result<Option<UvLoop>> {
+    let inverse = PreparedInverse::new(surface);
     let periods = surface.periods();
     let mut free = Vec::with_capacity(points.len());
     // Each point is sought from its predecessor: loop points lie close
     // together, and a global search per point would scale with the net.
-    walk_incidence(surface, &points, tolerance, |uv| {
+    walk_incidence_prepared(surface, &inverse, &points, tolerance, |uv| {
         let pole = surface.is_pole(uv, tolerance);
         let seam = seams(surface, relative(surface, uv));
         free.push((uv, pole, pole || seam[0] || seam[1], seam));
@@ -278,7 +291,7 @@ pub(crate) fn unroll(
         let uv = if i == 0 || after_pole {
             uv
         } else {
-            surface.invert(point.position, Some(previous))
+            inverse.invert(point.position, Some(previous))
         };
         if pole {
             let uv = [previous[0], uv[1]];
@@ -306,7 +319,7 @@ pub(crate) fn unroll(
     }
     ensure(chains.len() <= 2, Error::Unsupported)?;
     let start = unrolled.points[0].uv;
-    let closing = surface.invert(points[0].position, Some(previous));
+    let closing = inverse.invert(points[0].position, Some(previous));
     let turns = [0, 1]
         .map(|axis| periods[axis].map_or(0., |p| ((closing[axis] - start[axis]) / p).round()));
     // A seam loop that returns to its start encloses the whole surface,

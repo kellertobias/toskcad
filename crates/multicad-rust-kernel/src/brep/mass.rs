@@ -6,6 +6,7 @@
 //! surface contributes the full-period integral up to its start, and a face
 //! that closes at a pole contributes it up to the pole.
 use super::domain::{Domain, UvLoop};
+use super::surface::PreparedInverse;
 use super::{
     Boundary, Error, Face, GAUSS, Point, Result, Surface, cross, distance, dot, ensure, norm,
     scale, sub,
@@ -58,6 +59,7 @@ fn quadrature(
 
 struct Integral<'a> {
     surface: &'a Surface,
+    inverse: PreparedInverse<'a>,
     anchor: Point,
     base: [f64; 2],
     refine: usize,
@@ -107,7 +109,7 @@ impl Integral<'_> {
                 let along = (t - segment.t[0]) / (segment.t[1] - segment.t[0]);
                 let seed =
                     [0, 1].map(|axis| ends[0][axis] + (ends[1][axis] - ends[0][axis]) * along);
-                let uv = self.surface.invert(point, Some(seed));
+                let uv = self.inverse.invert(point, Some(seed));
                 let (s, [su, sv]) = self.surface.evaluate(uv);
                 ensure(distance(s, point) <= tolerance, Error::Invalid)?;
                 let (a, b, c) = (dot(su, su), dot(su, sv), dot(sv, sv));
@@ -158,6 +160,7 @@ pub(crate) fn integrate(
     let surface = &face.surface;
     let mut integral = Integral {
         surface,
+        inverse: PreparedInverse::new(surface),
         anchor,
         base: [0.; 2],
         refine,
