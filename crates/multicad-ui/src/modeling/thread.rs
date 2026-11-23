@@ -30,6 +30,11 @@ pub(super) struct ThreadPanel {
     family: ThreadFamily,
     fit: ThreadFit,
     engagement_basis: model::MetricFitEngagementBasis,
+    /// The basis is only the unset default (no intent stored, no metric fit).
+    /// Selecting 6g/6H then states normal-group intent explicitly instead of
+    /// silently validating the whole physical thread as the mating length.
+    /// Any user choice or stored intent clears it and is never overwritten.
+    implicit_engagement: bool,
     engagement_length: DimensionField,
     end_treatments_enabled: bool,
     start_chamfer: bool,
@@ -105,6 +110,7 @@ impl ThreadPanel {
                     model::MetricFitEngagementBasis::NormalGroupAssumed
                 }
             },
+            implicit_engagement: p.metric_fit_engagement.is_none() && !Self::metric_fit(p.fit),
             engagement_length: field(
                 match &p.metric_fit_engagement {
                     Some(model::MetricFitEngagement::IntendedLength { length }) => length,
@@ -245,7 +251,10 @@ impl ThreadPanel {
                 v: basis.map_or(self.request.parameters.frame.v, |b| b.v),
             },
             fit: self.fit,
+            // Core accepts engagement intent only with a 6g/6H fit. Another fit
+            // omits it from the request; the panel retains it for a later 6g/6H.
             metric_fit_engagement: match self.engagement_basis {
+                _ if !Self::metric_fit(self.fit) => None,
                 model::MetricFitEngagementBasis::LegacyCompleteProfile => None,
                 model::MetricFitEngagementBasis::IntendedLength => {
                     Some(model::MetricFitEngagement::IntendedLength {
@@ -640,9 +649,24 @@ impl ThreadPanel {
                     "Assume normal group; mate unknown",
                 ),
             ] {
-                changed |= ui
+                if ui
                     .radio_value(&mut self.engagement_basis, basis, label)
-                    .changed();
+                    .changed()
+                {
+                    self.implicit_engagement = false;
+                    changed = true;
+                }
+            }
+            if !Self::metric_fit(self.fit) {
+                ui.small("The selected fit uses no metric engagement; this choice is retained for 6g/6H.");
+            } else if self.implicit_engagement
+                && self.engagement_basis == model::MetricFitEngagementBasis::NormalGroupAssumed
+            {
+                ui.small(format!(
+                    "No mating depth was given, so {} assumes the normal engagement group. Declare the intended engagement, or choose the complete physical thread to validate all {} of it.",
+                    self.fit.label(),
+                    diagram::field_value(&self.length)
+                ));
             }
             if self.engagement_basis == model::MetricFitEngagementBasis::IntendedLength {
                 changed |= link.field(
@@ -782,7 +806,33 @@ impl ThreadPanel {
                 }
             });
         }
+        changed | self.sync_implicit_engagement()
+    }
+    fn metric_fit(fit: ThreadFit) -> bool {
+        matches!(
+            fit,
+            ThreadFit::Metric6gExternal | ThreadFit::Metric6HInternal
+        )
+    }
+    /// Keeps an unset default engagement meaningful for the current fit: an
+    /// explicit normal group for 6g/6H, no intent otherwise. Returns whether
+    /// the staged recipe changed.
+    fn sync_implicit_engagement(&mut self) -> bool {
+        if !self.implicit_engagement {
+            return false;
+        }
+        let basis = if Self::metric_fit(self.fit) {
+            model::MetricFitEngagementBasis::NormalGroupAssumed
+        } else {
+            model::MetricFitEngagementBasis::LegacyCompleteProfile
+        };
+        let changed = self.engagement_basis != basis;
+        self.engagement_basis = basis;
         changed
+    }
+    #[cfg(test)]
+    pub(super) fn set_intended_engagement_mm(&mut self, value: f64) {
+        self.engagement_length.set_literal(value, "mm");
     }
     fn representation_controls(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
