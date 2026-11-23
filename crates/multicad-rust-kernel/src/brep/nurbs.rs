@@ -53,7 +53,7 @@ fn homogeneous(points: &[Point], weights: Option<&[f64]>) -> Result<Vec<Homogene
 }
 
 /// Room for the nonzero basis functions of the largest admitted degree.
-const BASIS: usize = MAX_DEGREE + 1;
+pub(crate) const BASIS: usize = MAX_DEGREE + 1;
 
 /// Span index, basis values and basis derivatives at `t`; the first
 /// `degree + 1` entries of each array are the nonzero ones.
@@ -290,6 +290,22 @@ impl NurbsSurface {
     pub fn evaluate(&self, u: f64, v: f64) -> (Point, [Point; 2]) {
         let (su, nu, du) = basis(&self.knots[0], self.degrees[0], u);
         let (sv, nv, dv) = basis(&self.knots[1], self.degrees[1], v);
+        self.combine((su, &nu, &du), (sv, &nv, &dv))
+    }
+
+    /// Span, nonzero basis values and derivatives of one parameter, exactly
+    /// as [`Self::evaluate`] computes them for that axis.
+    pub(crate) fn basis(&self, axis: usize, t: f64) -> (usize, [f64; BASIS], [f64; BASIS]) {
+        basis(&self.knots[axis], self.degrees[axis], t)
+    }
+
+    /// The tensor-product sums of [`Self::evaluate`] from both axes' bases;
+    /// each slice holds at least `degree + 1` entries.
+    pub(crate) fn combine(
+        &self,
+        (su, nu, du): (usize, &[f64], &[f64]),
+        (sv, nv, dv): (usize, &[f64], &[f64]),
+    ) -> (Point, [Point; 2]) {
         let mut sums = [[0.; 4]; 3];
         for i in 0..=self.degrees[0] {
             let row = (su + i - self.degrees[0]) * self.counts[1];

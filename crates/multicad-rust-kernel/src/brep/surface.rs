@@ -198,14 +198,22 @@ impl Surface {
 
     /// Keep spline parameters inside their knot range, wrapping closed ones.
     fn confine(surface: &NurbsSurface, closed: [bool; 2], uv: [f64; 2]) -> [f64; 2] {
-        [0, 1].map(|axis| {
-            let [a, b] = surface.range(axis);
-            if closed[axis] {
-                a + (uv[axis] - a).rem_euclid(b - a)
-            } else {
-                uv[axis].clamp(a, b)
-            }
-        })
+        [0, 1].map(|axis| Self::confine_axis(surface, closed, axis, uv[axis]))
+    }
+
+    /// [`Self::confine`] along one axis; the axes are independent.
+    pub(crate) fn confine_axis(
+        surface: &NurbsSurface,
+        closed: [bool; 2],
+        axis: usize,
+        t: f64,
+    ) -> f64 {
+        let [a, b] = surface.range(axis);
+        if closed[axis] {
+            a + (t - a).rem_euclid(b - a)
+        } else {
+            t.clamp(a, b)
+        }
     }
 
     /// The parameter range of each axis carried by an open spline.

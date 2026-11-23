@@ -8,9 +8,12 @@
 use super::domain::{Domain, UvLoop};
 use super::surface::PreparedInverse;
 use super::{
-    Boundary, Error, Face, GAUSS, Point, Result, Surface, cross, distance, dot, ensure, norm,
-    scale, sub,
+    Boundary, Error, Face, GAUSS, NurbsSurface, Point, Result, Surface, cross, distance, dot,
+    ensure, norm, scale, sub,
 };
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 /// Volume flux, area and the three first moments of area.
 pub(crate) type Moments = [f64; 5];
@@ -22,7 +25,10 @@ fn accumulate(into: &mut Moments, value: Moments, weight: f64) {
 }
 
 fn integrand(surface: &Surface, uv: [f64; 2], anchor: Point) -> Moments {
-    let (s, [su, sv]) = surface.evaluate(uv);
+    moments(surface.evaluate(uv), anchor)
+}
+
+fn moments((s, [su, sv]): (Point, [Point; 2]), anchor: Point) -> Moments {
     let normal = cross(su, sv);
     let area = norm(normal);
     [
@@ -57,12 +63,51 @@ fn quadrature(
     Ok(total)
 }
 
+/// Bounds the optional memo, not the integral's total workspace.
+const MEMO_BYTES: usize = 4 * 1024 * 1024;
+
+/// Multiplicative hash of a parameter's bits; keys are not adversarial.
+#[derive(Default)]
+struct NodeHasher(u64);
+
+impl Hasher for NodeHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u64(self.0 ^ u64::from(byte));
+        }
+    }
+
+    fn write_u64(&mut self, bits: u64) {
+        let mixed = (self.0 ^ bits).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        self.0 = mixed ^ (mixed >> 32);
+    }
+}
+
+/// The u-axis spline bases already evaluated, keyed by the exact bits of u.
+///
+/// Every strip starts at the same base and cuts its panels at the same knot
+/// breaks with the same arithmetic, so Gauss nodes recur bit for bit across
+/// strips. The basis is a pure function of u, so a memoized entry is the
+/// value a fresh evaluation returns.
+#[derive(Default)]
+struct UBasis {
+    index: HashMap<u64, usize, BuildHasherDefault<NodeHasher>>,
+    spans: Vec<usize>,
+    /// Per entry, the `degree + 1` values then the `degree + 1` derivatives.
+    values: Vec<f64>,
+}
+
 struct Integral<'a> {
     surface: &'a Surface,
     inverse: PreparedInverse<'a>,
     anchor: Point,
     base: [f64; 2],
     refine: usize,
+    memo: RefCell<UBasis>,
 }
 
 impl Integral<'_> {
@@ -74,11 +119,50 @@ impl Integral<'_> {
             (self.base[0], u, 1.)
         };
         let panels = self.surface.breaks(0, low, high);
-        quadrature(&panels, self.refine, |s| {
-            Ok(integrand(self.surface, [s, v], self.anchor))
-        })
-        .unwrap_or_default()
-        .map(|g| g * sign)
+        let total = if let Surface::Nurbs { surface, closed } = self.surface {
+            // `Surface::evaluate` confines each axis independently, then
+            // combines the two bases; v and its basis are shared here.
+            let v = Surface::confine_axis(surface, *closed, 1, v);
+            let (sv, nv, dv) = surface.basis(1, v);
+            quadrature(&panels, self.refine, |s| {
+                let u = Surface::confine_axis(surface, *closed, 0, s);
+                Ok(self.with_basis(surface, u, |along| {
+                    moments(surface.combine(along, (sv, &nv, &dv)), self.anchor)
+                }))
+            })
+        } else {
+            quadrature(&panels, self.refine, |s| {
+                Ok(integrand(self.surface, [s, v], self.anchor))
+            })
+        };
+        total.unwrap_or_default().map(|g| g * sign)
+    }
+
+    /// Call `f` with the u-axis basis at `u`, memoized while room remains.
+    fn with_basis<R>(
+        &self,
+        surface: &NurbsSurface,
+        u: f64,
+        f: impl FnOnce((usize, &[f64], &[f64])) -> R,
+    ) -> R {
+        let count = surface.degrees()[0] + 1;
+        let mut memo = self.memo.borrow_mut();
+        if let Some(&entry) = memo.index.get(&u.to_bits()) {
+            let values = &memo.values[2 * count * entry..2 * count * (entry + 1)];
+            let (value, derivative) = values.split_at(count);
+            return f((memo.spans[entry], value, derivative));
+        }
+        let (span, value, derivative) = surface.basis(0, u);
+        // Index, span and both value runs per entry, with map overhead.
+        let entry_bytes = 3 * size_of::<u64>() + 2 * count * size_of::<f64>();
+        if (memo.spans.len() + 1) * entry_bytes <= MEMO_BYTES {
+            let entry = memo.spans.len();
+            memo.index.insert(u.to_bits(), entry);
+            memo.spans.push(span);
+            memo.values.extend_from_slice(&value[..count]);
+            memo.values.extend_from_slice(&derivative[..count]);
+        }
+        f((span, &value, &derivative))
     }
 
     /// `H(v)`: the full-period strip accumulated along v from the base.
@@ -164,6 +248,7 @@ pub(crate) fn integrate(
         anchor,
         base: [0.; 2],
         refine,
+        memo: RefCell::default(),
     };
     match domain {
         Domain::Complete([low, high]) => {
@@ -202,5 +287,121 @@ pub(crate) fn integrate(
             }
             Ok(total)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use multicad_precision::PortableMath as _;
+
+    fn patch() -> NurbsSurface {
+        let counts = [7, 5];
+        let points = (0..counts[0])
+            .flat_map(|i| {
+                (0..counts[1]).map(move |j| {
+                    let (i, j) = (i as f64, j as f64);
+                    [
+                        i + 0.1 * j * j,
+                        j - 0.05 * i,
+                        0.3 * (i * 0.7).portable_sin() + 0.2 * j,
+                    ]
+                })
+            })
+            .collect::<Vec<_>>();
+        let weights = (0..points.len())
+            .map(|k| 1. + 0.25 * ((k * 7 % 5) as f64))
+            .collect();
+        NurbsSurface::new(
+            [3, 2],
+            counts,
+            points,
+            Some(weights),
+            [vec![0., 0.2, 0.45, 0.7, 1.], vec![0., 0.3, 0.6, 1.]],
+            [vec![4, 1, 1, 1, 4], vec![3, 1, 1, 3]],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn memoized_strips_are_bit_identical_to_fresh_surface_evaluation() {
+        for closed in [[false, false], [true, false], [true, true]] {
+            let surface = Surface::Nurbs {
+                surface: patch(),
+                closed,
+            };
+            for refine in [1, 2] {
+                for base in [0., 0.31] {
+                    let integral = Integral {
+                        surface: &surface,
+                        inverse: PreparedInverse::new(&surface),
+                        anchor: [0.4, -0.2, 0.1],
+                        base: [base, 0.],
+                        refine,
+                        memo: RefCell::default(),
+                    };
+                    let mut nodes = 0;
+                    // Repeated and wrapped u, u below the base and v outside
+                    // the open range all match the uncached evaluation.
+                    for &u in &[0.9, 0.05, 0.9, 0.62, 1.3, -0.2, 0.62, 0.31] {
+                        for &v in &[0.0, 0.17, 0.5, 0.83, 1.0, 1.4, -0.1] {
+                            let (low, high, sign) = if u < base {
+                                (u, base, -1.)
+                            } else {
+                                (base, u, 1.)
+                            };
+                            let panels = surface.breaks(0, low, high);
+                            nodes += (panels.len() - 1) * refine * GAUSS.len();
+                            let fresh = quadrature(&panels, refine, |s| {
+                                Ok(integrand(&surface, [s, v], integral.anchor))
+                            })
+                            .unwrap()
+                            .map(|g| g * sign);
+                            let memoized = integral.strip([u, v]);
+                            assert_eq!(fresh.map(f64::to_bits), memoized.map(f64::to_bits));
+                        }
+                    }
+                    let entries = integral.memo.borrow().spans.len();
+                    // Most nodes recur across strips and are served by the memo.
+                    assert!(entries > 0 && 2 * entries < nodes, "{entries} of {nodes}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_full_memo_keeps_evaluating_without_storing() {
+        let surface = Surface::Nurbs {
+            surface: patch(),
+            closed: [false; 2],
+        };
+        let integral = Integral {
+            surface: &surface,
+            inverse: PreparedInverse::new(&surface),
+            anchor: [0.; 3],
+            base: [0.; 2],
+            refine: 2,
+            memo: RefCell::default(),
+        };
+        let first = integral.strip([0.8, 0.4]);
+        let stored = integral.memo.borrow().spans.len();
+        // Pretend the budget is spent: further nodes are evaluated, not kept.
+        {
+            let mut memo = integral.memo.borrow_mut();
+            let count = 4;
+            let entry_bytes = 3 * size_of::<u64>() + 2 * count * size_of::<f64>();
+            memo.spans.resize(MEMO_BYTES / entry_bytes, 0);
+        }
+        let full = integral.memo.borrow().spans.len();
+        let again = integral.strip([0.9, 0.4]);
+        assert!(stored > 0);
+        assert_eq!(integral.memo.borrow().spans.len(), full);
+        assert_eq!(integral.memo.borrow().index.len(), stored);
+        assert_ne!(first, again);
+        let fresh = quadrature(&surface.breaks(0, 0., 0.9), 2, |s| {
+            Ok(integrand(&surface, [s, 0.4], [0.; 3]))
+        })
+        .unwrap();
+        assert_eq!(fresh.map(f64::to_bits), again.map(f64::to_bits));
     }
 }
