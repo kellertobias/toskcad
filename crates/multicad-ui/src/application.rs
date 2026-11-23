@@ -609,7 +609,14 @@ impl Application {
                     | Command::Transfer
             )
     }
-    fn invoke(&mut self, command: Command, args: &[&str], channel: Channel) -> Result<(), String> {
+    /// Run a command through the path its ribbon button, shortcut or command
+    /// line uses.
+    pub fn invoke(
+        &mut self,
+        command: Command,
+        args: &[&str],
+        channel: Channel,
+    ) -> Result<(), String> {
         use multicad_core::response_trace as trace;
         let mut span = trace::span(trace::Stage::Preparation, "command");
         if span.is_some() {
@@ -2776,6 +2783,27 @@ impl Application {
             self.message_error = error;
         }
     }
+    /// One application frame with its response-trace records (CAD-347).
+    /// The native window and the headless timing harness both enter here.
+    pub fn show_frame(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let frame = crate::response_trace::begin_frame(&ctx);
+        self.show(ui);
+        let mode = if self.welcome {
+            "Welcome"
+        } else {
+            self.mode.title()
+        };
+        crate::response_trace::end_frame(&ctx, frame, mode, &self.message);
+    }
+    /// Current workspace mode.
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+    /// The status line shown to the operator, and whether it reports an error.
+    pub fn status(&self) -> (&str, bool) {
+        (&self.message, self.message_error)
+    }
     pub fn show(&mut self, ui: &mut egui::Ui) {
         crate::window_resize::show(ui);
         let ctx = ui.ctx().clone();
@@ -3171,15 +3199,7 @@ impl eframe::App for Application {
             crate::native_window::align_title_buttons(_frame, 40.0 * ui.ctx().zoom_factor() as f64);
         }
         crate::quit_shortcut::feed(_frame, ui.ctx());
-        let ctx = ui.ctx().clone();
-        let frame = crate::response_trace::begin_frame(&ctx);
-        self.show(ui);
-        let mode = if self.welcome {
-            "Welcome"
-        } else {
-            self.mode.title()
-        };
-        crate::response_trace::end_frame(&ctx, frame, mode, &self.message);
+        self.show_frame(ui);
     }
 }
 
