@@ -13,6 +13,42 @@ const TOL: f64 = 1e-7;
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() < 3e-5, "{a} != {b}");
 }
+/// Compare analytic geometry, ignoring the direction of a line.
+fn same_geometry(a: AnalyticGeometry, b: AnalyticGeometry) {
+    match (a, b) {
+        (
+            AnalyticGeometry::Line { a_mm, b_mm },
+            AnalyticGeometry::Line {
+                a_mm: start,
+                b_mm: end,
+            },
+        ) => {
+            let (start, end) = if (0..3).all(|i| (a_mm[i] - start[i]).abs() < 3e-5) {
+                (start, end)
+            } else {
+                (end, start)
+            };
+            for i in 0..3 {
+                near(a_mm[i], start[i]);
+                near(b_mm[i], end[i]);
+            }
+        }
+        (
+            AnalyticGeometry::Point { position_mm: a },
+            AnalyticGeometry::Point { position_mm: b },
+        ) => (0..3).for_each(|i| near(a[i], b[i])),
+        (AnalyticGeometry::Plane { frame: a }, AnalyticGeometry::Plane { frame: b }) => {
+            (0..3).for_each(|i| near(a.normal()[i], b.normal()[i]));
+            near(
+                (0..3)
+                    .map(|i| a.normal()[i] * (a.origin_mm[i] - b.origin_mm[i]))
+                    .sum(),
+                0.,
+            );
+        }
+        other => panic!("changed geometry {other:?}"),
+    }
+}
 fn tetra() -> Union {
     let [a, b, c, d] = [[0., 0., 0.], [4., 0., 0.], [0., 4., 0.], [0., 0., 4.]];
     Union::new(
@@ -160,42 +196,14 @@ fn imported_tetrahedron_proves_occupied_convex_material_for_cut_join_and_queries
                 assert_eq!(result.solid_count().unwrap(), 1);
                 let output = result.topology_snapshot(owner, 1).unwrap();
                 for (reference, original) in &retained {
-                    let resolution = resolve(reference, &output, 1);
-                    match resolution {
-                        Resolution::Resolved { .. } => {}
-                        Resolution::Ambiguous { candidates }
-                            if reference.kind == TopologyKind::Edge =>
-                        {
-                            // Existing Boolean clipping can retain collinear
-                            // subdivisions. Report every physical fragment;
-                            // never silently choose one for the old full edge.
-                            assert!(candidates.len() > 1);
-                            let Some(AnalyticGeometry::Line { a_mm: a, b_mm: b }) = *original
-                            else {
-                                unreachable!()
-                            };
-                            let delta: [f64; 3] = std::array::from_fn(|i| b[i] - a[i]);
-                            let length2 = delta.iter().map(|v| v * v).sum::<f64>();
-                            for key in candidates {
-                                let current =
-                                    output.elements.iter().find(|e| e.key == key).unwrap();
-                                let Some(AnalyticGeometry::Line { a_mm, b_mm }) = current.geometry
-                                else {
-                                    panic!("nonlinear fragment")
-                                };
-                                for point in [a_mm, b_mm] {
-                                    let t =
-                                        (0..3).map(|i| (point[i] - a[i]) * delta[i]).sum::<f64>()
-                                            / length2;
-                                    assert!((-TOL..=1. + TOL).contains(&t));
-                                    for i in 0..3 {
-                                        near(point[i], a[i] + t * delta[i]);
-                                    }
-                                }
-                            }
-                        }
-                        other => panic!("lost tetrahedron boundary {reference:?}: {other:?}"),
-                    }
+                    // The clipping box never reaches x=0. Every boundary of
+                    // that face, including the whole A-C edge, stays one
+                    // element with its original extent.
+                    let Resolution::Resolved { key, .. } = resolve(reference, &output, 1) else {
+                        panic!("lost tetrahedron boundary {reference:?}");
+                    };
+                    let current = output.elements.iter().find(|e| e.key == key).unwrap();
+                    same_geometry(current.geometry.unwrap(), original.unwrap());
                 }
                 result
                     .manufacturing_mesh_with_receipt(Default::default())
@@ -242,6 +250,129 @@ fn imported_tetrahedron_proves_occupied_convex_material_for_cut_join_and_queries
             }
             assert_eq!(source.topology_snapshot(owner, 0).unwrap(), before);
             assert_eq!(tool.topology_snapshot(owner, 0).unwrap(), tool_before);
+        }
+    }
+}
+
+fn lines(solid: &Solid) -> Vec<[[f64; 3]; 2]> {
+    solid
+        .topology_snapshot(EntityId::new(), 0)
+        .unwrap()
+        .elements
+        .into_iter()
+        .filter_map(|element| match element.geometry {
+            Some(AnalyticGeometry::Line { a_mm, b_mm }) => Some([a_mm, b_mm]),
+            _ => None,
+        })
+        .collect()
+}
+fn has_line(lines: &[[[f64; 3]; 2]], a: [f64; 3], b: [f64; 3]) -> bool {
+    let same = |p: [f64; 3], q: [f64; 3]| (0..3).all(|i| (p[i] - q[i]).abs() < 1e-9);
+    lines
+        .iter()
+        .any(|&[p, q]| (same(p, a) && same(q, b)) || (same(p, b) && same(q, a)))
+}
+
+#[test]
+fn genuine_splits_and_authored_collinear_vertices_stay_explicit() {
+    let policy = GeometryPolicy::default();
+    let box_tool = |origin: [f64; 3], size: [[i64; 2]; 3]| {
+        Solid::rust_box(
+            EntityId::new().uuid_bits(),
+            size.map(|[n, d]| Rational::new(n, d).unwrap()),
+            PlaneFrame {
+                origin,
+                ..Default::default()
+            },
+            policy,
+        )
+        .unwrap()
+    };
+    let import = |geometry: &Union, owner| {
+        Solid::import_rust_step(&placed_text(geometry, PlaneFrame::default()), owner, policy)
+            .unwrap()
+    };
+    let [a, c] = [[0., 0., 0.], [0., 4., 0.]];
+
+    // A notch through the middle of A-C removes part of that edge. The old
+    // whole-edge reference must name both survivors, never pick one.
+    let owner = EntityId::new();
+    let source = import(&tetra(), owner);
+    let before = source.topology_snapshot(owner, 0).unwrap();
+    let edge = before
+        .elements
+        .iter()
+        .find(|e| {
+            matches!(e.geometry, Some(AnalyticGeometry::Line { a_mm, b_mm })
+                if has_line(&[[a_mm, b_mm]], a, c))
+        })
+        .unwrap();
+    let reference = GeometryIntent::capture(&before, edge.key).unwrap();
+    let notched = source
+        .rust_subtract_planar_tools(
+            &[&box_tool([-1., 1., -1.], [[3, 2], [1, 1], [3, 2]])],
+            EntityId::new(),
+            policy,
+        )
+        .unwrap()
+        .unwrap();
+    near(notched.volume_mm3().unwrap(), 32. / 3. - 0.25);
+    let output = notched.topology_snapshot(owner, 1).unwrap();
+    let Resolution::Ambiguous { candidates } = resolve(&reference, &output, 1) else {
+        panic!("a genuinely split edge must stay ambiguous");
+    };
+    assert_eq!(candidates.len(), 2);
+    let segments = lines(&notched);
+    assert!(has_line(&segments, a, [0., 1., 0.]));
+    assert!(has_line(&segments, [0., 2., 0.], c));
+    assert!(!has_line(&segments, a, c));
+
+    // An authored midpoint on A-C is part of the imported boundary and
+    // survives the same remote cut that no longer subdivides A-C itself.
+    let m = [0., 2., 0.];
+    let [b, d] = [[4., 0., 0.], [0., 0., 4.]];
+    let authored = Union::new(
+        &[ConvexPiece::new(
+            vec![
+                vec![a, m, c, b],
+                vec![a, b, d],
+                vec![a, d, c, m],
+                vec![b, c, d],
+            ],
+            TOL,
+        )
+        .unwrap()],
+        TOL,
+    )
+    .unwrap();
+    let remote = box_tool([1., 0., 0.], [[4, 1], [1, 1], [1, 1]]);
+    for (source, authored) in [
+        (import(&authored, EntityId::new()), true),
+        (import(&tetra(), owner), false),
+    ] {
+        let cut = source
+            .rust_subtract_planar_tools(&[&remote], EntityId::new(), policy)
+            .unwrap()
+            .unwrap();
+        let join = Solid::union_planar_pieces(&[&source, &remote], EntityId::new(), policy)
+            .unwrap()
+            .unwrap();
+        for result in [&cut, &join] {
+            let segments = lines(result);
+            let midpoint = source
+                .topology_snapshot(EntityId::new(), 0)
+                .unwrap()
+                .elements
+                .iter()
+                .any(|e| {
+                    matches!(e.geometry, Some(AnalyticGeometry::Point { position_mm })
+                        if position_mm == m)
+                });
+            assert_eq!(midpoint, authored);
+            assert_eq!(has_line(&segments, a, m), midpoint);
+            assert_eq!(has_line(&segments, m, c), midpoint);
+            assert_eq!(has_line(&segments, a, c), !midpoint);
+            assert!(!segments.iter().flatten().any(|&p| p == [0., 1., 0.]));
         }
     }
 }
