@@ -21,6 +21,7 @@ pub mod plants;
 pub mod project_file;
 pub mod project_path;
 pub mod references;
+pub mod response_trace;
 pub mod schedules;
 pub mod sketch;
 pub mod sketch_corner;
