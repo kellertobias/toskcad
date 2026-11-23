@@ -345,6 +345,14 @@ fn emit_boundary(
         return Ok(None);
     }
     boundary.split_edges(&mut work.remaining)?;
+    boundary.remove_collinear_splits(operands.iter().flat_map(|operand| {
+        operand
+            .boundary
+            .vertices
+            .iter()
+            .copied()
+            .chain(piece_vertices(operand.pieces))
+    }))?;
     let boundary = Union::from_boundary(boundary)?;
     work.check()?;
     Ok(Some(boundary))

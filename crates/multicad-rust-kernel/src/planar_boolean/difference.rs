@@ -9,9 +9,35 @@ impl Union {
         tools: &[ConvexPiece],
         tolerance_mm: f64,
     ) -> Result<Option<Self>, Error> {
+        Self::subtract_split(stock, tools, tolerance_mm, true)
+    }
+
+    /// Like [`Self::subtract`], but keep every vertex and seam the clipping
+    /// left, for chart unions as in [`Self::new_charted`].
+    pub fn subtract_charted(
+        stock: &[ConvexPiece],
+        tools: &[ConvexPiece],
+        tolerance_mm: f64,
+    ) -> Result<Option<Self>, Error> {
+        Self::subtract_split(stock, tools, tolerance_mm, false)
+    }
+
+    fn subtract_split(
+        stock: &[ConvexPiece],
+        tools: &[ConvexPiece],
+        tolerance_mm: f64,
+        simplify: bool,
+    ) -> Result<Option<Self>, Error> {
         validate_cut(stock, tools, tolerance_mm)?;
         let stock_boundary = clipping::exterior(stock, tolerance_mm, MAX_WORK)?;
-        subtract(stock_boundary, stock, tools, stock.len(), tolerance_mm)
+        subtract(
+            stock_boundary,
+            stock,
+            tools,
+            stock.len(),
+            tolerance_mm,
+            simplify,
+        )
     }
 }
 
@@ -25,10 +51,21 @@ impl CutMaterial {
     ) -> Result<Option<Union>, Error> {
         validate_cut(&self.pieces, tools, tolerance_mm)?;
         let mut boundary = shell::Boundary::new(tolerance_mm);
+        let vertices = &self.boundary.vertices;
         for (i, face) in self.boundary.faces.iter().enumerate() {
-            boundary.add(&polygon(&self.boundary.vertices, face), face.normal, 0, i)?;
+            // Clipping splits convex rings. A merged concave face is cut as
+            // its boundary triangles, which introduce no edge vertices.
+            if shell::is_concave(vertices, face) {
+                for triangle in
+                    shell::triangulate_face(vertices, face).map_err(|_| Error::Unresolved)?
+                {
+                    boundary.add(&triangle.map(|v| vertices[v]), face.normal, 0, i)?;
+                }
+            } else {
+                boundary.add(&polygon(vertices, face), face.normal, 0, i)?;
+            }
         }
-        subtract(boundary, &self.pieces, tools, 1, tolerance_mm)
+        subtract(boundary, &self.pieces, tools, 1, tolerance_mm, true)
     }
 }
 
@@ -53,8 +90,11 @@ fn subtract(
     tools: &[ConvexPiece],
     tool_offset: usize,
     tolerance: f64,
+    simplify: bool,
 ) -> Result<Option<Union>, Error> {
     let tool_boundary = clipping::exterior(tools, tolerance, MAX_WORK)?;
+    let mut protected = stock_boundary.vertices.clone();
+    protected.extend(piece_vertices(stock).chain(piece_vertices(tools)));
     let mut cut = CutBoundary {
         boundary: shell::Boundary::new(tolerance),
         tolerance,
@@ -66,6 +106,10 @@ fn subtract(
         return Ok(None);
     }
     cut.boundary.split_edges(&mut cut.budget)?;
+    if simplify {
+        cut.boundary
+            .remove_collinear_splits(protected.into_iter())?;
+    }
     Union::from_boundary(cut.boundary).map(Some)
 }
 

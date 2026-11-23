@@ -20,7 +20,7 @@ impl Chart {
             return Ok(self);
         }
         let (stock, tools) = self.pieces.split_at(self.stock_count);
-        let boundary = Union::subtract(stock, tools, tolerance)
+        let boundary = Union::subtract_charted(stock, tools, tolerance)
             .map_err(source_error)?
             .ok_or_else(|| input("The retained cut has no material left to join"))?;
         let material =
@@ -122,7 +122,7 @@ impl Solid {
         }
         chart.stock_count = chart.pieces.len();
         Some(
-            Union::new(&chart.pieces, tolerance)
+            Union::new_charted(&chart.pieces, tolerance)
                 .map_err(source_error)
                 .and_then(|union| chart.finish(union, feature, policy)),
         )
@@ -195,7 +195,7 @@ impl Solid {
                 bury_flush_end(&mut chart, tolerance);
             }
             chart.stock_count = chart.pieces.len();
-            let union = Union::new(&chart.pieces, tolerance).map_err(source_error)?;
+            let union = Union::new_charted(&chart.pieces, tolerance).map_err(source_error)?;
             let joined = chart.finish(union, feature, policy)?;
             if frame == PlaneFrame::default() {
                 Ok(joined)

@@ -321,5 +321,6 @@ pub(super) fn triangulate_face(
     })
 }
 
+mod collinear;
 #[cfg(test)]
 mod tests;

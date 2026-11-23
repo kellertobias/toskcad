@@ -545,3 +545,115 @@ fn disk_excess_measures_the_farthest_disk_point_beyond_any_plane() {
     let tilted = [0., 0.6, 0.8];
     assert!((piece.disk_excess([4., 4., 2.], tilted, 2.) - 0.2).abs() < 1e-12);
 }
+
+fn tetrahedron(edge_midpoint: Option<Point>) -> ConvexPiece {
+    let [a, b, c, d] = [[0., 0., 0.], [4., 0., 0.], [0., 4., 0.], [0., 0., 4.]];
+    let (mut bottom, mut left) = (vec![a, c, b], vec![a, d, c]);
+    if let Some(m) = edge_midpoint {
+        bottom.insert(1, m);
+        left.push(m);
+    }
+    ConvexPiece::new(vec![bottom, vec![a, b, d], left, vec![b, c, d]], TOL).unwrap()
+}
+
+/// The vertices strictly inside segment a-b, ordered from a, and the number
+/// of face loops with an edge from a to b.
+fn on_segment(union: &Union, a: Point, b: Point) -> (Vec<Point>, usize) {
+    let direction = sub(b, a);
+    let mut inside: Vec<_> = union
+        .vertices()
+        .iter()
+        .copied()
+        .filter_map(|p| {
+            let t = dot(sub(p, a), direction) / dot(direction, direction);
+            (t > 1e-9 && t < 1. - 1e-9 && norm(sub(sub(p, a), scale(direction, t))) < 1e-9)
+                .then_some((t, p))
+        })
+        .collect::<Vec<_>>();
+    inside.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let inside: Vec<_> = inside.into_iter().map(|(_, p)| p).collect();
+    let index = |p: Point| union.vertices().iter().position(|&q| q == p);
+    let loops = match (index(a), index(b)) {
+        (Some(a), Some(b)) => union
+            .faces()
+            .iter()
+            .filter(|face| {
+                face.vertices
+                    .iter()
+                    .zip(face.vertices.iter().cycle().skip(1))
+                    .any(|(&p, &q)| [p, q] == [a, b] || [p, q] == [b, a])
+            })
+            .count(),
+        _ => 0,
+    };
+    (inside, loops)
+}
+
+#[test]
+fn remote_cuts_leave_untouched_straight_edges_whole() {
+    let [a, c] = [[0., 0., 0.], [0., 4., 0.]];
+    let remote = block([1., 0., 0.], [5., 1., 1.]);
+    let cut = Union::subtract(&[tetrahedron(None)], std::slice::from_ref(&remote), TOL)
+        .unwrap()
+        .unwrap();
+    let join = Union::new(&[tetrahedron(None), remote.clone()], TOL).unwrap();
+    check_volume(cut.volume_mm3(), 26. / 3.);
+    check_volume(join.volume_mm3(), 38. / 3.);
+    for union in [&cut, &join] {
+        assert_eq!(union.solid_count(), 1);
+        // One edge A-C bounded by exactly the bottom and the x=0 face.
+        assert_eq!(on_segment(union, a, c), (vec![], 2));
+        let mesh = union.mesh(options(1_000)).unwrap();
+        check_volume(
+            manufacturing::certify(&mesh).unwrap().signed_volume_mm3,
+            union.volume_mm3(),
+        );
+    }
+
+    // The merged bottom is concave. Cutting it again through edge B-C, from
+    // the certified material, still yields the exact volume (a corner of
+    // legs 0.5 under the slanted face) and keeps A-C whole.
+    let material = CutMaterial::recover(
+        &cut,
+        &[tetrahedron(None)],
+        std::slice::from_ref(&remote),
+        TOL,
+    )
+    .unwrap();
+    assert!(
+        cut.faces()
+            .iter()
+            .any(|face| shell::is_concave(cut.vertices(), face))
+    );
+    let again = material
+        .subtract(&[block([2., 1.5, -1.], [3., 2., 0.5])], TOL)
+        .unwrap()
+        .unwrap();
+    check_volume(again.volume_mm3(), 26. / 3. - 1. / 48.);
+    assert_eq!(on_segment(&again, a, c), (vec![], 2));
+
+    // An authored collinear vertex is input topology and stays.
+    let m = [0., 2., 0.];
+    let authored = Union::subtract(&[tetrahedron(Some(m))], std::slice::from_ref(&remote), TOL)
+        .unwrap()
+        .unwrap();
+    assert_eq!(on_segment(&authored, a, c), (vec![m], 0));
+    assert_eq!(on_segment(&authored, a, m), (vec![], 2));
+    assert_eq!(on_segment(&authored, m, c), (vec![], 2));
+}
+
+#[test]
+fn a_cut_through_a_straight_edge_keeps_both_survivors() {
+    let [a, c] = [[0., 0., 0.], [0., 4., 0.]];
+    let notch = block([-1., 1., -1.], [0.5, 2., 0.5]);
+    let cut = Union::subtract(&[tetrahedron(None)], &[notch], TOL)
+        .unwrap()
+        .unwrap();
+    check_volume(cut.volume_mm3(), 32. / 3. - 0.25);
+    let (inside, _) = on_segment(&cut, a, c);
+    assert_eq!(inside, vec![[0., 1., 0.], [0., 2., 0.]]);
+    assert_eq!(on_segment(&cut, a, [0., 1., 0.]), (vec![], 2));
+    assert_eq!(on_segment(&cut, [0., 2., 0.], c), (vec![], 2));
+    // The notch floor at y=1..2 is not material, so no edge joins them.
+    assert_eq!(on_segment(&cut, [0., 1., 0.], [0., 2., 0.]).1, 0);
+}

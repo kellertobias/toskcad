@@ -258,12 +258,29 @@ impl Union {
         Self::new_with_interrupt(pieces, tolerance_mm, None)
     }
 
+    /// Like [`Self::new`], but keep every vertex and seam the clipping left.
+    /// For chart unions whose consumer assigns one region to each face, such
+    /// as a warped band remap: merging coplanar fragments could join faces
+    /// across a band level.
+    pub fn new_charted(pieces: &[ConvexPiece], tolerance_mm: f64) -> Result<Self, Error> {
+        Self::build(pieces, tolerance_mm, None, false)
+    }
+
     /// Regularize exposed raw-cell faces with cooperative cancellation between
     /// bounded clipping work items; successful labels match `new` exactly.
     pub fn new_with_interrupt(
         pieces: &[ConvexPiece],
         tolerance_mm: f64,
         interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<Self, Error> {
+        Self::build(pieces, tolerance_mm, interrupt, true)
+    }
+
+    fn build(
+        pieces: &[ConvexPiece],
+        tolerance_mm: f64,
+        interrupt: Option<&dyn Fn() -> bool>,
+        simplify: bool,
     ) -> Result<Self, Error> {
         validate_tolerance(tolerance_mm)?;
         if pieces.is_empty() {
@@ -273,9 +290,12 @@ impl Union {
             return Err(Error::Limit);
         }
         let mut budget = MAX_WORK;
-        let boundary =
+        let mut boundary =
             clipping::exterior_with_interrupt(pieces, tolerance_mm, &mut budget, interrupt)?;
         checkpoint(interrupt)?;
+        if simplify {
+            boundary.remove_collinear_splits(piece_vertices(pieces))?;
+        }
         let boundary = Self::from_boundary(boundary)?;
         checkpoint(interrupt)?;
         Ok(boundary)
@@ -335,6 +355,13 @@ impl Union {
         options.check()?;
         shell::mesh(&self.vertices, &self.faces, options.triangle_limit)
     }
+}
+
+/// Every authored loop vertex of the input cells.
+fn piece_vertices(pieces: &[ConvexPiece]) -> impl Iterator<Item = Point> + '_ {
+    pieces
+        .iter()
+        .flat_map(|piece| piece.faces.iter().flatten().copied())
 }
 
 fn validate_tolerance(tolerance: f64) -> Result<(), Error> {
