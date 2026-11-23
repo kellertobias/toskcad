@@ -569,8 +569,9 @@ pub(super) fn certify(
                     return Ok(Proof::Unsupported);
                 }
             }
-            // Sample-derived wrapping is not a full coefficient seam theorem.
-            // No source/target endpoint convention is silently substituted.
+            // A certified closure still wraps parameters across the seam, and
+            // this isoline proof has no seam convention for it: refuse, never
+            // report a disagreement. No endpoint convention is substituted.
             if closed[moving] || closed[fixed] {
                 return Ok(Proof::Unsupported);
             }

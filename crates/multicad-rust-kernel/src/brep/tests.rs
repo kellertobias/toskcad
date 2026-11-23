@@ -2978,11 +2978,55 @@ fn closure_is_certified_along_the_whole_boundary_not_at_samples() {
     let real = distance(open.evaluate(0., 0.125).0, open.evaluate(1., 0.125).0);
     assert!(samples < 1e-12 && real > 3e-3);
     assert!(open.boundary_gap(0).unwrap() >= real);
-    assert_eq!(Surface::nurbs(open, TOLERANCE).periods(), [None, None]);
+    let face = Surface::nurbs(open.clone(), TOLERANCE);
+    assert_eq!(face.periods(), [None, None]);
+    // The upper boundary keeps its own literal geometry: no wrap to u = 0.
+    for i in 0..=64 {
+        let v = f64::from(i) / 64.;
+        for u in [0., 0.5, 1.] {
+            assert_eq!(face.evaluate([u, v]).0, open.evaluate(u, v).0);
+        }
+        // Past the open end the parameter clamps to the end, never wraps.
+        assert_eq!(face.evaluate([1. + 1e-3, v]).0, open.evaluate(1., v).0);
+    }
+    let upper = face.evaluate([1., 0.125]).0;
+    assert!(distance(upper, open.evaluate(0., 0.125).0) > 3e-3);
+    // The same counterexample along v: rows and columns swap roles.
+    let transposed = {
+        let points = (0..6)
+            .flat_map(|v| (0..4).map(move |u| (u, v)))
+            .map(|(u, v)| open.points()[u * 6 + v])
+            .collect();
+        NurbsSurface::new(
+            [5, 3],
+            [6, 4],
+            points,
+            None,
+            [vec![0., 1.], vec![0., 1.]],
+            [vec![6, 6], vec![4, 4]],
+        )
+        .unwrap()
+    };
+    assert!(transposed.boundary_gap(1).unwrap() >= real);
+    let face = Surface::nurbs(transposed.clone(), TOLERANCE);
+    assert_eq!(face.periods(), [None, None]);
+    assert_eq!(
+        face.evaluate([0.125, 1.]).0,
+        transposed.evaluate(0.125, 1.).0
+    );
+    assert_eq!(face.evaluate([0.125, 1.]).0, upper);
     // The same net without the bump closes exactly.
     let closed = net(false);
     assert!(closed.boundary_gap(0).unwrap() <= 1e-12);
-    assert_eq!(Surface::nurbs(closed, TOLERANCE).periods()[0], Some(1.));
+    let face = Surface::nurbs(closed.clone(), TOLERANCE);
+    assert_eq!(face.periods(), [Some(1.), None]);
+    // A genuine closure wraps past the end onto the same geometry.
+    for i in 0..=16 {
+        let v = f64::from(i) / 16.;
+        let wrapped = face.evaluate([1.25, v]).0;
+        assert!(distance(wrapped, closed.evaluate(0.25, v).0) <= 1e-12);
+        assert!(distance(face.evaluate([1., v]).0, closed.evaluate(0., v).0) <= 1e-12);
+    }
 }
 
 /// Genuine rational closures (equal or proportional end-row weights) and
