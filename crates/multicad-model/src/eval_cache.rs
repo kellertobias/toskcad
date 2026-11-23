@@ -57,6 +57,23 @@
 //! providers qualify. Receipts cover the entire pin and compiler configuration,
 //! and are published only after the enclosing compile completes successfully.
 //!
+//! # Assembly and occurrence composition (CAD-396)
+//!
+//! Reusable Assembly compounds and placed Instance occurrences are not
+//! feature results, but a full compile still rebuilds their exact solids,
+//! topology, display payloads and canonical leaves from the member solids.
+//! When every input of such a node is the *same* immutable B-rep as in an
+//! earlier successful full compile ([`Solid::shares_geometry_with`], pointer
+//! identity, never geometric equality) and every other input recorded in its
+//! key (member list, component, producer, resolved pose bits, leaf metadata
+//! and compiler configuration) is equal, the node's earlier result is the
+//! same function of the same inputs and is reused, re-stamped with the
+//! current revision. Entries retain their input solids, so an input address
+//! cannot be reused by different geometry while its entry exists. Poses are
+//! still resolved and refined every compile; source-material checks and
+//! display budgets are still applied to reused nodes. Entries are staged and
+//! promoted only after the enclosing full compile succeeds.
+//!
 //! # Lifetime, memory and threads
 //!
 //! Entries are only stored for successfully evaluated features, so a
@@ -164,6 +181,10 @@ pub struct CompileStats {
     pub symbol_reused: BTreeSet<EntityId>,
     /// Audited literal symbol nodes constructed this compile.
     pub symbol_evaluated: BTreeSet<EntityId>,
+    /// Assembly/Instance compositions restored from identical inputs (CAD-396).
+    pub composition_reused: BTreeSet<EntityId>,
+    /// Assembly/Instance compositions constructed this compile.
+    pub composition_evaluated: BTreeSet<EntityId>,
     /// Entries evicted after this compile.
     pub evicted: usize,
     /// Entries and their estimated size after eviction.
@@ -213,6 +234,27 @@ struct SymbolEntry {
     bytes: usize,
     used: u64,
 }
+/// A composed Assembly/Instance node and the exact solids it was built from.
+struct CompositionEntry {
+    inputs: Vec<Solid>,
+    node: SymbolNode,
+    bytes: usize,
+    used: u64,
+}
+impl CompositionEntry {
+    fn matches(&self, inputs: &[Solid]) -> bool {
+        self.inputs.len() == inputs.len()
+            && self
+                .inputs
+                .iter()
+                .zip(inputs)
+                .all(|(a, b)| a.shares_geometry_with(b))
+    }
+}
+/// Bounds on retained compositions (alternatives per key, entries). Their
+/// estimated size is bounded separately by the owner's `retained_bytes`.
+const COMPOSITION_ALTERNATIVES: usize = 4;
+const COMPOSITION_ENTRIES: usize = 4096;
 #[derive(Clone)]
 struct LiteralSymbol {
     entities: Vec<EntityId>,
@@ -337,6 +379,9 @@ pub struct EvaluationCache {
     symbol_native_checks: usize,
     symbol_nodes: BTreeMap<CacheKey, SymbolEntry>,
     pending_symbol_nodes: BTreeMap<CacheKey, SymbolEntry>,
+    compositions: BTreeMap<CacheKey, Vec<CompositionEntry>>,
+    composition_bytes: usize,
+    pending_compositions: Vec<(CacheKey, CompositionEntry)>,
     full_rust: Option<FullRustModel>,
     pub(crate) pipe_threads: multicad_kernel::PipeThreadFactory,
 }
@@ -364,6 +409,9 @@ impl EvaluationCache {
             symbol_native_checks: 0,
             symbol_nodes: BTreeMap::new(),
             pending_symbol_nodes: BTreeMap::new(),
+            compositions: BTreeMap::new(),
+            composition_bytes: 0,
+            pending_compositions: Vec::new(),
             full_rust: None,
             pipe_threads: multicad_kernel::PipeThreadFactory::new(retained_bytes, max_entries),
         }
@@ -407,6 +455,9 @@ impl EvaluationCache {
         self.pending_symbol_proofs.clear();
         self.symbol_nodes.clear();
         self.pending_symbol_nodes.clear();
+        self.compositions.clear();
+        self.composition_bytes = 0;
+        self.pending_compositions.clear();
         self.last = CompileStats::default();
     }
 
@@ -497,14 +548,25 @@ impl EvaluationCache {
     pub fn symbol_node_entries(&self) -> usize {
         self.symbol_nodes.len()
     }
+    /// Retained Assembly/Instance compositions (CAD-396).
+    pub fn composition_entries(&self) -> usize {
+        self.compositions.values().map(Vec::len).sum()
+    }
+    /// Estimated size of the retained compositions.
+    pub fn composition_bytes(&self) -> usize {
+        self.composition_bytes
+    }
     pub(crate) fn begin_symbol_proofs(&mut self) {
+        self.pending_compositions.clear();
         self.pending_symbol_nodes.clear();
         self.pending_symbol_proofs.clear();
     }
     pub(crate) fn finish_symbol_proofs(&mut self, success: bool) {
         let pending = std::mem::take(&mut self.pending_symbol_proofs);
         let nodes = std::mem::take(&mut self.pending_symbol_nodes);
+        let compositions = std::mem::take(&mut self.pending_compositions);
         if success {
+            self.promote_compositions(compositions);
             let limit = self.max_entries.min(768);
             let budget = self.retained_bytes.min(64 * 1024 * 1024);
             for (key, entry) in nodes {
@@ -538,6 +600,54 @@ impl EvaluationCache {
                 }
                 self.symbol_proofs.insert(key);
             }
+        }
+    }
+    fn promote_compositions(&mut self, staged: Vec<(CacheKey, CompositionEntry)>) {
+        let limit = self.max_entries.min(COMPOSITION_ENTRIES);
+        let budget = self.retained_bytes;
+        for (key, entry) in staged {
+            if limit == 0 || entry.bytes > budget {
+                continue;
+            }
+            let alternatives = self.compositions.entry(key).or_default();
+            let mut freed = 0;
+            alternatives.retain(|old| {
+                let keep = !old.matches(&entry.inputs);
+                if !keep {
+                    freed += old.bytes;
+                }
+                keep
+            });
+            if alternatives.len() >= COMPOSITION_ALTERNATIVES
+                && let Some(oldest) = (0..alternatives.len()).min_by_key(|&i| alternatives[i].used)
+            {
+                freed += alternatives.remove(oldest).bytes;
+            }
+            self.composition_bytes -= freed;
+            while self.composition_entries() >= limit
+                || self.composition_bytes > budget - entry.bytes
+            {
+                let Some((oldest, index)) = self
+                    .compositions
+                    .iter()
+                    .flat_map(|(key, list)| {
+                        list.iter()
+                            .enumerate()
+                            .map(move |(index, e)| (e.used, *key, index))
+                    })
+                    .min()
+                    .map(|(_, key, index)| (key, index))
+                else {
+                    break;
+                };
+                let list = self.compositions.get_mut(&oldest).expect("listed key");
+                self.composition_bytes -= list.remove(index).bytes;
+                if list.is_empty() {
+                    self.compositions.remove(&oldest);
+                }
+            }
+            self.composition_bytes += entry.bytes;
+            self.compositions.entry(key).or_default().push(entry);
         }
     }
     pub(crate) fn symbol_proof_hit(&mut self, key: ContentHash) -> bool {
@@ -864,6 +974,57 @@ impl<'a> Session<'a> {
         self.cache
             .pending_symbol_nodes
             .insert(key, SymbolEntry { node, bytes, used });
+    }
+    /// The key of an Assembly/Instance composition. `content` must record
+    /// every non-solid input the node reads; solids are matched separately.
+    pub(crate) fn composition_key(&self, id: EntityId, content: &[u8]) -> CacheKey {
+        let mut bytes = self.salt.clone();
+        bytes.extend(b"composition/1|");
+        bytes.extend(id.to_string().bytes());
+        bytes.push(b'|');
+        bytes.extend(content);
+        CacheKey(ContentHash::of(&bytes).0)
+    }
+    /// An earlier composition built from exactly these input solids.
+    pub(crate) fn lookup_composition(
+        &mut self,
+        key: &CacheKey,
+        inputs: &[Solid],
+        id: EntityId,
+        revision: u64,
+    ) -> Option<SymbolNode> {
+        let entry = self
+            .cache
+            .compositions
+            .get_mut(key)?
+            .iter_mut()
+            .find(|entry| entry.matches(inputs))?;
+        let node = entry.node.shared(revision)?;
+        entry.used = self.cache.clock;
+        self.stats.composition_reused.insert(id);
+        Some(node)
+    }
+    pub(crate) fn evaluated_composition(&mut self, id: EntityId) {
+        self.stats.composition_evaluated.insert(id);
+    }
+    /// Stage a complete composition; it is promoted after a successful compile.
+    pub(crate) fn stage_composition(
+        &mut self,
+        key: CacheKey,
+        inputs: Vec<Solid>,
+        node: SymbolNode,
+    ) {
+        let bytes = node.bytes();
+        let used = self.cache.clock;
+        self.cache.pending_compositions.push((
+            key,
+            CompositionEntry {
+                inputs,
+                node,
+                bytes,
+                used,
+            },
+        ));
     }
     /// Reuse an earlier exact result, re-stamped for this revision.
     pub(crate) fn lookup(

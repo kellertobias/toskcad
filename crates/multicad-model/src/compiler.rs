@@ -873,6 +873,49 @@ impl Compiler {
                     cache.evaluated_symbol(id);
                 }
                 let assembly_started = std::time::Instant::now();
+                // CAD-396: an unchanged composition of the same member solids.
+                let composition = if roots.is_none() && symbol_key.is_none() {
+                    cached.as_ref().and_then(|c| {
+                        crate::assemblies::component_inputs(
+                            document,
+                            &occurrences,
+                            &solids,
+                            &leaves,
+                            id,
+                        )
+                        .map(|(content, inputs)| (c.composition_key(id, &content), inputs))
+                    })
+                } else {
+                    None
+                };
+                if let Some((key, inputs)) = &composition
+                    && let Some(node) = cached
+                        .as_mut()
+                        .and_then(|c| c.lookup_composition(key, inputs, id, revision))
+                    && let Some(snapshot) = node.shape
+                {
+                    multicad_core::model::wall_face_materials(document, &snapshot.topology)
+                        .map_err(|e| error(Some(id), e))?;
+                    triangles = triangles.saturating_add(snapshot.mesh.indices.len() / 3);
+                    if triangles > MAX_MODEL_TRIANGLES {
+                        return Err(error(
+                            Some(id),
+                            "Assembly display exceeds the native triangle budget",
+                        ));
+                    }
+                    leaves.restore(node.leaves)?;
+                    topologies.insert(id, snapshot.topology.clone());
+                    shapes.insert(id, snapshot);
+                    solids.insert(id, node.solid);
+                    timings.assembly_and_occurrence_ms +=
+                        assembly_started.elapsed().as_secs_f64() * 1000.;
+                    continue;
+                }
+                if composition.is_some()
+                    && let Some(cache) = cached.as_mut()
+                {
+                    cache.evaluated_composition(id);
+                }
                 let solid = crate::assemblies::component(
                     crate::assemblies::ComponentInputs {
                         document,
@@ -941,6 +984,20 @@ impl Compiler {
                         },
                     );
                 }
+                if let (Some((key, inputs)), Some(cache)) = (composition, cached.as_mut())
+                    && let (Ok(shared), Some(leaf)) = (solid.share(), leaves.capture(id))
+                {
+                    cache.stage_composition(
+                        key,
+                        inputs,
+                        crate::eval_cache::SymbolNode {
+                            solid: shared,
+                            shape: Some(snapshot.clone()),
+                            occurrence: None,
+                            leaves: leaf,
+                        },
+                    );
+                }
                 topologies.insert(id, topology);
                 shapes.insert(id, snapshot);
                 solids.insert(id, solid);
@@ -976,23 +1033,66 @@ impl Compiler {
                     cache.evaluated_symbol(id);
                 }
                 let occurrence_started = std::time::Instant::now();
-                let (occurrence, solid) = crate::occurrences::build(
-                    crate::occurrences::Inputs {
-                        document,
-                        parameters: context.parameters(),
-                        body_heads: &bodies,
-                        solids: &solids,
-                        topologies: &topologies,
-                        policy: self.policy,
-                    },
-                    id,
-                    revision,
-                )?;
+                let inputs = crate::occurrences::Inputs {
+                    document,
+                    parameters: context.parameters(),
+                    body_heads: &bodies,
+                    solids: &solids,
+                    topologies: &topologies,
+                    policy: self.policy,
+                };
+                let placement = crate::occurrences::resolve(&inputs, id, revision)?;
+                // CAD-396: the same resolved placement of the same source solid.
+                let composition = if roots.is_none() && symbol_key.is_none() {
+                    cached.as_ref().and_then(|c| {
+                        crate::occurrences::placement_inputs(
+                            &inputs, &leaves, id, revision, placement,
+                        )
+                        .map(|(content, inputs)| (c.composition_key(id, &content), inputs))
+                    })
+                } else {
+                    None
+                };
+                if let Some((key, inputs)) = &composition
+                    && let Some(node) = cached
+                        .as_mut()
+                        .and_then(|c| c.lookup_composition(key, inputs, id, revision))
+                    && let Some(occurrence) = node.occurrence
+                {
+                    leaves.restore(node.leaves)?;
+                    topologies.insert(id, occurrence.topology.clone());
+                    solids.insert(id, node.solid);
+                    occurrences.insert(id, occurrence);
+                    timings.assembly_and_occurrence_ms +=
+                        occurrence_started.elapsed().as_secs_f64() * 1000.;
+                    continue;
+                }
+                if composition.is_some()
+                    && let Some(cache) = cached.as_mut()
+                {
+                    cache.evaluated_composition(id);
+                }
+                let (occurrence, solid) =
+                    crate::occurrences::place(&inputs, id, revision, placement)?;
                 topologies.insert(id, occurrence.topology.clone());
                 leaves.instance(document, &occurrence, revision, interrupt)?;
                 timings.assembly_and_occurrence_ms +=
                     occurrence_started.elapsed().as_secs_f64() * 1000.;
                 let occurrence = Arc::new(occurrence);
+                if let (Some((key, inputs)), Some(cache)) = (composition, cached.as_mut())
+                    && let (Ok(shared), Some(leaf)) = (solid.share(), leaves.capture(id))
+                {
+                    cache.stage_composition(
+                        key,
+                        inputs,
+                        crate::eval_cache::SymbolNode {
+                            solid: shared,
+                            shape: None,
+                            occurrence: Some(occurrence.clone()),
+                            leaves: leaf,
+                        },
+                    );
+                }
                 if let (Some(key), Some(cache)) = (symbol_key, cached.as_mut())
                     && let (Ok(shared), Some(leaf)) = (solid.share(), leaves.capture(id))
                 {

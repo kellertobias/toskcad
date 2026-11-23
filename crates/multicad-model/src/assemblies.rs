@@ -51,7 +51,7 @@ impl CachedLeaves {
     }
 }
 impl LeafStore {
-    fn paths<T>(
+    pub(crate) fn paths<T>(
         map: &BTreeMap<OccurrencePath, T>,
         root: EntityId,
     ) -> impl Iterator<Item = (&OccurrencePath, &T)> {
@@ -251,6 +251,50 @@ pub(crate) struct ComponentInputs<'a> {
     pub revision: u64,
     pub policy: GeometryPolicy,
     pub interrupt: Option<&'a dyn Fn() -> bool>,
+}
+/// Every input [`component`] reads besides the policy, revision and compiler
+/// display options: the member order and placements, nested leaf metadata,
+/// and the exact member and nested leaf solids (CAD-396). None when an input
+/// is missing; [`component`] then reports the ordinary error.
+pub(crate) fn component_inputs(
+    document: &Document,
+    occurrences: &BTreeMap<EntityId, Arc<OccurrenceSnapshot>>,
+    solids: &BTreeMap<EntityId, Solid>,
+    store: &LeafStore,
+    id: EntityId,
+) -> Option<(Vec<u8>, Vec<Solid>)> {
+    use std::fmt::Write as _;
+    let Some(EntityData::Assembly { instances }) = document.get(id).map(|e| &e.data) else {
+        return None;
+    };
+    let mut content = String::new();
+    let mut inputs = vec![];
+    for member in instances {
+        let occurrence = occurrences.get(member)?;
+        let part = matches!(
+            document.get(occurrence.component).map(|e| &e.data),
+            Some(EntityData::Part { .. })
+        );
+        write!(
+            content,
+            "member|{member}|{}|{}|{:?}|{part}|",
+            occurrence.component, occurrence.producer, occurrence.pose
+        )
+        .ok()?;
+        inputs.push(solids.get(member)?.share().ok()?);
+        if !part {
+            for (path, leaf) in LeafStore::paths(&store.snapshots, *member) {
+                write!(
+                    content,
+                    "leaf|{:?}|{}|{}|{:?}|{:?}|",
+                    path.members, leaf.component, leaf.producer, leaf.pose, leaf.bounds
+                )
+                .ok()?;
+                inputs.push(store.solids.get(path)?.share().ok()?);
+            }
+        }
+    }
+    Some((content.into_bytes(), inputs))
 }
 pub(crate) fn component(
     inputs: ComponentInputs<'_>,
