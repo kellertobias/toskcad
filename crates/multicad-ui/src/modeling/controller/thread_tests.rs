@@ -1633,3 +1633,248 @@ fn painted_metric_fits_and_custom_end_treatments_keep_authored_length_and_native
         fresh.cancel();
     }
 }
+
+fn staged_thread(c: &ModelToolController, s: &Session) -> Result<model::ThreadRequest, String> {
+    match c.form.as_ref().unwrap() {
+        ModelForm::Thread(p) => p.request(s.document(), true),
+        _ => panic!("thread form"),
+    }
+}
+fn painted_text(ctx: &egui::Context, c: &mut ModelToolController, s: &mut Session) -> Vec<String> {
+    let painted = unified_frame(ctx, c, s, vec![]);
+    let text = painted
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(t) => Some(t.galley.job.text.clone()),
+            _ => None,
+        })
+        .collect();
+    painted.drop_without_applying_deltas();
+    text
+}
+fn choose_fit(
+    ctx: &egui::Context,
+    c: &mut ModelToolController,
+    s: &mut Session,
+    from: model::ThreadFit,
+    to: model::ThreadFit,
+) {
+    unified_click(ctx, c, s, from.label());
+    unified_click(ctx, c, s, to.label());
+}
+/// CAD-367: an unset (implicit) engagement on a long screw must not become a
+/// complete-thread mating claim when 6g is selected through the painted form.
+#[test]
+fn painted_6g_on_a_long_default_screw_states_normal_group_and_keeps_explicit_intent() {
+    use model::{MetricFitEngagement, ThreadFit};
+    use multicad_core::{constraint_sketch::Dimension, parameters::BoundExpression};
+    let rows = model::metric_fit_presets();
+    for (row, physical, intended) in [(&rows[0], 8., 3.), (&rows[1], 12., 6.)] {
+        let mut s = Session::new(Document::new("Long metric screw").unwrap()).unwrap();
+        let before = s.document().clone();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut c = controller();
+        let length = Dimension::Expression {
+            expression: BoundExpression::bind(s.document(), &format!("={physical}"), "mm", None)
+                .unwrap(),
+        };
+        let original = model::ThreadRequest::new(
+            "Long metric screw",
+            model::ThreadParameters {
+                major_diameter: model::length(row.diameter_mm),
+                pitch: model::length(row.pitch_mm),
+                length: length.clone(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(original.parameters.metric_fit_engagement, None);
+        c.begin_form(
+            &s,
+            &Default::default(),
+            Channel::Ui,
+            ModelForm::Thread(Box::new(
+                ThreadPanel::new(
+                    original,
+                    s.parameters().clone(),
+                    vec![],
+                    &BTreeSet::new(),
+                    false,
+                )
+                .unwrap(),
+            )),
+        )
+        .unwrap();
+        assert_eq!(
+            staged_thread(&c, &s)
+                .unwrap()
+                .parameters
+                .metric_fit_engagement,
+            None
+        );
+
+        // Selecting 6g states the normal group explicitly; the long physical
+        // thread is not reinterpreted as the mating length.
+        choose_fit(
+            &ctx,
+            &mut c,
+            &mut s,
+            ThreadFit::NominalBasic,
+            ThreadFit::Metric6gExternal,
+        );
+        let fitted = staged_thread(&c, &s).unwrap_or_else(|e| {
+            panic!(
+                "{}: 6g on the default engagement refused: {e}",
+                row.designation
+            )
+        });
+        assert_eq!(fitted.parameters.fit, ThreadFit::Metric6gExternal);
+        assert_eq!(
+            fitted.parameters.metric_fit_engagement,
+            Some(MetricFitEngagement::NormalGroupAssumed {})
+        );
+        assert_eq!(fitted.parameters.length, length);
+        assert_eq!(
+            fitted.parameters.major_diameter,
+            model::length(row.diameter_mm)
+        );
+        assert_eq!(fitted.parameters.pitch, model::length(row.pitch_mm));
+        let resolved = fitted
+            .parameters
+            .resolve(s.parameters(), fitted.mode)
+            .unwrap()
+            .metric_fit_engagement
+            .unwrap();
+        assert_eq!(
+            resolved.basis,
+            model::MetricFitEngagementBasis::NormalGroupAssumed
+        );
+        assert_eq!(resolved.intended_length_mm, None);
+        assert_eq!(
+            resolved.full_profile_end_mm - resolved.full_profile_start_mm,
+            physical
+        );
+        let text = painted_text(&ctx, &mut c, &mut s);
+        assert!(
+            text.iter()
+                .any(|t| t.starts_with("No mating depth was given")),
+            "{text:?}"
+        );
+        unified_click(&ctx, &mut c, &mut s, "Preview");
+        wait(&mut c, &s);
+        assert!(c.can_apply(&s, &Default::default()), "{:?}", c.error());
+        assert_eq!(s.document(), &before);
+
+        // Back to Nominal basic: no intent is sent, nothing else changes.
+        choose_fit(
+            &ctx,
+            &mut c,
+            &mut s,
+            ThreadFit::Metric6gExternal,
+            ThreadFit::NominalBasic,
+        );
+        let nominal = staged_thread(&c, &s).unwrap();
+        assert_eq!(nominal.parameters.metric_fit_engagement, None);
+        assert_eq!(nominal.parameters.length, length);
+
+        // A deliberately chosen complete engagement is never overwritten and
+        // still refuses the long thread with the Core normal-group range.
+        choose_fit(
+            &ctx,
+            &mut c,
+            &mut s,
+            ThreadFit::NominalBasic,
+            ThreadFit::Metric6gExternal,
+        );
+        unified_click(&ctx, &mut c, &mut s, "Use complete physical thread");
+        let range = format!(
+            "{} fit requires normal engagement over {} and up to {} mm",
+            row.designation, row.engagement_over_mm, row.engagement_up_to_mm
+        );
+        for _ in 0..2 {
+            let refused = staged_thread(&c, &s).unwrap_err();
+            assert!(refused.contains(&range), "{refused}");
+            choose_fit(
+                &ctx,
+                &mut c,
+                &mut s,
+                ThreadFit::Metric6gExternal,
+                ThreadFit::NominalBasic,
+            );
+            choose_fit(
+                &ctx,
+                &mut c,
+                &mut s,
+                ThreadFit::NominalBasic,
+                ThreadFit::Metric6gExternal,
+            );
+        }
+        assert!(
+            !painted_text(&ctx, &mut c, &mut s)
+                .iter()
+                .any(|t| t.starts_with("No mating depth was given"))
+        );
+
+        // Genuinely invalid explicit intent refuses with actionable feedback.
+        unified_click(&ctx, &mut c, &mut s, "Declare intended engagement");
+        let set = |c: &mut ModelToolController, value| match c.form.as_mut().unwrap() {
+            ModelForm::Thread(p) => p.set_intended_engagement_mm(value),
+            _ => panic!("thread form"),
+        };
+        set(&mut c, row.engagement_up_to_mm + 0.5);
+        let refused = staged_thread(&c, &s).unwrap_err();
+        assert!(refused.contains(&range), "{refused}");
+        assert!(!c.can_apply(&s, &Default::default()));
+        assert!(
+            painted_text(&ctx, &mut c, &mut s)
+                .iter()
+                .any(|t| t.contains(&range))
+        );
+
+        // The intended engagement accepts the unchanged physical thread, and
+        // the deliberate depth survives a fit round trip.
+        set(&mut c, intended);
+        for _ in 0..2 {
+            let accepted = staged_thread(&c, &s).unwrap();
+            assert_eq!(
+                accepted.parameters.metric_fit_engagement,
+                Some(MetricFitEngagement::IntendedLength {
+                    length: model::length(intended)
+                })
+            );
+            assert_eq!(accepted.parameters.length, length);
+            choose_fit(
+                &ctx,
+                &mut c,
+                &mut s,
+                ThreadFit::Metric6gExternal,
+                ThreadFit::NominalBasic,
+            );
+            assert_eq!(
+                staged_thread(&c, &s)
+                    .unwrap()
+                    .parameters
+                    .metric_fit_engagement,
+                None
+            );
+            choose_fit(
+                &ctx,
+                &mut c,
+                &mut s,
+                ThreadFit::NominalBasic,
+                ThreadFit::Metric6gExternal,
+            );
+        }
+        let accepted = staged_thread(&c, &s).unwrap();
+        unified_click(&ctx, &mut c, &mut s, "Preview");
+        wait(&mut c, &s);
+        assert!(c.can_apply(&s, &Default::default()), "{:?}", c.error());
+        assert_eq!(s.document(), &before);
+        let output = c.apply(&mut s, &Default::default()).unwrap();
+        let saved = model::read_thread(s.document(), output[0].feature).unwrap();
+        assert_eq!(saved.parameters, accepted.parameters);
+        s.undo(s.revision(), Actor::local(Channel::Ui)).unwrap();
+        assert_eq!(s.document(), &before);
+    }
+}
