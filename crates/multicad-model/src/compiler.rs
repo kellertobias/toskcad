@@ -495,6 +495,22 @@ impl Compiler {
         )
     }
 
+    /// The full Rust model this owner thread already holds for exactly this
+    /// document revision and source, without evaluating anything.
+    pub(crate) fn cached_full_with_backend(
+        &self,
+        document: &Document,
+        revision: u64,
+        backend: GeometryBackend,
+    ) -> Option<Model> {
+        if backend != GeometryBackend::Rust {
+            return None;
+        }
+        crate::worker_cache::with_current_cache(|cache| {
+            cache?.reuse_full_rust(self, document, revision)
+        })
+    }
+
     /// Evaluate only selected source roots using the requested solid backend.
     pub fn compile_sources_with_backend(
         &self,

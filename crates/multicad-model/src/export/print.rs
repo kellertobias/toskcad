@@ -26,6 +26,7 @@ use std::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 /// Upper bound on one written package file.
@@ -37,6 +38,25 @@ struct Built {
     preview: PrintPreview,
     generated: Vec<Vec<u8>>,
     plate_meshes: Option<(Vec<mesh::MeshObject>, Vec<mesh::BuildItem>)>,
+    timings: PrintPhaseTimings,
+}
+
+/// Wall-clock time of each stage of one print build, measured inside the
+/// same build the preview worker runs. Diagnostic only: never part of a key.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PrintPhaseTimings {
+    /// Selection resolution, manufacturing history and parameters.
+    pub resolve: Duration,
+    /// Native source compilation of the exact model.
+    pub compile: Duration,
+    /// Exact placement poses, bounds and solid volumes.
+    pub placement: Duration,
+    /// Manufacturing tessellation and placed mesh volumes.
+    pub mesh: Duration,
+    /// Bed bounds and pairwise exact collision checks of a plate.
+    pub arrangement: Duration,
+    /// 3MF/STL generation and the plan hash.
+    pub package: Duration,
 }
 
 #[derive(Clone, Copy)]
@@ -44,6 +64,45 @@ enum Arrangement<'a> {
     Package,
     PlatePreview(&'a PrintPlateDefinition),
     PlateWrite(&'a PrintPlateDefinition),
+}
+
+/// Source roots whose evaluation contains every plate placement: a direct
+/// Part, or the root Instance of a placed occurrence (which evaluates its
+/// whole component chain). A plate only needs each leaf's local solid, so
+/// unrelated sources are not compiled. Every unsuppressed feature that takes
+/// a placed Part's body or an Instance on a placement path as an input is a
+/// root too, so the scoped model records the same consumption as the full
+/// one. `None` (aids, unresolved heads, too many roots) keeps full evaluation.
+fn plate_source_roots(document: &Document, selection: &PrintSelection) -> Option<Vec<EntityId>> {
+    let mut roots = BTreeSet::new();
+    let mut targets = BTreeSet::new();
+    for part in &selection.parts {
+        if part.role != PrintRole::Finished {
+            return None;
+        }
+        targets.insert(direct_part_head(document, part.part)?);
+        targets.extend(part.occurrence_path.iter().copied());
+        roots.insert(part.occurrence_path.first().copied().unwrap_or(part.part));
+    }
+    roots.extend(
+        document
+            .entities()
+            .filter(|entity| {
+                matches!(&entity.data, EntityData::Feature { inputs, suppressed: false, .. }
+                    if inputs.iter().any(|input| targets.contains(&input.target)))
+            })
+            .map(|entity| entity.id),
+    );
+    let roots: Vec<_> = roots.into_iter().collect();
+    crate::validate_source_roots(document, &roots).ok()
+}
+
+/// The compiler of plate and Rust print builds: no display payloads.
+fn plate_compiler(exporter: &Exporter) -> crate::Compiler {
+    crate::Compiler {
+        omit_display: true,
+        ..exporter.compiler
+    }
 }
 
 fn direct_part_head(document: &Document, part: EntityId) -> Option<EntityId> {
@@ -550,6 +609,13 @@ impl GeometryExporter<'_> {
             ));
         }
         checkpoint(interrupt)?;
+        let mut timings = PrintPhaseTimings::default();
+        let mut clock = Instant::now();
+        let mut lap = |slot: &mut Duration| {
+            let now = Instant::now();
+            *slot += now - clock;
+            clock = now;
+        };
         let plate = match arrangement {
             Arrangement::Package => None,
             Arrangement::PlatePreview(plate) | Arrangement::PlateWrite(plate) => Some(plate),
@@ -592,30 +658,37 @@ impl GeometryExporter<'_> {
         let mut meshes = vec![];
         let mut items = vec![];
         let mut plate_blocked = None;
+        lap(&mut timings.resolve);
         if !selection.parts.is_empty() {
             let compiler = if plate.is_some() || self.backend == GeometryBackend::Rust {
-                crate::Compiler {
-                    omit_display: true,
-                    ..self.exporter.compiler
-                }
+                plate_compiler(self.exporter)
             } else {
                 self.exporter.compiler
             };
             let roots = match arrangement {
-                Arrangement::PlatePreview(_) => direct_plate_roots(document, &selection),
+                Arrangement::PlatePreview(_) => plate_source_roots(document, &selection),
                 _ => None,
             };
-            let model = match roots {
-                Some(roots) => compiler.compile_sources_with_backend(
+            // A full model this worker already holds answers any plate of
+            // the same source at once; otherwise compile only the roots.
+            let cached = roots
+                .as_ref()
+                .and_then(|_| compiler.cached_full_with_backend(document, revision, self.backend));
+            let model = match (cached, roots) {
+                (Some(model), _) => Ok(model),
+                (None, Some(roots)) => compiler.compile_sources_with_backend(
                     document,
                     revision,
                     &roots,
                     self.backend,
                     interrupt,
                 ),
-                None => compiler.compile_with_backend(document, revision, self.backend, interrupt),
+                (None, None) => {
+                    compiler.compile_with_backend(document, revision, self.backend, interrupt)
+                }
             }
             .map_err(|e| failure(ErrorKind::Invalid, e.entity, e.message))?;
+            lap(&mut timings.compile);
             if model.snapshot().stamp.source_hash != selection.stamp.source_hash {
                 return Err(failure(
                     ErrorKind::Stale,
@@ -729,6 +802,7 @@ impl GeometryExporter<'_> {
                     let volume = world.volume_mm3().map_err(|e| invalid(e.to_string()))?;
                     (pose, [bounds.min, bounds.max], volume)
                 };
+                lap(&mut timings.placement);
                 let index = match shared.get(&producer) {
                     Some(index) => *index,
                     None => {
@@ -763,6 +837,7 @@ impl GeometryExporter<'_> {
                     mesh_volume_mm3: mesh::volume(&placed_vertices, &resource.triangles).abs(),
                 });
                 items.push(item);
+                lap(&mut timings.mesh);
             }
             if let Some(plate) = plate {
                 plate_blocked = if let Some(missing) = unavailable.first() {
@@ -781,6 +856,7 @@ impl GeometryExporter<'_> {
                     )?
                 };
             }
+            lap(&mut timings.arrangement);
             selection.parts.retain(|p| {
                 !unavailable
                     .iter()
@@ -894,6 +970,7 @@ impl GeometryExporter<'_> {
             ),
             None => plan_hash,
         };
+        lap(&mut timings.package);
         Ok(Built {
             preview: PrintPreview {
                 requested_by: actor.clone(),
@@ -912,6 +989,7 @@ impl GeometryExporter<'_> {
             },
             generated,
             plate_meshes: plate.map(|_| (meshes, items)),
+            timings,
         })
     }
     fn print_preview(
@@ -1162,6 +1240,28 @@ impl Exporter {
             .print_preview(document, revision, request, actor, interrupt)
     }
 
+    /// [`Self::print_plate_preview`] with the wall-clock time of each stage.
+    pub fn print_plate_preview_timed(
+        &self,
+        document: &Document,
+        revision: u64,
+        plate: &PrintPlateDefinition,
+        actor: &Actor,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(PrintPreview, PrintPhaseTimings), ExportError> {
+        let built = self
+            .with_backend(GeometryBackend::default(), None)
+            .build_print(
+                document,
+                revision,
+                &plate.summary_request(document),
+                Arrangement::PlatePreview(plate),
+                actor,
+                interrupt,
+            )?;
+        Ok((built.preview, built.timings))
+    }
+
     /// Verify and tessellate a saved plate without changing its source model.
     pub fn print_plate_preview(
         &self,
@@ -1332,68 +1432,100 @@ impl PrintWorker {
         exporter: Exporter,
         backend: GeometryBackend,
     ) -> Result<Self, String> {
-        Self::spawn(move |job, interrupt| {
-            let exporter = exporter.with_backend(backend, None);
-            match job {
-                Job::Preview {
-                    document,
-                    revision,
-                    request,
-                    actor,
-                } => {
-                    let preview = match request {
-                        JobRequest::Package(request) => exporter.print_preview(
-                            &document,
-                            revision,
-                            &request,
-                            &actor,
-                            Some(interrupt),
-                        ),
-                        JobRequest::Plate(plate) => exporter.print_plate_preview(
-                            &document,
-                            revision,
-                            &plate,
-                            &actor,
-                            Some(interrupt),
-                        ),
-                    };
-                    PrintResult::Preview(preview.map(Box::new))
-                }
-                Job::Write {
-                    document,
-                    revision,
-                    request,
-                    expected,
-                    path,
-                    actor,
-                } => {
-                    let write = match request {
-                        JobRequest::Package(request) => exporter.write_print(
-                            &document,
-                            revision,
-                            &request,
-                            &expected,
-                            &path,
-                            &actor,
-                            Some(interrupt),
-                        ),
-                        JobRequest::Plate(plate) => exporter.write_print_plate(
-                            &document,
-                            revision,
-                            &plate,
-                            &expected,
-                            &path,
-                            &actor,
-                            Some(interrupt),
-                        ),
-                    };
-                    PrintResult::Write(write)
-                }
+        // The latest plate source previewed from scoped roots. While the
+        // queue is empty the worker evaluates its full model, which then
+        // answers further previews and the write of that revision at once.
+        let warm = Arc::new(Mutex::new(None::<(Document, u64)>));
+        let pending = Arc::clone(&warm);
+        let idle = move |interrupt: &dyn Fn() -> bool| {
+            let Some((document, revision)) = warm.lock().unwrap_or_else(|e| e.into_inner()).take()
+            else {
+                return;
+            };
+            let compiler = plate_compiler(&exporter);
+            if compiler
+                .cached_full_with_backend(&document, revision, backend)
+                .is_none()
+            {
+                // An interrupted or failed warm-up stores nothing; the next
+                // preview evaluates its own roots again.
+                let _ =
+                    compiler.compile_with_backend(&document, revision, backend, Some(interrupt));
             }
-        })
+        };
+        Self::spawn(
+            move |job, interrupt| {
+                let exporter = exporter.with_backend(backend, None);
+                match job {
+                    Job::Preview {
+                        document,
+                        revision,
+                        request,
+                        actor,
+                    } => {
+                        let preview = match request {
+                            JobRequest::Package(request) => exporter.print_preview(
+                                &document,
+                                revision,
+                                &request,
+                                &actor,
+                                Some(interrupt),
+                            ),
+                            JobRequest::Plate(plate) => {
+                                let preview = exporter.print_plate_preview(
+                                    &document,
+                                    revision,
+                                    &plate,
+                                    &actor,
+                                    Some(interrupt),
+                                );
+                                if backend == GeometryBackend::Rust && preview.is_ok() {
+                                    *pending.lock().unwrap_or_else(|e| e.into_inner()) =
+                                        Some((document, revision));
+                                }
+                                preview
+                            }
+                        };
+                        PrintResult::Preview(preview.map(Box::new))
+                    }
+                    Job::Write {
+                        document,
+                        revision,
+                        request,
+                        expected,
+                        path,
+                        actor,
+                    } => {
+                        let write = match request {
+                            JobRequest::Package(request) => exporter.write_print(
+                                &document,
+                                revision,
+                                &request,
+                                &expected,
+                                &path,
+                                &actor,
+                                Some(interrupt),
+                            ),
+                            JobRequest::Plate(plate) => exporter.write_print_plate(
+                                &document,
+                                revision,
+                                &plate,
+                                &expected,
+                                &path,
+                                &actor,
+                                Some(interrupt),
+                            ),
+                        };
+                        PrintResult::Write(write)
+                    }
+                }
+            },
+            idle,
+        )
     }
     fn spawn(
         handler: impl Fn(Job, &dyn Fn() -> bool) -> PrintResult + Send + 'static,
+        mut idle: impl FnMut(&dyn Fn() -> bool) + Send + 'static,
     ) -> Result<Self, String> {
         let shared = Arc::new(Shared {
             slots: Mutex::new(Slots::default()),
@@ -1428,10 +1560,26 @@ impl PrintWorker {
                         worker.stop.load(Ordering::Acquire) || queued.cancel.load(Ordering::Acquire)
                     };
                     let result = handler(queued.job, &interrupt);
-                    let mut slots = worker.slots.lock().unwrap_or_else(|e| e.into_inner());
-                    slots.active = None;
-                    if !slots.closed {
-                        slots.replies.push_back(queued.info.reply(result));
+                    let idle_now = {
+                        let mut slots = worker.slots.lock().unwrap_or_else(|e| e.into_inner());
+                        slots.active = None;
+                        if !slots.closed {
+                            slots.replies.push_back(queued.info.reply(result));
+                        }
+                        slots.pending.is_empty() && !slots.closed
+                    };
+                    if idle_now {
+                        // Background work yields to the next accepted job.
+                        let interrupt = || {
+                            worker.stop.load(Ordering::Acquire)
+                                || !worker
+                                    .slots
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .pending
+                                    .is_empty()
+                        };
+                        idle(&interrupt);
                     }
                 }
             })
@@ -1630,6 +1778,117 @@ impl Drop for PrintWorker {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    fn toolcase() -> Document {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/toolcase.tcd");
+        multicad_core::project_file::read(
+            &mut fs::File::open(path).unwrap(),
+            Default::default(),
+            &multicad_core::project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project
+        .document
+    }
+
+    /// CAD-330: a plate preview compiles only the source roots of its
+    /// placements. Every saved plate of the bundled toolcase must reach the
+    /// exact key, objects and verdict of the full evaluation that writing
+    /// uses, so a scoped preview never admits a write the full model refuses.
+    #[test]
+    fn scoped_plate_previews_match_full_native_evaluation_for_every_saved_plate() {
+        let document = toolcase();
+        let exporter = Exporter::default();
+        let geometry = exporter.with_backend(GeometryBackend::Rust, None);
+        let actor = Actor::local(multicad_core::commands::Channel::Ui);
+        let (mut plates, mut scoped, mut occurrences) = (0, 0, 0);
+        for entity in document.entities() {
+            let Ok(plate) = read_print_plate(&document, entity.id) else {
+                continue;
+            };
+            plates += 1;
+            let selection = resolve_print_plate(&document, 0, &plate).unwrap();
+            if let Some(roots) = plate_source_roots(&document, &selection) {
+                scoped += 1;
+                // A placed occurrence is evaluated from its root Instance.
+                for part in &selection.parts {
+                    let root = part.occurrence_path.first().unwrap_or(&part.part);
+                    assert!(roots.contains(root));
+                    occurrences += usize::from(!part.occurrence_path.is_empty());
+                }
+            }
+            let request = plate.summary_request(&document);
+            let build = |arrangement| {
+                geometry
+                    .build_print(&document, 0, &request, arrangement, &actor, None)
+                    .unwrap()
+            };
+            // As on the print worker: a cold scoped preview, the full build
+            // a write performs, then a preview answered by that full model.
+            let (preview, full, warm) = crate::worker_cache::with_evaluation_cache(|| {
+                (
+                    build(Arrangement::PlatePreview(&plate)),
+                    build(Arrangement::PlateWrite(&plate)),
+                    build(Arrangement::PlatePreview(&plate)),
+                )
+            });
+            for preview in [&preview, &warm] {
+                assert_eq!(preview.preview.key, full.preview.key, "{}", entity.name);
+                assert_eq!(preview.preview.objects, full.preview.objects);
+                assert_eq!(preview.preview.blocked, full.preview.blocked);
+                assert_eq!(preview.generated, full.generated);
+            }
+        }
+        assert!(plates >= 3 && scoped == plates && occurrences >= 1);
+    }
+
+    /// A feature outside the placement closure that consumes a placed
+    /// Part's body, or takes an Instance on its path, is evaluated with it.
+    /// An aid keeps full evaluation.
+    #[test]
+    fn plate_source_roots_add_outside_consumers_and_refuse_aids() {
+        let document = toolcase();
+        let consumer = |target: EntityId| {
+            document
+                .entities()
+                .find(|entity| {
+                    matches!(&entity.data, EntityData::Feature { inputs, suppressed: false, .. }
+                        if inputs.iter().any(|input| input.target == target))
+                })
+                .map(|entity| entity.id)
+        };
+        let (part, by) = document
+            .entities()
+            .filter(|entity| matches!(entity.data, EntityData::Part { .. }))
+            .find_map(|part| Some((part, consumer(direct_part_head(&document, part.id)?)?)))
+            .expect("a Part whose finished body another feature consumes");
+        let selection = |occurrence_path: Vec<EntityId>, role: PrintRole| PrintSelection {
+            stamp: ExportStamp::capture(&document, 0).unwrap(),
+            parts: vec![PrintPart {
+                part: part.id,
+                occurrence_path,
+                name: part.name.clone(),
+                role,
+            }],
+            skipped: vec![],
+            processes: vec![],
+        };
+        let roots = plate_source_roots(&document, &selection(vec![], PrintRole::Finished)).unwrap();
+        assert!(roots.contains(&part.id) && roots.contains(&by));
+        let instance = document
+            .entities()
+            .find(|entity| matches!(entity.data, EntityData::Instance { .. }))
+            .unwrap()
+            .id;
+        let roots =
+            plate_source_roots(&document, &selection(vec![instance], PrintRole::Finished)).unwrap();
+        assert!(roots.contains(&instance) && roots.contains(&by) && !roots.contains(&part.id));
+        let aid = PrintRole::Aid {
+            feature: by,
+            target: part.id,
+        };
+        assert_eq!(plate_source_roots(&document, &selection(vec![], aid)), None);
+    }
     #[test]
     fn stl_names_stay_in_the_folder_and_are_unique() {
         assert_eq!(
@@ -1752,14 +2011,17 @@ mod tests {
     fn worker_is_bounded_and_reports_cancellation() {
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         let rx = Mutex::new(rx);
-        let worker = PrintWorker::spawn(move |_, interrupt| {
-            let _ = rx.lock().unwrap().recv();
-            PrintResult::Preview(if interrupt() {
-                Err(failure(ErrorKind::Cancelled, None, "cancelled"))
-            } else {
-                Err(failure(ErrorKind::Empty, None, "controlled"))
-            })
-        })
+        let worker = PrintWorker::spawn(
+            move |_, interrupt| {
+                let _ = rx.lock().unwrap().recv();
+                PrintResult::Preview(if interrupt() {
+                    Err(failure(ErrorKind::Cancelled, None, "cancelled"))
+                } else {
+                    Err(failure(ErrorKind::Empty, None, "controlled"))
+                })
+            },
+            |_| {},
+        )
         .unwrap();
         let document = Document::new("Bounded print").unwrap();
         let actor = Actor::local(multicad_core::commands::Channel::Ui);

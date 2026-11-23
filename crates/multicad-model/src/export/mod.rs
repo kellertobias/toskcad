@@ -8,7 +8,7 @@ pub use render::{RenderManifest, RenderPackage};
 mod planar;
 pub use planar::DevelopedContourProvider;
 pub mod print;
-pub use print::PrintWorker;
+pub use print::{PrintPhaseTimings, PrintWorker};
 mod publish;
 pub use publish::{
     StepActualHeadReceipt, StepDocumentOwnershipReceipt, StepHealedMemberReceipt,
