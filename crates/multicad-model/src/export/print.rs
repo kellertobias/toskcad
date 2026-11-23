@@ -66,6 +66,37 @@ enum Arrangement<'a> {
     PlateWrite(&'a PrintPlateDefinition),
 }
 
+/// Source roots whose evaluation contains every plate placement: a direct
+/// Part, or the root Instance of a placed occurrence (which evaluates its
+/// whole component chain). A plate only needs each leaf's local solid, so
+/// unrelated sources are not compiled. Every unsuppressed feature that takes
+/// a placed Part's body or an Instance on a placement path as an input is a
+/// root too, so the scoped model records the same consumption as the full
+/// one. `None` (aids, unresolved heads, too many roots) keeps full evaluation.
+fn plate_source_roots(document: &Document, selection: &PrintSelection) -> Option<Vec<EntityId>> {
+    let mut roots = BTreeSet::new();
+    let mut targets = BTreeSet::new();
+    for part in &selection.parts {
+        if part.role != PrintRole::Finished {
+            return None;
+        }
+        targets.insert(direct_part_head(document, part.part)?);
+        targets.extend(part.occurrence_path.iter().copied());
+        roots.insert(part.occurrence_path.first().copied().unwrap_or(part.part));
+    }
+    roots.extend(
+        document
+            .entities()
+            .filter(|entity| {
+                matches!(&entity.data, EntityData::Feature { inputs, suppressed: false, .. }
+                    if inputs.iter().any(|input| targets.contains(&input.target)))
+            })
+            .map(|entity| entity.id),
+    );
+    let roots: Vec<_> = roots.into_iter().collect();
+    crate::validate_source_roots(document, &roots).ok()
+}
+
 fn direct_part_head(document: &Document, part: EntityId) -> Option<EntityId> {
     let EntityData::Part { features, .. } = &document.get(part)?.data else {
         return None;
@@ -630,7 +661,7 @@ impl GeometryExporter<'_> {
                 self.exporter.compiler
             };
             let roots = match arrangement {
-                Arrangement::PlatePreview(_) => direct_plate_roots(document, &selection),
+                Arrangement::PlatePreview(_) => plate_source_roots(document, &selection),
                 _ => None,
             };
             let model = match roots {
@@ -1687,6 +1718,107 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
+    fn toolcase() -> Document {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/toolcase.tcd");
+        multicad_core::project_file::read(
+            &mut fs::File::open(path).unwrap(),
+            Default::default(),
+            &multicad_core::project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project
+        .document
+    }
+
+    /// CAD-330: a plate preview compiles only the source roots of its
+    /// placements. Every saved plate of the bundled toolcase must reach the
+    /// exact key, objects and verdict of the full evaluation that writing
+    /// uses, so a scoped preview never admits a write the full model refuses.
+    #[test]
+    fn scoped_plate_previews_match_full_native_evaluation_for_every_saved_plate() {
+        let document = toolcase();
+        let exporter = Exporter::default();
+        let geometry = exporter.with_backend(GeometryBackend::Rust, None);
+        let actor = Actor::local(multicad_core::commands::Channel::Ui);
+        let (mut plates, mut scoped, mut occurrences) = (0, 0, 0);
+        for entity in document.entities() {
+            let Ok(plate) = read_print_plate(&document, entity.id) else {
+                continue;
+            };
+            plates += 1;
+            let selection = resolve_print_plate(&document, 0, &plate).unwrap();
+            if let Some(roots) = plate_source_roots(&document, &selection) {
+                scoped += 1;
+                // A placed occurrence is evaluated from its root Instance.
+                for part in &selection.parts {
+                    let root = part.occurrence_path.first().unwrap_or(&part.part);
+                    assert!(roots.contains(root));
+                    occurrences += usize::from(!part.occurrence_path.is_empty());
+                }
+            }
+            let request = plate.summary_request(&document);
+            let build = |arrangement| {
+                geometry
+                    .build_print(&document, 0, &request, arrangement, &actor, None)
+                    .unwrap()
+            };
+            let preview = build(Arrangement::PlatePreview(&plate));
+            let full = build(Arrangement::PlateWrite(&plate));
+            assert_eq!(preview.preview.key, full.preview.key, "{}", entity.name);
+            assert_eq!(preview.preview.objects, full.preview.objects);
+            assert_eq!(preview.preview.blocked, full.preview.blocked);
+            assert_eq!(preview.generated, full.generated);
+        }
+        assert!(plates >= 3 && scoped == plates && occurrences >= 1);
+    }
+
+    /// A feature outside the placement closure that consumes a placed
+    /// Part's body, or takes an Instance on its path, is evaluated with it.
+    /// An aid keeps full evaluation.
+    #[test]
+    fn plate_source_roots_add_outside_consumers_and_refuse_aids() {
+        let document = toolcase();
+        let consumer = |target: EntityId| {
+            document
+                .entities()
+                .find(|entity| {
+                    matches!(&entity.data, EntityData::Feature { inputs, suppressed: false, .. }
+                        if inputs.iter().any(|input| input.target == target))
+                })
+                .map(|entity| entity.id)
+        };
+        let (part, by) = document
+            .entities()
+            .filter(|entity| matches!(entity.data, EntityData::Part { .. }))
+            .find_map(|part| Some((part, consumer(direct_part_head(&document, part.id)?)?)))
+            .expect("a Part whose finished body another feature consumes");
+        let selection = |occurrence_path: Vec<EntityId>, role: PrintRole| PrintSelection {
+            stamp: ExportStamp::capture(&document, 0).unwrap(),
+            parts: vec![PrintPart {
+                part: part.id,
+                occurrence_path,
+                name: part.name.clone(),
+                role,
+            }],
+            skipped: vec![],
+            processes: vec![],
+        };
+        let roots = plate_source_roots(&document, &selection(vec![], PrintRole::Finished)).unwrap();
+        assert!(roots.contains(&part.id) && roots.contains(&by));
+        let instance = document
+            .entities()
+            .find(|entity| matches!(entity.data, EntityData::Instance { .. }))
+            .unwrap()
+            .id;
+        let roots =
+            plate_source_roots(&document, &selection(vec![instance], PrintRole::Finished)).unwrap();
+        assert!(roots.contains(&instance) && roots.contains(&by) && !roots.contains(&part.id));
+        let aid = PrintRole::Aid {
+            feature: by,
+            target: part.id,
+        };
+        assert_eq!(plate_source_roots(&document, &selection(vec![], aid)), None);
+    }
     #[test]
     fn stl_names_stay_in_the_folder_and_are_unique() {
         assert_eq!(
