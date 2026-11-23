@@ -41,15 +41,28 @@ fn rack_plate_first_check_timings() {
         .unwrap()
         .id;
     let plate = read_print_plate(&document, id).unwrap();
+    let other = document
+        .entities()
+        .find(|entity| entity.name == "Large drawer 1")
+        .unwrap()
+        .id;
+    let other = read_print_plate(&document, other).unwrap();
+    let mut moved = plate.clone();
+    moved.placements[0].position_mm[0] += 10.;
     let actor = || Actor::local(Channel::Ui);
-    // A fresh worker per sample, as for the first selection in a new session.
+    // A fresh worker per sample, as for the first selection in a new session:
+    // the rack, the rack again, another plate of the same revision, then,
+    // after a second of idle time, the rack moved on its bed.
     for sample in 0..5 {
         let worker =
             PrintWorker::with_geometry_backend(Exporter::default(), GeometryBackend::Rust).unwrap();
         let mut rounds = vec![];
-        for _ in 0..2 {
+        for (round, plate) in [&plate, &plate, &other, &moved].into_iter().enumerate() {
+            if round == 3 {
+                std::thread::sleep(Duration::from_secs(1));
+            }
             let started = Instant::now();
-            let job = worker.preview_plate(&document, 0, &plate, actor()).unwrap();
+            let job = worker.preview_plate(&document, 0, plate, actor()).unwrap();
             let reply = loop {
                 if let Some(reply) = worker.poll() {
                     break reply;
@@ -68,8 +81,8 @@ fn rack_plate_first_check_timings() {
             .unwrap();
         assert!(preview.can_write());
         eprintln!(
-            "sample {sample}: worker first {:?} repeat {:?}; stages {stages:?}",
-            rounds[0], rounds[1]
+            "sample {sample}: worker first {:?} repeat {:?} other plate {:?} moved after idle {:?}; stages {stages:?}",
+            rounds[0], rounds[1], rounds[2], rounds[3]
         );
     }
 }

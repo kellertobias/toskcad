@@ -97,6 +97,14 @@ fn plate_source_roots(document: &Document, selection: &PrintSelection) -> Option
     crate::validate_source_roots(document, &roots).ok()
 }
 
+/// The compiler of plate and Rust print builds: no display payloads.
+fn plate_compiler(exporter: &Exporter) -> crate::Compiler {
+    crate::Compiler {
+        omit_display: true,
+        ..exporter.compiler
+    }
+}
+
 fn direct_part_head(document: &Document, part: EntityId) -> Option<EntityId> {
     let EntityData::Part { features, .. } = &document.get(part)?.data else {
         return None;
@@ -653,10 +661,7 @@ impl GeometryExporter<'_> {
         lap(&mut timings.resolve);
         if !selection.parts.is_empty() {
             let compiler = if plate.is_some() || self.backend == GeometryBackend::Rust {
-                crate::Compiler {
-                    omit_display: true,
-                    ..self.exporter.compiler
-                }
+                plate_compiler(self.exporter)
             } else {
                 self.exporter.compiler
             };
@@ -664,15 +669,23 @@ impl GeometryExporter<'_> {
                 Arrangement::PlatePreview(_) => plate_source_roots(document, &selection),
                 _ => None,
             };
-            let model = match roots {
-                Some(roots) => compiler.compile_sources_with_backend(
+            // A full model this worker already holds answers any plate of
+            // the same source at once; otherwise compile only the roots.
+            let cached = roots
+                .as_ref()
+                .and_then(|_| compiler.cached_full_with_backend(document, revision, self.backend));
+            let model = match (cached, roots) {
+                (Some(model), _) => Ok(model),
+                (None, Some(roots)) => compiler.compile_sources_with_backend(
                     document,
                     revision,
                     &roots,
                     self.backend,
                     interrupt,
                 ),
-                None => compiler.compile_with_backend(document, revision, self.backend, interrupt),
+                (None, None) => {
+                    compiler.compile_with_backend(document, revision, self.backend, interrupt)
+                }
             }
             .map_err(|e| failure(ErrorKind::Invalid, e.entity, e.message))?;
             lap(&mut timings.compile);
@@ -1419,68 +1432,100 @@ impl PrintWorker {
         exporter: Exporter,
         backend: GeometryBackend,
     ) -> Result<Self, String> {
-        Self::spawn(move |job, interrupt| {
-            let exporter = exporter.with_backend(backend, None);
-            match job {
-                Job::Preview {
-                    document,
-                    revision,
-                    request,
-                    actor,
-                } => {
-                    let preview = match request {
-                        JobRequest::Package(request) => exporter.print_preview(
-                            &document,
-                            revision,
-                            &request,
-                            &actor,
-                            Some(interrupt),
-                        ),
-                        JobRequest::Plate(plate) => exporter.print_plate_preview(
-                            &document,
-                            revision,
-                            &plate,
-                            &actor,
-                            Some(interrupt),
-                        ),
-                    };
-                    PrintResult::Preview(preview.map(Box::new))
-                }
-                Job::Write {
-                    document,
-                    revision,
-                    request,
-                    expected,
-                    path,
-                    actor,
-                } => {
-                    let write = match request {
-                        JobRequest::Package(request) => exporter.write_print(
-                            &document,
-                            revision,
-                            &request,
-                            &expected,
-                            &path,
-                            &actor,
-                            Some(interrupt),
-                        ),
-                        JobRequest::Plate(plate) => exporter.write_print_plate(
-                            &document,
-                            revision,
-                            &plate,
-                            &expected,
-                            &path,
-                            &actor,
-                            Some(interrupt),
-                        ),
-                    };
-                    PrintResult::Write(write)
-                }
+        // The latest plate source previewed from scoped roots. While the
+        // queue is empty the worker evaluates its full model, which then
+        // answers further previews and the write of that revision at once.
+        let warm = Arc::new(Mutex::new(None::<(Document, u64)>));
+        let pending = Arc::clone(&warm);
+        let idle = move |interrupt: &dyn Fn() -> bool| {
+            let Some((document, revision)) = warm.lock().unwrap_or_else(|e| e.into_inner()).take()
+            else {
+                return;
+            };
+            let compiler = plate_compiler(&exporter);
+            if compiler
+                .cached_full_with_backend(&document, revision, backend)
+                .is_none()
+            {
+                // An interrupted or failed warm-up stores nothing; the next
+                // preview evaluates its own roots again.
+                let _ =
+                    compiler.compile_with_backend(&document, revision, backend, Some(interrupt));
             }
-        })
+        };
+        Self::spawn(
+            move |job, interrupt| {
+                let exporter = exporter.with_backend(backend, None);
+                match job {
+                    Job::Preview {
+                        document,
+                        revision,
+                        request,
+                        actor,
+                    } => {
+                        let preview = match request {
+                            JobRequest::Package(request) => exporter.print_preview(
+                                &document,
+                                revision,
+                                &request,
+                                &actor,
+                                Some(interrupt),
+                            ),
+                            JobRequest::Plate(plate) => {
+                                let preview = exporter.print_plate_preview(
+                                    &document,
+                                    revision,
+                                    &plate,
+                                    &actor,
+                                    Some(interrupt),
+                                );
+                                if backend == GeometryBackend::Rust && preview.is_ok() {
+                                    *pending.lock().unwrap_or_else(|e| e.into_inner()) =
+                                        Some((document, revision));
+                                }
+                                preview
+                            }
+                        };
+                        PrintResult::Preview(preview.map(Box::new))
+                    }
+                    Job::Write {
+                        document,
+                        revision,
+                        request,
+                        expected,
+                        path,
+                        actor,
+                    } => {
+                        let write = match request {
+                            JobRequest::Package(request) => exporter.write_print(
+                                &document,
+                                revision,
+                                &request,
+                                &expected,
+                                &path,
+                                &actor,
+                                Some(interrupt),
+                            ),
+                            JobRequest::Plate(plate) => exporter.write_print_plate(
+                                &document,
+                                revision,
+                                &plate,
+                                &expected,
+                                &path,
+                                &actor,
+                                Some(interrupt),
+                            ),
+                        };
+                        PrintResult::Write(write)
+                    }
+                }
+            },
+            idle,
+        )
     }
     fn spawn(
         handler: impl Fn(Job, &dyn Fn() -> bool) -> PrintResult + Send + 'static,
+        mut idle: impl FnMut(&dyn Fn() -> bool) + Send + 'static,
     ) -> Result<Self, String> {
         let shared = Arc::new(Shared {
             slots: Mutex::new(Slots::default()),
@@ -1515,10 +1560,26 @@ impl PrintWorker {
                         worker.stop.load(Ordering::Acquire) || queued.cancel.load(Ordering::Acquire)
                     };
                     let result = handler(queued.job, &interrupt);
-                    let mut slots = worker.slots.lock().unwrap_or_else(|e| e.into_inner());
-                    slots.active = None;
-                    if !slots.closed {
-                        slots.replies.push_back(queued.info.reply(result));
+                    let idle_now = {
+                        let mut slots = worker.slots.lock().unwrap_or_else(|e| e.into_inner());
+                        slots.active = None;
+                        if !slots.closed {
+                            slots.replies.push_back(queued.info.reply(result));
+                        }
+                        slots.pending.is_empty() && !slots.closed
+                    };
+                    if idle_now {
+                        // Background work yields to the next accepted job.
+                        let interrupt = || {
+                            worker.stop.load(Ordering::Acquire)
+                                || !worker
+                                    .slots
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .pending
+                                    .is_empty()
+                        };
+                        idle(&interrupt);
                     }
                 }
             })
@@ -1762,12 +1823,21 @@ mod tests {
                     .build_print(&document, 0, &request, arrangement, &actor, None)
                     .unwrap()
             };
-            let preview = build(Arrangement::PlatePreview(&plate));
-            let full = build(Arrangement::PlateWrite(&plate));
-            assert_eq!(preview.preview.key, full.preview.key, "{}", entity.name);
-            assert_eq!(preview.preview.objects, full.preview.objects);
-            assert_eq!(preview.preview.blocked, full.preview.blocked);
-            assert_eq!(preview.generated, full.generated);
+            // As on the print worker: a cold scoped preview, the full build
+            // a write performs, then a preview answered by that full model.
+            let (preview, full, warm) = crate::worker_cache::with_evaluation_cache(|| {
+                (
+                    build(Arrangement::PlatePreview(&plate)),
+                    build(Arrangement::PlateWrite(&plate)),
+                    build(Arrangement::PlatePreview(&plate)),
+                )
+            });
+            for preview in [&preview, &warm] {
+                assert_eq!(preview.preview.key, full.preview.key, "{}", entity.name);
+                assert_eq!(preview.preview.objects, full.preview.objects);
+                assert_eq!(preview.preview.blocked, full.preview.blocked);
+                assert_eq!(preview.generated, full.generated);
+            }
         }
         assert!(plates >= 3 && scoped == plates && occurrences >= 1);
     }
@@ -1941,14 +2011,17 @@ mod tests {
     fn worker_is_bounded_and_reports_cancellation() {
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         let rx = Mutex::new(rx);
-        let worker = PrintWorker::spawn(move |_, interrupt| {
-            let _ = rx.lock().unwrap().recv();
-            PrintResult::Preview(if interrupt() {
-                Err(failure(ErrorKind::Cancelled, None, "cancelled"))
-            } else {
-                Err(failure(ErrorKind::Empty, None, "controlled"))
-            })
-        })
+        let worker = PrintWorker::spawn(
+            move |_, interrupt| {
+                let _ = rx.lock().unwrap().recv();
+                PrintResult::Preview(if interrupt() {
+                    Err(failure(ErrorKind::Cancelled, None, "cancelled"))
+                } else {
+                    Err(failure(ErrorKind::Empty, None, "controlled"))
+                })
+            },
+            |_| {},
+        )
         .unwrap();
         let document = Document::new("Bounded print").unwrap();
         let actor = Actor::local(multicad_core::commands::Channel::Ui);
