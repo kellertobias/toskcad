@@ -2437,6 +2437,14 @@ impl SketchEditor {
                 },
                 _ => vec![],
             })
+            .chain(
+                // Authored fixed plans of library parts sit in their local
+                // coordinates too; plan views place them, 3D keeps the model.
+                multicad_core::symbols::authored_plan_instances(document)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|plan| plan.sketch),
+            )
             .collect::<std::collections::BTreeSet<_>>();
         let visible: std::collections::BTreeSet<_> = multicad_core::hierarchy::Index::new(document)
             .map(|index| {
@@ -4968,6 +4976,8 @@ impl SketchEditor {
                 }
             }
             if self.symbols.active() {
+                self.symbols
+                    .paint_plan_preview(&painter, session, self.camera, rect);
                 match self.symbols.placement_viewport(
                     ui,
                     session,

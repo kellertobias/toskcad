@@ -1956,3 +1956,215 @@ fn model_symbol_preview_runs_after_latest_edit_without_a_manual_button() {
             .any(|entity| entity.name == "Latest symbol name")
     );
 }
+
+/// Plan-preview polyline bounds in world X/Y.
+fn xy_bounds(lines: &[Vec<[f64; 3]>]) -> [f64; 4] {
+    lines.iter().flatten().fold(
+        [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ],
+        |b, p| {
+            [
+                b[0].min(p[0]),
+                b[1].min(p[1]),
+                b[2].max(p[0]),
+                b[3].max(p[1]),
+            ]
+        },
+    )
+}
+fn near4(a: [f64; 4], b: [f64; 4]) {
+    for i in 0..4 {
+        assert!((a[i] - b[i]).abs() < 1e-6, "{a:?} != {b:?}");
+    }
+}
+
+#[test]
+fn authored_plan_alignment_is_previewed_embedded_and_edited_for_every_instance_through_painted_controls()
+ {
+    use multicad_core::{
+        constraint_sketch::source::Source,
+        document::Placement,
+        model::ExtrudeRequest,
+        sketch::Datum,
+        symbols::{PlanAlignment, SymbolPlaceRequest, SymbolUpdateRequest},
+    };
+    // A 30 × 20 block and a separate, simpler 2D plan symbol sketch.
+    let (body_sketch, edits) = Source::create(Datum::Xy, "Block profile").unwrap();
+    let (plan_sketch, plan_edits) = Source::create(Datum::Xy, "Plan symbol").unwrap();
+    let mut document = Document::new("Plan authoring")
+        .unwrap()
+        .edited(&edits)
+        .unwrap()
+        .edited(&plan_edits)
+        .unwrap();
+    for (sketch, b) in [(body_sketch, [30., 20.]), (plan_sketch, [30., 20.])] {
+        let mut source = Source::read(&document, sketch).unwrap().0;
+        source.add_rectangle([0., 0.], b).unwrap();
+        document = document
+            .edited(&source.replace(&document, sketch).unwrap())
+            .unwrap();
+    }
+    let mut s = Session::new(document).unwrap();
+    let profiles =
+        multicad_solver::evaluate_document_sketch(s.document(), s.revision(), body_sketch, None)
+            .unwrap()
+            .regions()
+            .unwrap()
+            .regions
+            .iter()
+            .map(|r| r.intent())
+            .collect();
+    let extrude = ExtrudeRequest::new(body_sketch, profiles, Default::default());
+    let body = extrude.outputs[0].body;
+    s.commit(
+        model::prepare_extrude(&s, s.revision(), actor(), &extrude)
+            .unwrap()
+            .prepared,
+    )
+    .unwrap();
+    let ctx = egui::Context::default();
+    let mut c = controller();
+    begin(
+        &mut c,
+        &s,
+        SymbolTool::Create,
+        SymbolSelection {
+            component: Some(body),
+            plan_sketch: Some(plan_sketch),
+            ..Default::default()
+        },
+    );
+    let (output, _) = frame(&ctx, &mut c, &mut s, vec![], 3000.);
+    assert_eq!(
+        painted_text_count(&output, "Plan alignment to the 3D content"),
+        1
+    );
+    output.drop_without_applying_deltas();
+    // Quarter turn, then 100 mm along X: corners (0,0)..(30,20) → x 80..100, y 0..30.
+    let alignment = PlanAlignment {
+        offset_mm: [100., 0.],
+        rotation_deg: 90.,
+    };
+    if let Operation::Author(request) = &mut c.form.as_mut().unwrap().operation {
+        request.plan.as_mut().unwrap().alignment = alignment;
+    }
+    c.form.as_mut().unwrap().changed();
+    near4(
+        xy_bounds(&c.plan_preview_lines(&s).unwrap()),
+        [80., 0., 100., 30.],
+    );
+    c.preview(&s, &Default::default(), Channel::Ui).unwrap();
+    wait(&mut c, &s, &Default::default());
+    assert!(c.can_apply(&s, &Default::default()), "{:?}", c.error);
+    let SymbolOutcome::Applied { selected, .. } = c.apply(&mut s, &Default::default()).unwrap()
+    else {
+        panic!()
+    };
+    let definition = selected[0];
+    let stored = symbols::read_definition(s.document(), definition).unwrap();
+    assert_eq!(stored.plan.as_ref().unwrap().alignment, alignment);
+    // Two placements: translated, and translated plus a quarter turn.
+    let mut instances = vec![];
+    for (translation, rotation) in [
+        ([1000., 0., 0.], [0., 0., 0., 1.]),
+        (
+            [2000., 500., 0.],
+            [
+                0.,
+                0.,
+                std::f64::consts::FRAC_1_SQRT_2,
+                std::f64::consts::FRAC_1_SQRT_2,
+            ],
+        ),
+    ] {
+        let request = SymbolPlaceRequest::new(
+            s.document(),
+            definition,
+            "Block",
+            Default::default(),
+            Placement {
+                translation_mm: translation,
+                rotation_xyzw: rotation,
+            },
+        )
+        .unwrap();
+        let prepared = symbols::prepare_place(&s, s.revision(), actor(), &request).unwrap();
+        s.commit(prepared.prepared).unwrap();
+        instances.push(request.record);
+    }
+    // Instance Edit offers the plan editor for the definition.
+    begin(
+        &mut c,
+        &s,
+        SymbolTool::Edit,
+        SymbolSelection {
+            instance: Some(instances[0]),
+            ..Default::default()
+        },
+    );
+    let (output, _) = frame(&ctx, &mut c, &mut s, vec![], 3000.);
+    let at = point(&output, "Edit plan representation…");
+    output.drop_without_applying_deltas();
+    click(&ctx, &mut c, &mut s, at, 3000.);
+    assert!(matches!(
+        c.form.as_ref().unwrap().operation,
+        Operation::PlanEdit { .. }
+    ));
+    let (output, _) = frame(&ctx, &mut c, &mut s, vec![], 3000.);
+    assert_eq!(
+        painted_text_count(&output, "2 placed instance(s) update together"),
+        1
+    );
+    output.drop_without_applying_deltas();
+    // The preview places the aligned symbol at every instance pose:
+    // x 1080..1100, y 0..30 and, turned again, x 1970..2000, y 580..600.
+    let lines = c.plan_preview_lines(&s).unwrap();
+    assert_eq!(lines.len(), 8);
+    let mut placed = [xy_bounds(&lines[..4]), xy_bounds(&lines[4..])];
+    placed.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    near4(placed[0], [1080., 0., 1100., 30.]);
+    near4(placed[1], [1970., 580., 2000., 600.]);
+    let edited = PlanAlignment {
+        offset_mm: [0., -50.],
+        rotation_deg: 0.,
+    };
+    if let Operation::PlanEdit { alignment, .. } = &mut c.form.as_mut().unwrap().operation {
+        *alignment = edited;
+    }
+    c.form.as_mut().unwrap().changed();
+    // The Inspector applies exactly the typed request MCP's edit_symbol_plan builds.
+    let ui_request = c
+        .form
+        .as_ref()
+        .unwrap()
+        .plan_request(s.document())
+        .unwrap()
+        .unwrap();
+    let mcp_request = SymbolUpdateRequest::plan_edit(
+        s.document(),
+        definition,
+        symbols::next_revision(s.document(), stored.symbol, &stored.revision).unwrap(),
+        Some(symbols::SymbolPlan::aligned(plan_sketch, edited)),
+    )
+    .unwrap();
+    assert_eq!(ui_request, mcp_request);
+    let before = s.document().clone();
+    c.preview(&s, &Default::default(), Channel::Ui).unwrap();
+    wait(&mut c, &s, &Default::default());
+    assert!(c.can_apply(&s, &Default::default()), "{:?}", c.error);
+    assert_eq!(s.document(), &before, "Preview leaves the source unchanged");
+    c.apply(&mut s, &Default::default()).unwrap();
+    let updated = symbols::read_definition(s.document(), definition).unwrap();
+    assert_eq!(updated.plan.as_ref().unwrap().alignment, edited);
+    assert_eq!(updated.revision, "2");
+    for record in &instances {
+        let instance = symbols::read_instance(s.document(), *record).unwrap();
+        assert_eq!(instance.pin, updated.pin().unwrap());
+    }
+    s.undo(s.revision(), actor()).unwrap();
+    assert_eq!(s.document(), &before);
+}

@@ -6,6 +6,7 @@ mod forms;
 mod hardware_details;
 mod inspector;
 mod installed;
+mod plan_preview;
 mod proof;
 #[cfg(test)]
 mod representation_tests;

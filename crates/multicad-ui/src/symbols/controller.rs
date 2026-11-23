@@ -60,6 +60,9 @@ pub struct SymbolController {
     placement: crate::modeling::gizmo::Interaction,
     placement_source: Option<(Arc<Scene>, multicad_core::document::Placement, EntityId)>,
     placement_display: Option<Arc<Scene>>,
+    /// World polylines of the aligned plan symbol being authored or edited,
+    /// keyed by form version and document revision.
+    plan_preview: Option<((u64, u64), Result<Vec<Vec<[f64; 3]>>, String>)>,
     pub(super) error: Option<String>,
 }
 impl SymbolController {
@@ -573,6 +576,46 @@ impl SymbolController {
             self.placement_display = display;
         }
         Ok(gesture.input_owned)
+    }
+    /// Draw the aligned plan symbol over the 3D content while it is authored
+    /// or edited, so its 2D/3D alignment is visible before Preview.
+    pub(crate) fn paint_plan_preview(
+        &mut self,
+        painter: &egui::Painter,
+        session: &Session,
+        camera: crate::camera::Camera,
+        rect: egui::Rect,
+    ) {
+        let Some(form) = &self.form else {
+            return;
+        };
+        let key = (form.version, session.revision());
+        if self.plan_preview.as_ref().is_none_or(|(k, _)| *k != key) {
+            let lines = super::plan_preview::world_lines(form, session);
+            self.plan_preview = Some((key, lines));
+        }
+        let Some((_, Ok(lines))) = &self.plan_preview else {
+            return;
+        };
+        let stroke = egui::Stroke::new(2., egui::Color32::from_rgb(255, 176, 64));
+        for polyline in lines {
+            let points: Vec<_> = polyline
+                .iter()
+                .map(|p| {
+                    let s = camera.project([p[0] as f32, p[1] as f32, p[2] as f32], rect);
+                    egui::pos2(s[0], s[1])
+                })
+                .collect();
+            painter.add(egui::Shape::line(points, stroke));
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn plan_preview_lines(
+        &mut self,
+        session: &Session,
+    ) -> Result<Vec<Vec<[f64; 3]>>, String> {
+        let form = self.form.as_ref().ok_or("No symbol form")?;
+        super::plan_preview::world_lines(form, session)
     }
     pub fn take_action(&mut self) -> Option<SymbolAction> {
         self.actions.pop_front()

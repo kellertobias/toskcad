@@ -6,8 +6,8 @@ use multicad_core::{
     commands::{Actor, Session},
     document::{Document, EntityData, EntityId},
     symbols::{
-        self, SymbolAuthorRequest, SymbolDefinition, SymbolEditRequest, SymbolKind,
-        SymbolPlaceRequest, SymbolPrepared, SymbolUpdateRequest, SymbolUpgradeReport,
+        self, PlanAlignment, SymbolAuthorRequest, SymbolDefinition, SymbolEditRequest, SymbolKind,
+        SymbolPlaceRequest, SymbolPlan, SymbolPrepared, SymbolUpdateRequest, SymbolUpgradeReport,
     },
 };
 use std::collections::BTreeMap;
@@ -50,6 +50,15 @@ pub(super) enum Operation {
         architecture_values: BTreeMap<EntityId, super::architecture::Fields>,
         report: Option<SymbolUpgradeReport>,
     },
+    /// Choose, align or remove an embedded definition's fixed plan symbol as
+    /// an explicit new revision that updates every placed instance.
+    PlanEdit {
+        definition: EntityId,
+        sketch: Option<EntityId>,
+        alignment: PlanAlignment,
+        revision: String,
+        report: Option<SymbolUpgradeReport>,
+    },
 }
 pub(super) struct Form {
     pub tool: SymbolTool,
@@ -89,9 +98,7 @@ impl Form {
                     root,
                     SymbolKind::Dynamic,
                     exposed,
-                    selection
-                        .plan_sketch
-                        .map(|sketch| symbols::SymbolPlan { sketch }),
+                    selection.plan_sketch.map(SymbolPlan::new),
                 ))
             }
             SymbolTool::Place => Operation::Place {
@@ -289,6 +296,57 @@ impl Form {
     }
     pub fn changed(&mut self) {
         self.version = self.version.saturating_add(1);
+    }
+    /// Edit the fixed plan of an embedded definition, starting from its
+    /// current sketch and alignment and proposing the next free revision.
+    pub fn plan_edit(&mut self, document: &Document, definition: EntityId) -> Result<(), String> {
+        let value = symbols::read_definition(document, definition).map_err(|e| e.to_string())?;
+        if super::architecture::role(&value).is_some() {
+            return Err("Path-driven walls and fences derive their plan from the path".into());
+        }
+        if multicad_core::plants::template_for(&value.template, value.root)
+            .map_err(|e| e.to_string())?
+            .is_some()
+            || multicad_core::equipment::template_for(&value.template, value.root)
+                .map_err(|e| e.to_string())?
+                .is_some()
+        {
+            return Err("Plants and equipment keep their template plan symbols".into());
+        }
+        let revision = symbols::next_revision(document, value.symbol, &value.revision)
+            .map_err(|e| e.to_string())?;
+        self.tool = SymbolTool::Update;
+        self.operation = Operation::PlanEdit {
+            definition,
+            sketch: value.plan.as_ref().map(|p| p.sketch),
+            alignment: value.plan.map(|p| p.alignment).unwrap_or_default(),
+            revision,
+            report: None,
+        };
+        self.changed();
+        Ok(())
+    }
+    /// The typed request this plan edit applies, shared with MCP.
+    pub fn plan_request(&self, document: &Document) -> Option<Result<SymbolUpdateRequest, String>> {
+        let Operation::PlanEdit {
+            definition,
+            sketch,
+            alignment,
+            revision,
+            ..
+        } = &self.operation
+        else {
+            return None;
+        };
+        Some(
+            SymbolUpdateRequest::plan_edit(
+                document,
+                *definition,
+                revision.clone(),
+                sketch.map(|s| SymbolPlan::aligned(s, *alignment)),
+            )
+            .map_err(|e| e.to_string()),
+        )
     }
     pub fn authoring(&self) -> bool {
         !matches!(self.operation, Operation::Library)
@@ -514,6 +572,17 @@ impl Form {
                         .map_err(|e| e.to_string())?,
                 );
                 symbols::prepare_update(session, revision, actor, request)
+            }
+            Operation::PlanEdit { .. } => {
+                let request = self
+                    .plan_request(session.document())
+                    .expect("plan edit operation")?;
+                let comparison = symbols::compare_update_request(session.document(), &request)
+                    .map_err(|e| e.to_string())?;
+                if let Operation::PlanEdit { report, .. } = &mut self.operation {
+                    *report = Some(comparison);
+                }
+                symbols::prepare_update(session, revision, actor, &request)
             }
         };
         prepared.map_err(|e| e.to_string())
