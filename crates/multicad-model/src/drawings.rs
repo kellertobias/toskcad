@@ -414,6 +414,10 @@ impl Model {
         planting.extend(crate::equipment_plans::plans(
             document, self, revision, view, &bodies,
         )?);
+        let handled = planting.keys().copied().collect();
+        planting.extend(crate::symbol_plans::plans(
+            document, self, revision, view, &bodies, &handled,
+        )?);
         let bodies: Vec<_> = bodies
             .into_iter()
             .filter(|body| !planting.contains_key(&body.identity))

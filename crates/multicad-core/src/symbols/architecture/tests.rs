@@ -446,9 +446,7 @@ fn blueprint_definition_requires_dynamic_used_exposures_and_path_derived_plan() 
     bad.exposed.push(unused.id);
     assert!(bad.validate().unwrap_err().to_string().contains("used by"));
     let mut bad = definition;
-    bad.plan = Some(SymbolPlan {
-        sketch: EntityId::new(),
-    });
+    bad.plan = Some(SymbolPlan::new(EntityId::new()));
     assert!(
         bad.validate()
             .unwrap_err()

@@ -1,5 +1,7 @@
 //! Thin controls over canonical pinned definitions and owned instance overrides.
-use super::{Quantity, Request, ToolResult, commit, compile, id, imports, revision_guard};
+use super::{
+    Quantity, Request, ToolResult, commit, compile, id, imports, revision_guard, snapshot,
+};
 use crate::{
     error::ToolError,
     host::{Host, with},
@@ -314,5 +316,137 @@ pub(super) fn edit_symbol_instance(
         prepared.prepared,
         revision,
         json!({"instances":instances,"overrides_semantics":"Replacement map; omitted entries inherit pinned defaults","native_geometry_checked":true}),
+    )
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolPlanArgs {
+    /// Embedded definition ID, placed instance ID or symbol ownership record ID.
+    pub symbol: String,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolPlanChoiceArgs {
+    /// A sketch captured in the definition template (see symbol_plan).
+    pub sketch: String,
+    /// Shift along the symbol's local X and Y in millimeters; omission is zero.
+    pub offset_mm: Option<[f64; 2]>,
+    /// Counter-clockwise rotation about local Z, seen from above, applied
+    /// before the offset; omission is zero.
+    pub rotation_deg: Option<f64>,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditSymbolPlanArgs {
+    pub expected_revision: u64,
+    /// Embedded definition ID, placed instance ID or symbol ownership record ID.
+    pub symbol: String,
+    /// New explicit revision label; omission picks the next free one.
+    pub revision: Option<String>,
+    /// The fixed plan symbol; null removes it so plans project the 3D model.
+    pub plan: Option<SymbolPlanChoiceArgs>,
+}
+/// The embedded definition an ID names directly or through a placed instance.
+fn definition_of(
+    doc: &multicad_core::document::Document,
+    value: EntityId,
+) -> Result<EntityId, ToolError> {
+    if symbols::read_definition(doc, value).is_ok() {
+        return Ok(value);
+    }
+    if let Ok(instance) = symbols::read_instance(doc, value) {
+        return Ok(instance.definition);
+    }
+    for entity in doc.entities() {
+        if let Ok(instance) = symbols::read_instance(doc, entity.id)
+            && instance.instance == value
+        {
+            return Ok(instance.definition);
+        }
+    }
+    Err(ToolError::invalid(
+        "Name an embedded symbol definition, placed symbol instance or ownership record",
+    ))
+}
+pub(super) fn symbol_plan(host: &dyn Host, _: &Request, args: SymbolPlanArgs) -> ToolResult {
+    let (doc, revision, _) = snapshot(host)?;
+    let definition = definition_of(&doc, id(&args.symbol)?)?;
+    let value = symbols::read_definition(&doc, definition)?;
+    let sketches: Vec<_> = value
+        .template
+        .entities()
+        .filter(|e| matches!(e.data, multicad_core::document::EntityData::Sketch { .. }))
+        .map(|e| json!({"sketch":e.id,"name":e.name}))
+        .collect();
+    let instances: Vec<_> = symbols::instances(&doc, definition)?
+        .into_iter()
+        .map(|(record, instance)| {
+            let plan = value
+                .plan
+                .as_ref()
+                .and_then(|plan| instance.ids.get(&plan.sketch));
+            json!({"record":record,"instance":instance.instance,"plan_sketch":plan})
+        })
+        .collect();
+    Ok(json!({
+        "revision": revision,
+        "definition": definition,
+        "symbol": value.symbol,
+        "definition_revision": value.revision,
+        "plan": value.plan.as_ref().map(|plan| json!({
+            "sketch": plan.sketch,
+            "offset_mm": plan.alignment.offset_mm,
+            "rotation_deg": plan.alignment.rotation_deg,
+        })),
+        "template_sketches": sketches,
+        "instances": instances,
+        "semantics": "Plan projections draw the plan sketch, rotated about local Z then offset, at each instance's pose instead of the detailed 3D content; 3D views and picking keep the model.",
+    }))
+}
+pub(super) fn edit_symbol_plan(
+    host: &dyn Host,
+    call: &Request,
+    args: EditSymbolPlanArgs,
+) -> ToolResult {
+    let revision = args.expected_revision;
+    let symbol = id(&args.symbol)?;
+    let plan = args
+        .plan
+        .map(|plan| -> Result<_, ToolError> {
+            Ok(symbols::SymbolPlan::aligned(
+                id(&plan.sketch)?,
+                symbols::PlanAlignment {
+                    offset_mm: plan.offset_mm.unwrap_or_default(),
+                    rotation_deg: plan.rotation_deg.unwrap_or_default(),
+                },
+            ))
+        })
+        .transpose()?;
+    let label = args.revision;
+    let owned = call.clone();
+    let (prepared, definition, report) = with(host, move |target| {
+        revision_guard(target, revision)?;
+        let doc = target.session().document();
+        let definition = definition_of(doc, symbol)?;
+        let current = symbols::read_definition(doc, definition)?;
+        let label = match label {
+            Some(label) => label,
+            None => symbols::next_revision(doc, current.symbol, &current.revision)?,
+        };
+        // The same typed request the Inspector's plan editor applies.
+        let request = symbols::SymbolUpdateRequest::plan_edit(doc, definition, label, plan)?;
+        let report = symbols::compare_update_request(doc, &request)?;
+        let prepared =
+            symbols::prepare_update(target.session(), revision, owned.actor.clone(), &request)?;
+        Ok::<_, ToolError>((prepared, definition, report))
+    })??;
+    let instances = prepared.instances.clone();
+    finish(
+        host,
+        call,
+        prepared.prepared,
+        revision,
+        json!({"definition":definition,"instances":instances,"old_pin":report.old_pin.to_string(),"new_pin":report.new_pin.to_string(),"native_geometry_checked":true}),
     )
 }

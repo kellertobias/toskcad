@@ -101,9 +101,7 @@ pub fn library(assembly: bool, kind: SymbolKind) -> Result<Library, Error> {
         root,
         kind,
         exposed,
-        Some(SymbolPlan {
-            sketch: panel.sketch,
-        }),
+        Some(SymbolPlan::new(panel.sketch)),
     );
     let prepared =
         symbols::prepare_author(&panel.session, panel.session.revision(), actor(), &author)?;
@@ -429,9 +427,7 @@ pub fn publish_revision_two(library: &mut Library) -> Result<SymbolDefinition, E
             library.panel.stock,
             library.panel.depth,
         ],
-        Some(SymbolPlan {
-            sketch: library.panel.sketch,
-        }),
+        Some(SymbolPlan::new(library.panel.sketch)),
     );
     author.symbol = library.author.symbol;
     author.revision = "2".into();

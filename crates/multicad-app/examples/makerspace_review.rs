@@ -163,7 +163,7 @@ fn equipment_library() -> Result<(Session, EntityId, EntityId, EquipmentParamete
         body,
         SymbolKind::Dynamic,
         vec![ids.width, ids.depth, ids.height],
-        Some(SymbolPlan { sketch }),
+        Some(SymbolPlan::new(sketch)),
     );
     let prepared = symbols::prepare_author(&session, session.revision(), actor(), &author)?;
     checked(&mut session, prepared.prepared)?;

@@ -122,19 +122,36 @@ impl SymbolDefinition {
         {
             return Err(invalid("Symbol plan must be a captured constrained sketch"));
         }
-        if let Some(plant) = crate::plants::template_for(&self.template, self.root)?
-            && self.plan.as_ref().map(|p| p.sketch) != Some(plant.plan)
-        {
-            return Err(invalid(
-                "Plant definition and its linked plan do not share one source",
-            ));
+        if let Some(plan) = &self.plan {
+            plan.alignment.validate()?;
         }
-        if let Some(equipment) = crate::equipment::template_for(&self.template, self.root)?
-            && self.plan.as_ref().map(|p| p.sketch) != Some(equipment.footprint)
-        {
-            return Err(invalid(
-                "Equipment definition must retain its true-size footprint as its linked plan",
-            ));
+        let fixed_alignment = |kind: &str| -> Result<(), DocumentError> {
+            if self
+                .plan
+                .as_ref()
+                .is_some_and(|p| !p.alignment.is_identity())
+            {
+                return Err(invalid(format!(
+                    "{kind} plans are aligned by their template; an extra plan alignment is not supported"
+                )));
+            }
+            Ok(())
+        };
+        if let Some(plant) = crate::plants::template_for(&self.template, self.root)? {
+            if self.plan.as_ref().map(|p| p.sketch) != Some(plant.plan) {
+                return Err(invalid(
+                    "Plant definition and its linked plan do not share one source",
+                ));
+            }
+            fixed_alignment("Plant")?;
+        }
+        if let Some(equipment) = crate::equipment::template_for(&self.template, self.root)? {
+            if self.plan.as_ref().map(|p| p.sketch) != Some(equipment.footprint) {
+                return Err(invalid(
+                    "Equipment definition must retain its true-size footprint as its linked plan",
+                ));
+            }
+            fixed_alignment("Equipment")?;
         }
         for e in self.template.entities() {
             super::remap::validate_entity(e)?;
@@ -421,6 +438,60 @@ pub(super) fn override_errors(
         .collect()
 }
 
+/// Resolve an instance record's authored simplified plan with its alignment.
+/// Consumers compose the alignment with the current native occurrence pose,
+/// so moving or rotating the instance keeps 2D and 3D together.
+pub fn symbol_plan_representation(
+    doc: &Document,
+    id: EntityId,
+) -> Result<Option<SymbolPlanRepresentation>, DocumentError> {
+    let instance = read_instance(doc, id)?;
+    let def = read_definition(doc, instance.definition)?;
+    let Some(plan) = def.plan else {
+        return Ok(None);
+    };
+    let sketch = *instance
+        .ids
+        .get(&plan.sketch)
+        .ok_or_else(|| invalid("Symbol instance has no copy of its plan sketch"))?;
+    Ok(Some(SymbolPlanRepresentation {
+        instance: instance.instance,
+        sketch,
+        alignment: plan.alignment,
+    }))
+}
+/// Every placed generic symbol whose definition authors a fixed simplified
+/// plan. Plants and equipment keep their own template-driven plan symbols.
+pub fn authored_plan_instances(
+    doc: &Document,
+) -> Result<Vec<SymbolPlanRepresentation>, DocumentError> {
+    let mut generic = BTreeMap::new();
+    let mut out = vec![];
+    for entity in doc.entities() {
+        let EntityData::Extension { definition, .. } = &entity.data else {
+            continue;
+        };
+        if definition.type_id != INSTANCE_TYPE {
+            continue;
+        }
+        let instance = read_instance(doc, entity.id)?;
+        let plain = match generic.get(&instance.definition) {
+            Some(plain) => *plain,
+            None => {
+                let def = read_definition(doc, instance.definition)?;
+                let plain = def.plan.is_some()
+                    && crate::plants::template_for(&def.template, def.root)?.is_none()
+                    && crate::equipment::template_for(&def.template, def.root)?.is_none();
+                generic.insert(instance.definition, plain);
+                plain
+            }
+        };
+        if plain && let Some(plan) = symbol_plan_representation(doc, entity.id)? {
+            out.push(plan);
+        }
+    }
+    Ok(out)
+}
 /// Resolve an instance's authored simplified plan. Consumers obtain the actual
 /// world pose from the current native occurrence receipt, including later moves.
 pub fn symbol_plan(

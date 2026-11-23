@@ -3163,3 +3163,121 @@ fn default_scene_backend_publishes_with_the_linked_geometry_provider() {
         assert!(failure.contains("OpenCascade is unavailable"), "{failure}");
     }
 }
+#[allow(dead_code)]
+#[path = "../../examples/symbol_review.rs"]
+mod symbol_review;
+#[test]
+fn architecture_2d_draws_authored_symbol_plans_bound_to_the_picked_canonical_instance() {
+    use multicad_core::symbols::{self, PlanAlignment, SymbolPlan, SymbolUpdateRequest};
+    let mut f = symbol_review::seed(false).unwrap();
+    let [a, b] = [f.placed[0].instance, f.placed[1].instance];
+    let edit = |session: &mut Session, plan: Option<SymbolPlan>| {
+        let current = symbols::read_definition(session.document(), f.definition).unwrap();
+        let revision =
+            symbols::next_revision(session.document(), current.symbol, &current.revision).unwrap();
+        let request =
+            SymbolUpdateRequest::plan_edit(session.document(), f.definition, revision, plan)
+                .unwrap();
+        let prepared = symbols::prepare_update(
+            session,
+            session.revision(),
+            symbol_review::actor(),
+            &request,
+        )
+        .unwrap();
+        symbol_review::checked(session, prepared.prepared).unwrap();
+    };
+    let sketch = symbols::read_definition(f.session.document(), f.definition)
+        .unwrap()
+        .plan
+        .unwrap()
+        .sketch;
+    edit(
+        &mut f.session,
+        Some(SymbolPlan::aligned(
+            sketch,
+            PlanAlignment {
+                offset_mm: [0., -300.],
+                rotation_deg: 90.,
+            },
+        )),
+    );
+    let scene = |session: &Session| {
+        let mut backend = Backend::new();
+        backend
+            .request(
+                session.document(),
+                SceneStamp {
+                    document: session.document().id(),
+                    revision: session.revision(),
+                    generation: 1,
+                },
+            )
+            .unwrap();
+        receive(&mut backend).result.unwrap()
+    };
+    let native = scene(&f.session);
+    let plan = native
+        .architecture_plan()
+        .expect("native plan receipt")
+        .as_ref()
+        .unwrap();
+    assert_eq!(plan.sources, std::collections::BTreeSet::from([a, b]));
+    for instance in [a, b] {
+        let lines: Vec<_> = plan
+            .vectors
+            .iter()
+            .filter(|v| v.source == instance)
+            .collect();
+        assert_eq!(
+            lines.len(),
+            4,
+            "the authored symbol, not the projected solid"
+        );
+    }
+    // Panel A (150 × 90 at x 250, y 50) is drawn rotated a quarter turn and
+    // 300 mm below its body: x 160..250, y -250..-100.
+    let points: Vec<_> = plan
+        .vectors
+        .iter()
+        .filter(|v| v.source == a)
+        .flat_map(|v| v.preview_mm.clone())
+        .collect();
+    let min = |i: usize| points.iter().map(|p| p[i]).fold(f64::INFINITY, f64::min);
+    let max = |i: usize| {
+        points
+            .iter()
+            .map(|p| p[i])
+            .fold(f64::NEG_INFINITY, f64::max)
+    };
+    for (value, expected) in [
+        (min(0), 160.),
+        (max(0), 250.),
+        (min(1), -250.),
+        (max(1), -100.),
+    ] {
+        assert!((value - expected).abs() < 1e-6, "{value} vs {expected}");
+    }
+    // The 2D symbol and the detailed 3D body identify the same object.
+    let hit = native
+        .pick_face(viewport::Ray::new([325., 95., 5000.], [0., 0., -1.]).unwrap())
+        .unwrap();
+    assert_eq!(hit.instance, a);
+    let surface = plan.surface_scene(&native).unwrap();
+    assert!(
+        surface.instances().iter().all(|i| i.id != a && i.id != b),
+        "2D hides the detailed meshes the symbols replace"
+    );
+    // Without an authored plan the instance leaves the 2D symbol set.
+    edit(&mut f.session, None);
+    let plain = scene(&f.session);
+    assert!(
+        plain
+            .architecture_plan()
+            .expect("native plan receipt")
+            .as_ref()
+            .unwrap()
+            .sources
+            .is_empty()
+    );
+}

@@ -10,7 +10,7 @@ use multicad_core::{
     commands::Session,
     document::{Document, EntityData, EntityId},
     project_file::ContentHash,
-    symbols::{self, SymbolDefinition, SymbolKind, SymbolPlan},
+    symbols::{self, PlanAlignment, SymbolDefinition, SymbolKind, SymbolPlan},
 };
 use std::collections::{BTreeMap, BTreeSet};
 enum Next {
@@ -21,6 +21,7 @@ enum Next {
     Replacement(Box<SymbolDefinition>),
     Edit(EntityId),
     AuthorConstruction(EntityId),
+    PlanEdit(EntityId),
 }
 pub(super) struct Catalogue<'a> {
     pub embedded: &'a [(EntityId, SymbolDefinition)],
@@ -91,7 +92,8 @@ pub(super) fn show(
             }else if !request.exposed.is_empty(){request.exposed.clear();changed=true;}
             let mut plan=request.plan.as_ref().map(|plan|plan.sketch);
             let sketches=document.entities().filter(|e|matches!(e.data,EntityData::Sketch{..})).map(|e|(e.id,entity_label(document,e.id))).collect::<Vec<_>>();
-            if entity_choice(ui,"symbol-create-plan","Optional simplified 2D sketch",&mut plan,&sketches,true){request.plan=plan.map(|sketch|SymbolPlan{sketch});changed=true;}
+            if entity_choice(ui,"symbol-create-plan","Optional simplified 2D sketch",&mut plan,&sketches,true){request.plan=plan.map(|sketch|SymbolPlan::aligned(sketch,request.plan.as_ref().map(|p|p.alignment).unwrap_or_default()));changed=true;}
+            if let Some(plan)=&mut request.plan { changed|=alignment_fields(ui,&mut plan.alignment); }
             ui.small("The chosen source and plan are embedded together. Parameter exposure does not change the source project's inputs.");
         }
         Operation::ArchitecturalAuthor{request,editor}=>{
@@ -152,6 +154,8 @@ pub(super) fn show(
             changed|=values.show(ui,definition);
             values.show_hardware_attribution(ui, definition);
             ui.small("Only this instance's exposed inputs change. Move changes its shared 2D/3D placement.");
+            let definition_id=symbols::read_instance(document,request.record).map(|i|i.definition).ok();
+            if let Some(id)=definition_id && plan_editable(definition) && ui.button("Edit plan representation…").on_hover_text("Choose and align the fixed 2D symbol that plan views draw for every instance of this definition").clicked(){next=Some(Next::PlanEdit(id));}
         }
         Operation::Update{definition,replacement,request,values,architecture_values,report}=>{
             let entries=definitions.iter().map(|(id,def)|(*id,format!("{} · revision {}",def.name,def.revision))).collect::<Vec<_>>();
@@ -166,6 +170,7 @@ pub(super) fn show(
                     }
                 }).response.on_hover_text("Only revisions of the same stable symbol identity can replace this definition");
                 if ui.button("Open library file…").clicked(){action=Some(SymbolAction::ImportLibrary);}
+                if plan_editable(old) && ui.button("Edit plan representation…").on_hover_text("Choose and align the fixed 2D symbol as a new revision of this definition").clicked(){next=Some(Next::PlanEdit(*old_id));}
             }
             if let (Some(replacement),Some(report))=(replacement.as_ref(),report.as_ref()){
                 ui.strong("Review definition changes");
@@ -205,6 +210,27 @@ pub(super) fn show(
                 ui.small("Compatible overrides are retained. Uncheck removed or incompatible values explicitly. Preview validates the resolved inputs and exact geometry; Apply updates all listed instances in one undoable action.");
             }
         }
+        Operation::PlanEdit{definition,sketch,alignment,revision,report}=>{
+            match definitions.iter().find(|(id,_)|id==definition) {
+                None=>{ui.colored_label(egui::Color32::LIGHT_YELLOW,"The embedded definition is no longer in this project");}
+                Some((_,old))=>{
+                    summary(ui,old);
+                    ui.strong("Plan representation");
+                    ui.small("Plan views (Architecture 2D and plan drawings) draw this fixed linework for every instance; 3D views and picking keep the detailed model.");
+                    let sketches=old.template.entities().filter(|e|matches!(e.data,EntityData::Sketch{..})).map(|e|(e.id,e.name.clone())).collect::<Vec<_>>();
+                    if entity_choice(ui,"symbol-plan-sketch","Plan sketch",sketch,&sketches,true){changed=true;}
+                    if sketch.is_some(){changed|=alignment_fields(ui,alignment);}
+                    else {ui.small("None: plan views project the detailed geometry.");}
+                    changed|=fields::text(ui,"New revision",revision,"The edited definition is an explicit new revision; every placed instance updates to it in one undoable action");
+                    let instances=symbols::instances(document,*definition).map(|v|v.len()).unwrap_or(0);
+                    ui.label(format!("{instances} placed instance(s) update together"));
+                    if let Some(report)=report {
+                        ui.small(format!("{} changed entities · new pin {}",report.changed_entities.len(),report.new_pin));
+                    }
+                    ui.small("Preview shows the aligned symbol in the viewport; Apply saves the new revision with this project. Save definition in the Library to publish it.");
+                }
+            }
+        }
     }});
     if changed {
         form.changed();
@@ -238,11 +264,54 @@ fn transition(form: &mut Form, document: &Document, next: Next) -> Result<(), St
             Ok(())
         }
         Next::Replacement(definition) => form.set_replacement(document, *definition),
+        Next::PlanEdit(id) => form.plan_edit(document, id),
         Next::Edit(id) => Form::existing(document, id).map(|mut replacement| {
             replacement.version = form.version.saturating_add(1);
             *form = replacement;
         }),
     }
+}
+
+/// Generic library parts and assemblies author their plan; walls, fences,
+/// plants and equipment derive theirs.
+fn plan_editable(definition: &SymbolDefinition) -> bool {
+    super::architecture::role(definition).is_none()
+        && multicad_core::plants::template_for(&definition.template, definition.root)
+            .is_ok_and(|t| t.is_none())
+        && multicad_core::equipment::template_for(&definition.template, definition.root)
+            .is_ok_and(|t| t.is_none())
+}
+/// Offset and rotation of the plan sketch in the symbol's own coordinates.
+fn alignment_fields(ui: &mut egui::Ui, alignment: &mut PlanAlignment) -> bool {
+    let limit = symbols::MAX_PLAN_OFFSET_MM;
+    let mut changed = false;
+    ui.label("Plan alignment to the 3D content");
+    for (label, value) in ["Offset X", "Offset Y"]
+        .into_iter()
+        .zip(alignment.offset_mm.iter_mut())
+    {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            changed |= ui
+                .add(
+                    egui::DragValue::new(value)
+                        .range(-limit..=limit)
+                        .suffix(" mm")
+                        .speed(1.),
+                )
+                .on_hover_text("Shift of the plan sketch along the symbol's local axis")
+                .changed();
+        });
+    }
+    ui.horizontal(|ui| {
+        ui.label("Rotation");
+        changed |= ui
+            .add(egui::DragValue::new(&mut alignment.rotation_deg).range(-360.0..=360.0).suffix("°").speed(1.))
+            .on_hover_text("Counter-clockwise rotation of the plan sketch about the symbol's local Z, seen from above")
+            .changed();
+    });
+    ui.small("Rotation applies first, then the offset. Instances move and rotate both representations together.");
+    changed
 }
 
 pub(super) fn focus_button(response: egui::Response) -> bool {

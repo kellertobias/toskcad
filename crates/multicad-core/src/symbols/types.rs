@@ -13,10 +13,79 @@ pub enum SymbolKind {
     Static,
     Dynamic,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// The author-defined simplified plan of a reusable symbol: a captured
+/// sketch in the definition plus its explicit alignment to the symbol's local
+/// coordinates. Plan views draw this fixed linework instead of projecting the
+/// detailed 3D content; 3D views keep the detailed model.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolPlan {
     pub sketch: EntityId,
+    /// Identity alignment is omitted from storage, so definitions authored
+    /// before alignment existed keep their pins.
+    #[serde(default, skip_serializing_if = "PlanAlignment::is_identity")]
+    pub alignment: PlanAlignment,
+}
+impl SymbolPlan {
+    pub fn new(sketch: EntityId) -> Self {
+        Self {
+            sketch,
+            alignment: PlanAlignment::default(),
+        }
+    }
+    pub fn aligned(sketch: EntityId, alignment: PlanAlignment) -> Self {
+        Self { sketch, alignment }
+    }
+}
+/// A rigid in-plane placement of the plan sketch in the symbol's local
+/// coordinates: rotate the sketch about local Z by `rotation_deg`
+/// (counter-clockwise, seen from +Z), then shift it by `offset_mm` along
+/// local X and Y. True size; plan symbols are never scaled.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanAlignment {
+    pub offset_mm: [f64; 2],
+    pub rotation_deg: f64,
+}
+/// The largest authored plan offset from the symbol origin.
+pub const MAX_PLAN_OFFSET_MM: f64 = 100_000.;
+impl PlanAlignment {
+    pub fn is_identity(&self) -> bool {
+        self.offset_mm == [0., 0.] && self.rotation_deg == 0.
+    }
+    pub fn validate(&self) -> Result<(), crate::document::DocumentError> {
+        if !self
+            .offset_mm
+            .iter()
+            .all(|v| v.is_finite() && v.abs() <= MAX_PLAN_OFFSET_MM)
+            || !self.rotation_deg.is_finite()
+            || self.rotation_deg.abs() > 360.
+        {
+            return Err(crate::document::DocumentError::Invalid(format!(
+                "Plan alignment needs finite offsets within ±{MAX_PLAN_OFFSET_MM} mm and a rotation within ±360°"
+            )));
+        }
+        Ok(())
+    }
+    /// The local rigid transform from plan-sketch coordinates to symbol
+    /// coordinates; compose the occurrence pose after it.
+    pub fn pose(&self) -> crate::model::RigidPose {
+        use multicad_precision::PortableMath as _;
+        let (s, c) = self.rotation_deg.to_radians().portable_sin_cos();
+        crate::model::RigidPose {
+            rotation: [[c, -s, 0.], [s, c, 0.], [0., 0., 1.]],
+            translation_mm: [self.offset_mm[0], self.offset_mm[1], 0.],
+        }
+    }
+}
+/// A placed instance's authored plan, resolved to canonical identities.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SymbolPlanRepresentation {
+    /// The placed canonical object (the outer Instance) both views pick.
+    pub instance: EntityId,
+    /// The instance-owned copy of the definition's plan sketch.
+    pub sketch: EntityId,
+    pub alignment: PlanAlignment,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -140,4 +209,72 @@ pub struct SymbolPrepared {
     pub definition: EntityId,
     pub instances: Vec<EntityId>,
     pub plans: BTreeMap<EntityId, EntityId>,
+}
+#[cfg(test)]
+mod plan_alignment_tests {
+    use super::*;
+    #[test]
+    fn identity_alignment_keeps_stored_plans_and_pins_of_older_definitions() {
+        let sketch = EntityId::new();
+        let identity = serde_json::to_value(SymbolPlan::new(sketch)).unwrap();
+        assert_eq!(identity, serde_json::json!({"sketch": sketch}));
+        let older: SymbolPlan =
+            serde_json::from_value(serde_json::json!({"sketch": sketch})).unwrap();
+        assert_eq!(older, SymbolPlan::new(sketch));
+        let aligned = SymbolPlan::aligned(
+            sketch,
+            PlanAlignment {
+                offset_mm: [12.5, -3.],
+                rotation_deg: 30.,
+            },
+        );
+        let value = serde_json::to_value(&aligned).unwrap();
+        assert_eq!(
+            value["alignment"],
+            serde_json::json!({"offset_mm":[12.5,-3.0],"rotation_deg":30.0})
+        );
+        assert_eq!(
+            serde_json::from_value::<SymbolPlan>(value).unwrap(),
+            aligned
+        );
+        assert!(
+            serde_json::from_value::<SymbolPlan>(
+                serde_json::json!({"sketch": sketch, "alignment": {"offset_mm":[0,0],"rotation_deg":0,"scale":2}})
+            )
+            .is_err(),
+            "plan symbols are true size; unknown fields are refused"
+        );
+    }
+    #[test]
+    fn alignment_rotates_about_local_z_before_offsetting_and_rejects_bad_values() {
+        let alignment = PlanAlignment {
+            offset_mm: [100., -20.],
+            rotation_deg: 90.,
+        };
+        let p = alignment.pose().point([30., 0., 5.]);
+        for (a, b) in p.into_iter().zip([100., 10., 5.]) {
+            assert!((a - b).abs() < 1e-12, "{p:?}");
+        }
+        assert!(alignment.pose().validate().is_ok());
+        for bad in [
+            PlanAlignment {
+                offset_mm: [f64::NAN, 0.],
+                rotation_deg: 0.,
+            },
+            PlanAlignment {
+                offset_mm: [MAX_PLAN_OFFSET_MM * 2., 0.],
+                rotation_deg: 0.,
+            },
+            PlanAlignment {
+                offset_mm: [0., 0.],
+                rotation_deg: 361.,
+            },
+            PlanAlignment {
+                offset_mm: [0., 0.],
+                rotation_deg: f64::INFINITY,
+            },
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?}");
+        }
+    }
 }

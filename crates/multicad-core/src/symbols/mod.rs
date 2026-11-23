@@ -3,7 +3,10 @@ pub mod architecture;
 mod remap;
 mod source;
 mod types;
-pub use source::{definitions, instances, read_definition, read_instance, symbol_plan};
+pub use source::{
+    authored_plan_instances, definitions, instances, read_definition, read_instance, symbol_plan,
+    symbol_plan_representation,
+};
 pub use types::*;
 pub const DEFINITION_TYPE: &str = "symbols.definition";
 pub const INSTANCE_TYPE: &str = "symbols.instance";
