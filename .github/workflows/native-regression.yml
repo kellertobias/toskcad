@@ -53,6 +53,24 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
+      - name: Free macOS runner disk
+        # Every workspace target plus the per-package test builds exceed the
+        # image's free space. Remove SDKs this job never uses; keep the
+        # selected Xcode.
+        if: runner.os == 'macOS'
+        run: |
+          df -h .
+          active="$(realpath "$(xcode-select -p)/../..")"
+          case "$active" in
+            /Applications/Xcode*.app)
+              for x in /Applications/Xcode*.app; do
+                [ -L "$x" ] && continue
+                [ "$(realpath "$x")" = "$active" ] || sudo rm -rf "$x"
+              done ;;
+            *) echo "Selected developer directory is not an Xcode app; keeping every Xcode." ;;
+          esac
+          sudo rm -rf "$HOME/Library/Android" "$HOME/.dotnet" /usr/local/share/dotnet
+          df -h .
       - run: rustup show active-toolchain
       - name: Install pinned cargo-nextest
         run: cargo install cargo-nextest --version 0.9.152 --locked
