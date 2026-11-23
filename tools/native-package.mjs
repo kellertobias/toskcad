@@ -1,5 +1,5 @@
 // Native runtime layout, source/notice closure and packaged smoke checks.
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawn} from 'node:child_process';
 import {copyFileSync,existsSync,lstatSync,mkdirSync,readFileSync,readdirSync,realpathSync,writeFileSync} from 'node:fs';
 import {dirname,join,resolve,relative,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -279,6 +279,67 @@ export function collectNotices(resources,source,metadata){
   }
   writeFileSync(join(resources,'third-party.json'),JSON.stringify(records.sort((a,b)=>a.name.localeCompare(b.name)),null,2)+'\n');
   sealMacOSBundle(resources);
+}
+// Packaged MCP workflow smoke: a copy of a bundled example is opened by the
+// packaged executable over newline-delimited JSON-RPC stdio, evaluated by the
+// Rust kernel and exported as STEP. The bundled original is never written.
+export const MCP_SMOKE_EXAMPLE='drill-guide.tcd';
+export function bundledExamplePath(resources,file=MCP_SMOKE_EXAMPLE){return join(resources,'examples',file);}
+export async function mcpSmoke(executable,{project,exportDirectory,cwd,timeoutMs=10*60*1000,spawnProcess=spawn}={}){
+  project=resolve(project);exportDirectory=resolve(exportDirectory);cwd??=dirname(project);
+  mkdirSync(exportDirectory,{recursive:true});
+  const child=spawnProcess(executable,['--mcp','--project',project,'--export-dir',exportDirectory],{cwd,stdio:['pipe','pipe','pipe']});
+  const pending=new Map();let stderr='',buffer='',next=1,failure,finished=false;
+  const fail=error=>{failure??=error;for(const {reject} of pending.values())reject(error);pending.clear();};
+  const timer=setTimeout(()=>{fail(new Error('Packaged MCP smoke timed out'));child.kill();},timeoutMs);
+  child.stderr.on('data',chunk=>{stderr+=chunk;});
+  child.stdout.on('data',chunk=>{
+    buffer+=chunk;let index;
+    while((index=buffer.indexOf('\n'))>=0){
+      const line=buffer.slice(0,index).trim();buffer=buffer.slice(index+1);if(!line)continue;
+      let message;try{message=JSON.parse(line);}catch{fail(new Error('Packaged MCP server wrote a non-JSON line'));return;}
+      const waiter=pending.get(message.id);if(waiter){pending.delete(message.id);waiter.resolve(message);}
+    }
+  });
+  const exited=new Promise(resolveExit=>child.on('close',code=>{if(!finished)fail(new Error(`Packaged MCP server exited early (${code}): ${stderr.trim()}`));resolveExit(code);}));
+  child.on('error',fail);child.stdin.on('error',fail);
+  const send=message=>child.stdin.write(JSON.stringify(message)+'\n');
+  const request=(method,params)=>{
+    if(failure)return Promise.reject(failure);
+    const id=next++;const reply=new Promise((resolveReply,reject)=>pending.set(id,{resolve:resolveReply,reject}));
+    send({jsonrpc:'2.0',id,method,params});return reply;
+  };
+  const call=async(name,args={})=>{
+    const response=await request('tools/call',{name,arguments:args});
+    const result=response.result;
+    if(response.error||!result||result.isError)throw new Error(`Packaged MCP ${name} failed: ${JSON.stringify(response.error??result?.structuredContent??response)}`);
+    return result.structuredContent;
+  };
+  const workflow=async()=>{
+    const init=await request('initialize',{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'multicad-package-smoke',version:'1.0'}});
+    if(init.result?.serverInfo?.name!=='multicad'||typeof init.result?.capabilities?.tools!=='object')throw new Error('Packaged MCP server did not identify as MultiCAD');
+    send({jsonrpc:'2.0',method:'notifications/initialized',params:{}});
+    const info=await call('document_info');
+    if(info.geometry_backend!=='rust')throw new Error(`Packaged MCP server reports geometry backend ${info.geometry_backend}`);
+    if(info.project_path!==project||info.revision!==0||typeof info.name!=='string'||!info.name)throw new Error('Packaged MCP server did not open the bundled example project');
+    const model=await call('evaluate_model');
+    // The largest published solid gives a deterministic export subject.
+    const parts=(model.parts??[]).filter(part=>typeof part.part==='string'&&Number.isFinite(part.volume_mm3)&&part.volume_mm3>0).sort((a,b)=>b.volume_mm3-a.volume_mm3);
+    if(!parts.length)throw new Error('Packaged MCP evaluation produced no solid part');
+    const fileName='package-smoke.step';
+    await call('export_step',{part:parts[0].part,file_name:fileName});
+    const step=readFileSync(join(exportDirectory,fileName),'utf8');
+    if(!step.startsWith('ISO-10303-21;')||!step.trimEnd().endsWith('END-ISO-10303-21;'))throw new Error('Packaged MCP STEP export is not a complete ISO 10303-21 file');
+    return {serverName:init.result.serverInfo.name,geometryBackend:info.geometry_backend,document:info.name,parts:parts.length,exported:parts[0].name??parts[0].part,stepBytes:Buffer.byteLength(step)};
+  };
+  let summary;
+  try{summary=await workflow();}
+  catch(error){finished=true;clearTimeout(timer);child.kill();await exited;throw error;}
+  // Closing stdin is the client's normal end of session.
+  finished=true;clearTimeout(timer);child.stdin.end();
+  const code=await exited;
+  if(code!==0)throw new Error(`Packaged MCP server exited with ${code}: ${stderr.trim()}`);
+  return summary;
 }
 export function auditRuntime(binary){
   if(process.platform==='darwin'){
