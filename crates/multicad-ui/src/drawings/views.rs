@@ -12,6 +12,23 @@ impl DrawingEditor {
     pub fn has_backend_factory(&self) -> bool {
         self.feed.has_factory()
     }
+    /// The selected page's native preview: `None` while it is pending or not
+    /// yet scheduled, the number of ready views once shown, or its error.
+    pub fn preview_outcome(&self, session: &Session) -> Option<Result<usize, String>> {
+        if !self.preview_matches(session) || self.feed.pending() {
+            return None;
+        }
+        if let Some(error) = &self.feed.error {
+            return Some(Err(error.clone()));
+        }
+        self.feed.result.as_ref().map(|result| {
+            Ok(result
+                .views
+                .values()
+                .filter(|view| matches!(view, ViewEvaluation::Ready { .. }))
+                .count())
+        })
+    }
     pub(super) fn preview_matches(&self, session: &Session) -> bool {
         self.preview_input
             .as_ref()

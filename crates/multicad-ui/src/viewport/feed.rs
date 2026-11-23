@@ -5,6 +5,7 @@ use multicad_core::{
     document::{Document, EntityId},
     project_file::ProjectResources,
     references::{ReferenceGate, ReferenceReport, TopologySnapshot, inspect},
+    response_trace as trace,
 };
 use std::{
     collections::BTreeMap,
@@ -303,6 +304,10 @@ impl SceneFeed {
                     .begin(stamp)
                     .and_then(|()| self.store.publish(scene.clone()));
                 if accepted.is_ok() {
+                    trace::mark("scene-reused", |record| {
+                        record.insert("revision".into(), revision.into());
+                        record.insert("generation".into(), generation.into());
+                    });
                     if let Some(evaluation) = &mut self.references {
                         evaluation.stamp = stamp;
                         evaluation.report.revision = revision;
@@ -329,6 +334,10 @@ impl SceneFeed {
                 self.pending = false;
                 return;
             }
+            trace::mark("scene-request", |record| {
+                record.insert("revision".into(), revision.into());
+                record.insert("generation".into(), generation.into());
+            });
             self.pending = true;
         }
         if !self.pending
@@ -372,6 +381,10 @@ impl SceneFeed {
             if self.expected != Some(reply.stamp) {
                 return;
             }
+            let mut accept = trace::span(trace::Stage::Publication, "scene-accept");
+            trace::set(&mut accept, "revision", reply.stamp.revision);
+            trace::set(&mut accept, "generation", reply.stamp.generation);
+            trace::set(&mut accept, "ok", reply.result.is_ok());
             self.pending = false;
             match reply.result {
                 Ok(scene) if scene.stamp() == reply.stamp && scene.is_full_model() => {
@@ -437,6 +450,7 @@ impl SceneFeed {
                             self.error = Some(error)
                         }
                     } else {
+                        trace::set(&mut accept, "published", true);
                         self.source_valid = true;
                     }
                 }

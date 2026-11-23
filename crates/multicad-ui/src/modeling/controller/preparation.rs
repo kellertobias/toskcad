@@ -34,10 +34,16 @@ impl Lane {
         self.desired.is_some()
     }
     pub fn cancel(&mut self) {
+        if self.desired.is_some() {
+            multicad_core::response_trace::mark("preparation-cancel", |_| {});
+        }
         self.desired = None;
         self.queued = None;
     }
     pub fn submit(&mut self, job: Job) -> Result<(), String> {
+        multicad_core::response_trace::mark("preparation-request", |record| {
+            record.insert("generation".into(), job.generation.into());
+        });
         self.desired = Some(job.generation);
         self.queued = Some(job);
         self.start()
@@ -59,6 +65,11 @@ impl Lane {
         let spawned = std::thread::Builder::new()
             .name("model-preparation".into())
             .spawn(move || {
+                let mut span = multicad_core::response_trace::span(
+                    multicad_core::response_trace::Stage::Preparation,
+                    "model-request",
+                );
+                multicad_core::response_trace::set(&mut span, "generation", job.generation);
                 let result = (|| {
                     let prepared = job
                         .request
@@ -66,6 +77,8 @@ impl Lane {
                     let content = ContentHash::document(prepared.prepared.document())?;
                     Ok((prepared, content))
                 })();
+                multicad_core::response_trace::set(&mut span, "ok", result.is_ok());
+                drop(span);
                 let _ = send.send(Reply {
                     request: job.request,
                     form: job.form,
@@ -94,6 +107,11 @@ impl Lane {
         };
         self.running = None;
         let current = self.desired == Some(reply.generation);
+        multicad_core::response_trace::mark("preparation-reply", |record| {
+            record.insert("generation".into(), reply.generation.into());
+            record.insert("current".into(), current.into());
+            record.insert("ok".into(), reply.result.is_ok().into());
+        });
         if current {
             self.desired = None;
         }

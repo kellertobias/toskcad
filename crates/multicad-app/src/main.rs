@@ -140,6 +140,10 @@ fn record_startup_error(error: &str) {
     }
 }
 fn run_application(project: Option<PathBuf>, model_backend: GeometryBackend) -> Result<(), String> {
+    // Opt-in input-to-frame diagnostics (CAD-347); off unless the variable is set.
+    if let Some(path) = multicad_core::response_trace::install_from_env()? {
+        eprintln!("multicad: writing response trace to {}", path.display());
+    }
     let mut app =
         multicad_ui::application::Application::welcome(Box::new(files::ProjectStore::default()))?;
     app.request_open_documents(project);
@@ -147,6 +151,29 @@ fn run_application(project: Option<PathBuf>, model_backend: GeometryBackend) -> 
     app.set_library_store(Box::new(library::LibraryFileStore::default()));
     app.set_example_library(bundled_examples::library());
     app.set_preference_store(Box::new(preferences::PreferenceFileStore::default()));
+    let pair_proofs = install_backends(&mut app, model_backend)?;
+    multicad_ui::launch_with(Box::new(move |context| {
+        app.set_file_picker(Box::new(file_picker::NativePicker::new(context)));
+        app.set_external_control(Box::new(multicad_model::with_pair_cycle_proofs(
+            pair_proofs.clone(),
+            || {
+                app_control::WindowControl::new(
+                    context.egui_ctx.clone(),
+                    app_control::default_endpoint(),
+                    model_backend,
+                )
+            },
+        )));
+        Ok(Box::new(app))
+    }))
+}
+
+/// Native geometry, drawing, export and inspection providers for a window.
+/// Returns the pair-cycle proof store the window's MCP bridge shares.
+fn install_backends(
+    app: &mut multicad_ui::application::Application,
+    model_backend: GeometryBackend,
+) -> Result<multicad_model::PairCycleProofStore, String> {
     app.set_sketch_queries(std::sync::Arc::new(move || {
         let queries = match model_backend {
             GeometryBackend::OpenCascade => multicad_kernel::NativeRegionQueries::default(),
@@ -233,21 +260,12 @@ fn run_application(project: Option<PathBuf>, model_backend: GeometryBackend) -> 
     app.set_sheet_pattern_backends(std::sync::Arc::new(move || {
         Box::new(sheet_pattern::Backend::new(proofs.clone(), model_backend))
     }));
-    multicad_ui::launch_with(Box::new(move |context| {
-        app.set_file_picker(Box::new(file_picker::NativePicker::new(context)));
-        app.set_external_control(Box::new(multicad_model::with_pair_cycle_proofs(
-            pair_proofs.clone(),
-            || {
-                app_control::WindowControl::new(
-                    context.egui_ctx.clone(),
-                    app_control::default_endpoint(),
-                    model_backend,
-                )
-            },
-        )));
-        Ok(Box::new(app))
-    }))
+    Ok(pair_proofs)
 }
+
+#[cfg(test)]
+#[path = "response_harness.rs"]
+mod response_harness;
 
 #[cfg(test)]
 mod tests {

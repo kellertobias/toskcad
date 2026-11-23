@@ -3,6 +3,7 @@
 use multicad_core::{
     document::{Document, EntityId},
     drawings::{DrawingEvaluation, DrawingStamp},
+    response_trace as trace,
     schedules::ScheduleSpec,
 };
 use multicad_model::{Compiler, DrawingProviders, GeometryBackend, ModelError, Runtime, schedules};
@@ -88,7 +89,12 @@ impl Backend {
                 },
                 geometry_backend,
                 move |document, revision, tag| {
-                    reader.as_ref()?.read(document, revision, tag).map(Arc::new)
+                    let reader = reader.as_ref()?;
+                    let mut read = trace::span(trace::Stage::Query, "drawing-disk-cache");
+                    trace::set(&mut read, "revision", revision);
+                    let page = reader.read(document, revision, tag).map(Arc::new);
+                    trace::set(&mut read, "hit", page.is_some());
+                    page
                 },
                 |document, tag| {
                     if tag == 0 {
@@ -102,13 +108,19 @@ impl Backend {
                 move |document, model, tag| {
                     let revision = model.snapshot().stamp.revision;
                     let providers = DrawingProviders::default();
+                    let mut projection = trace::span(trace::Stage::Query, "drawing-projection");
+                    trace::set(&mut projection, "revision", revision);
                     let result = if tag == 0 {
                         model.drawings(document, revision, &providers)
                     } else {
                         let page = page_for_tag(document, tag)?;
                         model.drawing_page_preview(document, revision, &providers, page)
-                    }?;
+                    };
+                    trace::set(&mut projection, "ok", result.is_ok());
+                    drop(projection);
+                    let result = result?;
                     if let Some(cache) = &cache {
+                        let _write = trace::span(trace::Stage::Publication, "drawing-disk-cache");
                         cache.write(document, tag, &result);
                     }
                     Ok(Arc::new(result))

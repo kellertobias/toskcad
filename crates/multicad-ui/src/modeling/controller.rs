@@ -1969,6 +1969,10 @@ impl ModelToolController {
             .as_mut()
             .ok_or("The native modeling preview provider is unavailable")?
             .request_evaluation(prepared.prepared.document(), resources, stamp, &options)?;
+        multicad_core::response_trace::mark("model-preview-request", |record| {
+            record.insert("revision".into(), stamp.revision.into());
+            record.insert("generation".into(), stamp.generation.into());
+        });
         let instances = match request {
             ModelRequest::Placement(command) => command.instances(),
             ModelRequest::Scale(command) => command.instances(),
@@ -2102,6 +2106,11 @@ impl ModelToolController {
             if !candidate.pending || reply.stamp != candidate.stamp {
                 continue;
             }
+            let mut accept = multicad_core::response_trace::span(
+                multicad_core::response_trace::Stage::Publication,
+                "model-preview-accept",
+            );
+            multicad_core::response_trace::set(&mut accept, "generation", reply.stamp.generation);
             let result = (|| {
                 self.current(session, resources, true)?;
                 let candidate = self.candidate.as_ref().expect("matching candidate");
@@ -2163,6 +2172,8 @@ impl ModelToolController {
                 )?;
                 Ok((scene, visible))
             })();
+            multicad_core::response_trace::set(&mut accept, "ok", result.is_ok());
+            drop(accept);
             let candidate = self.candidate.as_mut().expect("matching candidate");
             candidate.pending = false;
             match result {

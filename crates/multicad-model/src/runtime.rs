@@ -4,6 +4,7 @@
 //! Unchanged feature results are reused from earlier requests through a
 //! worker-owned [`crate::EvaluationCache`].
 use crate::{Compiler, GeometryBackend, Model, ModelError, ModelSnapshot};
+use multicad_core::response_trace as trace;
 use multicad_core::{
     document::Document,
     model::{CutTargetProbeResult, EvaluationOptions, ModelQueryError},
@@ -274,6 +275,9 @@ impl<T: Send + 'static> Runtime<T> {
                             return;
                         };
                         if !slots.stop && !superseded() {
+                            trace::mark("publication-cached", |record| {
+                                record.insert("generation".into(), job.generation.into());
+                            });
                             slots.reply = Some(ModelReply {
                                 generation: job.generation,
                                 result: Ok(publication),
@@ -304,6 +308,11 @@ impl<T: Send + 'static> Runtime<T> {
                                     .ok()
                                     == Some(snapshot.stamp.source_hash)
                         });
+                    let mut compile = trace::span(trace::Stage::Compilation, "model");
+                    trace::set(&mut compile, "revision", job.revision);
+                    trace::set(&mut compile, "generation", job.generation);
+                    trace::set(&mut compile, "scoped", roots.is_some());
+                    trace::set(&mut compile, "reused", unchanged);
                     let result = if unchanged {
                         Ok(retained.take().expect("matching retained drawing model"))
                     } else {
@@ -325,11 +334,32 @@ impl<T: Send + 'static> Runtime<T> {
                             ),
                         }
                     };
+                    trace::set(&mut compile, "ok", result.is_ok());
+                    if compile.is_some() && !unchanged {
+                        let stats = cache.last_compile();
+                        trace::set(&mut compile, "evaluated", stats.evaluated.len());
+                        trace::set(&mut compile, "reused_features", stats.reused.len());
+                        trace::set(&mut compile, "uncacheable", stats.uncacheable.len());
+                        trace::set(&mut compile, "reused_full_model", stats.reused_full_model);
+                    }
+                    drop(compile);
                     if superseded() {
+                        trace::mark("superseded", |record| {
+                            record.insert("generation".into(), job.generation.into());
+                        });
                         continue;
                     }
                     let stats = (!unchanged).then(|| cache.last_compile().clone());
+                    // The model this publication replaces. Destroying a large
+                    // model takes measurable time (CAD-347), so it happens
+                    // after the reply is posted, still on this owner thread.
+                    let mut replaced = None;
                     let result = result.and_then(|model| {
+                        let mut query = (job.options.sheet_development.is_some()
+                            || !job.options.cut_targets.is_empty())
+                        .then(|| trace::span(trace::Stage::Query, "model"))
+                        .flatten();
+                        trace::set(&mut query, "generation", job.generation);
                         if let Some(part) = job.options.sheet_development {
                             model.unfold(&job.document, part).map_err(|error| {
                                 let detail = error
@@ -371,33 +401,42 @@ impl<T: Send + 'static> Runtime<T> {
                             }
                             Some(snapshot)
                         };
+                        drop(query);
                         if superseded() {
                             return Err(ModelError {
                                 entity: None,
                                 message: "Model evaluation superseded".into(),
                             });
                         }
+                        let mut publication = trace::span(trace::Stage::Publication, "publish");
+                        trace::set(&mut publication, "generation", job.generation);
                         let snapshot = publish(
                             &job.document,
                             &model,
                             queried.as_ref().unwrap_or_else(|| model.snapshot()),
                             job.tag,
-                        )?;
-                        retained = Some(model);
+                        );
+                        trace::set(&mut publication, "ok", snapshot.is_ok());
+                        drop(publication);
+                        let snapshot = snapshot?;
+                        replaced = retained.replace(model);
                         Ok(snapshot)
                     });
-                    let Ok(mut slots) = lane.slots.lock() else {
-                        return;
-                    };
-                    if !slots.stop && !superseded() {
-                        slots.stats = stats;
-                        slots.reply = Some(ModelReply {
-                            generation: job.generation,
-                            result,
-                        });
+                    {
+                        let Ok(mut slots) = lane.slots.lock() else {
+                            return;
+                        };
+                        if !slots.stop && !superseded() {
+                            slots.stats = stats;
+                            slots.reply = Some(ModelReply {
+                                generation: job.generation,
+                                result,
+                            });
+                        }
                     }
                     // All B-reps, including superseded and retained results, are
                     // created and destroyed on this owner thread.
+                    drop(replaced);
                     let _ = &retained;
                 }
             })

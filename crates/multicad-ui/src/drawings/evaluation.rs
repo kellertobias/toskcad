@@ -4,6 +4,7 @@ use multicad_core::{
     document::{Document, EntityId},
     drawings::{DrawingEvaluation, DrawingStamp},
     project_file::ContentHash,
+    response_trace as trace,
 };
 use std::sync::Arc;
 pub struct DrawingReply {
@@ -93,11 +94,14 @@ impl DrawingFeed {
         if let Some(backend) = self.backend.as_mut() {
             backend.cancel();
         }
+        let mut hash = trace::span(trace::Stage::Preparation, "drawing-source-hash");
+        trace::set(&mut hash, "revision", revision);
         let stamp = DrawingStamp {
             document: document.id(),
             revision,
             source_hash: ContentHash::document(&document)?,
         };
+        drop(hash);
         self.expected = Some(stamp);
         self.result = None;
         self.error = None;
@@ -114,6 +118,9 @@ impl DrawingFeed {
             self.result = Some(result);
             self.queued = None;
             self.pending = false;
+            trace::mark("drawing-cache-hit", |record| {
+                record.insert("revision".into(), revision.into());
+            });
             return Ok(());
         }
         let due = if self.queued.is_some() || self.pending {
@@ -155,6 +162,27 @@ impl DrawingFeed {
         {
             changed = true;
             self.pending = false;
+            trace::mark("drawing-reply", |record| {
+                record.insert("revision".into(), reply.stamp.revision.into());
+                record.insert("ok".into(), reply.result.is_ok().into());
+                if let Ok(result) = &reply.result {
+                    record.insert("views".into(), result.views.len().into());
+                    record.insert(
+                        "ready".into(),
+                        result
+                            .views
+                            .values()
+                            .filter(|view| {
+                                matches!(
+                                    view,
+                                    multicad_core::drawings::ViewEvaluation::Ready { .. }
+                                )
+                            })
+                            .count()
+                            .into(),
+                    );
+                }
+            });
             match reply.result {
                 Ok(result) if result.stamp == reply.stamp => {
                     if let Some(page) = self.page
@@ -212,6 +240,10 @@ impl DrawingFeed {
             };
             match request {
                 Ok(()) => {
+                    trace::mark("drawing-request", |record| {
+                        record.insert("revision".into(), stamp.revision.into());
+                        record.insert("page".into(), self.page.is_some().into());
+                    });
                     self.pending = true;
                     self.error = None;
                 }
