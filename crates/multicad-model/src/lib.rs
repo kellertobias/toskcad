@@ -56,6 +56,7 @@ mod sheet_unfold;
 mod sketch_support;
 mod split;
 mod surface_structure;
+mod symbol_plans;
 mod symbols;
 mod targets;
 mod threads;
