@@ -40,6 +40,8 @@ struct Handoff {
     resources: ProjectResources,
     scene: Arc<Scene>,
 }
+/// World polylines of a plan preview, or why it cannot be drawn.
+type PlanPreviewLines = Result<Vec<Vec<[f64; 3]>>, String>;
 #[derive(Default)]
 pub struct SymbolController {
     pub(super) form: Option<Form>,
@@ -62,7 +64,7 @@ pub struct SymbolController {
     placement_display: Option<Arc<Scene>>,
     /// World polylines of the aligned plan symbol being authored or edited,
     /// keyed by form version and document revision.
-    plan_preview: Option<((u64, u64), Result<Vec<Vec<[f64; 3]>>, String>)>,
+    plan_preview: Option<((u64, u64), PlanPreviewLines)>,
     pub(super) error: Option<String>,
 }
 impl SymbolController {
@@ -610,10 +612,7 @@ impl SymbolController {
         }
     }
     #[cfg(test)]
-    pub(crate) fn plan_preview_lines(
-        &mut self,
-        session: &Session,
-    ) -> Result<Vec<Vec<[f64; 3]>>, String> {
+    pub(crate) fn plan_preview_lines(&mut self, session: &Session) -> PlanPreviewLines {
         let form = self.form.as_ref().ok_or("No symbol form")?;
         super::plan_preview::world_lines(form, session)
     }

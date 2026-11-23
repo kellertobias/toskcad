@@ -301,7 +301,7 @@ fn authored_plan_symbols_replace_plan_projection_at_each_pose_and_survive_edits_
     let mut other = Session::new(Document::new("Another project").unwrap()).unwrap();
     let id = symbols::library_placement_definition(other.document(), &definition)
         .unwrap()
-        .unwrap_or_else(EntityId::new);
+        .unwrap_or_default();
     let request = SymbolPlaceRequest::from_definition(
         id,
         &definition,
@@ -483,12 +483,12 @@ fn pdf_points(bytes: &[u8]) -> Vec<[f64; 2]> {
         for line in stream[..end].lines() {
             let tokens: Vec<_> = line.split_whitespace().collect();
             for (i, t) in tokens.iter().enumerate() {
-                if (*t == "m" || *t == "l") && i >= 2 {
-                    if let (Ok(x), Ok(y)) =
+                if (*t == "m" || *t == "l")
+                    && i >= 2
+                    && let (Ok(x), Ok(y)) =
                         (tokens[i - 2].parse::<f64>(), tokens[i - 1].parse::<f64>())
-                    {
-                        points.push([x / drawings::pdf::PT_PER_MM, y / drawings::pdf::PT_PER_MM]);
-                    }
+                {
+                    points.push([x / drawings::pdf::PT_PER_MM, y / drawings::pdf::PT_PER_MM]);
                 }
             }
         }

@@ -3171,7 +3171,7 @@ fn architecture_2d_draws_authored_symbol_plans_bound_to_the_picked_canonical_ins
     use multicad_core::symbols::{self, PlanAlignment, SymbolPlan, SymbolUpdateRequest};
     let mut f = symbol_review::seed(false).unwrap();
     let [a, b] = [f.placed[0].instance, f.placed[1].instance];
-    let mut edit = |session: &mut Session, plan: Option<SymbolPlan>| {
+    let edit = |session: &mut Session, plan: Option<SymbolPlan>| {
         let current = symbols::read_definition(session.document(), f.definition).unwrap();
         let revision =
             symbols::next_revision(session.document(), current.symbol, &current.revision).unwrap();
