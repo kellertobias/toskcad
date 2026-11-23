@@ -27,6 +27,6 @@ jobs:
           persist-credentials: false
       - run: rustup show active-toolchain
       - name: Owned exact arithmetic and geometry tests
-        run: cargo test -p multicad-precision -p multicad-rust-kernel --profile coverage --locked
+        run: cargo test -p multicad-precision -p multicad-rust-kernel --profile ci --locked
       - name: Owned kernel strict lint checks
-        run: cargo clippy -p multicad-precision -p multicad-rust-kernel --all-targets --profile coverage --locked -- -D warnings
+        run: cargo clippy -p multicad-precision -p multicad-rust-kernel --all-targets --profile ci --locked -- -D warnings

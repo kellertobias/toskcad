@@ -124,8 +124,8 @@ test('native regression suites are read-only and gate publication on every platf
   assert.match(profile,/overflow-checks = true/);
   assert.match(owned,/^permissions:\n {2}contents: read$/m);
   for(const os of ['ubuntu-24.04','macos-15','windows-2025'])assert(owned.includes(os));
-  assert(owned.includes('cargo test -p multicad-precision -p multicad-rust-kernel --profile coverage --locked'));
-  assert(owned.includes('cargo clippy -p multicad-precision -p multicad-rust-kernel --all-targets --profile coverage --locked -- -D warnings'));
+  assert(owned.includes('cargo test -p multicad-precision -p multicad-rust-kernel --profile ci --locked'));
+  assert(owned.includes('cargo clippy -p multicad-precision -p multicad-rust-kernel --all-targets --profile ci --locked -- -D warnings'));
   for(const workflow of [owned,regression,release])assert.doesNotMatch(workflow,/foundation-deps|spikes\/native-foundation|native-deps|features.*occt|MULTICAD_OCCT/);
   assert.match(release,/uses: \.\/\.github\/workflows\/owned-kernel\.yml/);
 });

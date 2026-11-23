@@ -40,6 +40,10 @@ jobs:
       # disk while linking, even as line tables only. Test behaviour does not
       # depend on it; backtraces keep function names.
       CARGO_PROFILE_DEV_DEBUG: "0"
+      # Unoptimised exact geometry and its dependencies did not finish the
+      # named suites within the job limit. Optimise every crate while keeping
+      # the dev profile's debug assertions and overflow checks.
+      CARGO_PROFILE_DEV_OPT_LEVEL: "2"
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: "1"
     defaults:
