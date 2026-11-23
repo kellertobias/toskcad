@@ -245,7 +245,7 @@ fn actual_closed_hanger_candidate_emits_all_trimmed_literal_geometry() {
             started.elapsed().as_secs_f64()
         );
         std::fs::write(
-            format!("/tmp/hanger-actual-trimmed-{left}.step"),
+            std::env::temp_dir().join(format!("hanger-actual-trimmed-{left}.step")),
             file.as_str(),
         )
         .unwrap();
