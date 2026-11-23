@@ -350,6 +350,10 @@ impl<T: Send + 'static> Runtime<T> {
                         continue;
                     }
                     let stats = (!unchanged).then(|| cache.last_compile().clone());
+                    // The model this publication replaces. Destroying a large
+                    // model takes measurable time (CAD-347), so it happens
+                    // after the reply is posted, still on this owner thread.
+                    let mut replaced = None;
                     let result = result.and_then(|model| {
                         let mut query = (job.options.sheet_development.is_some()
                             || !job.options.cut_targets.is_empty())
@@ -415,21 +419,24 @@ impl<T: Send + 'static> Runtime<T> {
                         trace::set(&mut publication, "ok", snapshot.is_ok());
                         drop(publication);
                         let snapshot = snapshot?;
-                        retained = Some(model);
+                        replaced = retained.replace(model);
                         Ok(snapshot)
                     });
-                    let Ok(mut slots) = lane.slots.lock() else {
-                        return;
-                    };
-                    if !slots.stop && !superseded() {
-                        slots.stats = stats;
-                        slots.reply = Some(ModelReply {
-                            generation: job.generation,
-                            result,
-                        });
+                    {
+                        let Ok(mut slots) = lane.slots.lock() else {
+                            return;
+                        };
+                        if !slots.stop && !superseded() {
+                            slots.stats = stats;
+                            slots.reply = Some(ModelReply {
+                                generation: job.generation,
+                                result,
+                            });
+                        }
                     }
                     // All B-reps, including superseded and retained results, are
                     // created and destroyed on this owner thread.
+                    drop(replaced);
                     let _ = &retained;
                 }
             })
