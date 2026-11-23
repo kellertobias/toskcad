@@ -1148,6 +1148,143 @@ mod tests {
         assert_eq!(material, source(false, 1, true, true));
     }
     #[test]
+    fn constructed_coarse_stock_trace_refuses_the_outer_wall_without_publishing_stock() {
+        let material = source(false, 1, true, true);
+        let before = material;
+        let body = material.cavity();
+        let radius = material.radius_interval();
+        let options = Tessellation {
+            deflection: 0.1,
+            angle: 0.3,
+            triangle_limit: 1_000_000,
+        };
+        // Exact cap knots on the actual stock cylinder: the mouth ring keeps 64
+        // knots, the terminal ring keeps `knots`. Every vertex lies on the stock
+        // surface at its own trace parameter, so only the wall span can refuse.
+        let wall = |knots: usize| {
+            let w = &mut Work {
+                remaining: 16_000_000,
+                used: 0,
+                interrupt: None,
+            };
+            let mut trace = Trace::new(64 + knots, w).unwrap();
+            let mut shell = Shell {
+                mesh: DisplayMesh {
+                    vertices: vec![],
+                    indices: vec![],
+                    face_indices: vec![],
+                },
+                chord: 0.,
+                normal: 0.,
+                mouth: vec![],
+                top: vec![],
+            };
+            let mut rings: [Vec<Node>; 2] = std::array::from_fn(|_| Vec::new());
+            for (end, nodes) in rings.iter_mut().enumerate() {
+                let count = if end == 1 { knots } else { 64 };
+                for i in 0..count {
+                    let v = i as f64 / count as f64;
+                    let id = shell.mesh.vertices.len() / 3;
+                    trace
+                        .remember(id, &exact::Q::float(v, w).unwrap(), 0, w)
+                        .unwrap();
+                    let source = point(
+                        body,
+                        I::point(v),
+                        radius,
+                        I::point(end as f64 * body.full_length_mm()),
+                    );
+                    shell
+                        .mesh
+                        .vertices
+                        .extend(source.map(|a| a.lo.midpoint(a.hi)));
+                    let error = close::error(&shell.mesh, id, source);
+                    nodes.push(Node {
+                        vertex: id,
+                        angle: id,
+                        error,
+                    });
+                }
+            }
+            let ids = 0..64 + knots;
+            let bounds = |w: &mut Work<'_>| {
+                ids.clone()
+                    .map(|id| trace.bounds(id, w).map(|b| [b.lo, b.hi]))
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+            };
+            let traced = bounds(w);
+            let used = w.used;
+            let verdict = outer_wall(
+                StockSurface {
+                    body,
+                    radius,
+                    trace: &trace,
+                },
+                &mut shell,
+                &rings,
+                10,
+                options,
+                w,
+            );
+            assert_eq!(bounds(w), traced);
+            (verdict, shell, w.used - used)
+        };
+        let (verdict, shell, _) = wall(16);
+        assert_eq!(verdict, Ok(true));
+        assert_eq!(shell.mesh.face_indices.len(), 80);
+        assert!(shell.chord <= options.deflection && shell.normal <= options.angle);
+        let (verdict, shell, charged) = wall(8);
+        // A quality refusal of the stock wall, not an error: the caller must
+        // discard the scratch shell and propose another chart.
+        assert_eq!(verdict, Ok(false));
+        assert!(charged > 0);
+        assert!(shell.mesh.face_indices.len() < 72);
+        assert_eq!(material, before);
+
+        // The same refusal kind from the actual traced stock: a wall target the
+        // 64-knot rings cannot certify yields Verdict::Refine (never Radial at
+        // the strip cap or an error), and assemble publishes no candidate.
+        let target = Tessellation {
+            angle: 0.01,
+            ..options
+        };
+        let w = &mut Work {
+            remaining: 16_000_000,
+            used: 0,
+            interrupt: None,
+        };
+        let (shell, trace) = chart::traced_shell(body, options, 1, 64, w)
+            .unwrap()
+            .unwrap();
+        let Prepared { shell, caps } = close::prepare(shell, body, options, w).unwrap().unwrap();
+        let mut oriented = shell.clone();
+        for triangle in oriented.mesh.indices.as_chunks_mut::<3>().0 {
+            triangle.swap(1, 2);
+        }
+        let mut verdicts = Vec::new();
+        let mut strips = 1;
+        loop {
+            let mut scratch = oriented.clone();
+            let verdict =
+                stock_boundary(&material, &mut scratch, &caps, &trace, target, strips, w).unwrap();
+            let radial = matches!(verdict, radial::Verdict::Radial);
+            verdicts.push(verdict);
+            if !radial || strips >= radial::MAX_STRIPS {
+                break;
+            }
+            strips *= 2;
+        }
+        assert!(matches!(verdicts.as_slice(), [.., radial::Verdict::Refine]));
+        let failed = w.used;
+        assert_eq!(
+            assemble(&material, Prepared { shell, caps }, trace, target, w).map(|c| c.is_none()),
+            Ok(true)
+        );
+        assert!(w.used > failed);
+        assert_eq!(material, before);
+    }
+    #[test]
     fn nonzero_exact_stock_origin_is_retained_while_candidates_are_stock_relative() {
         let original = source(false, 1, true, true);
         let origin = [
