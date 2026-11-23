@@ -1082,3 +1082,308 @@ fn panel_stock_on_an_explicit_material_and_old_projects_keep_their_colors() {
         "the fixture's explicit Birch color stays"
     );
 }
+
+// ---- CAD-385: "Based on sketch" profile stock through the section modal ----
+
+/// Click the control whose accessible value is `value` (a combo box shows
+/// its selection as its value).
+fn click_value(
+    ctx: &egui::Context,
+    editor: &mut LibraryEditor,
+    s: &mut Session,
+    size: egui::Vec2,
+    value: &str,
+) {
+    let output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+            focused: true,
+            ..Default::default()
+        },
+        |ui| editor.show_inline(ui, s, &Default::default(), true),
+    );
+    let bounds = output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find_map(|(_, node)| {
+            (node.value() == Some(value))
+                .then(|| node.bounds())
+                .flatten()
+        })
+        .unwrap_or_else(|| panic!("no control showing {value}"));
+    output.drop_without_applying_deltas();
+    let pos = egui::pos2(
+        ((bounds.x0 + bounds.x1) / 2.) as f32,
+        ((bounds.y0 + bounds.y1) / 2.) as f32,
+    );
+    for pressed in [true, false] {
+        render(
+            ctx,
+            editor,
+            s,
+            size,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ],
+        );
+    }
+}
+
+fn draft_stock(editor: &LibraryEditor) -> Stock {
+    let Some(LibraryDefinition::Stock(stock)) =
+        read(&editor.draft.as_ref().unwrap().entity).unwrap()
+    else {
+        panic!("stock draft")
+    };
+    stock
+}
+fn part_volume(s: &Session, part: EntityId) -> f64 {
+    multicad_model::Compiler::default()
+        .compile(s.document(), s.revision())
+        .unwrap()
+        .solid(part)
+        .unwrap()
+        .volume_mm3()
+        .unwrap()
+}
+fn escape() -> Vec<egui::Event> {
+    vec![egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]
+}
+
+#[test]
+fn based_on_sketch_opens_the_section_modal_and_cancel_or_finish_returns_to_the_same_stock() {
+    let mut fixture = shared_fixture::fixture().unwrap();
+    let stock_id = fixture.stocks[2];
+    let mut editor = editor(&fixture.session);
+    editor.select(
+        &fixture.session,
+        fixture.session.document().get(stock_id).unwrap().clone(),
+    );
+    let before = fixture.session.document().clone();
+    let original = draft_stock(&editor);
+    let volume = part_volume(&fixture.session, fixture.parts[2]);
+    let size = egui::vec2(1100., 900.);
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    crate::theme::configure(&ctx);
+    for _ in 0..3 {
+        render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    }
+    let choose_sketch = |ctx: &egui::Context, editor: &mut LibraryEditor, s: &mut Session| {
+        click_value(ctx, editor, s, size, "Rectangular");
+        click_label(ctx, editor, s, size, "Based on sketch");
+        render(ctx, editor, s, size, vec![]);
+    };
+    choose_sketch(&ctx, &mut editor, &mut fixture.session);
+    assert!(
+        editor.section_editor().is_some(),
+        "the section modal opened"
+    );
+    assert_eq!(draft_stock(&editor), original, "the draft waits for Finish");
+    let (labels, texts, _) = render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    assert!(labels.iter().any(|l| l == "Finish") && labels.iter().any(|l| l == "Line"));
+    assert!(
+        texts
+            .iter()
+            .any(|(t, _)| t.starts_with("Valid section · 30 × 20 mm")),
+        "the preset seeds the sketch: {texts:?}"
+    );
+    // Cancel on an untouched new section leaves nothing behind.
+    render(&ctx, &mut editor, &mut fixture.session, size, escape());
+    assert!(editor.section_editor().is_none());
+    assert_eq!(draft_stock(&editor), original);
+    assert!(!editor.dirty());
+    assert_eq!(fixture.session.document(), &before);
+    // Finish returns the solved sketch to the same stock draft.
+    choose_sketch(&ctx, &mut editor, &mut fixture.session);
+    click_label(&ctx, &mut editor, &mut fixture.session, size, "Finish");
+    assert!(editor.section_editor().is_none());
+    let stock = draft_stock(&editor);
+    let StockKind::Profile {
+        shape: ProfileShape::Sketch,
+        section: Some(section),
+        width_mm,
+        height_mm,
+        wall_mm: None,
+        ..
+    } = &stock.specification
+    else {
+        panic!("sketch stock draft: {:?}", stock.specification)
+    };
+    assert_eq!([*width_mm, *height_mm], [30., 20.]);
+    assert!(!section.sketch.curves.is_empty());
+    let (_, texts, _) = render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    assert!(
+        texts
+            .iter()
+            .any(|(t, _)| t.starts_with("Custom section · 30 × 20 mm")),
+        "the stock form shows the returned section"
+    );
+    assert_eq!(
+        fixture.session.document(),
+        &before,
+        "nothing commits before Apply"
+    );
+    let revision = fixture.session.revision();
+    apply(&mut editor, &mut fixture.session).unwrap();
+    assert_eq!(fixture.session.revision(), revision + 1, "one transaction");
+    // The seeded tube equals the preset: same member geometry, now owned by
+    // the sketch.
+    assert!((part_volume(&fixture.session, fixture.parts[2]) - volume).abs() < 1e-6);
+    let committed = fixture.session.document().clone();
+    fixture
+        .session
+        .undo(fixture.session.revision(), Actor::local(Channel::Ui))
+        .unwrap();
+    assert_eq!(fixture.session.document(), &before);
+    fixture
+        .session
+        .redo(fixture.session.revision(), Actor::local(Channel::Ui))
+        .unwrap();
+    assert_eq!(fixture.session.document(), &committed);
+}
+
+#[test]
+fn reopened_section_dimensions_rebuild_the_member_and_invalid_sections_cannot_finish() {
+    use multicad_core::project_file::{self, ProjectFile};
+    let mut fixture = shared_fixture::fixture().unwrap();
+    let stock_id = fixture.stocks[2];
+    let mut editor = editor(&fixture.session);
+    let select = |editor: &mut LibraryEditor, s: &Session| {
+        editor.select(s, s.document().get(stock_id).unwrap().clone());
+    };
+    select(&mut editor, &fixture.session);
+    let size = egui::vec2(1100., 900.);
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    crate::theme::configure(&ctx);
+    for _ in 0..3 {
+        render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    }
+    click_value(&ctx, &mut editor, &mut fixture.session, size, "Rectangular");
+    click_label(
+        &ctx,
+        &mut editor,
+        &mut fixture.session,
+        size,
+        "Based on sketch",
+    );
+    render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    click_label(&ctx, &mut editor, &mut fixture.session, size, "Finish");
+    apply(&mut editor, &mut fixture.session).unwrap();
+    // Reopen the owned sketch and change the 30 mm width dimension.
+    select(&mut editor, &fixture.session);
+    for _ in 0..2 {
+        render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    }
+    click_label(
+        &ctx,
+        &mut editor,
+        &mut fixture.session,
+        size,
+        "Edit section sketch…",
+    );
+    render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    let modal = editor.section_editor().expect("reopened section");
+    assert!(!modal.touched());
+    let (width, _) = modal
+        .dimension_fields()
+        .iter()
+        .find(|(_, f)| f.text == "30")
+        .cloned()
+        .expect("the width dimension is retained");
+    modal.set_dimension(width, "40");
+    assert!((modal.status().unwrap().size_mm[0] - 40.).abs() < 1e-6);
+    click_label(&ctx, &mut editor, &mut fixture.session, size, "Finish");
+    let StockKind::Profile { width_mm, .. } = draft_stock(&editor).specification else {
+        unreachable!()
+    };
+    assert!((width_mm - 40.).abs() < 1e-6);
+    apply(&mut editor, &mut fixture.session).unwrap();
+    // The dependent member follows its stock's edited section.
+    let expected = (40. * 20. - 26. * 16.) * 200.;
+    assert!((part_volume(&fixture.session, fixture.parts[2]) - expected).abs() < 1e-6);
+    // Save and reopen keeps the owned sketch, its dimension and geometry.
+    let saved = fixture.session.document().clone();
+    let project = ProjectFile::new(saved.clone()).unwrap();
+    assert!(
+        project
+            .capabilities()
+            .contains(multicad_core::materials::SKETCH_PROFILE_CAPABILITY)
+    );
+    let mut bytes = vec![];
+    project_file::write(&project, &mut bytes, Default::default()).unwrap();
+    let reopened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project
+    .document;
+    assert_eq!(reopened, saved);
+    let reopened = Session::new(reopened).unwrap();
+    assert!((part_volume(&reopened, fixture.parts[2]) - expected).abs() < 1e-6);
+    // An opened outline cannot finish; the stock keeps its valid section.
+    select(&mut editor, &fixture.session);
+    render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    click_label(
+        &ctx,
+        &mut editor,
+        &mut fixture.session,
+        size,
+        "Edit section sketch…",
+    );
+    render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    let modal = editor.section_editor().unwrap();
+    let edge = modal
+        .sketch()
+        .curves
+        .iter()
+        .find(|c| {
+            matches!(
+                c.kind,
+                multicad_core::constraint_sketch::CurveKind::Line { .. }
+            )
+        })
+        .unwrap()
+        .id;
+    modal.select(Some(edge));
+    modal.delete_selected();
+    let error = modal.status().unwrap_err();
+    assert!(error.contains("open"), "{error}");
+    let (_, texts, _) = render(&ctx, &mut editor, &mut fixture.session, size, vec![]);
+    assert!(
+        texts
+            .iter()
+            .any(|(t, _)| t.contains("The section outline is open"))
+    );
+    click_label(&ctx, &mut editor, &mut fixture.session, size, "Finish");
+    assert!(
+        editor.section_editor().is_some(),
+        "Finish is disabled for an open outline"
+    );
+    render(&ctx, &mut editor, &mut fixture.session, size, escape());
+    assert!(editor.section_editor().is_none());
+    assert!(
+        !editor.dirty(),
+        "cancelling an edit leaves the stored section"
+    );
+    assert_eq!(fixture.session.document(), &saved);
+}

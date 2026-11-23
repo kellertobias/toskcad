@@ -1,6 +1,7 @@
 //! Native, source-neutral catalog and selected-part metadata editor.
 mod library;
 mod part;
+mod section_editor;
 mod tag_input;
 use eframe::egui;
 pub use library::LibraryEditor;
