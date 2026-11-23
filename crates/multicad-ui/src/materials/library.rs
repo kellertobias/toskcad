@@ -303,6 +303,7 @@ impl LibraryEditor {
                     height_mm: 30.,
                     wall_mm: None,
                     shape: ProfileShape::Rectangular,
+                    section: None,
                 },
             ),
         }
@@ -1196,6 +1197,7 @@ fn stock_default(i: usize) -> StockKind {
             height_mm: 30.,
             wall_mm: Some(2.),
             shape: ProfileShape::Rectangular,
+            section: None,
         },
         _ => StockKind::Print {
             process: "FDM".into(),
@@ -1256,6 +1258,7 @@ fn stock_controls(ui: &mut egui::Ui, s: &mut StockKind, solid_rectangular: bool)
             height_mm,
             wall_mm,
             shape,
+            section: _,
         } => {
             let designation_label = ui.label("Designation");
             ui.text_edit_singleline(designation)
@@ -1266,6 +1269,7 @@ fn stock_controls(ui: &mut egui::Ui, s: &mut StockKind, solid_rectangular: bool)
                 ProfileShape::Round => "Round",
                 ProfileShape::Angle => "Angle",
                 ProfileShape::ItemLine8_40x40 => "item Line 8 40×40",
+                ProfileShape::Sketch => "Based on sketch",
             };
             if !solid_rectangular {
                 egui::ComboBox::from_id_salt("profile-shape")

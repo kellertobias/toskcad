@@ -586,6 +586,7 @@ mod tests {
                 height_mm: 30.,
                 wall_mm: Some(2.),
                 shape: ProfileShape::Rectangular,
+                section: None,
             },
         })
         .entity(EntityId::new(), "SHS 30")
@@ -650,6 +651,7 @@ mod tests {
                 height_mm: 40.,
                 wall_mm: None,
                 shape: ProfileShape::Rectangular,
+                section: None,
             },
         })
         .entity(EntityId::new(), "Timber 20 × 40")

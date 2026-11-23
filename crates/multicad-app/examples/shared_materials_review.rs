@@ -100,6 +100,7 @@ pub fn fixture() -> Result<Fixture, Error> {
                 height_mm: 20.,
                 wall_mm: Some(2.),
                 shape: ProfileShape::Rectangular,
+                section: None,
             },
         ),
     ];

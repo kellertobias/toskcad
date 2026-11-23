@@ -414,10 +414,16 @@ fn section_sample(painter: &egui::Painter, rect: Rect, profile: &ProfileSection)
                             center: [cx, cy],
                             a,
                             b,
+                            clockwise,
                         } => {
                             let start = (a[1] - cy).portable_atan2(a[0] - cx);
                             let end = (b[1] - cy).portable_atan2(b[0] - cx);
-                            let sweep = (end - start).rem_euclid(std::f64::consts::TAU);
+                            let ccw = (end - start).rem_euclid(std::f64::consts::TAU);
+                            let sweep = if clockwise {
+                                ccw - std::f64::consts::TAU
+                            } else {
+                                ccw
+                            };
                             let radius = (a[0] - cx).portable_hypot(a[1] - cy);
                             let points = (0..=12).map(|i| {
                                 let angle = start + sweep * f64::from(i) / 12.;

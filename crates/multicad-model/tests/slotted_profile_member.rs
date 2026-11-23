@@ -64,6 +64,7 @@ fn line_8_member_has_four_native_open_grooves_through_core_and_stable_datums() {
             height_mm: 40.,
             wall_mm: None,
             shape: ProfileShape::ItemLine8_40x40,
+            section: None,
         },
     };
     let valid_stock = LibraryDefinition::Stock(stock.clone())

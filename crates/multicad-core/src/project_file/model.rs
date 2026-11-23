@@ -415,6 +415,9 @@ impl ProjectFile {
         if crate::materials::requires_item_line_8_profile(&self.document) {
             required.insert(crate::materials::ITEM_LINE_8_PROFILE_CAPABILITY.into());
         }
+        if crate::materials::requires_sketch_profile(&self.document) {
+            required.insert(crate::materials::SKETCH_PROFILE_CAPABILITY.into());
+        }
         if self.document.entities().any(|entity| matches!(&entity.data,EntityData::Extension{definition,..} if matches!(definition.type_id.as_str(),crate::symbols::DEFINITION_TYPE|crate::symbols::INSTANCE_TYPE))) {
             required.insert(crate::symbols::CAPABILITY.into());
         }
@@ -514,6 +517,7 @@ pub fn supported_capabilities() -> BTreeSet<String> {
         crate::constraint_sketch::source::V3_CAPABILITY.into(),
         crate::materials::CAPABILITY.into(),
         crate::materials::ITEM_LINE_8_PROFILE_CAPABILITY.into(),
+        crate::materials::SKETCH_PROFILE_CAPABILITY.into(),
         crate::inspection::CAPABILITY.into(),
         crate::constraint_sketch::source::V4_CAPABILITY.into(),
         crate::constraint_sketch::text::CAPABILITY.into(),

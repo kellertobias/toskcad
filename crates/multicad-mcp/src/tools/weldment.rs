@@ -340,6 +340,7 @@ pub(super) fn create_profile_stock(
                     ProfileShapeArg::Round => ProfileShape::Round,
                     ProfileShapeArg::Angle => ProfileShape::Angle,
                 },
+                section: None,
             },
         })
         .entity(EntityId::new(), args.name.clone())

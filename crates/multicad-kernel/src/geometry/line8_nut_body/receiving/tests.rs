@@ -16,6 +16,7 @@ fn resolved(start: Point, end: Point) -> ResolvedMember {
             height_mm: 40.,
             wall_mm: None,
             shape: ProfileShape::ItemLine8_40x40,
+            section: None,
         },
     };
     let delta = std::array::from_fn::<_, 3, _>(|i| end[i] - start[i]);
@@ -42,11 +43,16 @@ fn edges(wire: &SectionLoop) -> Vec<crate::CurvedEdge2d> {
             .iter()
             .map(|edge| match *edge {
                 SectionEdge::Line { a, b } => crate::CurvedEdge2d::Line { a, b },
-                SectionEdge::Arc { center, a, b } => crate::CurvedEdge2d::Arc {
+                SectionEdge::Arc {
                     center,
                     a,
                     b,
-                    clockwise: false,
+                    clockwise,
+                } => crate::CurvedEdge2d::Arc {
+                    center,
+                    a,
+                    b,
+                    clockwise,
                 },
             })
             .collect(),
