@@ -53,7 +53,7 @@ fn source(left: bool, width: f64) -> Material {
     .unwrap()
 }
 #[test]
-fn actual_tail_stock_trace_repartitions_without_losing_failed_work_or_source() {
+fn actual_unshifted_tail_chart_refusal_keeps_failed_work_and_source() {
     let options = Tessellation {
         deflection: 0.1,
         angle: 0.3,
@@ -65,21 +65,28 @@ fn actual_tail_stock_trace_repartitions_without_losing_failed_work_or_source() {
         used: 0,
         interrupt: None,
     };
-    let Attempt::Complete((shell, trace)) =
-        chart::traced_grid_attempt(material.cavity(), options, &Grid::new(), &mut work).unwrap()
-    else {
-        panic!("actual unshifted source chart must qualify")
-    };
-    let prepared = close::prepare(shell, material.cavity(), options, &mut work)
-        .unwrap()
-        .unwrap();
-    assert!(
-        assemble(&material, prepared, trace, options, &mut work)
+    // General refusal of the first (unshifted, 64-row) chart at whatever stage
+    // refuses it. Under portable maths band 1's knot is one ulp off row 24, so
+    // the chart repartitions before closure; the assembler's stock-trace
+    // refusal is covered directly by
+    // constructed_coarse_stock_trace_refuses_the_outer_wall_without_publishing_stock.
+    let first =
+        match chart::traced_grid_attempt(material.cavity(), options, &Grid::new(), &mut work)
             .unwrap()
-            .is_none()
-    );
+        {
+            Attempt::Complete((shell, trace)) => {
+                match close::prepare(shell, material.cavity(), options, &mut work).unwrap() {
+                    Some(prepared) => {
+                        assemble(&material, prepared, trace, options, &mut work).unwrap()
+                    }
+                    None => None,
+                }
+            }
+            Attempt::Refine | Attempt::Repartition => None,
+        };
+    assert!(first.is_none());
     let failed_work = work.used;
-    assert!(failed_work > 1_000_000);
+    assert_eq!(failed_work, 582_905);
     let before = material;
     let calls = std::cell::Cell::new(0usize);
     let count = || {
