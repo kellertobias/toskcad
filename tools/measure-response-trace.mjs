@@ -6,8 +6,9 @@
 //
 // Times are in-process: an input starts when a frame first sees it and a
 // result is visible when that frame's commands are encoded for presentation.
-// Operating-system queueing before the frame and display scan-out after
-// encoding are outside this trace; measure-native-input.mjs covers them.
+// Operating-system queueing before the frame and display presentation after
+// encoding are outside this trace; --native joins the presentation times a
+// measure-native-input.mm probe recorded in the same process.
 import {readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 
@@ -34,6 +35,8 @@ export function parseResponseTrace(text) {
   return rows;
 }
 
+// A trace without any paint record comes from the headless harness: there a
+// result counts as shown when the frame that accepted it finished building.
 function frameTable(rows) {
   const frames = new Map();
   const get = frame => frames.get(frame) ?? frames.set(frame,{frame}).get(frame);
@@ -42,7 +45,10 @@ function frameTable(rows) {
     if (row.phase==='frame-built') get(row.frame).built=row.t;
     if (row.phase==='frame-encoded') get(row.frame).encoded ??= row.t;
   }
-  return [...frames.values()].filter(f=>Number.isFinite(f.begin)&&Number.isFinite(f.built)).sort((a,b)=>a.begin-b.begin);
+  const headless = !rows.some(row=>row.phase==='frame-encoded');
+  const table = [...frames.values()].filter(f=>Number.isFinite(f.begin)&&Number.isFinite(f.built)).sort((a,b)=>a.begin-b.begin);
+  if (headless) for (const frame of table) frame.encoded = frame.built;
+  return {frames:table, headless};
 }
 
 // The frame whose build contains `t`, else the first frame that begins after it.
@@ -64,10 +70,29 @@ const completion = {
 };
 const doneAt = row => row.phase==='span' ? row.end : row.t;
 const succeeded = row => row.phase==='span' ? row.ok!==false : row.ok!==false && row.current!==false;
+const outcomeOf = (row, visible) => row.current===false ? 'superseded' : !succeeded(row) ? 'failed' : visible ? 'visible' : 'handled, not painted';
 
-export function summarizeResponseTrace(text, {from=-Infinity, through=Infinity}={}) {
+// Join a measure-native-input.mm trace from the same process. Its k-th
+// drawable is this trace's k-th encoded frame; the clocks differ by a constant
+// that must agree across every pair, or the join is refused.
+export function joinNativePresentation(frames, nativeText) {
+  const drawables = nativeText.trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(row=>row.phase==='frame-presented').sort((a,b)=>a.frame-b.frame);
+  const encoded = frames.filter(frame=>Number.isFinite(frame.encoded));
+  if (drawables.length!==encoded.length) throw new Error(`Native trace has ${drawables.length} drawables for ${encoded.length} encoded frames`);
+  const offsets = encoded.map((frame,index)=>drawables[index].acquired-frame.encoded).sort((a,b)=>a-b);
+  const spread = offsets.at(-1)-offsets[0];
+  if (!(spread<=.001)) throw new Error(`Native and in-app frame clocks disagree by ${ms(spread).toFixed(3)} ms`);
+  const offset = offsets[Math.floor(offsets.length/2)];
+  encoded.forEach((frame,index)=>{ if (drawables[index].presented>0) frame.presented = drawables[index].presented-offset; });
+  const latency = drawables.filter(d=>d.presented>0).map(d=>ms(d.presented-d.acquired));
+  return {pairs:encoded.length, clockSpreadMs:ms(spread), acquireToPresentMs:distribution(latency)};
+}
+
+export function summarizeResponseTrace(text, {from=-Infinity, through=Infinity, native}={}) {
   const rows = parseResponseTrace(text);
-  const frames = frameTable(rows);
+  const {frames, headless} = frameTable(rows);
+  if (native && headless) throw new Error('A headless trace has no frames to join with a native trace');
+  const presentation = native ? joinNativePresentation(frames, native) : null;
   const inputs = rows.filter(r=>r.phase==='input' && ACTIONS.has(r.kind) && r.t>=from && r.t<=through);
   const feedback = [];
   const unpainted = [];
@@ -93,10 +118,11 @@ export function summarizeResponseTrace(text, {from=-Infinity, through=Infinity}=
       steps.push(next.phase);
       done = completion[next.phase](rows,next);
     }
-    const trigger = [...rows].reverse().find(r=>r.phase==='input' && ACTIONS.has(r.kind) && r.t<=request.t);
-    const start = trigger ? frames.find(f=>f.frame===trigger.frame)?.begin ?? trigger.t : request.t;
+    // The cause is the latest operator input, or harness action, before the request.
+    const trigger = [...rows].reverse().find(r=>((r.phase==='input' && ACTIONS.has(r.kind)) || r.phase==='harness-action') && r.t<=request.t);
+    const start = trigger?.phase==='input' ? frames.find(f=>f.frame===trigger.frame)?.begin ?? trigger.t : trigger?.t ?? request.t;
     const chain = {request:steps.join(' > '), revision:request.revision ?? null, generation:request.generation ?? null,
-      trigger:trigger ? {sequence:trigger.sequence, kind:trigger.kind, detail:trigger.detail ?? null, msBeforeRequest:ms(request.t-trigger.t)} : null};
+      trigger:trigger ? {sequence:trigger.sequence ?? null, kind:trigger.kind ?? 'harness', detail:trigger.detail ?? trigger.label ?? null, msBeforeRequest:ms(request.t-trigger.t)} : null};
     if (!done) { chains.push({...chain, outcome:'unanswered'}); continue; }
     const visible = visibleAfter(frames, doneAt(done));
     const end = visible?.encoded ?? doneAt(done);
@@ -115,8 +141,9 @@ export function summarizeResponseTrace(text, {from=-Infinity, through=Infinity}=
       if (!enclosed) stages[span.stage] += ms(Math.min(span.end,end)-Math.max(span.start,start));
     }
     const framesBetween = frames.filter(f=>f.begin>=start && f.built<=end);
-    chains.push({...chain, outcome:succeeded(done) ? (visible ? 'visible' : 'handled, not painted') : 'failed',
+    chains.push({...chain, outcome:outcomeOf(done, visible),
       totalMs:ms(end-start), resultHandledMs:ms(doneAt(done)-start),
+      presentedMs: Number.isFinite(visible?.presented) ? ms(visible.presented-start) : null,
       paintMs: visible ? ms(visible.encoded-visible.built) : null,
       longestFrameBuildMs: framesBetween.length ? Math.max(...framesBetween.map(f=>ms(f.built-f.begin))) : null,
       stagesMs:stages, spansMs:labels});
@@ -124,7 +151,11 @@ export function summarizeResponseTrace(text, {from=-Infinity, through=Infinity}=
   const statuses = rows.filter(r=>r.phase==='frame-built' && r.status!==undefined && r.t>=from && r.t<=through).map(r=>({t:r.t, mode:r.mode, status:r.status}));
   const cancels = rows.filter(r=>['preparation-cancel','superseded'].includes(r.phase) && r.t>=from && r.t<=through).map(r=>({phase:r.phase, t:r.t}));
   return {
-    scope:'in-process: frame that first sees an input to the encoded frame that shows its result; excludes OS queueing and display scan-out',
+    scope: headless
+      ? 'headless harness: action to the end of the frame that accepted its result; no window, GPU upload, presentation or OS input'
+      : 'in-process: frame that first sees an input to the encoded frame that shows its result; excludes OS queueing and display scan-out',
+    headless,
+    presentation,
     build:{version:rows[0].product_version, commit:rows[0].commit ?? null, pid:rows[0].pid},
     frames:{count:selectedFrames.length,
       buildMs:distribution(selectedFrames.map(f=>ms(f.built-f.begin))),
@@ -136,7 +167,8 @@ export function summarizeResponseTrace(text, {from=-Infinity, through=Infinity}=
 
 if (import.meta.url===pathToFileURL(process.argv[1] ?? '').href) {
   const [path,...flags] = process.argv.slice(2);
-  if (!path) { console.error('Usage: node tools/measure-response-trace.mjs TRACE.jsonl [--from SECONDS] [--through SECONDS]'); process.exit(2); }
-  const option = name => { const index=flags.indexOf(name); return index<0 ? undefined : Number(flags[index+1]); };
-  console.log(JSON.stringify(summarizeResponseTrace(readFileSync(path,'utf8'),{from:option('--from') ?? -Infinity, through:option('--through') ?? Infinity}),null,2));
+  if (!path) { console.error('Usage: node tools/measure-response-trace.mjs TRACE.jsonl [--native NATIVE.jsonl] [--from SECONDS] [--through SECONDS]'); process.exit(2); }
+  const option = name => { const index=flags.indexOf(name); return index<0 ? undefined : flags[index+1]; };
+  const native = option('--native');
+  console.log(JSON.stringify(summarizeResponseTrace(readFileSync(path,'utf8'),{from:Number(option('--from') ?? -Infinity), through:Number(option('--through') ?? Infinity), native:native && readFileSync(native,'utf8')}),null,2));
 }
