@@ -42,7 +42,11 @@ pub(crate) fn navigate_with_plane(
     if already_applied {
         return;
     }
-    let eligible = ui.is_enabled() && !ui.ctx().egui_wants_keyboard_input();
+    // Keyboard focus in an Inspector or sidebar field must not block pointer
+    // navigation that starts over the viewport (CAD-371). Drags that start in
+    // another widget never reach this response, and a hover is required for
+    // wheel and trackpad input.
+    let eligible = ui.is_enabled();
     let hovered = eligible && response.hovered();
     let native = ui.ctx().data_mut(|data| {
         data.remove_temp::<NativeOrbit>(egui::Id::new("native-trackpad-frame"))

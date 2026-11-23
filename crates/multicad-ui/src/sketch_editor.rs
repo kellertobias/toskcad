@@ -1301,6 +1301,10 @@ impl SketchEditor {
     pub(crate) fn cancel_model_stock(&mut self) -> bool {
         self.model.cancel_stock_editor()
     }
+    #[cfg(test)]
+    pub(crate) fn primitive_envelope(&self, session: &Session) -> Option<[[f64; 3]; 8]> {
+        self.model.primitive_envelope(session)
+    }
     pub(crate) fn primitive_corner_input_focused(&self) -> bool {
         self.model.primitive_corner_input_focused()
     }

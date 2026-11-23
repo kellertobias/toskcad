@@ -5112,3 +5112,6 @@ const RIBBON_BOTTOM_PAD: f32 = 2.0;
 #[cfg(test)]
 #[path = "application/open_fit_tests.rs"]
 mod open_fit_tests;
+#[cfg(test)]
+#[path = "application/viewport_focus_tests.rs"]
+mod viewport_focus_tests;
