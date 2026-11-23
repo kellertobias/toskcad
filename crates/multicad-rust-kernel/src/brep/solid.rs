@@ -5,6 +5,7 @@ use super::{
 };
 use super::{crosses_ray, mesh, point_triangle};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// The largest admitted number of faces, edges or vertices in one solid.
 pub const MAX_ELEMENTS: usize = 100_000;
@@ -322,6 +323,88 @@ fn prepare_boundary(
     Ok((boundary, samples))
 }
 
+/// Faces below which one thread integrates them all.
+const PARALLEL_FACES: usize = 8;
+
+/// `f` of every face index, computed on up to eight threads. Each result is
+/// stored at its index, so the caller combines them in the same order as a
+/// sequential loop and every face's own arithmetic is unchanged: the
+/// results are bit-identical whatever the thread count. The interrupt is
+/// polled on the calling thread before each face it takes, as the
+/// sequential loop did; once it fires, or once a face fails, faces not yet
+/// started stay `None`.
+fn each_face<T: Send>(
+    count: usize,
+    interrupt: Interrupt<'_>,
+    f: &(dyn Fn(usize) -> Result<T> + Sync),
+) -> Vec<Option<Result<T>>> {
+    let workers = std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .min(8)
+        .min(count / PARALLEL_FACES.max(1));
+    let mut output: Vec<Option<Result<T>>> = (0..count).map(|_| None).collect();
+    if workers < 2 {
+        for (index, slot) in output.iter_mut().enumerate() {
+            if checkpoint(interrupt).is_err() {
+                break;
+            }
+            let result = f(index);
+            let failed = result.is_err();
+            *slot = Some(result);
+            if failed {
+                break;
+            }
+        }
+        return output;
+    }
+    let next = AtomicUsize::new(0);
+    let stop = AtomicBool::new(false);
+    let take = || {
+        (!stop.load(Ordering::Relaxed))
+            .then(|| next.fetch_add(1, Ordering::Relaxed))
+            .filter(|&index| index < count)
+    };
+    // The caller stops at the first failed face, and every lower index
+    // was handed out before it, so no further face is needed.
+    let run = |index: usize| {
+        let result = f(index);
+        if result.is_err() {
+            stop.store(true, Ordering::Relaxed);
+        }
+        (index, result)
+    };
+    let work = || {
+        let mut done = Vec::new();
+        while let Some(index) = take() {
+            done.push(run(index));
+        }
+        done
+    };
+    let finished = std::thread::scope(|scope| {
+        let helpers: Vec<_> = (1..workers).map(|_| scope.spawn(work)).collect();
+        let mut done = Vec::new();
+        loop {
+            if checkpoint(interrupt).is_err() {
+                stop.store(true, Ordering::Relaxed);
+                break;
+            }
+            let Some(index) = take() else { break };
+            done.push(run(index));
+        }
+        for helper in helpers {
+            match helper.join() {
+                Ok(more) => done.extend(more),
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        }
+        done
+    });
+    for (index, result) in finished {
+        output[index] = Some(result);
+    }
+    output
+}
+
 impl Solid {
     /// Validate the boundary and integrate its properties. `tolerance` is
     /// the largest admitted gap between a vertex, its edges and their faces.
@@ -333,15 +416,21 @@ impl Solid {
         let mut domains = Vec::with_capacity(boundary.faces.len());
         let mut faces = Vec::with_capacity(boundary.faces.len());
         let mut error = 0.;
-        for (index, face) in boundary.faces.iter().enumerate() {
-            checkpoint(interrupt)?;
-            let integrated =
-                domain::build(&boundary, index, &samples, tolerance).and_then(|domain| {
-                    let coarse = mass::integrate(&boundary, face, &domain, anchor, 1, tolerance)?;
-                    let fine = mass::integrate(&boundary, face, &domain, anchor, 2, tolerance)?;
-                    ensure(fine[1].is_finite() && fine[1] > 0., Error::Invalid)?;
-                    Ok((domain, coarse, fine))
-                });
+        let integrate = |index: usize| {
+            let face = &boundary.faces[index];
+            domain::build(&boundary, index, &samples, tolerance).and_then(|domain| {
+                let coarse = mass::integrate(&boundary, face, &domain, anchor, 1, tolerance)?;
+                let fine = mass::integrate(&boundary, face, &domain, anchor, 2, tolerance)?;
+                ensure(fine[1].is_finite() && fine[1] > 0., Error::Invalid)?;
+                Ok((domain, coarse, fine))
+            })
+        };
+        let mut integrated = each_face(boundary.faces.len(), interrupt, &integrate);
+        for index in 0..boundary.faces.len() {
+            // A face left unintegrated was stopped by the interrupt.
+            let Some(integrated) = integrated[index].take() else {
+                return Err(Error::Cancelled);
+            };
             let (domain, coarse, fine) = match integrated {
                 // A face whose edges coincide within the tolerance bounds no
                 // region. Writers emit such slivers between faces that meet
