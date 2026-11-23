@@ -335,6 +335,13 @@ impl<T: Send + 'static> Runtime<T> {
                         }
                     };
                     trace::set(&mut compile, "ok", result.is_ok());
+                    if compile.is_some() && !unchanged {
+                        let stats = cache.last_compile();
+                        trace::set(&mut compile, "evaluated", stats.evaluated.len());
+                        trace::set(&mut compile, "reused_features", stats.reused.len());
+                        trace::set(&mut compile, "uncacheable", stats.uncacheable.len());
+                        trace::set(&mut compile, "reused_full_model", stats.reused_full_model);
+                    }
                     drop(compile);
                     if superseded() {
                         trace::mark("superseded", |record| {
