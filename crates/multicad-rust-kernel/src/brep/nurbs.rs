@@ -52,34 +52,42 @@ fn homogeneous(points: &[Point], weights: Option<&[f64]>) -> Result<Vec<Homogene
         .collect()
 }
 
-/// Nonzero basis functions of `degree` on the knot span `span`.
-fn values(knots: &[f64], span: usize, degree: usize, t: f64) -> Vec<f64> {
-    let mut current = vec![1.];
+/// Room for the nonzero basis functions of the largest admitted degree.
+const BASIS: usize = MAX_DEGREE + 1;
+
+/// Span index, basis values and basis derivatives at `t`; the first
+/// `degree + 1` entries of each array are the nonzero ones.
+///
+/// The Cox-de Boor triangle is built once on the stack. Its row of
+/// `degree - 1` gives the lower-degree values the derivatives need, and
+/// every row is formed by the same operations in the same order as a
+/// separate evaluation of that degree, so both are bit-identical to it.
+fn basis(knots: &[f64], degree: usize, t: f64) -> (usize, [f64; BASIS], [f64; BASIS]) {
+    let count = knots.len() - degree - 1;
+    let t = t.clamp(knots[degree], knots[count]);
+    // The last span in `degree..count` whose knot does not exceed `t`, as
+    // a scan up from `degree` finds it; knots never decrease.
+    let above = degree + 1 + knots[degree + 1..count].partition_point(|&knot| t >= knot);
+    let span = above - 1;
+    let mut value = [0.; BASIS];
+    value[0] = 1.;
+    let mut lower = value;
+    let mut next = [0.; BASIS];
     for j in 1..=degree {
-        let mut next = vec![0.; j + 1];
+        if j == degree {
+            lower = value;
+        }
+        next[..=j].fill(0.);
         for r in 0..j {
             let i = span + 1 + r - j;
-            let w = current[r] / (knots[i + j] - knots[i]);
+            let w = value[r] / (knots[i + j] - knots[i]);
             next[r + 1] += (t - knots[i]) * w;
             next[r] += (knots[i + j] - t) * w;
         }
-        current = next;
+        value[..=j].copy_from_slice(&next[..=j]);
     }
-    current
-}
-
-/// Span index, basis values and basis derivatives at `t`.
-fn basis(knots: &[f64], degree: usize, t: f64) -> (usize, Vec<f64>, Vec<f64>) {
-    let count = knots.len() - degree - 1;
-    let t = t.clamp(knots[degree], knots[count]);
-    let mut span = degree;
-    while span + 1 < count && t >= knots[span + 1] {
-        span += 1;
-    }
-    let value = values(knots, span, degree, t);
-    let lower = values(knots, span, degree - 1, t);
-    let mut derivative = vec![0.; degree + 1];
-    for (m, slot) in derivative.iter_mut().enumerate() {
+    let mut derivative = [0.; BASIS];
+    for (m, slot) in derivative[..=degree].iter_mut().enumerate() {
         let i = span + m - degree;
         if m >= 1 {
             *slot += lower[m - 1] / (knots[i + degree] - knots[i]);
@@ -326,7 +334,7 @@ impl NurbsSurface {
         let row = |end: usize, j: usize| -> Homogeneous {
             let (span, values, _) = &ends[end];
             let mut sum = [0.; 4];
-            for (k, &value) in values.iter().enumerate() {
+            for (k, &value) in values[..=self.degrees[axis]].iter().enumerate() {
                 accumulate(&mut sum, control(span + k - self.degrees[axis], j), value);
             }
             sum
@@ -478,5 +486,101 @@ impl NurbsSurface {
             }
         }
         Some(patches)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The allocating Cox-de Boor evaluation the stack triangle replaced.
+    fn reference_values(knots: &[f64], span: usize, degree: usize, t: f64) -> Vec<f64> {
+        let mut current = vec![1.];
+        for j in 1..=degree {
+            let mut next = vec![0.; j + 1];
+            for r in 0..j {
+                let i = span + 1 + r - j;
+                let w = current[r] / (knots[i + j] - knots[i]);
+                next[r + 1] += (t - knots[i]) * w;
+                next[r] += (knots[i + j] - t) * w;
+            }
+            current = next;
+        }
+        current
+    }
+
+    fn reference_basis(knots: &[f64], degree: usize, t: f64) -> (usize, Vec<f64>, Vec<f64>) {
+        let count = knots.len() - degree - 1;
+        let t = t.clamp(knots[degree], knots[count]);
+        let mut span = degree;
+        while span + 1 < count && t >= knots[span + 1] {
+            span += 1;
+        }
+        let value = reference_values(knots, span, degree, t);
+        let lower = reference_values(knots, span, degree - 1, t);
+        let mut derivative = vec![0.; degree + 1];
+        for (m, slot) in derivative.iter_mut().enumerate() {
+            let i = span + m - degree;
+            if m >= 1 {
+                *slot += lower[m - 1] / (knots[i + degree] - knots[i]);
+            }
+            if m < degree {
+                *slot -= lower[m] / (knots[i + degree + 1] - knots[i + 1]);
+            }
+            *slot *= degree as f64;
+        }
+        (span, value, derivative)
+    }
+
+    /// Every degree, clamped and unclamped knots with repeated interior
+    /// knots, parameters on and between knots and outside the range: the
+    /// stack basis is bit-identical to the allocating one.
+    #[test]
+    fn stack_basis_is_bit_identical_to_the_allocating_evaluation() {
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut unit = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1_u64 << 53) as f64
+        };
+        let mut checked = 0;
+        for degree in 1..=MAX_DEGREE {
+            for clamped in [true, false] {
+                let count = degree + 1 + (degree % 5);
+                let mut knots = Vec::new();
+                let mut knot = -1.7;
+                while knots.len() < count + degree + 1 {
+                    let repeat = if clamped && (knots.is_empty() || knots.len() >= count) {
+                        degree + 1
+                    } else if unit() < 0.2 {
+                        2
+                    } else {
+                        1
+                    };
+                    for _ in 0..repeat.min(count + degree + 1 - knots.len()) {
+                        knots.push(knot);
+                    }
+                    knot += 0.1 + unit();
+                }
+                let [low, high] = [knots[degree], knots[count]];
+                let mut parameters: Vec<f64> = knots.clone();
+                parameters.extend([low - 1., high + 1., low, high]);
+                parameters.extend((0..40).map(|_| low + (high - low) * unit()));
+                for t in parameters {
+                    let (span, value, derivative) = basis(&knots, degree, t);
+                    let (expected, values, derivatives) = reference_basis(&knots, degree, t);
+                    assert_eq!(span, expected);
+                    for (got, want) in [(&value, &values), (&derivative, &derivatives)] {
+                        assert!(got[degree + 1..].iter().all(|&v| v.to_bits() == 0));
+                        for (a, b) in got[..=degree].iter().zip(want.iter()) {
+                            assert_eq!(a.to_bits(), b.to_bits(), "degree {degree} at {t}");
+                        }
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 2_000);
     }
 }
