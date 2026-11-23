@@ -176,6 +176,8 @@ schema is generated from the Rust argument types with schemars and returned by
 | `import_symbol` | yes | Embed one pinned definition from a scoped `.tcd` Library |
 | `place_symbol` | yes | Native-preflighted placement with exposed parameter overrides |
 | `edit_symbol_instance` | yes | Replace exposed overrides while retaining the pin and identities |
+| `symbol_plan` | no | A generic symbol's fixed plan sketch, alignment, candidate template sketches and instance copies |
+| `edit_symbol_plan` | yes | Choose, align or remove a generic symbol's fixed plan as an explicit new revision |
 | `list_parameters` | no | Expression, unit, evaluated value, role and exposure of project parameters; symbol-private parameters are omitted |
 | `set_parameter` | yes | Create a parameter, or edit the one with that name |
 | `create_sketch` | yes | Empty sketch on the `xy`, `xz` or `yz` origin plane |
@@ -717,6 +719,21 @@ preserves the pin, placement and materialized identities. Placement and editing
 evaluate the complete candidate natively before one attributable commit or
 owner review. Invalid geometry, stale revisions and cancellation leave source
 unchanged.
+
+`symbol_plan` and `edit_symbol_plan` read and change the fixed simplified plan
+of a generic library part or assembly (CAD-364). The plan is a sketch captured
+in the definition template plus an alignment: rotate it by `rotation_deg`
+counter-clockwise about the symbol's local Z, then shift it by `offset_mm`
+along local X and Y. Plan projections (Architecture 2D and plan drawings,
+including PDF/DXF/SVG export) draw that linework at each instance's current
+pose instead of projecting the detailed 3D content; elevations, sections, 3D
+views and picking keep the model, and every vector names the same canonical
+instance. `edit_symbol_plan` is the Inspector's plan editor transaction: an
+explicit new definition revision (`revision`, or the next free label) that
+updates every placed instance in one undoable step while keeping identities,
+overrides and placements. `plan: null` removes the plan. Other linework needs
+a newly authored revision. Walls, fences, plants and equipment keep their own
+plan representations.
 
 ## Gear control
 

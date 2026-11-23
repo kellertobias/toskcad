@@ -116,9 +116,13 @@ use gears::{gear_profiles, inspect_gear, set_gear};
 pub use mechanical_parts::{InspectMechanicalPartArgs, MechanicalPartArgs};
 use mechanical_parts::{inspect_mechanical_part, mechanical_part_profiles, set_mechanical_part};
 pub use symbols::{
-    EditSymbolInstanceArgs, ImportSymbolArgs, PlaceLibrarySymbolArgs, PlaceSymbolArgs,
+    EditSymbolInstanceArgs, EditSymbolPlanArgs, ImportSymbolArgs, PlaceLibrarySymbolArgs,
+    PlaceSymbolArgs, SymbolPlanArgs, SymbolPlanChoiceArgs,
 };
-use symbols::{edit_symbol_instance, import_symbol, place_library_symbol, place_symbol};
+use symbols::{
+    edit_symbol_instance, edit_symbol_plan, import_symbol, place_library_symbol, place_symbol,
+    symbol_plan,
+};
 pub use text::{
     AddTextArgs, EditTextArgs, RemoveTextArgs, TextAlignmentArg, TextAnchorArg, TextFontArg,
     TextStyleArgs,
@@ -393,6 +397,12 @@ tools! {
     "edit_symbol_instance" => EditSymbolInstanceArgs, "Configure symbol instance", false,
         "Configure a placed instance or ownership record through canonical exposed overrides, preserving its pin, identities and placement. overrides is a required REPLACEMENT map, not a partial patch: omitted keys inherit pinned defaults and an empty map restores all defaults. Keys are exposed template IDs, never private materialized IDs. Native preflight, revision, cancellation and owner review guards apply; direct private-source edits remain refused.",
         edit_symbol_instance;
+    "symbol_plan" => SymbolPlanArgs, "Read symbol plan representation", true,
+        "Read an embedded generic symbol definition's fixed simplified plan: its plan sketch, alignment (offset_mm along local X/Y, rotation_deg about local Z, applied rotation first) and the template sketches it may use, plus each placed instance's owned copy. Accepts a definition, placed instance or ownership record ID.",
+        symbol_plan;
+    "edit_symbol_plan" => EditSymbolPlanArgs, "Edit symbol plan representation", false,
+        "Choose, align or remove (plan: null) the fixed plan symbol of an embedded generic symbol definition as an explicit new revision; every placed instance updates to it in one undoable transaction, keeping identities, overrides and placements. The sketch must be captured in the definition template; author a new revision to add other linework. Plan projections then draw that sketch at each instance's pose; 3D views and picking keep the detailed model. Walls, fences, plants and equipment keep their own plans. Native preflight, revision and owner review guards apply.",
+        edit_symbol_plan;
     "gear_profiles" => NoArgs, "Gear profile coverage", true,
         "Read supported gear families, primary dimension/profile sources and limits. Unsupported families and pair placement are explicit.",
         gear_profiles;
