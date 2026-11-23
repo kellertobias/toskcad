@@ -324,24 +324,32 @@ fn prepare_boundary(
 }
 
 /// Faces below which one thread integrates them all.
-const PARALLEL_FACES: usize = 8;
+pub(super) const PARALLEL_FACES: usize = 8;
 
-/// `f` of every face index, computed on up to eight threads. Each result is
+/// Threads that integrate `count` faces: one below `2 * PARALLEL_FACES`,
+/// otherwise up to eight.
+fn face_workers(count: usize) -> usize {
+    std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .min(8)
+        .min(count / PARALLEL_FACES.max(1))
+}
+
+/// `f` of every face index, computed on `workers` threads. Each result is
 /// stored at its index, so the caller combines them in the same order as a
 /// sequential loop and every face's own arithmetic is unchanged: the
 /// results are bit-identical whatever the thread count. The interrupt is
 /// polled on the calling thread before each face it takes, as the
-/// sequential loop did; once it fires, or once a face fails, faces not yet
-/// started stay `None`.
-fn each_face<T: Send>(
+/// sequential loop did. Once a face fails, faces not yet started stay
+/// `None`. Once the interrupt fires, faces not yet started stay `None` on
+/// one thread; on several, helpers may already have finished every face,
+/// so all results are dropped and the caller reports cancellation.
+pub(super) fn each_face<T: Send>(
     count: usize,
+    workers: usize,
     interrupt: Interrupt<'_>,
     f: &(dyn Fn(usize) -> Result<T> + Sync),
 ) -> Vec<Option<Result<T>>> {
-    let workers = std::thread::available_parallelism()
-        .map_or(1, usize::from)
-        .min(8)
-        .min(count / PARALLEL_FACES.max(1));
     let mut output: Vec<Option<Result<T>>> = (0..count).map(|_| None).collect();
     if workers < 2 {
         for (index, slot) in output.iter_mut().enumerate() {
@@ -380,11 +388,16 @@ fn each_face<T: Send>(
         }
         done
     };
+    if checkpoint(interrupt).is_err() {
+        return output;
+    }
+    let cancelled = AtomicBool::new(false);
     let finished = std::thread::scope(|scope| {
         let helpers: Vec<_> = (1..workers).map(|_| scope.spawn(work)).collect();
         let mut done = Vec::new();
         loop {
             if checkpoint(interrupt).is_err() {
+                cancelled.store(true, Ordering::Relaxed);
                 stop.store(true, Ordering::Relaxed);
                 break;
             }
@@ -399,6 +412,9 @@ fn each_face<T: Send>(
         }
         done
     });
+    if cancelled.into_inner() {
+        return output;
+    }
     for (index, result) in finished {
         output[index] = Some(result);
     }
@@ -409,6 +425,17 @@ impl Solid {
     /// Validate the boundary and integrate its properties. `tolerance` is
     /// the largest admitted gap between a vertex, its edges and their faces.
     pub fn new(boundary: Boundary, tolerance: f64, interrupt: Interrupt<'_>) -> Result<Self> {
+        let workers = face_workers(boundary.faces.len());
+        Self::build(boundary, tolerance, interrupt, workers)
+    }
+
+    /// [`Solid::new`] integrating its faces on `workers` threads.
+    pub(super) fn build(
+        boundary: Boundary,
+        tolerance: f64,
+        interrupt: Interrupt<'_>,
+        workers: usize,
+    ) -> Result<Self> {
         let (boundary, samples) =
             prepare_boundary(boundary, tolerance, interrupt, Preparation::Full)?;
         let anchor = *boundary.vertices.first().ok_or(Error::Invalid)?;
@@ -425,7 +452,7 @@ impl Solid {
                 Ok((domain, coarse, fine))
             })
         };
-        let mut integrated = each_face(boundary.faces.len(), interrupt, &integrate);
+        let mut integrated = each_face(boundary.faces.len(), workers, interrupt, &integrate);
         for index in 0..boundary.faces.len() {
             // A face left unintegrated was stopped by the interrupt.
             let Some(integrated) = integrated[index].take() else {

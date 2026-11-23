@@ -3411,3 +3411,120 @@ fn a_seeded_inversion_decides_alike_for_a_translated_copy() {
         assert!(found[0] < 0.5, "{shift:?}: {found:?}");
     }
 }
+
+/// Every bit `Solid::new` derives from its faces, for comparing builds.
+fn integrated_bits(solid: &Solid) -> Vec<u64> {
+    let [low, high] = solid.bounds_mm();
+    let mut bits = vec![
+        solid.volume_mm3().to_bits(),
+        solid.volume_error_mm3().to_bits(),
+    ];
+    bits.extend(low.iter().chain(&high).map(|value| value.to_bits()));
+    for face in solid.faces() {
+        bits.push(face.area_mm2.to_bits());
+        bits.push(face.flux_mm3.to_bits());
+        bits.extend(face.centroid_mm.iter().map(|value| value.to_bits()));
+    }
+    bits
+}
+
+#[test]
+fn parallel_face_integration_is_bit_identical_to_one_thread() {
+    let mut large = 0;
+    for text in [DRILLED, STANDOFF, BUMPS, WEDGES, DISC, VOID, VASE] {
+        for boundary in read_boundaries(text, TOLERANCE).unwrap() {
+            let faces = boundary.faces.len();
+            large += usize::from(faces >= 2 * solid::PARALLEL_FACES);
+            let alone = Solid::build(boundary.clone(), TOLERANCE, None, 1).unwrap();
+            let expected = integrated_bits(&alone);
+            assert_eq!(expected.len(), 8 + 5 * faces);
+            for workers in [2, 3, 8, faces + 3] {
+                let shared = Solid::build(boundary.clone(), TOLERANCE, None, workers).unwrap();
+                assert_eq!(
+                    integrated_bits(&shared),
+                    expected,
+                    "{faces} faces, {workers}"
+                );
+            }
+            // The default worker choice for this machine agrees too.
+            let default = Solid::new(boundary, TOLERANCE, None).unwrap();
+            assert_eq!(integrated_bits(&default), expected);
+        }
+    }
+    assert!(large >= 1, "no fixture has enough faces to run in parallel");
+}
+
+#[test]
+fn parallel_faces_keep_order_first_failure_and_cancellation() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let value = |index: usize| -> Result<f64> {
+        match index {
+            23 => Err(Error::Unsupported),
+            41 => Err(Error::Invalid),
+            _ => Ok((index as f64 * 0.1).portable_sin()),
+        }
+    };
+    // What the ordered caller sees: every result up to the first failure.
+    let prefix = |output: Vec<Option<Result<f64>>>| {
+        let mut seen = Vec::new();
+        for slot in output {
+            let result = slot.expect("a face before the first failure was skipped");
+            let failed = result.is_err();
+            seen.push(result.map(f64::to_bits));
+            if failed {
+                break;
+            }
+        }
+        seen
+    };
+    let expected = prefix(solid::each_face(64, 1, None, &value));
+    assert_eq!(expected.len(), 24);
+    assert_eq!(expected[23], Err(Error::Unsupported));
+    for workers in [2, 3, 8, 70] {
+        assert_eq!(
+            prefix(solid::each_face(64, workers, None, &value)),
+            expected
+        );
+        let all = solid::each_face(30, workers, None, &|index| value(index % 17 + 24));
+        let all: Vec<_> = all.into_iter().map(|slot| slot.unwrap().unwrap()).collect();
+        let alone = solid::each_face(30, 1, None, &|index| value(index % 17 + 24));
+        let alone: Vec<_> = alone
+            .into_iter()
+            .map(|slot| slot.unwrap().unwrap())
+            .collect();
+        assert_eq!(
+            all.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            alone.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+        );
+        // An interrupt that fires on its third poll leaves faces unstarted.
+        let polls = AtomicUsize::new(0);
+        let stop = || polls.fetch_add(1, Ordering::Relaxed) >= 2;
+        // Helpers may finish every face before the caller polls a third
+        // time; otherwise the whole result is dropped.
+        let cancelled = solid::each_face(64, workers, Some(&stop), &value);
+        if cancelled.iter().any(Option::is_some) {
+            assert_eq!(prefix(cancelled), expected);
+        }
+        let stopped = solid::each_face(64, workers, Some(&|| true), &value);
+        assert!(stopped.iter().all(Option::is_none));
+    }
+    // One thread keeps the faces it finished before the third poll.
+    let polls = AtomicUsize::new(0);
+    let stop = || polls.fetch_add(1, Ordering::Relaxed) >= 2;
+    let cancelled = solid::each_face(64, 1, Some(&stop), &value);
+    assert_eq!(cancelled.iter().filter(|slot| slot.is_some()).count(), 2);
+    assert!(
+        solid::each_face(64, 1, Some(&|| true), &value)
+            .iter()
+            .all(Option::is_none)
+    );
+    for workers in [2, 8] {
+        let polls = AtomicUsize::new(0);
+        let stop = || polls.fetch_add(1, Ordering::Relaxed) >= 2;
+        let boundary = read_boundaries(DRILLED, TOLERANCE).unwrap().remove(0);
+        assert_eq!(
+            Solid::build(boundary, TOLERANCE, Some(&stop), workers).unwrap_err(),
+            Error::Cancelled
+        );
+    }
+}
