@@ -25,6 +25,14 @@ is defined in Project → Materials or with `create_profile_stock`, and holds:
   - **round**: a circular hollow section (CHS) when it has a wall,
     otherwise a round bar. Width and height are both the outside diameter;
   - **angle**: an L section. The wall is the leg thickness and is required;
+  - **based on sketch** (CAD-385): a custom section the stock owns as an
+    editable constraint sketch (lines, arcs, circles, dimensions). It must
+    enclose one closed outline, optionally with holes; open, crossing,
+    separate, island, spline and text sections are refused. Width and height
+    are the sketch's exact bounding box. Section dimensions are numbers, not
+    project-parameter expressions, so the stored solved geometry stays
+    canonical. Files with such stock require
+    `materials.profile.sketch_section.1`;
 - the section width and height;
 - the wall, optional except for angles;
 - the bar length the stock is supplied in;
@@ -289,7 +297,8 @@ contract for BOM, cut-list and weld schedule exports (CAD-89).
 - **Window.** Model → Weld → **Weld joint**. Attach a weld to a
   connection, or reopen one; switch to Sequence to order the welds with Up,
   Down, Remove and Add. Weld plans are placed through MCP for now.
-- **MCP.** `create_profile_stock`, `create_members`, `edit_member`,
+- **MCP.** `create_profile_stock` (including `shape: "sketch"`),
+  `edit_profile_stock_section`, `create_members`, `edit_member`,
   `connect_members`, `weldment_cut_list`, `set_weld`, `set_weld_sequence`,
   `weld_schedule` and `place_weld_plan`.
 
@@ -299,8 +308,13 @@ contract for BOM, cut-list and weld schedule exports (CAD-89).
   arcs or 3D sketches. A sketch-line path is solved without external
   reference geometry, so a path sketch that projects model edges is not
   yet supported.
-- **Sections.** Rectangular, round and angle sections with sharp corners;
-  no channels, beams or custom profile sketches.
+- **Sections.** Rectangular, round and angle sections with sharp corners,
+  and custom sections based on a sketch. No standard channel or beam
+  catalog. A custom section cannot receive a cope (it has no exact grown
+  outline) or be the continuing member of a butt joint; arc-sided custom
+  sections cannot be mitered by the Rust evaluator. Custom sections butt
+  onto flat faces and straight-sided ones miter. Weld cut perimeters of
+  arc-sided custom sections are measured on points at most 1° apart.
 - **Path changes in the window.** A sketch-line member cannot be moved to
   another line from the form; edit the sketch or recreate the member.
 - **Connections.**

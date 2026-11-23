@@ -27,6 +27,55 @@ pub enum ProfileShapeArg {
     Rectangular,
     Round,
     Angle,
+    /// A custom cross-section drawn with `section` or given as `section_sketch`.
+    Sketch,
+}
+/// One element of a custom profile section, in section-plane millimeters.
+/// Endpoints at the same coordinates join; together the elements must
+/// enclose one closed outline, optionally with holes.
+#[derive(Clone, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SectionShapeArg {
+    Rectangle {
+        corner_mm: [f64; 2],
+        opposite_mm: [f64; 2],
+    },
+    Circle {
+        center_mm: [f64; 2],
+        radius_mm: f64,
+    },
+    /// A closed polygon; do not repeat the first vertex.
+    Polygon {
+        vertices_mm: Vec<[f64; 2]>,
+    },
+    Line {
+        start_mm: [f64; 2],
+        end_mm: [f64; 2],
+    },
+    /// A circular arc from start to end about center (counterclockwise
+    /// unless `clockwise`); start and end must be equally far from center.
+    Arc {
+        center_mm: [f64; 2],
+        start_mm: [f64; 2],
+        end_mm: [f64; 2],
+        #[serde(default)]
+        clockwise: bool,
+    },
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditProfileSectionArgs {
+    pub expected_revision: u64,
+    /// Sketch-based profile stock to change.
+    pub stock: String,
+    /// Replace the section with these drawn elements.
+    #[serde(default)]
+    pub section: Option<Vec<SectionShapeArg>>,
+    /// Replace the section with this canonical constraint sketch (points,
+    /// curves, constraints with literal dimensions), e.g. the stock's stored
+    /// `section.sketch` with a changed dimension value. It is re-solved.
+    #[serde(default)]
+    pub section_sketch: Option<Value>,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -39,12 +88,23 @@ pub struct ProfileStockArgs {
     pub material: Option<String>,
     #[serde(default)]
     pub material_name: Option<String>,
-    /// rectangular (SHS/RHS tube or flat bar), round (CHS tube or round bar) or angle.
+    /// rectangular (SHS/RHS tube or flat bar), round (CHS tube or round bar),
+    /// angle, or sketch (a custom section from `section` or `section_sketch`).
     pub shape: ProfileShapeArg,
-    /// Section width; for round stock the outside diameter.
-    pub width_mm: f64,
-    /// Section height; for round stock equal to the width.
-    pub height_mm: f64,
+    /// Section width; for round stock the outside diameter. Derived from the
+    /// section for sketch stock.
+    #[serde(default)]
+    pub width_mm: Option<f64>,
+    /// Section height; for round stock equal to the width. Derived from the
+    /// section for sketch stock.
+    #[serde(default)]
+    pub height_mm: Option<f64>,
+    /// Sketch stock: the drawn section elements.
+    #[serde(default)]
+    pub section: Option<Vec<SectionShapeArg>>,
+    /// Sketch stock: a canonical constraint sketch instead of `section`.
+    #[serde(default)]
+    pub section_sketch: Option<Value>,
     /// Tube wall or angle leg thickness. Omit for a solid bar; required for an angle.
     #[serde(default)]
     pub wall_mm: Option<f64>,
@@ -327,26 +387,69 @@ pub(super) fn create_profile_stock(
                 ));
             }
         };
-        let stock = LibraryDefinition::Stock(Stock {
-            material,
-            specification: StockKind::Profile {
+        let specification = if matches!(args.shape, ProfileShapeArg::Sketch) {
+            if args.wall_mm.is_some() {
+                return Err(ToolError::invalid(
+                    "Sketch stock has no wall_mm; draw holes in the section instead",
+                ));
+            }
+            let solved = section_sketch(args.section.as_deref(), args.section_sketch.as_ref())?;
+            let [w, h] = solved.section.size_mm;
+            for (given, derived, name) in [
+                (args.width_mm, w, "width_mm"),
+                (args.height_mm, h, "height_mm"),
+            ] {
+                if given.is_some_and(|g| {
+                    (g - derived).abs() > materials::SKETCH_PROFILE_SIZE_TOLERANCE_MM
+                }) {
+                    return Err(ToolError::invalid(format!(
+                        "{name} is derived from the section ({derived} mm); omit it or give the same value"
+                    )));
+                }
+            }
+            sketch_spec(
+                args.name.clone(),
+                args.bar_length_mm.unwrap_or(6000.),
+                solved,
+            )
+        } else {
+            if args.section.is_some() || args.section_sketch.is_some() {
+                return Err(ToolError::invalid(
+                    "section and section_sketch need shape \"sketch\"",
+                ));
+            }
+            let (Some(width_mm), Some(height_mm)) = (args.width_mm, args.height_mm) else {
+                return Err(ToolError::invalid(
+                    "Give width_mm and height_mm for rectangular, round and angle stock",
+                ));
+            };
+            StockKind::Profile {
                 designation: args.name.clone(),
                 length_mm: args.bar_length_mm.unwrap_or(6000.),
-                width_mm: args.width_mm,
-                height_mm: args.height_mm,
+                width_mm,
+                height_mm,
                 wall_mm: args.wall_mm,
                 shape: match args.shape {
                     ProfileShapeArg::Rectangular => ProfileShape::Rectangular,
                     ProfileShapeArg::Round => ProfileShape::Round,
-                    ProfileShapeArg::Angle => ProfileShape::Angle,
+                    ProfileShapeArg::Angle | ProfileShapeArg::Sketch => ProfileShape::Angle,
                 },
-            },
+                section: None,
+            }
+        };
+        let stock = LibraryDefinition::Stock(Stock {
+            material,
+            specification,
         })
         .entity(EntityId::new(), args.name.clone())
-        .map_err(|_| {
-            ToolError::invalid(
-                "Invalid profile stock: sizes must be positive, round stock needs width = height, an angle needs wall_mm, and twice the wall must fit the section",
-            )
+        .map_err(|e| {
+            if matches!(args.shape, ProfileShapeArg::Sketch) {
+                ToolError::invalid(format!("Invalid sketch profile stock: {e}"))
+            } else {
+                ToolError::invalid(
+                    "Invalid profile stock: sizes must be positive, round stock needs width = height, an angle needs wall_mm, and twice the wall must fit the section",
+                )
+            }
         })?;
         let stock_id = stock.id;
         entities.push(stock);
@@ -743,4 +846,163 @@ pub(super) fn weldment_cut_list(host: &dyn Host, call: &Request, _: super::NoArg
             "volume_mm3": r.volume_mm3, "fits_stock": r.fits_stock, "issues": r.issues,
         })).collect::<Vec<_>>(),
     }))
+}
+
+/// Build and solve a section from drawn elements or a canonical sketch.
+fn section_sketch(
+    shapes: Option<&[SectionShapeArg]>,
+    canonical: Option<&Value>,
+) -> Result<multicad_solver::profile_section::SolvedSection, ToolError> {
+    use multicad_core::{
+        constraint_sketch::Sketch,
+        sketch_draw::{DrawInput, DrawRequest, PointInput},
+    };
+    use multicad_solver::profile_section::{draw_section, solve_profile_section};
+    let sketch = match (shapes, canonical) {
+        (Some(shapes), None) => {
+            if shapes.is_empty() {
+                return Err(ToolError::invalid("Give at least one section element"));
+            }
+            let mut sketch = Sketch::default();
+            for shape in shapes {
+                // Endpoints at existing coordinates reuse that point, so
+                // separately given lines and arcs join into loops.
+                let at = |sketch: &Sketch, p: [f64; 2]| {
+                    sketch
+                        .points
+                        .iter()
+                        .find(|q| q.position_mm == p)
+                        .map_or(PointInput::Position(p), |q| PointInput::Existing(q.id))
+                };
+                let input = match shape.clone() {
+                    SectionShapeArg::Rectangle {
+                        corner_mm,
+                        opposite_mm,
+                    } => DrawInput::Rectangle {
+                        a: at(&sketch, corner_mm),
+                        b: at(&sketch, opposite_mm),
+                    },
+                    SectionShapeArg::Circle {
+                        center_mm,
+                        radius_mm,
+                    } => DrawInput::Circle {
+                        center: at(&sketch, center_mm),
+                        radius_mm,
+                    },
+                    SectionShapeArg::Polygon { vertices_mm } => DrawInput::Polyline {
+                        vertices: vertices_mm.iter().map(|p| at(&sketch, *p)).collect(),
+                        closed: true,
+                    },
+                    SectionShapeArg::Line { start_mm, end_mm } => DrawInput::Line {
+                        start: at(&sketch, start_mm),
+                        end: at(&sketch, end_mm),
+                    },
+                    SectionShapeArg::Arc {
+                        center_mm,
+                        start_mm,
+                        end_mm,
+                        clockwise,
+                    } => DrawInput::Arc {
+                        center: at(&sketch, center_mm),
+                        start: at(&sketch, start_mm),
+                        end: at(&sketch, end_mm),
+                        clockwise,
+                    },
+                };
+                sketch = draw_section(
+                    &sketch,
+                    &DrawRequest {
+                        input,
+                        construction: false,
+                    },
+                )
+                .map_err(ToolError::invalid)?;
+            }
+            sketch
+        }
+        (None, Some(value)) => serde_json::from_value::<Sketch>(value.clone()).map_err(|e| {
+            ToolError::invalid(format!("section_sketch is not a constraint sketch: {e}"))
+        })?,
+        _ => {
+            return Err(ToolError::invalid(
+                "Give exactly one of section or section_sketch for sketch stock",
+            ));
+        }
+    };
+    solve_profile_section(&sketch).map_err(ToolError::invalid)
+}
+
+fn sketch_spec(
+    designation: String,
+    length_mm: f64,
+    solved: multicad_solver::profile_section::SolvedSection,
+) -> StockKind {
+    let [width_mm, height_mm] = solved.section.size_mm;
+    StockKind::Profile {
+        designation,
+        length_mm,
+        width_mm,
+        height_mm,
+        wall_mm: None,
+        shape: ProfileShape::Sketch,
+        section: Some(Box::new(materials::ProfileSketch {
+            sketch: solved.sketch,
+        })),
+    }
+}
+
+/// Replace the owned section of sketch-based profile stock. Members using
+/// the stock are rebuilt natively before the one transaction commits.
+pub(super) fn edit_profile_stock_section(
+    host: &dyn Host,
+    call: &Request,
+    args: EditProfileSectionArgs,
+) -> ToolResult {
+    let call = call.clone();
+    with(host, move |target| {
+        revision_guard(target, args.expected_revision)?;
+        let session = target.session();
+        let stock_id = id(&args.stock)?;
+        let entity = session
+            .document()
+            .get(stock_id)
+            .ok_or_else(|| ToolError::invalid(format!("{} is not in the document", args.stock)))?;
+        let Some(LibraryDefinition::Stock(stock)) = materials::read(entity)? else {
+            return Err(ToolError::invalid(format!("{} is not stock", args.stock)));
+        };
+        let StockKind::Profile {
+            designation,
+            length_mm,
+            shape: ProfileShape::Sketch,
+            ..
+        } = &stock.specification
+        else {
+            return Err(ToolError::invalid(
+                "Only sketch-based profile stock has an editable section",
+            ));
+        };
+        let solved = section_sketch(args.section.as_deref(), args.section_sketch.as_ref())?;
+        let edited = LibraryDefinition::Stock(Stock {
+            material: stock.material,
+            specification: sketch_spec(designation.clone(), *length_mm, solved),
+        });
+        let mut replacement = entity.clone();
+        let EntityData::Extension { definition, .. } = &mut replacement.data else {
+            unreachable!("stock is an extension")
+        };
+        definition.data =
+            serde_json::to_value(&edited).map_err(|e| ToolError::invalid(e.to_string()))?;
+        edited
+            .validate()
+            .map_err(|e| ToolError::invalid(e.to_string()))?;
+        let prepared = materials::prepare_library(
+            session,
+            args.expected_revision,
+            call.actor.clone(),
+            &[replacement],
+        )?;
+        compile(prepared.document(), args.expected_revision + 1, &call)?;
+        let revision = commit(target, &call, prepared)?;
+        Ok(json!({ "revision": revision, "stock": stock_id }))
+    })?
 }

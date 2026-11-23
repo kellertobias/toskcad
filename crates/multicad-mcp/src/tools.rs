@@ -169,12 +169,12 @@ use walls::{
     set_vertical_cutout, set_wall_opening,
 };
 pub use weldment::{
-    ConnectArgs, EditMemberArgs, MembersArgs, ProfileStockArgs, SequenceArgs, WeldArgs,
-    WeldPlanArgs,
+    ConnectArgs, EditMemberArgs, EditProfileSectionArgs, MembersArgs, ProfileStockArgs,
+    SequenceArgs, WeldArgs, WeldPlanArgs,
 };
 use weldment::{
-    connect_members, create_members, create_profile_stock, edit_member, place_weld_plan, set_weld,
-    set_weld_sequence, weld_schedule, weldment_cut_list,
+    connect_members, create_members, create_profile_stock, edit_member, edit_profile_stock_section,
+    place_weld_plan, set_weld, set_weld_sequence, weld_schedule, weldment_cut_list,
 };
 
 pub type ToolResult = Result<Value, ToolError>;
@@ -642,8 +642,11 @@ tools! {
         "Write a render scene's Parts as NAME.glb (glTF 2.0 in meters, assembly groups, shared instance meshes, appearances, the scene camera and KHR_lights_punctual lights) and NAME.render.json (scope, units, revision, lights in Blender units, excluded aids, notes) into the export folder, built from the current native model. MultiCAD does not render; Blender does.",
         blender_handoff;
     "create_profile_stock" => ProfileStockArgs, "Create profile stock", false,
-        "Create tube, bar or angle profile stock (rectangular SHS/RHS or flat bar, round CHS or round bar, angle) with section size, optional wall and bar length, on an existing Material or a new one. Commits one transaction.",
+        "Create tube, bar or angle profile stock (rectangular SHS/RHS or flat bar, round CHS or round bar, angle) with section size, optional wall and bar length, or custom sketch stock (shape \"sketch\") whose section is drawn from rectangles, circles, polygons, lines and arcs (one closed outline with optional holes; size derived), on an existing Material or a new one. Commits one transaction.",
         create_profile_stock;
+    "edit_profile_stock_section" => EditProfileSectionArgs, "Edit profile stock section", false,
+        "Replace the section of sketch-based profile stock, from drawn elements or from its canonical constraint sketch with changed literal dimensions (re-solved). The section must be one closed outline with optional holes; open, crossing or spline sections are refused. Members using the stock are rebuilt natively before one transaction commits.",
+        edit_profile_stock_section;
     "create_members" => MembersArgs, "Create weldment members", false,
         "Create straight tube/profile members from profile stock, one Part each: from every (or selected) solid line of a sketch, following those lines through later sketch edits, or from explicit point pairs. Section anchor, rotation about the axis and end extensions apply to all; optionally grouped. Every member is evaluated natively before commit.",
         create_members;

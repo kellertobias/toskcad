@@ -252,7 +252,8 @@ schema is generated from the Rust argument types with schemars and returned by
 | `create_appearance` | yes | Render appearance definition (base color, roughness, metallic), separate from Materials, stock and hatch |
 | `assign_appearance` | yes | Give one Part an appearance, or clear it, keeping its Material, stock and hatch |
 | `blender_handoff` | no | Write NAME.glb with the scene camera and lights and NAME.render.json into the export folder |
-| `create_profile_stock` | yes | Rectangular, round or angle profile stock on an existing or new Material (see [weldments](weldments.md)) |
+| `create_profile_stock` | yes | Rectangular, round, angle or sketch-based custom profile stock on an existing or new Material (see [weldments](weldments.md)) |
+| `edit_profile_stock_section` | yes | Replace a sketch-based stock's section from drawn elements or its canonical sketch; members rebuild in one transaction |
 | `create_members` | yes | One member Part per sketch line or point pair, with section anchor, rotation and end extensions |
 | `edit_member` | yes | Member stock, point path, anchor, rotation or extensions, keeping its Part |
 | `connect_members` | yes | Miter, butt or cope connection between two members, with gap; cuts derived from both members |

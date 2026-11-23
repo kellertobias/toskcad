@@ -14,10 +14,12 @@
 mod connection;
 mod prepare;
 mod resolve;
+mod sketch_section;
 mod weld;
 pub use connection::*;
 pub use prepare::*;
 pub use resolve::*;
+pub use sketch_section::*;
 pub use weld::*;
 
 use super::{

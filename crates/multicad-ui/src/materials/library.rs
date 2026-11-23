@@ -92,9 +92,19 @@ struct Draft {
     /// the document has none yet (CAD-160). Committed in the same transaction.
     companion: Option<Entity>,
 }
+/// Why the section-sketch modal opens (CAD-385).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SectionRequest {
+    /// The author chose "Based on sketch": start from the current preset.
+    Fresh,
+    /// Reopen the stock's owned section sketch.
+    Edit,
+}
 #[derive(Default)]
 pub struct LibraryEditor {
     draft: Option<Draft>,
+    /// The open section-sketch modal and the draft it belongs to.
+    section: Option<(super::section_editor::SectionEditor, EntityId)>,
     original: Option<Draft>,
     revision: u64,
     document: Option<EntityId>,
@@ -111,6 +121,7 @@ pub struct LibraryEditor {
 }
 impl LibraryEditor {
     pub fn cancel(&mut self) {
+        self.section = None;
         self.preview.clear();
         self.confirm_on_ready = None;
         self.reveal_category = None;
@@ -303,6 +314,7 @@ impl LibraryEditor {
                     height_mm: 30.,
                     wall_mm: None,
                     shape: ProfileShape::Rectangular,
+                    section: None,
                 },
             ),
         }
@@ -311,14 +323,84 @@ impl LibraryEditor {
     pub(crate) fn show_model_stock(&mut self, ui: &mut egui::Ui, s: &Session, kind: ToolStock) {
         ui.strong(kind.label().trim_end_matches('…'));
         ui.small("Save a shared Project definition and select it in the current Model tool.");
+        let mut request = None;
         if let Some(draft) = &mut self.draft {
             ui.push_id(draft.entity.id, |ui| {
-                edit_draft(ui, s, draft, Some(kind), false)
+                edit_draft(ui, s, draft, Some(kind), false, &mut request)
             });
         }
         if let Some(error) = &self.error {
             ui.colored_label(Color32::LIGHT_RED, error);
         }
+        self.section_modal(ui.ctx(), request);
+    }
+    /// Open the section modal on request, show it, and return its result
+    /// to the stock draft. Nothing is committed here; Apply commits.
+    fn section_modal(&mut self, ctx: &egui::Context, request: Option<SectionRequest>) {
+        use super::section_editor::{Outcome, SectionEditor};
+        if let (Some(request), Some(draft)) = (request, &self.draft)
+            && let Some(LibraryDefinition::Stock(stock)) = draft_definition(draft)
+        {
+            let editor = match (&stock.specification, request) {
+                (
+                    StockKind::Profile {
+                        section: Some(section),
+                        ..
+                    },
+                    SectionRequest::Edit,
+                ) => SectionEditor::new(section.sketch.clone()),
+                (specification, _) => SectionEditor::seeded(specification),
+            };
+            self.section = Some((editor, draft.entity.id));
+        }
+        let Some((editor, owner)) = &mut self.section else {
+            return;
+        };
+        let owner = *owner;
+        let Some(outcome) = editor.show(ctx) else {
+            return;
+        };
+        self.section = None;
+        let Outcome::Finished(solved) = outcome else {
+            // Cancel discards the modal copy; the stock draft is unchanged.
+            return;
+        };
+        let Some(draft) = self.draft.as_mut().filter(|d| d.entity.id == owner) else {
+            return;
+        };
+        let Some(LibraryDefinition::Stock(mut stock)) = draft_definition(draft) else {
+            return;
+        };
+        if let StockKind::Profile {
+            width_mm,
+            height_mm,
+            wall_mm,
+            shape,
+            section,
+            ..
+        } = &mut stock.specification
+        {
+            [*width_mm, *height_mm] = solved.section.size_mm;
+            *wall_mm = None;
+            *shape = ProfileShape::Sketch;
+            *section = Some(Box::new(multicad_core::materials::ProfileSketch {
+                sketch: solved.sketch,
+            }));
+        }
+        let definition = LibraryDefinition::Stock(stock);
+        if let EntityData::Extension {
+            definition: wire,
+            inputs,
+        } = &mut draft.entity.data
+        {
+            wire.data = serde_json::to_value(&definition).expect("serializable stock draft");
+            *inputs = definition.links();
+        }
+        self.error = None;
+    }
+    #[cfg(test)]
+    pub(crate) fn section_editor(&mut self) -> Option<&mut super::section_editor::SectionEditor> {
+        self.section.as_mut().map(|(editor, _)| editor)
     }
     pub(crate) fn prepare_model_stock(&self, s: &Session) -> Result<(EntityId, Prepared), String> {
         let draft = self
@@ -636,6 +718,7 @@ impl LibraryEditor {
     fn show_definition_editor(&mut self, ui: &mut egui::Ui, s: &Session, editable: bool) {
         let can_open = editable && !self.dirty() && self.original.is_some();
         let mut open = None;
+        let mut request = None;
         ui.add_enabled_ui(editable, |ui| {
             if let Some(draft) = &mut self.draft {
                 // The draft notice and compact/roomy layouts change the parent
@@ -647,17 +730,26 @@ impl LibraryEditor {
                 ));
                 open = ui
                     .scope_builder(egui::UiBuilder::new().id(id), |ui| {
-                        edit_draft(ui, s, draft, None, can_open)
+                        edit_draft(ui, s, draft, None, can_open, &mut request)
                     })
                     .inner;
             } else {
                 ui.label("Choose or create a reusable definition.");
             }
         });
+        if editable {
+            self.section_modal(ui.ctx(), request);
+        }
         if let Some(entity) = open.and_then(|id| s.document().get(id)) {
             self.select(s, entity.clone());
         }
     }
+}
+fn draft_definition(draft: &Draft) -> Option<LibraryDefinition> {
+    let EntityData::Extension { definition, .. } = &draft.entity.data else {
+        return None;
+    };
+    serde_json::from_value(definition.data.clone()).ok()
 }
 fn definition_row(
     ui: &mut egui::Ui,
@@ -748,6 +840,7 @@ fn edit_draft(
     d: &mut Draft,
     model_stock: Option<ToolStock>,
     can_open_material: bool,
+    section_request: &mut Option<SectionRequest>,
 ) -> Option<EntityId> {
     let mut open = None;
     let name = ui.label("Name");
@@ -941,6 +1034,7 @@ fn edit_draft(
                     ui,
                     &mut stock.specification,
                     model_stock == Some(ToolStock::Batten),
+                    section_request,
                 );
                 if model_stock.is_none() {
                     ui.small("Tools that use this stock read its live thickness or section. Applying checks any affected geometry.");
@@ -1196,6 +1290,7 @@ fn stock_default(i: usize) -> StockKind {
             height_mm: 30.,
             wall_mm: Some(2.),
             shape: ProfileShape::Rectangular,
+            section: None,
         },
         _ => StockKind::Print {
             process: "FDM".into(),
@@ -1204,7 +1299,12 @@ fn stock_default(i: usize) -> StockKind {
         },
     }
 }
-fn stock_controls(ui: &mut egui::Ui, s: &mut StockKind, solid_rectangular: bool) {
+fn stock_controls(
+    ui: &mut egui::Ui,
+    s: &mut StockKind,
+    solid_rectangular: bool,
+    section_request: &mut Option<SectionRequest>,
+) {
     match s {
         StockKind::Panel {
             thickness_mm,
@@ -1256,6 +1356,7 @@ fn stock_controls(ui: &mut egui::Ui, s: &mut StockKind, solid_rectangular: bool)
             height_mm,
             wall_mm,
             shape,
+            section,
         } => {
             let designation_label = ui.label("Designation");
             ui.text_edit_singleline(designation)
@@ -1266,6 +1367,7 @@ fn stock_controls(ui: &mut egui::Ui, s: &mut StockKind, solid_rectangular: bool)
                 ProfileShape::Round => "Round",
                 ProfileShape::Angle => "Angle",
                 ProfileShape::ItemLine8_40x40 => "item Line 8 40×40",
+                ProfileShape::Sketch => "Based on sketch",
             };
             if !solid_rectangular {
                 egui::ComboBox::from_id_salt("profile-shape")
@@ -1276,10 +1378,26 @@ fn stock_controls(ui: &mut egui::Ui, s: &mut StockKind, solid_rectangular: bool)
                             ProfileShape::Round,
                             ProfileShape::Angle,
                             ProfileShape::ItemLine8_40x40,
+                            ProfileShape::Sketch,
                         ] {
-                            ui.selectable_value(shape, s, shape_label(s));
+                            ui.selectable_value(shape, s, shape_label(s)).on_hover_text(
+                                if s == ProfileShape::Sketch {
+                                    "Draw a custom cross-section in a sketch"
+                                } else {
+                                    ""
+                                },
+                            );
                         }
                     });
+            }
+            if previous_shape != *shape && *shape == ProfileShape::Sketch {
+                // The section modal decides: Finish makes this sketch stock,
+                // Cancel leaves the preset untouched.
+                *shape = previous_shape;
+                *section_request = Some(SectionRequest::Fresh);
+            }
+            if previous_shape == ProfileShape::Sketch && *shape != ProfileShape::Sketch {
+                *section = None;
             }
             if previous_shape != *shape {
                 if *shape == ProfileShape::ItemLine8_40x40 {
@@ -1295,6 +1413,21 @@ fn stock_controls(ui: &mut egui::Ui, s: &mut StockKind, solid_rectangular: bool)
                 }
             }
             number(ui, "Stock length", length_mm, " mm");
+            if *shape == ProfileShape::Sketch {
+                ui.label(format!(
+                    "Custom section · {width_mm} × {height_mm} mm · {} sketch elements",
+                    section.as_ref().map_or(0, |s| s.sketch.curves.len())
+                ));
+                ui.small("Width and height follow the section sketch.");
+                if ui
+                    .button("Edit section sketch…")
+                    .on_hover_text("Open the section's sketch elements and dimensions")
+                    .clicked()
+                {
+                    *section_request = Some(SectionRequest::Edit);
+                }
+                return;
+            }
             if *shape == ProfileShape::ItemLine8_40x40 {
                 ui.label("40 × 40 mm · four open 8 mm grooves · Ø6.8 mm core");
                 ui.label("item 0.0.026.03 mounting dimensions with simplified groove flanks");

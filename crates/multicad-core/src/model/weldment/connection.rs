@@ -238,10 +238,19 @@ fn extent(m: &ResolvedMember, p: [f64; 3], direction: [f64; 3]) -> f64 {
         let center = m.point([m.section.width_mm / 2., m.section.height_mm / 2.], s);
         return dot(sub(center, p), direction) + m.section.width_mm / 2.;
     }
+    if m.section.is_sketch() {
+        return sketch_support(m, s, direction) - dot(p, direction);
+    }
     m.outline_world(s)
         .into_iter()
         .map(|q| dot(sub(q, p), direction))
         .fold(f64::NEG_INFINITY, f64::max)
+}
+/// Exact largest `dot(q, direction)` over a sketch section's placed outside
+/// at axial distance `s`, including arc bulges between vertices.
+fn sketch_support(m: &ResolvedMember, s: f64, direction: [f64; 3]) -> f64 {
+    let local = [dot(m.frame.x, direction), dot(m.frame.y, direction)];
+    dot(m.section_origin(s), direction) + m.section.support(local)
 }
 /// Where two member paths meet: the closest points of the two axis lines
 /// must coincide.
@@ -304,6 +313,10 @@ fn mirrored(a: &ResolvedMember, b: &ResolvedMember, p: [f64; 3], n: [f64; 3]) ->
 }
 fn largest_extent(m: &ResolvedMember, p: [f64; 3], direction: [f64; 3]) -> f64 {
     let s = m.axial(p);
+    if m.section.is_sketch() {
+        let back = [-direction[0], -direction[1], -direction[2]];
+        return sketch_support(m, s, direction) + sketch_support(m, s, back);
+    }
     let values: Vec<f64> = m
         .outline_world(s)
         .into_iter()
@@ -430,6 +443,13 @@ pub fn resolve_connection(
             })
         }
         ConnectionKind::Cope => {
+            if b.section.is_sketch() {
+                // A cope follows the receiving outside grown by the gap; a
+                // custom section has no exact offset outline to cut with.
+                return Err(invalid(
+                    "A cope needs the exact grown outside of the receiving member; a custom sketch section supports miter and butt connections",
+                ));
+            }
             let eb = at_end(a, p, "branch")?;
             position(b, p)?;
             let ub = away(a, eb);

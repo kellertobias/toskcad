@@ -108,7 +108,23 @@ pub enum ProfileShape {
     /// Standard item Line 8, article 0.0.026.03, with four open grooves.
     #[serde(rename = "item_line_8_40x40")]
     ItemLine8_40x40,
+    /// A custom cross-section drawn as a constraint sketch (CAD-385). Width
+    /// and height are its exact bounding box; the stock owns the sketch.
+    Sketch,
 }
+
+pub const SKETCH_PROFILE_CAPABILITY: &str = "materials.profile.sketch_section.1";
+
+/// The canonical, editable source of a sketch-based profile section. The
+/// stored point positions are the solved geometry (see
+/// `model::resolve_sketch_section`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileSketch {
+    pub sketch: crate::constraint_sketch::Sketch,
+}
+/// Bounding-box agreement between the stored stock size and its sketch.
+pub const SKETCH_PROFILE_SIZE_TOLERANCE_MM: f64 = 1e-9;
 
 pub const ITEM_LINE_8_PROFILE_CAPABILITY: &str = "materials.profile.item_line_8_40x40.1";
 impl ProfileShape {
@@ -140,6 +156,9 @@ pub enum StockKind {
         wall_mm: Option<f64>,
         #[serde(default, skip_serializing_if = "ProfileShape::is_rectangular")]
         shape: ProfileShape,
+        /// The owned section sketch of `ProfileShape::Sketch`; none otherwise.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        section: Option<Box<ProfileSketch>>,
     },
     Print {
         process: String,
@@ -306,6 +325,7 @@ impl LibraryDefinition {
                             height_mm,
                             wall_mm,
                             shape,
+                            section,
                         } => {
                             !designation.trim().is_empty()
                                 && designation.len() <= 256
@@ -325,7 +345,9 @@ impl LibraryDefinition {
                                             && wall_mm.is_none()
                                             && *length_mm <= 6000.
                                     }
+                                    ProfileShape::Sketch => wall_mm.is_none(),
                                 }
+                                && (section.is_some() == (*shape == ProfileShape::Sketch))
                         }
                         StockKind::Print {
                             process,
@@ -348,8 +370,66 @@ impl LibraryDefinition {
                 self.type_id()
             )));
         }
+        if let Self::Stock(Stock {
+            specification:
+                StockKind::Profile {
+                    width_mm,
+                    height_mm,
+                    section: Some(section),
+                    ..
+                },
+            ..
+        }) = self
+        {
+            // The section is the canonical shape: an open, crossing or
+            // unsupported sketch, or a stored size that disagrees with it,
+            // is refused rather than published as a guessed section.
+            let resolved = crate::model::resolve_sketch_section(&section.sketch)?;
+            let [w, h] = resolved.size_mm;
+            if (w - width_mm).abs() > SKETCH_PROFILE_SIZE_TOLERANCE_MM
+                || (h - height_mm).abs() > SKETCH_PROFILE_SIZE_TOLERANCE_MM
+            {
+                return Err(DocumentError::Invalid(format!(
+                    "The stock size {width_mm} × {height_mm} mm does not match its section sketch ({w} × {h} mm)"
+                )));
+            }
+        }
         Ok(())
     }
+}
+/// Whether any stock, including stock inside a library symbol, uses a
+/// sketch-based profile section.
+pub fn requires_sketch_profile(document: &Document) -> bool {
+    let sketch_stock = |data: &serde_json::Value| {
+        data.pointer("/value/specification/shape")
+            .and_then(serde_json::Value::as_str)
+            == Some("sketch")
+    };
+    document.entities().any(|entity| match &entity.data {
+        EntityData::Extension { definition, .. } if definition.type_id == "materials.stock" => {
+            sketch_stock(&definition.data)
+        }
+        EntityData::Extension { definition, .. }
+            if definition.type_id == crate::symbols::DEFINITION_TYPE =>
+        {
+            definition
+                .data
+                .pointer("/template/entities")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|entities| {
+                    entities.values().any(|entity| {
+                        entity
+                            .pointer("/data/definition/type_id")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("materials.stock")
+                            && entity
+                                .pointer("/data/definition/data")
+                                .is_some_and(sketch_stock)
+                    })
+                })
+        }
+        _ => false,
+    })
 }
 pub fn read(entity: &Entity) -> Result<Option<LibraryDefinition>, DocumentError> {
     let EntityData::Extension { definition, inputs } = &entity.data else {

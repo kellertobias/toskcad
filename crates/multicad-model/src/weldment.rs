@@ -91,11 +91,16 @@ fn edges(section_loop: &SectionLoop) -> Vec<CurvedEdge2d> {
             .iter()
             .map(|edge| match *edge {
                 SectionEdge::Line { a, b } => CurvedEdge2d::Line { a, b },
-                SectionEdge::Arc { center, a, b } => CurvedEdge2d::Arc {
+                SectionEdge::Arc {
                     center,
                     a,
                     b,
-                    clockwise: false,
+                    clockwise,
+                } => CurvedEdge2d::Arc {
+                    center,
+                    a,
+                    b,
+                    clockwise,
                 },
             })
             .collect(),

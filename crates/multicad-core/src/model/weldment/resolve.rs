@@ -55,6 +55,9 @@ pub enum SectionEdge {
         center: [f64; 2],
         a: [f64; 2],
         b: [f64; 2],
+        /// Traversal direction from `a` to `b`; closed-form sections use
+        /// counterclockwise arcs only.
+        clockwise: bool,
     },
 }
 
@@ -150,6 +153,7 @@ fn item_line_8_outer() -> Vec<SectionEdge> {
             center,
             a: side[side.len() - 1],
             b: rotate(side[0]),
+            clockwise: false,
         });
         for point in &mut side {
             *point = rotate(*point);
@@ -186,6 +190,8 @@ pub struct ProfileSection {
     pub wall_mm: Option<f64>,
     /// Bar length the stock is supplied in.
     pub stock_length_mm: f64,
+    /// The resolved sketch section of `ProfileShape::Sketch` stock.
+    pub custom: Option<super::SketchSection>,
 }
 impl ProfileSection {
     pub fn from_stock(stock: &Stock) -> Result<Self, DocumentError> {
@@ -196,9 +202,19 @@ impl ProfileSection {
             height_mm,
             wall_mm,
             shape,
+            section,
         } = &stock.specification
         else {
             return Err(invalid("Members need profile stock"));
+        };
+        let custom = match (shape, section) {
+            (ProfileShape::Sketch, Some(section)) => {
+                Some(super::resolve_sketch_section(&section.sketch)?)
+            }
+            (ProfileShape::Sketch, None) => {
+                return Err(invalid("Sketch-based profile stock has no section sketch"));
+            }
+            _ => None,
         };
         Ok(Self {
             designation: designation.clone(),
@@ -207,19 +223,43 @@ impl ProfileSection {
             height_mm: *height_mm,
             wall_mm: *wall_mm,
             stock_length_mm: *length_mm,
+            custom,
         })
+    }
+    pub fn is_sketch(&self) -> bool {
+        self.custom.is_some()
+    }
+    /// Exact extent of the section in a section-plane direction: the largest
+    /// `dot(p, direction)` over the outside boundary.
+    pub fn support(&self, direction: [f64; 2]) -> f64 {
+        match &self.custom {
+            Some(custom) => super::sketch_section::support(&custom.outer, direction),
+            None => super::sketch_section::support(&self.outer(0.), direction),
+        }
     }
     pub fn is_item_line_8_40x40(&self) -> bool {
         self.shape == ProfileShape::ItemLine8_40x40
     }
 
     pub fn is_hollow(&self) -> bool {
+        if let Some(custom) = &self.custom {
+            return !custom.holes.is_empty();
+        }
         self.is_item_line_8_40x40() || (self.wall_mm.is_some() && self.shape != ProfileShape::Angle)
     }
     /// The outside boundary, grown outward by `grow_mm` (0 for the section
     /// itself; a positive value for a clearance envelope).
     pub fn outer(&self, grow_mm: f64) -> SectionLoop {
         let (w, h, g) = (self.width_mm, self.height_mm, grow_mm);
+        if let Some(custom) = &self.custom {
+            return if g == 0. {
+                custom.outer.clone()
+            } else {
+                // A conservative outside cover. Copes against a custom
+                // section are refused natively, so this never shapes a cut.
+                SectionLoop::Polygon(vec![[-g, -g], [w + g, -g], [w + g, h + g], [-g, h + g]])
+            };
+        }
         match self.shape {
             ProfileShape::Rectangular => {
                 SectionLoop::Polygon(vec![[-g, -g], [w + g, -g], [w + g, h + g], [-g, h + g]])
@@ -242,7 +282,7 @@ impl ProfileSection {
             ProfileShape::ItemLine8_40x40 if g == 0. => SectionLoop::Curved(item_line_8_outer()),
             // A conservative outside cover. The native evaluator refuses
             // weld/cope operations on the slotted mounting section.
-            ProfileShape::ItemLine8_40x40 => {
+            ProfileShape::ItemLine8_40x40 | ProfileShape::Sketch => {
                 SectionLoop::Polygon(vec![[-g, -g], [w + g, -g], [w + g, h + g], [-g, h + g]])
             }
         }
@@ -272,6 +312,9 @@ impl ProfileSection {
     }
     /// Inner boundaries of a hollow section.
     pub fn holes(&self) -> Vec<SectionLoop> {
+        if let Some(custom) = &self.custom {
+            return custom.holes.clone();
+        }
         if self.is_item_line_8_40x40() {
             let center = [ITEM_LINE_8_WIDTH_MM / 2.; 2];
             return vec![SectionLoop::Circle {
@@ -294,11 +337,14 @@ impl ProfileSection {
                 center: [w / 2., h / 2.],
                 radius_mm: w / 2. - t,
             }],
-            ProfileShape::Angle | ProfileShape::ItemLine8_40x40 => vec![],
+            ProfileShape::Angle | ProfileShape::ItemLine8_40x40 | ProfileShape::Sketch => vec![],
         }
     }
     /// Exact cross-section area of the modeled section.
     pub fn area_mm2(&self) -> f64 {
+        if let Some(custom) = &self.custom {
+            return custom.area_mm2;
+        }
         let (w, h) = (self.width_mm, self.height_mm);
         match (self.shape, self.wall_mm) {
             (ProfileShape::Rectangular, None) => w * h,
@@ -313,12 +359,17 @@ impl ProfileSection {
                 w * t + (h - t) * t
             }
             (ProfileShape::ItemLine8_40x40, _) => item_line_8_area(),
+            // A sketch section without its resolved geometry has no area.
+            (ProfileShape::Sketch, _) => 0.,
         }
     }
     /// Points describing the outside shape: polygon vertices, or the four
     /// quadrant points and center of a circle. Used to compare placed
     /// sections, never as geometry.
     pub fn outline_points(&self) -> Vec<[f64; 2]> {
+        if let Some(custom) = &self.custom {
+            return super::sketch_section::sampled(&custom.outer);
+        }
         match self.outer(0.) {
             SectionLoop::Polygon(points) => points,
             SectionLoop::Curved(edges) => edges
@@ -344,6 +395,8 @@ impl ProfileSection {
             (ProfileShape::Round, None) => "round bar",
             (ProfileShape::Angle, _) => "angle",
             (ProfileShape::ItemLine8_40x40, _) => "item Line 8 40×40 · four open grooves",
+            (ProfileShape::Sketch, _) if self.is_hollow() => "custom hollow sketch section",
+            (ProfileShape::Sketch, _) => "custom sketch section",
         };
         format!("{} ({shape})", self.designation)
     }
@@ -606,6 +659,7 @@ mod tests {
             height_mm: h,
             wall_mm: wall,
             stock_length_mm: 6000.,
+            custom: None,
         };
         near(
             s(ProfileShape::Rectangular, 40., 20., Some(2.)).area_mm2(),

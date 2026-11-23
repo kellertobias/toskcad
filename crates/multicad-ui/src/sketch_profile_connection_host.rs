@@ -314,6 +314,7 @@ mod tests {
                 height_mm: 40.,
                 wall_mm: None,
                 shape: ProfileShape::ItemLine8_40x40,
+                section: None,
             },
         })
         .entity(stock, "Line 8")

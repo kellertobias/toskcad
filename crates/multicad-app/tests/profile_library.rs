@@ -55,7 +55,7 @@ fn bundled_line_8_member_retains_its_pin_and_edits_one_physical_length() {
     let stock = model::read_profile_stock(&definition.template, source.stock).unwrap();
     assert!(matches!(&stock.specification, StockKind::Profile {
         shape: ProfileShape::ItemLine8_40x40, designation, width_mm: 40., height_mm: 40.,
-        length_mm: 6000., wall_mm: None
+        length_mm: 6000., wall_mm: None, section: None
     } if designation == "item 0.0.026.03"));
     let material = definition.template.get(stock.material).unwrap();
     assert_eq!(material.name, "Natural anodized aluminum");
