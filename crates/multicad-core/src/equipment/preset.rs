@@ -834,7 +834,7 @@ impl Builder {
             root.assembly,
             SymbolKind::Dynamic,
             self.size.to_vec(),
-            Some(SymbolPlan { sketch: footprint }),
+            Some(SymbolPlan::new(footprint)),
         );
         author.definition = self.id(13);
         author.symbol = self.id(14);

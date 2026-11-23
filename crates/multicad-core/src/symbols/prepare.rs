@@ -94,6 +94,36 @@ impl SymbolPlaceRequest {
     }
 }
 impl SymbolUpdateRequest {
+    /// An explicit new revision of an embedded definition that changes only
+    /// its simplified plan: which captured sketch it uses and how that sketch
+    /// aligns to the symbol's local coordinates, or no plan at all. It is an
+    /// ordinary definition update, so every placed instance moves to the new
+    /// pin in one undoable transaction and keeps its identities and values.
+    pub fn plan_edit(
+        doc: &Document,
+        definition: EntityId,
+        revision: impl Into<String>,
+        plan: Option<SymbolPlan>,
+    ) -> Result<Self, DocumentError> {
+        let old = read_definition(doc, definition)?;
+        if let Some(plan) = &plan
+            && !matches!(
+                old.template.get(plan.sketch).map(|e| &e.data),
+                Some(EntityData::Sketch { .. })
+            )
+        {
+            return Err(invalid(
+                "Choose a sketch captured in this symbol definition as its plan; author a new revision to add other linework",
+            ));
+        }
+        if old.plan == plan {
+            return Err(invalid("The plan representation is unchanged"));
+        }
+        let mut replacement = old;
+        replacement.plan = plan;
+        replacement.revision = revision.into();
+        Self::new(doc, definition, replacement)
+    }
     pub fn new(
         doc: &Document,
         definition: EntityId,
@@ -130,6 +160,32 @@ impl SymbolUpdateRequest {
             architecture_inputs,
             architecture_contexts: BTreeMap::new(),
         })
+    }
+}
+/// The next revision label for an explicit edit of `revision`: an integer
+/// label counts up, any other label gains a numeric suffix.
+pub fn next_revision(
+    doc: &Document,
+    symbol: EntityId,
+    revision: &str,
+) -> Result<String, DocumentError> {
+    let taken: BTreeSet<String> = definitions(doc)?
+        .into_iter()
+        .filter(|(_, d)| d.symbol == symbol)
+        .map(|(_, d)| d.revision)
+        .collect();
+    let (stem, mut n) = match revision.parse::<u64>() {
+        Ok(n) => (String::new(), n),
+        Err(_) => (format!("{revision}."), 0),
+    };
+    loop {
+        n = n
+            .checked_add(1)
+            .ok_or_else(|| invalid("Symbol revision counter is exhausted"))?;
+        let candidate = format!("{stem}{n}");
+        if !taken.contains(&candidate) {
+            return Ok(candidate);
+        }
     }
 }
 fn embed(

@@ -200,7 +200,7 @@ pub fn generic_definition(kind: PlantKind) -> Result<symbols::SymbolDefinition, 
         assembly.assembly,
         symbols::SymbolKind::Dynamic,
         vec![height, spread],
-        Some(symbols::SymbolPlan { sketch: plan }),
+        Some(symbols::SymbolPlan::new(plan)),
     );
     request.definition = id(60);
     request.symbol = id(61);

@@ -75,7 +75,7 @@ fn author_fixture(kind: SymbolKind) -> (Session, SymbolDefinition, EntityId, Ent
         primitive.body,
         kind,
         vec![width],
-        Some(SymbolPlan { sketch }),
+        Some(SymbolPlan::new(sketch)),
     );
     let before = s.document().clone();
     let preview = prepare_author(&s, s.revision(), actor(), &request).unwrap();
