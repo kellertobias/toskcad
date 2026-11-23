@@ -46,6 +46,15 @@ fn build(document: &Document, model: &Model) -> Result<ArchitecturePlan, String>
             _ => false,
         })
         .copied()
+        .chain(
+            // Placed library parts with an authored fixed plan draw that
+            // symbol in 2D; their detailed 3D stays the picking geometry.
+            multicad_core::symbols::authored_plan_instances(document)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|plan| plan.instance)
+                .filter(|instance| snapshot.occurrences.contains_key(instance)),
+        )
         .collect::<std::collections::BTreeSet<_>>();
     if sources.is_empty() {
         return Ok(ArchitecturePlan {
