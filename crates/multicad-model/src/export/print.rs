@@ -26,6 +26,7 @@ use std::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 /// Upper bound on one written package file.
@@ -37,6 +38,25 @@ struct Built {
     preview: PrintPreview,
     generated: Vec<Vec<u8>>,
     plate_meshes: Option<(Vec<mesh::MeshObject>, Vec<mesh::BuildItem>)>,
+    timings: PrintPhaseTimings,
+}
+
+/// Wall-clock time of each stage of one print build, measured inside the
+/// same build the preview worker runs. Diagnostic only: never part of a key.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PrintPhaseTimings {
+    /// Selection resolution, manufacturing history and parameters.
+    pub resolve: Duration,
+    /// Native source compilation of the exact model.
+    pub compile: Duration,
+    /// Exact placement poses, bounds and solid volumes.
+    pub placement: Duration,
+    /// Manufacturing tessellation and placed mesh volumes.
+    pub mesh: Duration,
+    /// Bed bounds and pairwise exact collision checks of a plate.
+    pub arrangement: Duration,
+    /// 3MF/STL generation and the plan hash.
+    pub package: Duration,
 }
 
 #[derive(Clone, Copy)]
@@ -550,6 +570,13 @@ impl GeometryExporter<'_> {
             ));
         }
         checkpoint(interrupt)?;
+        let mut timings = PrintPhaseTimings::default();
+        let mut clock = Instant::now();
+        let mut lap = |slot: &mut Duration| {
+            let now = Instant::now();
+            *slot += now - clock;
+            clock = now;
+        };
         let plate = match arrangement {
             Arrangement::Package => None,
             Arrangement::PlatePreview(plate) | Arrangement::PlateWrite(plate) => Some(plate),
@@ -592,6 +619,7 @@ impl GeometryExporter<'_> {
         let mut meshes = vec![];
         let mut items = vec![];
         let mut plate_blocked = None;
+        lap(&mut timings.resolve);
         if !selection.parts.is_empty() {
             let compiler = if plate.is_some() || self.backend == GeometryBackend::Rust {
                 crate::Compiler {
@@ -616,6 +644,7 @@ impl GeometryExporter<'_> {
                 None => compiler.compile_with_backend(document, revision, self.backend, interrupt),
             }
             .map_err(|e| failure(ErrorKind::Invalid, e.entity, e.message))?;
+            lap(&mut timings.compile);
             if model.snapshot().stamp.source_hash != selection.stamp.source_hash {
                 return Err(failure(
                     ErrorKind::Stale,
@@ -729,6 +758,7 @@ impl GeometryExporter<'_> {
                     let volume = world.volume_mm3().map_err(|e| invalid(e.to_string()))?;
                     (pose, [bounds.min, bounds.max], volume)
                 };
+                lap(&mut timings.placement);
                 let index = match shared.get(&producer) {
                     Some(index) => *index,
                     None => {
@@ -763,6 +793,7 @@ impl GeometryExporter<'_> {
                     mesh_volume_mm3: mesh::volume(&placed_vertices, &resource.triangles).abs(),
                 });
                 items.push(item);
+                lap(&mut timings.mesh);
             }
             if let Some(plate) = plate {
                 plate_blocked = if let Some(missing) = unavailable.first() {
@@ -781,6 +812,7 @@ impl GeometryExporter<'_> {
                     )?
                 };
             }
+            lap(&mut timings.arrangement);
             selection.parts.retain(|p| {
                 !unavailable
                     .iter()
@@ -894,6 +926,7 @@ impl GeometryExporter<'_> {
             ),
             None => plan_hash,
         };
+        lap(&mut timings.package);
         Ok(Built {
             preview: PrintPreview {
                 requested_by: actor.clone(),
@@ -912,6 +945,7 @@ impl GeometryExporter<'_> {
             },
             generated,
             plate_meshes: plate.map(|_| (meshes, items)),
+            timings,
         })
     }
     fn print_preview(
@@ -1160,6 +1194,28 @@ impl Exporter {
     ) -> Result<PrintPreview, ExportError> {
         self.with_backend(GeometryBackend::default(), None)
             .print_preview(document, revision, request, actor, interrupt)
+    }
+
+    /// [`Self::print_plate_preview`] with the wall-clock time of each stage.
+    pub fn print_plate_preview_timed(
+        &self,
+        document: &Document,
+        revision: u64,
+        plate: &PrintPlateDefinition,
+        actor: &Actor,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<(PrintPreview, PrintPhaseTimings), ExportError> {
+        let built = self
+            .with_backend(GeometryBackend::default(), None)
+            .build_print(
+                document,
+                revision,
+                &plate.summary_request(document),
+                Arrangement::PlatePreview(plate),
+                actor,
+                interrupt,
+            )?;
+        Ok((built.preview, built.timings))
     }
 
     /// Verify and tessellate a saved plate without changing its source model.
@@ -1630,6 +1686,7 @@ impl Drop for PrintWorker {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
     #[test]
     fn stl_names_stay_in_the_folder_and_are_unique() {
         assert_eq!(
