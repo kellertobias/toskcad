@@ -1,7 +1,7 @@
 use multicad_core::{
     commands::{Actor, Channel, Request, Session},
     constraint_sketch::Dimension,
-    document::{Document, Entity, EntityData, Link, Mutation},
+    document::{Document, Entity, EntityData, EntityId, Link, Mutation},
     model::{
         self, BodyInput, BooleanRequest, Operation, PrimitiveFrame, PrimitiveParameters,
         PrimitiveRequest,
@@ -353,5 +353,182 @@ fn saved_imported_tetrahedron_booleans_follow_embedded_source_and_tool_edits() {
                 .unwrap(),
             32. / 3.,
         );
+    }
+}
+
+fn resolve_edge(
+    intent: &GeometryIntent,
+    model: &Model,
+    feature: EntityId,
+    revision: u64,
+) -> Resolution {
+    references::resolve(
+        intent,
+        &model.snapshot().shapes[&feature].topology,
+        revision,
+    )
+}
+
+/// The untouched A-C edge resolves as one element over its whole length.
+fn whole_edge(intent: &GeometryIntent, model: &Model, feature: EntityId, revision: u64) {
+    let resolution = resolve_edge(intent, model, feature, revision);
+    let Resolution::Resolved {
+        geometry: Some(AnalyticGeometry::Line { a_mm, b_mm }),
+        ..
+    } = resolution
+    else {
+        panic!("lost the untouched A-C edge: {resolution:?}");
+    };
+    let (start, end) = if a_mm[1] < b_mm[1] {
+        (a_mm, b_mm)
+    } else {
+        (b_mm, a_mm)
+    };
+    for (actual, expected) in start.into_iter().chain(end).zip([0., 0., 0., 0., 4., 0.]) {
+        near(actual, expected);
+    }
+}
+
+#[test]
+fn a_remote_cut_keeps_one_imported_edge_through_tool_edits_undo_redo_and_reopen() {
+    for operation in [Operation::Cut, Operation::Join] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tetrahedron.step");
+        std::fs::write(&path, tetra(4.)).unwrap();
+        let mut document = Document::new("Untouched imported edge").unwrap();
+        document
+            .insert(Entity::new(
+                "tool_height",
+                EntityData::Parameter {
+                    expression: "1".into(),
+                    unit: "mm".into(),
+                    exposed: true,
+                    inputs: vec![],
+                },
+            ))
+            .unwrap();
+        let mut session = Session::new(document).unwrap();
+        let imported = read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap();
+        let prepared =
+            prepare_step_import(&session, session.revision(), actor(), &imported).unwrap();
+        let import_source = prepared.source;
+        let part = prepared.model.outputs[0].clone();
+        session.commit(prepared.model.prepared).unwrap();
+        let original = compile(&session);
+        let topology = &original.snapshot().shapes[&part.feature].topology;
+        // A-C lies on the x=0 and z=0 supports; the clipping box never
+        // reaches x=0 and only removes material at x >= 1 on z=0.
+        let edge = topology
+            .elements
+            .iter()
+            .find(|element| {
+                matches!(element.geometry, Some(AnalyticGeometry::Line { a_mm, b_mm })
+                    if a_mm[0] == 0. && b_mm[0] == 0. && a_mm[2] == 0. && b_mm[2] == 0.)
+            })
+            .unwrap();
+        let a_to_c = GeometryIntent::capture(topology, edge.key).unwrap();
+        let tool = PrimitiveRequest::new(
+            "Clipping box",
+            PrimitiveParameters::Box {
+                size: [
+                    length(4.),
+                    length(1.),
+                    Dimension::Expression {
+                        expression: BoundExpression::bind(
+                            session.document(),
+                            "=$tool_height",
+                            "mm",
+                            None,
+                        )
+                        .unwrap(),
+                    },
+                ],
+                frame: PrimitiveFrame {
+                    origin: [1., 0., 0.].map(length),
+                    ..Default::default()
+                },
+            },
+        );
+        session
+            .commit(
+                model::prepare_primitive(&session, session.revision(), actor(), &tool)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+        let request = BooleanRequest::new(
+            operation,
+            BodyInput {
+                body: part.body,
+                producer: part.feature,
+            },
+            vec![BodyInput {
+                body: tool.body,
+                producer: tool.feature,
+            }],
+        );
+        session
+            .commit(
+                model::prepare_boolean(&session, session.revision(), actor(), &request)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+        let check = |session: &Session, length: f64, height: f64| {
+            for session in [session, &reopen(session)] {
+                let model = compile(session);
+                near(
+                    model.solid(part.body).unwrap().volume_mm3().unwrap(),
+                    expected(operation, length, height),
+                );
+                whole_edge(&a_to_c, &model, request.feature, session.revision());
+            }
+        };
+        check(&session, 4., 1.);
+
+        let mut parameter = session
+            .document()
+            .entities()
+            .find(|entity| entity.name == "tool_height")
+            .unwrap()
+            .clone();
+        let EntityData::Parameter { expression, .. } = &mut parameter.data else {
+            unreachable!()
+        };
+        *expression = "0.5".into();
+        session
+            .apply(Request {
+                expected_revision: session.revision(),
+                actor: actor(),
+                label: "Edit clipping tool".into(),
+                edits: vec![Mutation::Replace(parameter)],
+            })
+            .unwrap();
+        check(&session, 4., 0.5);
+        session.undo(session.revision(), actor()).unwrap();
+        check(&session, 4., 1.);
+        session.redo(session.revision(), actor()).unwrap();
+        check(&session, 4., 0.5);
+
+        // Moving B reshapes the z=0 support. Its imported identity includes
+        // its finite boundary, so the edge needs explicit repair: it reports
+        // Missing, never a fragment or a silently substituted edge.
+        std::fs::write(&path, tetra(5.)).unwrap();
+        let file = read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap();
+        let (_, update) =
+            prepare_step_update(&session, session.revision(), actor(), import_source, &file)
+                .unwrap();
+        session.commit(update.model.prepared).unwrap();
+        let model = compile(&session);
+        near(
+            model.solid(part.body).unwrap().volume_mm3().unwrap(),
+            expected(operation, 5., 0.5),
+        );
+        assert_eq!(
+            resolve_edge(&a_to_c, &model, request.feature, session.revision()),
+            Resolution::Missing
+        );
+        session.undo(session.revision(), actor()).unwrap();
+        check(&session, 4., 0.5);
     }
 }
