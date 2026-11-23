@@ -151,9 +151,9 @@ impl Solid {
             &chart.pieces[chart.stock_count..],
         ];
         let union = if cutters.is_empty() {
-            Union::new(stock, tolerance).map(Some)
+            Union::new_charted(stock, tolerance).map(Some)
         } else {
-            Union::subtract(stock, cutters, tolerance)
+            Union::subtract_charted(stock, cutters, tolerance)
         };
         let union = match union {
             Ok(Some(union)) => union,

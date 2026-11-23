@@ -223,7 +223,7 @@ fn crop_chart(
         &chart.pieces[..chart.stock_count],
         &chart.pieces[chart.stock_count..],
     ];
-    let union = Union::subtract(stock, cutters, tolerance)
+    let union = Union::subtract_charted(stock, cutters, tolerance)
         .map_err(source_error)?
         .ok_or_else(empty_crop)?;
     chart.finish(union, feature, policy)

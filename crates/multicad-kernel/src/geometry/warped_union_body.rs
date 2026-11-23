@@ -478,7 +478,8 @@ impl Solid {
         // complete attachment proof must establish its disk is inside the head.
         chart.bosses[0].ends[0][2] = bounds.min[2].midpoint(bounds.max[2]);
         chart.stock_count = chart.pieces.len();
-        let union = Union::new(&chart.pieces, policy.linear_tolerance_mm).map_err(source_error)?;
+        let union =
+            Union::new_charted(&chart.pieces, policy.linear_tolerance_mm).map_err(source_error)?;
         let mut solid = chart.finish(union, feature, policy)?;
         let SolidBody::WarpedUnion(body, _) = &mut solid.body else {
             unreachable!("the planar attachment builder returns its retained shell")
@@ -550,7 +551,7 @@ impl Solid {
         }
         chart.stock_count = chart.pieces.len();
         Some(
-            Union::new(&chart.pieces, tolerance)
+            Union::new_charted(&chart.pieces, tolerance)
                 .map_err(source_error)
                 .and_then(|union| chart.finish(union, feature, policy)),
         )
