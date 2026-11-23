@@ -435,6 +435,19 @@ mod trace_tests {
             }
         }
         let result = tessellate_candidate(&body, options, None).unwrap();
-        assert_eq!(result.work_used, 3_484_305);
+        // The complete request ledger under portable maths, identical on every
+        // platform; an independent second request repeats it bit for bit.
+        assert_eq!(result.work_used, 3_220_877);
+        let again = tessellate_candidate(&body, options, None).unwrap();
+        assert_eq!(again.work_used, result.work_used);
+        assert_eq!(again.mesh, result.mesh);
+        assert_eq!(
+            again.source_chord_bound_mm.to_bits(),
+            result.source_chord_bound_mm.to_bits()
+        );
+        assert_eq!(
+            again.source_normal_angle_bound_rad.to_bits(),
+            result.source_normal_angle_bound_rad.to_bits()
+        );
     }
 }
