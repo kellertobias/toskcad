@@ -6,6 +6,7 @@ use multicad_core::{
     model::*,
 };
 use multicad_model::Compiler;
+use multicad_precision::PortableMath as _;
 fn actor() -> Actor {
     Actor::local(Channel::Ui)
 }
@@ -448,6 +449,143 @@ fn canonical_counter_refuses_flat_washer_insufficient_engagement_and_floating_ha
             );
             assert!(message.contains(reason), "{message}");
             assert_eq!(session.document(), &saved);
+        }
+    }
+}
+
+fn replace_driver(
+    session: &Session,
+    request: &ScrewConnectionRequest,
+    edit: impl FnOnce(&mut ScrewHardwarePlacementDefinition),
+) -> multicad_core::commands::Prepared {
+    use multicad_core::{
+        commands::Request,
+        document::{EntityData, Mutation},
+    };
+    let saved = session.document();
+    let mut driver = read_screw_hardware_placement(saved, request.hardware[0].driver).unwrap();
+    edit(&mut driver);
+    let mut entity = saved.get(request.hardware[0].driver).unwrap().clone();
+    entity.data = EntityData::Extension {
+        definition: driver.definition().unwrap(),
+        inputs: driver.inputs().unwrap(),
+    };
+    session
+        .prepare(Request {
+            expected_revision: session.revision(),
+            actor: actor(),
+            label: "Replace conical screw placement".into(),
+            edits: vec![Mutation::Replace(entity)],
+        })
+        .unwrap()
+}
+
+fn refuses_bearing(
+    session: &Session,
+    document: &multicad_core::document::Document,
+    context: &str,
+) -> String {
+    compiler()
+        .compile(document, session.revision() + 1)
+        .err()
+        .unwrap_or_else(|| panic!("{context}: an unproven conical pose compiled"))
+        .to_string()
+}
+
+#[test]
+fn canonical_counter_refuses_wrong_stale_and_tilted_cones_without_mutation() {
+    for left in [false, true] {
+        // Wrong: a countersink whose actual cone is steeper than the 90° head
+        // can never bear on the head cone, before or after commit.
+        let (document, mut request) = countersunk(left);
+        request.receivers[0].source.seat = Some(ConnectionReceiverSeat::Countersink {
+            diameter: length(7.),
+            depth: length(1.2),
+        });
+        let session = Session::new(document.clone()).unwrap();
+        match prepare_screw_connection(&session, 0, actor(), &request) {
+            Err(error) => assert!(!error.to_string().is_empty()),
+            Ok(candidate) => {
+                let message = refuses_bearing(&session, candidate.prepared.document(), "wrong");
+                assert!(message.contains("conical"), "wrong cone: {message}");
+            }
+        }
+        assert_eq!(session.document(), &document);
+
+        for posed in [false, true] {
+            // Stale: the receiver changes after the connection was committed.
+            // A compatible 45° cone re-derives an actual bearing; an
+            // incompatible one refuses instead of keeping the old pose.
+            let (session, request, _) = valid(left, posed, false);
+            let saved = session.document().clone();
+            for (diameter, depth, compatible) in [(6.4, 1.5, true), (7., 1.5, false)] {
+                let mut receiver = request.receivers[0].source.clone();
+                receiver.seat = Some(ConnectionReceiverSeat::Countersink {
+                    diameter: length(diameter),
+                    depth: length(depth),
+                });
+                let candidate = prepare_connection_receiver_edit(
+                    &session,
+                    session.revision(),
+                    actor(),
+                    request.receivers[0].feature,
+                    &receiver,
+                )
+                .unwrap();
+                let compiled =
+                    compiler().compile(candidate.prepared.document(), session.revision() + 1);
+                if compatible {
+                    let model = compiled.unwrap_or_else(|e| {
+                        panic!("stale compatible left={left} posed={posed}: {e}")
+                    });
+                    let [check] = model.snapshot().screw_connection_checks.as_slice() else {
+                        panic!("re-derived connection proof");
+                    };
+                    assert!(check.scope.contains("source-certified conical bearing"));
+                } else {
+                    let message = compiled
+                        .err()
+                        .unwrap_or_else(|| panic!("stale incompatible left={left} posed={posed}"))
+                        .to_string();
+                    let lower = message.to_lowercase();
+                    assert!(
+                        lower.contains("conical") || lower.contains("receiving cone"),
+                        "{message}"
+                    );
+                }
+                assert_eq!(session.document(), &saved);
+            }
+
+            // Tilted: a detached placement is checked as placed. Untilted,
+            // the nominal station still fails on bearing; any tilt is refused
+            // at the axis gate first, so the tilt alone causes that refusal.
+            let station = 2.;
+            for tilt in [0., 1e-3_f64, -1e-3, 1e-2] {
+                let (s, c) = (tilt.portable_sin(), tilt.portable_cos());
+                let candidate = replace_driver(&session, &request, |driver| {
+                    driver.connection = None;
+                    driver.station = length(station);
+                    driver.roll = angle(0.);
+                    driver.local_mount = RigidPose {
+                        rotation: [[c, 0., s], [0., 1., 0.], [-s, 0., c]],
+                        translation_mm: [0.; 3],
+                    };
+                });
+                let message = refuses_bearing(&session, candidate.document(), "tilted");
+                let parallel = message.contains("must be parallel to the certified bore");
+                assert_eq!(
+                    parallel,
+                    tilt != 0.,
+                    "tilt={tilt} left={left} posed={posed}: {message}"
+                );
+                if tilt == 0. {
+                    assert!(
+                        message.contains("Actual finite conical bearing cannot be certified"),
+                        "{message}"
+                    );
+                }
+                assert_eq!(session.document(), &saved);
+            }
         }
     }
 }
