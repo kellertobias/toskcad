@@ -1098,10 +1098,7 @@ impl Application {
                 let p = self.current_mut();
                 if p.sketch.model_active() {
                     p.sketch.preview_model(&p.session, &p.resources, channel)?;
-                    self.message = format!(
-                        "Building native {} preview · document unchanged",
-                        p.sketch.model_label()
-                    );
+                    self.message = building_preview_status(p.sketch.model_label());
                     return Ok(());
                 }
                 p.editor.refresh_preview(&p.session);
@@ -2761,6 +2758,24 @@ impl Application {
             ctx.request_repaint();
         }
     }
+    /// Replace a "Building native … preview" status once that preview is
+    /// ready or has failed, so the status line agrees with the form (CAD-347).
+    fn settle_preview_status(&mut self) {
+        let p = self.current();
+        if !p.sketch.model_active() {
+            return;
+        }
+        let label = p.sketch.model_label();
+        if let Some((message, error)) = settled_preview_status(
+            &self.message,
+            label,
+            p.sketch.model_can_apply(&p.session, &p.resources),
+            p.sketch.model_error(),
+        ) {
+            self.message = message;
+            self.message_error = error;
+        }
+    }
     pub fn show(&mut self, ui: &mut egui::Ui) {
         crate::window_resize::show(ui);
         let ctx = ui.ctx().clone();
@@ -2947,6 +2962,7 @@ impl Application {
                 ctx.request_repaint_after(std::time::Duration::from_millis(16));
             }
         }
+        self.settle_preview_status();
         self.handle_shortcuts(&ctx);
         egui::Panel::top("header")
             .frame(
@@ -3112,6 +3128,30 @@ impl Application {
         self.text_input_was_focused = ctx.text_edit_focused();
     }
 }
+fn building_preview_status(label: &str) -> String {
+    format!("Building native {label} preview · document unchanged")
+}
+/// The status that replaces a pending preview status for this tool, if the
+/// preview has settled. Other status messages are never replaced.
+fn settled_preview_status(
+    message: &str,
+    label: &str,
+    ready: bool,
+    error: Option<&str>,
+) -> Option<(String, bool)> {
+    if message != building_preview_status(label) {
+        return None;
+    }
+    if let Some(error) = error {
+        return Some((format!("{label} preview failed · {error}"), true));
+    }
+    ready.then(|| {
+        (
+            format!("Native {label} preview ready · document unchanged"),
+            false,
+        )
+    })
+}
 impl eframe::App for Application {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
@@ -3148,6 +3188,39 @@ mod tests {
     use super::*;
     use std::path::Path;
     struct MemoryStorage;
+    #[test]
+    fn a_pending_preview_status_settles_to_ready_or_its_error_and_nothing_else_changes() {
+        let building = building_preview_status("Thread");
+        assert_eq!(
+            settled_preview_status(&building, "Thread", false, None),
+            None
+        );
+        assert_eq!(
+            settled_preview_status(&building, "Thread", true, None),
+            Some((
+                "Native Thread preview ready · document unchanged".into(),
+                false
+            ))
+        );
+        assert_eq!(
+            settled_preview_status(&building, "Thread", false, Some("Length exceeds the body")),
+            Some((
+                "Thread preview failed · Length exceeds the body".into(),
+                true
+            ))
+        );
+        // Another tool's status, or any later message, is left alone.
+        assert_eq!(settled_preview_status(&building, "Gear", true, None), None);
+        assert_eq!(
+            settled_preview_status(
+                "Modeling cancelled · document unchanged",
+                "Thread",
+                true,
+                None
+            ),
+            None
+        );
+    }
     #[test]
     fn page_drafts_guard_save_history_modeling_and_close_until_explicit_discard() {
         use crate::drawings::DrawingTool;

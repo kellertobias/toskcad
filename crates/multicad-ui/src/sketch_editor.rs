@@ -1129,6 +1129,10 @@ impl SketchEditor {
         Ok(true)
     }
 
+    /// The modeling form's current preview or validation error, if any.
+    pub fn model_error(&self) -> Option<&str> {
+        self.model.error()
+    }
     pub fn model_can_apply(
         &self,
         session: &Session,
