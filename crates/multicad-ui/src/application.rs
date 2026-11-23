@@ -610,6 +610,21 @@ impl Application {
             )
     }
     fn invoke(&mut self, command: Command, args: &[&str], channel: Channel) -> Result<(), String> {
+        use multicad_core::response_trace as trace;
+        let mut span = trace::span(trace::Stage::Preparation, "command");
+        if span.is_some() {
+            trace::set(&mut span, "command", format!("{command:?}"));
+        }
+        let result = self.invoke_command(command, args, channel);
+        trace::set(&mut span, "ok", result.is_ok());
+        result
+    }
+    fn invoke_command(
+        &mut self,
+        command: Command,
+        args: &[&str],
+        channel: Channel,
+    ) -> Result<(), String> {
         if command == Command::CloseProject {
             return self.request_close_project();
         }
@@ -3116,7 +3131,15 @@ impl eframe::App for Application {
             crate::native_window::align_title_buttons(_frame, 40.0 * ui.ctx().zoom_factor() as f64);
         }
         crate::quit_shortcut::feed(_frame, ui.ctx());
+        let ctx = ui.ctx().clone();
+        let frame = crate::response_trace::begin_frame(&ctx);
         self.show(ui);
+        let mode = if self.welcome {
+            "Welcome"
+        } else {
+            self.mode.title()
+        };
+        crate::response_trace::end_frame(&ctx, frame, mode, &self.message);
     }
 }
 

@@ -31,6 +31,7 @@ pub mod reference_repair;
 pub mod reference_repair_set;
 pub mod registry;
 pub mod render_view;
+mod response_trace;
 pub mod ribbon_ui;
 pub mod schedules;
 mod selection_input;

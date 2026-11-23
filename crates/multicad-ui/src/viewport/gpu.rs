@@ -6,7 +6,7 @@ use eframe::{
     egui_wgpu::{self, CallbackResources, CallbackTrait},
     wgpu::{self, util::DeviceExt},
 };
-use multicad_core::document::EntityId;
+use multicad_core::{document::EntityId, response_trace as trace};
 use multicad_precision::PortableMath as _;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -565,6 +565,10 @@ impl CallbackTrait for Callback {
         resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         if let Some(renderer) = resources.get_mut::<Renderer>() {
+            let mut upload = trace::span(trace::Stage::Upload, "viewport");
+            let stamp = self.scene.stamp();
+            trace::set(&mut upload, "revision", stamp.revision);
+            trace::set(&mut upload, "generation", stamp.generation);
             renderer.prepare(device, queue, &self.scene, self.view.clone());
         }
         vec![]
@@ -642,6 +646,54 @@ pub(super) fn paint_scene_view(
     painter.add(egui_wgpu::Callback::new_paint_callback(
         rect,
         Callback { scene, view },
+    ));
+}
+
+/// Response-trace frame marker (CAD-347): its `prepare` runs after every
+/// earlier paint callback has uploaded its buffers and its `paint` runs once
+/// the drawable was acquired and this frame's commands are being encoded,
+/// immediately before submission and presentation.
+struct FrameMarker {
+    frame: u64,
+}
+impl CallbackTrait for FrameMarker {
+    fn prepare(
+        &self,
+        _: &wgpu::Device,
+        _: &wgpu::Queue,
+        _: &egui_wgpu::ScreenDescriptor,
+        _: &mut wgpu::CommandEncoder,
+        _: &mut CallbackResources,
+    ) -> Vec<wgpu::CommandBuffer> {
+        trace::mark("frame-prepared", |record| {
+            record.insert("frame".into(), self.frame.into());
+        });
+        vec![]
+    }
+    fn paint(
+        &self,
+        _: egui::PaintCallbackInfo,
+        _: &mut wgpu::RenderPass<'static>,
+        _: &CallbackResources,
+    ) {
+        trace::mark("frame-encoded", |record| {
+            record.insert("frame".into(), self.frame.into());
+        });
+    }
+}
+/// Add the frame marker on top of everything else; nothing is drawn.
+pub(crate) fn paint_frame_marker(ctx: &egui::Context, frame: u64) {
+    if !trace::enabled() {
+        return;
+    }
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Debug,
+        egui::Id::new("response-trace-frame"),
+    ));
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1., 1.));
+    painter.add(egui_wgpu::Callback::new_paint_callback(
+        rect,
+        FrameMarker { frame },
     ));
 }
 

@@ -140,6 +140,10 @@ fn record_startup_error(error: &str) {
     }
 }
 fn run_application(project: Option<PathBuf>, model_backend: GeometryBackend) -> Result<(), String> {
+    // Opt-in input-to-frame diagnostics (CAD-347); off unless the variable is set.
+    if let Some(path) = multicad_core::response_trace::install_from_env()? {
+        eprintln!("multicad: writing response trace to {}", path.display());
+    }
     let mut app =
         multicad_ui::application::Application::welcome(Box::new(files::ProjectStore::default()))?;
     app.request_open_documents(project);
