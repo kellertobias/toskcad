@@ -3758,6 +3758,21 @@ mod tests {
             .or(rect)
             .expect("sketch viewport laid out")
             .center();
+        // Drawing, and with it the inline fields, waits for the background
+        // sketch solve. Wait for that worker instead of a fixed frame count,
+        // which races on a loaded machine.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while app.current().sketch.sketch_evaluation_status()
+            != crate::sketch_evaluation::EvaluationStatus::Ready
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "sketch solve never became ready: {:?}",
+                app.current().sketch.sketch_evaluation_status()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            shortcut_frame(&ctx, &mut app, vec![egui::Event::PointerMoved(center)]);
+        }
         for _ in 0..3 {
             shortcut_frame(&ctx, &mut app, vec![egui::Event::PointerMoved(center)]);
         }
