@@ -723,6 +723,7 @@ pub(crate) struct Session<'a> {
     salt: Vec<u8>,
     hashes: BTreeMap<(EntityId, Visit), Option<[u8; 32]>>,
     edges: BTreeMap<EntityId, Option<Edges>>,
+    sources: BTreeMap<EntityId, Option<std::rc::Rc<Source>>>,
     volatile_sketches: BTreeSet<EntityId>,
     stats: CompileStats,
     literal_symbols: BTreeMap<EntityId, LiteralSymbol>,
@@ -759,6 +760,7 @@ impl<'a> Session<'a> {
             salt,
             hashes: BTreeMap::new(),
             edges: BTreeMap::new(),
+            sources: BTreeMap::new(),
             volatile_sketches,
             stats: CompileStats::default(),
             literal_symbols: literal_symbols(document),
@@ -775,6 +777,20 @@ impl<'a> Session<'a> {
         self.profile_poses.insert(id, found.clone());
         found
     }
+    /// The canonical serialization of an entity and the identities it
+    /// mentions, computed once per compile for both its hash and its edges.
+    fn source(&mut self, id: EntityId) -> Option<std::rc::Rc<Source>> {
+        if let Some(found) = self.sources.get(&id) {
+            return found.clone();
+        }
+        let computed = self
+            .document
+            .get(id)
+            .and_then(Source::of)
+            .map(std::rc::Rc::new);
+        self.sources.insert(id, computed.clone());
+        computed
+    }
     /// Evaluation-dependency and mention edges of an entity.
     fn edges(&mut self, id: EntityId) -> Option<Edges> {
         if let Some(found) = self.edges.get(&id) {
@@ -786,10 +802,9 @@ impl<'a> Session<'a> {
             } else {
                 None
             };
-            let entity = self.document.get(id)?;
+            self.document.get(id)?;
             let mut evaluation: BTreeSet<_> = self.document.evaluation_dependencies(id).ok()?;
-            let mut mentioned = BTreeSet::new();
-            mentions(&serde_json::to_value(entity).ok()?, &mut mentioned);
+            let mut mentioned = self.source(id)?.mentioned.clone();
             mentioned.remove(&id);
             if let Some(projection) = projection {
                 for id in &projection.omitted {
@@ -818,7 +833,7 @@ impl<'a> Session<'a> {
                 None
             };
             let entity = self.document.get(id)?;
-            let mut bytes = serde_json::to_vec(entity).ok()?;
+            let mut bytes = self.source(id)?.bytes.clone();
             if let Some(projection) = projection {
                 bytes.extend(b"|absolute-profile-poses|");
                 bytes.extend(projection.fingerprint.0);
@@ -1121,6 +1136,115 @@ fn hidden_inputs(document: &Document, feature: EntityId, type_id: &str) -> Optio
     Some(inputs)
 }
 
+/// An entity's `serde_json::to_vec` bytes and every identity [`mentions`]
+/// finds in its `serde_json::to_value` form, from one serialization pass.
+struct Source {
+    bytes: Vec<u8>,
+    mentioned: BTreeSet<EntityId>,
+}
+impl Source {
+    fn of(entity: &multicad_core::document::Entity) -> Option<Self> {
+        use serde::Serialize as _;
+        let mut bytes = Vec::new();
+        let mut formatter = Scanning::default();
+        let serialized = entity
+            .serialize(&mut serde_json::Serializer::with_formatter(
+                &mut bytes,
+                &mut formatter,
+            ))
+            .is_ok();
+        if serialized && !formatter.unusual_key {
+            return Some(Self {
+                bytes,
+                mentioned: formatter.found,
+            });
+        }
+        // A non-string map key renders differently in a Value; keep the
+        // original two-pass derivation for that rare shape (and its errors).
+        let bytes = serde_json::to_vec(entity).ok()?;
+        let mut mentioned = BTreeSet::new();
+        mentions(&serde_json::to_value(entity).ok()?, &mut mentioned);
+        Some(Self { bytes, mentioned })
+    }
+}
+/// The default compact JSON output that also scans every string, object key
+/// included, exactly as decoded text, the way [`mentions`] scans a Value.
+#[derive(Default)]
+struct Scanning {
+    string: Option<String>,
+    found: BTreeSet<EntityId>,
+    /// A number or literal was written inside a string (a non-string key).
+    unusual_key: bool,
+}
+macro_rules! scanning_numbers {
+    ($($name:ident: $ty:ty),*) => {$(
+        fn $name<W: ?Sized + std::io::Write>(&mut self, writer: &mut W, value: $ty) -> std::io::Result<()> {
+            self.unusual_key |= self.string.is_some();
+            serde_json::ser::CompactFormatter.$name(writer, value)
+        }
+    )*};
+}
+impl serde_json::ser::Formatter for &mut Scanning {
+    scanning_numbers!(
+        write_bool: bool, write_i8: i8, write_i16: i16, write_i32: i32, write_i64: i64,
+        write_i128: i128, write_u8: u8, write_u16: u16, write_u32: u32, write_u64: u64,
+        write_u128: u128, write_f32: f32, write_f64: f64
+    );
+    fn write_null<W: ?Sized + std::io::Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
+        self.unusual_key |= self.string.is_some();
+        serde_json::ser::CompactFormatter.write_null(writer)
+    }
+    fn write_number_str<W: ?Sized + std::io::Write>(
+        &mut self,
+        writer: &mut W,
+        value: &str,
+    ) -> std::io::Result<()> {
+        self.unusual_key |= self.string.is_some();
+        serde_json::ser::CompactFormatter.write_number_str(writer, value)
+    }
+    fn begin_string<W: ?Sized + std::io::Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
+        self.string = Some(String::new());
+        serde_json::ser::CompactFormatter.begin_string(writer)
+    }
+    fn end_string<W: ?Sized + std::io::Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
+        if let Some(text) = self.string.take() {
+            scan(&text, &mut self.found);
+        }
+        serde_json::ser::CompactFormatter.end_string(writer)
+    }
+    fn write_string_fragment<W: ?Sized + std::io::Write>(
+        &mut self,
+        writer: &mut W,
+        fragment: &str,
+    ) -> std::io::Result<()> {
+        if let Some(text) = &mut self.string {
+            text.push_str(fragment);
+        }
+        serde_json::ser::CompactFormatter.write_string_fragment(writer, fragment)
+    }
+    fn write_char_escape<W: ?Sized + std::io::Write>(
+        &mut self,
+        writer: &mut W,
+        escape: serde_json::ser::CharEscape,
+    ) -> std::io::Result<()> {
+        use serde_json::ser::CharEscape;
+        if let Some(text) = &mut self.string {
+            text.push(match escape {
+                CharEscape::Quote => '"',
+                CharEscape::ReverseSolidus => '\\',
+                CharEscape::Solidus => '/',
+                CharEscape::Backspace => '\u{8}',
+                CharEscape::FormFeed => '\u{c}',
+                CharEscape::LineFeed => '\n',
+                CharEscape::CarriageReturn => '\r',
+                CharEscape::Tab => '\t',
+                CharEscape::AsciiControl(byte) => char::from(byte),
+            });
+        }
+        serde_json::ser::CompactFormatter.write_char_escape(writer, escape)
+    }
+}
+
 /// Every existing-format entity identity mentioned in a source value:
 /// identity strings, identities embedded in longer strings and map keys.
 fn mentions(value: &serde_json::Value, found: &mut BTreeSet<EntityId>) {
@@ -1147,6 +1271,10 @@ fn scan(text: &str, found: &mut BTreeSet<EntityId>) {
     }
     for start in 0..=bytes.len() - 36 {
         let window = &bytes[start..start + 36];
+        // Reject on the four separator positions before the hex digits.
+        if [8, 13, 18, 23].into_iter().any(|i| window[i] != b'-') {
+            continue;
+        }
         let shaped = window.iter().enumerate().all(|(i, b)| match i {
             8 | 13 | 18 | 23 => *b == b'-',
             _ => b.is_ascii_hexdigit(),
@@ -1198,6 +1326,48 @@ mod tests {
         let mut found = BTreeSet::new();
         mentions(&value, &mut found);
         assert_eq!(found, BTreeSet::from([a, b, c, d]));
+    }
+
+    #[test]
+    fn one_pass_sources_equal_the_value_derivation() {
+        let check = |entity: &multicad_core::document::Entity| {
+            let source = Source::of(entity).unwrap();
+            assert_eq!(source.bytes, serde_json::to_vec(entity).unwrap());
+            let mut expected = BTreeSet::new();
+            mentions(&serde_json::to_value(entity).unwrap(), &mut expected);
+            assert_eq!(source.mentioned, expected);
+        };
+        let document = multicad_core::project_file::read(
+            &mut include_bytes!("../../../examples/toolcase.tcd").as_slice(),
+            Default::default(),
+            &multicad_core::project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project
+        .document;
+        let mut mentioning = 0;
+        for entity in document.entities() {
+            check(entity);
+            mentioning += usize::from(!Source::of(entity).unwrap().mentioned.is_empty());
+        }
+        assert!(mentioning > 100, "{mentioning}");
+        let [a, b, c] = std::array::from_fn(|_| EntityId::new());
+        for name in [
+            format!("{a}"),
+            format!("x\"{a}\"\n\t{b}\\/\u{1}{c}"),
+            a.to_string().replace('-', ""),
+            format!("\u{1}{a}")[..20].to_string() + &b.to_string(),
+            format!("{a}{b}"),
+        ] {
+            check(&multicad_core::document::Entity::new(
+                name,
+                EntityData::Material {
+                    density_kg_m3: Some(-0.),
+                    color_rgba: [1, 2, 3, 4],
+                    section_hatch: None,
+                },
+            ));
+        }
     }
 
     #[test]
