@@ -5,7 +5,7 @@ use super::{Error, Point, Result, ensure, scale, sub};
 pub const MAX_CONTROL_POINTS: usize = 65_536;
 pub const MAX_DEGREE: usize = 32;
 
-type Homogeneous = [f64; 4];
+pub(crate) type Homogeneous = [f64; 4];
 
 fn knots(
     distinct: &[f64],
@@ -349,6 +349,41 @@ impl NurbsSurface {
                 accumulate(&mut sums[1], control, derivative * across);
                 accumulate(&mut sums[2], control, value * slope);
             }
+        }
+        project(sums[0], [sums[1], sums[2]])
+    }
+
+    /// Row `i` of the homogeneous section at a fixed v: the v-basis
+    /// combination of the row's controls and of their v derivatives.
+    pub(crate) fn section_row(
+        &self,
+        i: usize,
+        (sv, nv, dv): (usize, &[f64], &[f64]),
+    ) -> [Homogeneous; 2] {
+        let row = i * self.counts[1];
+        let mut sums = [[0.; 4]; 2];
+        for j in 0..=self.degrees[1] {
+            let control = self.control[row + sv + j - self.degrees[1]];
+            accumulate(&mut sums[0], control, nv[j]);
+            accumulate(&mut sums[1], control, dv[j]);
+        }
+        sums
+    }
+
+    /// The point and both derivatives from the u basis and section rows,
+    /// in `O(degree)` per point; mathematically [`Self::combine`], with the
+    /// v sums formed first and so differently rounded.
+    pub(crate) fn combine_section(
+        &self,
+        (su, nu, du): (usize, &[f64], &[f64]),
+        mut row: impl FnMut(usize) -> [Homogeneous; 2],
+    ) -> (Point, [Point; 2]) {
+        let mut sums = [[0.; 4]; 3];
+        for i in 0..=self.degrees[0] {
+            let [point, along_v] = row(su + i - self.degrees[0]);
+            accumulate(&mut sums[0], point, nu[i]);
+            accumulate(&mut sums[1], point, du[i]);
+            accumulate(&mut sums[2], along_v, nu[i]);
         }
         project(sums[0], [sums[1], sums[2]])
     }
