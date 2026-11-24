@@ -41,7 +41,7 @@ The label is drawn in the marker's color. Without a target the cursor is unchang
 
 ## Supporting-face corners and edges
 
-In a face-attached sketch, every draw tool that places points (all except Fillet, Chamfer, Text and, for now, Spline) offers the supporting face's producer geometry that lies in the sketch plane. Vertices are "Face corner" targets (class 0, like existing points, vertex marker). Straight and circular edges are "Face edge" targets (class 3, like a point on a sketch curve, edge marker); the target is the exact foot on the edge. A corner or edge already occupied by sketch geometry is left to that geometry.
+In a face-attached sketch, every draw tool that places points (all except Fillet, Chamfer and Text) offers the supporting face's producer geometry that lies in the sketch plane. Vertices are "Face corner" targets (class 0, like existing points, vertex marker). Straight and circular edges are "Face edge" targets (class 3, like a point on a sketch curve, edge marker); the target is the exact foot on the edge. A corner or edge already occupied by sketch geometry is left to that geometry.
 
 Placing a point on a face corner or edge creates nothing at once. When the gesture commits, each corner or edge it placed a point on is captured as a canonical projected reference (Project, reference only, the CAD-128 mechanism). A drawn point on a corner reuses the projected point by identity. A point on an edge lies exactly on the projected edge; the sketch model has no point-on-curve constraint, so it is not held there afterwards.
 

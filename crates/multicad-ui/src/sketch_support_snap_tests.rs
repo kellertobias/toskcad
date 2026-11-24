@@ -926,3 +926,65 @@ fn missing_and_ambiguous_face_references_are_refused_explicitly() {
             .starts_with("Missing face reference")
     );
 }
+
+#[test]
+fn spline_poles_on_face_corners_reuse_the_projected_points_in_one_transaction() {
+    let mut session = Session::new(Document::new("Spline projection").unwrap()).unwrap();
+    let stock = Stock::new(&mut session);
+    let (sketch, _) = top_face_sketch(&mut session, &stock);
+    let mut host = Host::new(session, sketch);
+    host.editor.set_tool(DrawTool::Spline).unwrap();
+    let revision = host.session.revision();
+    let (a, c) = (stock.corner(0., 0.), stock.corner(SIZE[0], SIZE[1]));
+    host.hover_support(a, TargetKind::FaceCorner);
+    host.click(a);
+    for free in [stock.corner(10., 12.), stock.corner(20., 6.)] {
+        let poles = host.editor.spline_poles.len();
+        host.click(free);
+        assert_eq!(host.editor.spline_poles.len(), poles + 1);
+    }
+    host.hover_support(c, TargetKind::FaceCorner);
+    host.click(c);
+    assert_eq!(host.editor.spline_poles.len(), 4);
+    assert_eq!(host.session.revision(), revision, "poles change nothing");
+    host.editor
+        .finish_spline(&mut host.session, false, Channel::Ui)
+        .unwrap();
+    assert!(host.editor.projection_pending(), "{}", host.editor.message);
+    assert!(
+        !host.editor.message.contains("committed"),
+        "{}",
+        host.editor.message
+    );
+    host.settle_support();
+    assert_eq!(
+        host.session.revision(),
+        revision + 1,
+        "{}",
+        host.editor.message
+    );
+    let document = host.session.document().clone();
+    let outputs = corner_outputs(&document, sketch);
+    assert_eq!(outputs.len(), 2);
+    let poles = authored(&document, sketch)
+        .sketch
+        .curves
+        .iter()
+        .find_map(|c| match &c.kind {
+            CurveKind::BSpline { poles, .. } if !c.construction => Some(poles.clone()),
+            _ => None,
+        })
+        .expect("a spline");
+    assert_eq!(poles.len(), 4);
+    assert!(
+        outputs.contains(&poles[0]) && outputs.contains(&poles[3]),
+        "the end poles are the projected corners: {poles:?} {outputs:?}"
+    );
+    host.session.undo(host.session.revision(), actor()).unwrap();
+    assert!(
+        sketch_external::bindings(host.session.document(), sketch)
+            .unwrap()
+            .is_empty(),
+        "one Undo removes the references and the spline"
+    );
+}

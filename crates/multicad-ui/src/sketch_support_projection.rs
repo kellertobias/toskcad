@@ -24,12 +24,9 @@ use multicad_core::{
 use snap::SupportEdge;
 
 /// Draw tools whose point placements may land on a face corner or edge.
-/// Fillet, Chamfer and Text place no points. Spline is not offered yet.
+/// Fillet, Chamfer and Text place no points.
 pub(super) fn projects(tool: DrawTool) -> bool {
-    !matches!(
-        tool,
-        DrawTool::Fillet | DrawTool::Chamfer | DrawTool::Text | DrawTool::Spline
-    )
+    !matches!(tool, DrawTool::Fillet | DrawTool::Chamfer | DrawTool::Text)
 }
 
 /// A drawing onto face references, waiting for its native check.
