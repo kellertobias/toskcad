@@ -440,6 +440,7 @@ pub use chevron::certify_herringbone;
 pub use distance::certify_boundary_distance;
 pub use internal::certify_internal;
 pub use overlap::{Piece, Region, Section, intersect_sections};
+pub(crate) use probe::DiscRims;
 pub use probe::{DiscSide, classify_annulus_disc, classify_ring_disc, classify_spur_disc};
 pub use rack::certify_rack;
 pub use twisted_volume::{TwistedVolume, twisted_interference_volume};

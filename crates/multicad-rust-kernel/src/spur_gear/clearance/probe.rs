@@ -11,6 +11,65 @@ use crate::{
     revolution::length,
     spur_gear::{Edge, Point, Profile, internal::Ring},
 };
+use std::sync::{Arc, Mutex};
+
+/// The chord-tube rims of one fixed outline already built for disc
+/// classification, by the exact bits of their deflection.
+///
+/// A rim is a pure function of the outline and its deflection, and each
+/// classification refines through the same deflections, so a remembered
+/// rim is the one a fresh build returns. It is derived data: a copy starts
+/// empty and it never affects equality.
+#[derive(Default)]
+pub(crate) struct DiscRims(Mutex<Vec<(u64, Arc<Rim>)>>);
+
+/// Rims kept per outline: every refinement of a few tolerances.
+const DISC_RIMS: usize = 4 * MAX_REFINEMENTS;
+
+impl Clone for DiscRims {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PartialEq for DiscRims {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for DiscRims {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DiscRims")
+    }
+}
+
+impl DiscRims {
+    /// The rim at `deflection`, built by `build` unless remembered. A
+    /// poisoned lock only loses the memo.
+    fn get(
+        &self,
+        deflection: f64,
+        build: impl FnOnce() -> Result<Rim, Error>,
+    ) -> Result<Arc<Rim>, Error> {
+        let key = deflection.to_bits();
+        let remembered = self.0.lock().ok().and_then(|rims| {
+            rims.iter()
+                .find(|(bits, _)| *bits == key)
+                .map(|(_, rim)| Arc::clone(rim))
+        });
+        if let Some(rim) = remembered {
+            return Ok(rim);
+        }
+        let rim = Arc::new(build()?);
+        if let Ok(mut rims) = self.0.lock()
+            && rims.len() < DISC_RIMS
+        {
+            rims.push((key, Arc::clone(&rim)));
+        }
+        Ok(rim)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DiscSide {
@@ -38,7 +97,8 @@ fn guard(center: Point, radius_mm: f64, circle_mm: f64) -> f64 {
 /// Whether the disc lies strictly inside (`Some(true)`) or strictly outside
 /// (`Some(false)`) the closed exact outline, refining its chord tubes.
 fn enclosed_by(
-    outline: &[Edge],
+    outline: impl Fn() -> Vec<Edge>,
+    rims: &DiscRims,
     center: Point,
     radius_mm: f64,
     tolerance_mm: f64,
@@ -46,13 +106,9 @@ fn enclosed_by(
 ) -> Result<Option<bool>, Error> {
     let mut deflection = (size_mm * 2e-4).clamp(tolerance_mm, 0.01);
     for _ in 0..MAX_REFINEMENTS {
-        let rim = Rim::from_outline(
-            outline.iter().copied(),
-            0.,
-            Placement::default(),
-            deflection,
-            None,
-        )?;
+        let rim = rims.get(deflection, || {
+            Rim::from_outline(outline(), 0., Placement::default(), deflection, None)
+        })?;
         // The tube encloses the exact edge, so a chord beyond this margin
         // proves the exact boundary lies beyond the disc.
         let margin = rim.tube_mm + rim.guard_mm + radius_mm;
@@ -95,10 +151,11 @@ pub fn classify_spur_disc(
     if bore == Some(true) {
         return Ok(DiscSide::Outside);
     }
-    let outline: Vec<_> = profile.outline().iter().map(|item| item.edge).collect();
+    let outline = || profile.outline().iter().map(|item| item.edge).collect();
     Ok(
         match enclosed_by(
-            &outline,
+            outline,
+            &profile.disc_rims,
             center,
             radius_mm,
             tolerance_mm,
@@ -126,10 +183,11 @@ pub fn classify_ring_disc(
     if rim == Some(false) {
         return Ok(DiscSide::Outside);
     }
-    let cavity: Vec<_> = ring.cavity().iter().map(|item| item.edge).collect();
+    let cavity = || ring.cavity().iter().map(|item| item.edge).collect();
     Ok(
         match enclosed_by(
-            &cavity,
+            cavity,
+            &ring.disc_rims,
             center,
             radius_mm,
             tolerance_mm,
@@ -241,6 +299,33 @@ mod tests {
         assert_eq!(side([0., 0.], 5.), DiscSide::Outside);
         assert_eq!(side(polar(pitch + 4., 0.2), 0.01), DiscSide::Unresolved);
         assert_eq!(side(polar(pitch + 6., 0.2), 1.), DiscSide::Outside);
+    }
+
+    #[test]
+    fn remembered_rims_classify_as_fresh_ones_and_stay_bounded() {
+        let gear = spur(3.);
+        // Discs on and near the flanks need every refinement; tolerances
+        // above the start deflection add their own levels.
+        let discs: Vec<(Point, f64)> = (0..240)
+            .map(|k| {
+                let k = f64::from(k);
+                (
+                    polar(17. + 0.0291 * k, 0.0137 * k),
+                    [0.3, 0.01, 1e-4][k as usize % 3],
+                )
+            })
+            .collect();
+        for tolerance in [1e-7, 1e-4, 1e-3, 1e-7] {
+            for &(center, radius) in &discs {
+                // A copy starts with no rims and builds every one afresh.
+                let fresh = classify_spur_disc(&gear.clone(), center, radius, tolerance);
+                assert_eq!(classify_spur_disc(&gear, center, radius, tolerance), fresh);
+            }
+        }
+        let kept = gear.disc_rims.0.lock().unwrap().len();
+        assert!((1..=DISC_RIMS).contains(&kept), "{kept}");
+        assert!(gear.clone().disc_rims.0.lock().unwrap().is_empty());
+        assert_eq!(gear.clone(), gear);
     }
 
     #[test]

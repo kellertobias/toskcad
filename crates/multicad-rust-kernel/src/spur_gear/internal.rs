@@ -65,6 +65,8 @@ impl Width {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ring {
     cavity: Vec<ToothEdge>,
+    /// Rims built for disc classification against the cavity.
+    pub(crate) disc_rims: super::clearance::DiscRims,
     teeth: u32,
     outer_radius_mm: f64,
     height_mm: f64,
@@ -174,6 +176,7 @@ impl Ring {
         let [area_mm2, x, y] = moments.map(Sum::value);
         Ok(Self {
             cavity,
+            disc_rims: Default::default(),
             teeth,
             outer_radius_mm: outer,
             height_mm: height,
