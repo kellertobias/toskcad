@@ -128,3 +128,39 @@ pub(crate) fn edit_through_callout(
 
 /// The two Inspector widths every linked form is checked at.
 pub(crate) const WIDTHS: [f32; 2] = [200., 420.];
+
+/// Paint `diagram` alone at `width` and assert that no two callout labels
+/// overlap and that each lies inside the painted diagram, so every callout
+/// keeps its own click target.
+pub(crate) fn assert_callouts_apart(
+    diagram: &super::Diagram,
+    width: f32,
+    max_height: f32,
+    value: &dyn Fn(super::Key) -> String,
+) {
+    let ctx = egui::Context::default();
+    let mut painted = None;
+    frame(&ctx, width, vec![], &mut |ui| {
+        painted = Some(super::show(
+            ui,
+            "callouts-apart",
+            diagram,
+            max_height,
+            Default::default(),
+            value,
+        ));
+    });
+    let painted = painted.expect("painted");
+    for (i, (a, ra)) in painted.labels.iter().enumerate() {
+        assert!(
+            painted.rect.expand(0.5).contains_rect(*ra),
+            "{a} lies inside the diagram at {width}"
+        );
+        for (b, rb) in &painted.labels[i + 1..] {
+            assert!(
+                !ra.intersects(*rb),
+                "callouts {a} {ra:?} and {b} {rb:?} overlap at width {width}"
+            );
+        }
+    }
+}

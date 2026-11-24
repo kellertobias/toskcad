@@ -105,6 +105,24 @@ fn clicking_the_going_callout_edits_the_stair_going_at_compact_and_ordinary_widt
             panic!("stair")
         };
         assert_eq!(stair.going, length(300.));
+        // Every form and the slab and pedestal keep separate callout targets.
+        for form in visual::FORMS {
+            p.form = form;
+            let schematic = visual::stair(form, &p.stair_values(document));
+            harness::assert_callouts_apart(&schematic, width, 240., &|k| {
+                p.callout_value(document, k)
+            });
+        }
+        for kind in [ArchitectureKind::Slab, ArchitectureKind::Pedestal] {
+            let mut q = panel(&session, kind);
+            for override_thickness in [false, true] {
+                q.override_thickness = override_thickness;
+                let schematic = visual::slab(&q.slab_values(document));
+                harness::assert_callouts_apart(&schematic, width, 240., &|k| {
+                    q.callout_value(document, k)
+                });
+            }
+        }
     }
 }
 

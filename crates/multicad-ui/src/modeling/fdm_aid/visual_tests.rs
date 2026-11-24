@@ -107,6 +107,8 @@ fn clicking_each_kinds_callout_edits_its_staged_field_at_both_widths() {
                 painted.has(typed),
                 "{kind:?} at {width}: the drawing follows"
             );
+            let schematic = visual::diagram(kind, &p.diagram_values(d));
+            harness::assert_callouts_apart(&schematic, width, 240., &|k| p.callout_value(k));
             match shape(&p, d) {
                 AidShape::Tab {
                     length: l,
