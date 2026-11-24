@@ -403,3 +403,110 @@ fn genuine_unrepresentable_flat_land_cannot_promote_a_generated_packet() {
         Err(Error::Unresolved)
     ));
 }
+#[test]
+fn placed_replay_maps_the_verified_local_chart_through_one_decoded_operator() {
+    use crate::step_read::{
+        npt_stock::Selected,
+        owned_insert::{CompoundDocument, DocumentOptions},
+    };
+    let source = super::super::tests::source(false);
+    let curves = CurvePlan::new(&source, Default::default(), None).unwrap();
+    let plan = SurfacePlan::new(curves, Default::default(), None).unwrap();
+    let verified = plan.verify_candidate(Default::default(), None).unwrap();
+    let local = verified.literal_material().local_volume_mm3();
+    // Columns of a proper rotation with a literal 3-4-5 basis.
+    let placement = OccurrenceMap {
+        columns: [[0.8, 0.6, 0.], [-0.36, 0.48, 0.8], [0.48, -0.64, 0.6]],
+        origin_mm: [17., -8., 13.],
+    };
+    assert!(placement.admitted());
+    let mut writer = super::super::super::Writer::new();
+    writer
+        .append_placed_verified_source_npt_candidate(&verified, Default::default(), placement, None)
+        .unwrap();
+    let text = writer.finish().unwrap();
+    let document = CompoundDocument::parse(&text, DocumentOptions::default(), None).unwrap();
+    let [member] = document.represented_members() else {
+        panic!("one mapped member");
+    };
+    assert!(member.mapping_link().is_some());
+    let material = Selected::parse(&document, member.item_entity(), Default::default(), None)
+        .unwrap()
+        .retain(Default::default(), None)
+        .unwrap();
+    // The local chart is unchanged; the decoded operator carries the pose.
+    assert_eq!(material.local_volume_mm3(), local);
+    let world = material.world_volume_mm3();
+    assert!(world[0] <= local[1] * (1. + 1e-12) && world[1] >= local[0] * (1. - 1e-12));
+    let columns = material.linear_columns_bounds();
+    for (j, column) in placement.columns.iter().enumerate() {
+        for (i, value) in column.iter().enumerate() {
+            let [lo, hi] = columns[j][i];
+            assert!(lo - 1e-15 <= *value && *value <= hi + 1e-15, "{j},{i}");
+        }
+    }
+    let origin = material.origin_mm();
+    for (i, value) in placement.origin_mm.iter().enumerate() {
+        assert!(origin[i][0] <= *value && *value <= origin[i][1]);
+    }
+    // The unplaced replay of the same candidate has no map.
+    let mut plain = super::super::super::Writer::new();
+    plain
+        .append_verified_source_npt_candidate(&verified, Default::default(), None)
+        .unwrap();
+    let plain = plain.finish().unwrap();
+    let document = CompoundDocument::parse(&plain, DocumentOptions::default(), None).unwrap();
+    assert!(document.represented_members()[0].mapping_link().is_none());
+}
+#[test]
+fn placed_replay_refuses_maps_outside_the_proper_near_rigid_domain_atomically() {
+    let source = super::super::tests::source(true);
+    let curves = CurvePlan::new(&source, Default::default(), None).unwrap();
+    let plan = SurfacePlan::new(curves, Default::default(), None).unwrap();
+    let verified = plan.verify_candidate(Default::default(), None).unwrap();
+    let identity = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
+    for (columns, origin_mm, expected) in [
+        // A reflection reverses material orientation.
+        (
+            [[1., 0., 0.], [0., 1., 0.], [0., 0., -1.]],
+            [0.; 3],
+            Error::Unresolved,
+        ),
+        // A shear is not a uniform scale of an orthonormal basis.
+        (
+            [[1., 0., 0.], [0.1, 1., 0.], [0., 0., 1.]],
+            [0.; 3],
+            Error::Unresolved,
+        ),
+        (identity, [f64::NAN, 0., 0.], Error::Invalid),
+        (
+            [[0.; 3], [0., 1., 0.], [0., 0., 1.]],
+            [0.; 3],
+            Error::Invalid,
+        ),
+    ] {
+        let placement = OccurrenceMap { columns, origin_mm };
+        assert!(!placement.admitted());
+        let mut writer = super::super::super::Writer::new();
+        writer
+            .append_verified_source_npt_candidate(&verified, Default::default(), None)
+            .unwrap();
+        let mut reference = super::super::super::Writer::new();
+        reference
+            .append_verified_source_npt_candidate(&verified, Default::default(), None)
+            .unwrap();
+        let before = reference.finish().unwrap();
+        assert_eq!(
+            writer
+                .append_placed_verified_source_npt_candidate(
+                    &verified,
+                    Default::default(),
+                    placement,
+                    None,
+                )
+                .unwrap_err(),
+            expected
+        );
+        assert_eq!(writer.finish().unwrap(), before);
+    }
+}
