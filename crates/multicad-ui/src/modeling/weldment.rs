@@ -1,8 +1,13 @@
 //! Weldment inspector: create tube and profile members from the solid lines
 //! of a sketch or from a point pair, or edit one member in place. Profile
 //! stock is shared with Project → Materials.
+mod linked;
+mod visual;
+#[cfg(test)]
+mod visual_tests;
 use super::{
     FormStamp, PreviewState,
+    diagram::DiagramLink,
     dimension::DimensionField,
     form::{self, FormAction, ModelEvent, ModelRequest},
 };
@@ -186,20 +191,6 @@ fn combo(
         });
     changed
 }
-fn anchor_radio(ui: &mut egui::Ui, label: &str, value: &mut AxisAnchor) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label(label);
-        for (a, text) in [
-            (AxisAnchor::Min, "Min"),
-            (AxisAnchor::Center, "Center"),
-            (AxisAnchor::Max, "Max"),
-        ] {
-            changed |= ui.radio_value(value, a, text).changed();
-        }
-    });
-    changed
-}
 
 pub(super) struct WeldmentPanel {
     stamp: FormStamp,
@@ -221,6 +212,8 @@ pub(super) struct WeldmentPanel {
     group: bool,
     error: Option<String>,
     batten: bool,
+    /// Callout ↔ field linking of the section and member schematic.
+    link: DiagramLink,
 }
 impl WeldmentPanel {
     pub fn new(document: &Document, name: String) -> Self {
@@ -247,6 +240,7 @@ impl WeldmentPanel {
             group: true,
             error: None,
             batten: false,
+            link: DiagramLink::default(),
         }
     }
     /// Open an applied member for editing in place.
@@ -448,6 +442,7 @@ impl WeldmentPanel {
         if create {
             return Some(ModelEvent::CreateStock(kind));
         }
+        self.paint_diagram(ui, document);
         ui.separator();
         let sketch_path = self.existing.is_some() && self.path.is_some();
         if self.existing.is_none() {
@@ -487,33 +482,11 @@ impl WeldmentPanel {
                     .changed();
             }
             PathKind::Points => {
-                for (axis, f) in ["X", "Y", "Z"].iter().zip(&mut self.start) {
-                    changed |= f.show(ui, &format!("Start {axis}"), "World path start");
-                }
-                for (axis, f) in ["X", "Y", "Z"].iter().zip(&mut self.end) {
-                    changed |= f.show(ui, &format!("End {axis}"), "World path end");
-                }
+                changed |= self.show_points(ui);
             }
         }
         ui.separator();
-        ui.label("Section placement");
-        changed |= anchor_radio(ui, "Width", &mut self.anchor[0]);
-        changed |= anchor_radio(ui, "Height", &mut self.anchor[1]);
-        changed |= self.rotation.show(
-            ui,
-            "Rotation",
-            "About the member axis; height starts along the sketch normal, or up",
-        );
-        changed |= self.extend_start.show(
-            ui,
-            "Extend start",
-            "Extra length at the path start; negative trims",
-        );
-        changed |= self.extend_end.show(
-            ui,
-            "Extend end",
-            "Extra length at the path end; negative trims",
-        );
+        changed |= self.show_section_placement(ui);
         ui.separator();
         form::preview_status(ui, self.stamp, preview);
         let validation = self.request(document, enabled);
