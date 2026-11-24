@@ -199,15 +199,29 @@ fn actual_npt_export_receipts_keep_member_mass_and_reject_a_different_source() {
             ..Default::default()
         })
         .unwrap();
-    assert!(matches!(
-        placed.verify_partitioned_step_source(&different, 1e-7, None),
-        Some(Err(GeometryError {
-            kind: GeometryErrorKind::Unsupported,
-            ..
-        }))
-    ));
-    assert!(placed.write_step(file.path()).is_err());
-    assert_eq!(std::fs::read_to_string(file.path()).unwrap(), different);
+    // An unmapped file cannot stand for a placed occurrence.
+    let refused = placed
+        .verify_partitioned_step_source(&different, 1e-7, None)
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused.kind, GeometryErrorKind::InvalidResult);
+    assert!(refused.message.contains("placement"), "{}", refused.message);
+    // The placed export maps the same local chart and verifies, and the
+    // unplaced source refuses that mapped file in turn.
+    placed.write_step(file.path()).unwrap();
+    let mapped = std::fs::read_to_string(file.path()).unwrap();
+    assert_ne!(mapped, different);
+    assert!(
+        placed
+            .verify_partitioned_step_source(&mapped, 1e-7, None)
+            .unwrap()
+            .is_ok()
+    );
+    let refused = parts[1]
+        .verify_partitioned_step_source(&mapped, 1e-7, None)
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused.kind, GeometryErrorKind::InvalidResult);
 }
 #[test]
 fn native_source_scalars_do_not_require_unrequested_fixed_absolute_precision() {
@@ -727,8 +741,79 @@ fn actual_clipped_source_poses_preserve_material_topology_edges_and_closed_manuf
                 })
                 .unwrap();
             assert!(mesh.edge_pairs > 0 && mesh.vertex_links > 0);
-            assert!(!moved.supports_step_export());
+            placed_step_reads_back_through_its_actual_operator(&moved, pose, policy);
             assert_eq!(original.topology_snapshot(feature, 0).unwrap(), topology);
         }
     }
+}
+
+/// The placed export is the verified local chart under one written map. Its
+/// independent readback decodes that map, bounds it against the occurrence,
+/// and refuses a file whose operator origin is moved by 1 um.
+fn placed_step_reads_back_through_its_actual_operator(
+    moved: &Solid,
+    pose: RigidTransform,
+    policy: GeometryPolicy,
+) {
+    assert!(moved.supports_step_export());
+    let file = tempfile::NamedTempFile::new().unwrap();
+    moved.write_step(file.path()).unwrap();
+    let text = std::fs::read_to_string(file.path()).unwrap();
+    assert!(text.contains("MAPPED_ITEM("));
+    let tolerance = policy.linear_tolerance_mm;
+    let proof = moved
+        .verify_partitioned_step_source(&text, tolerance, None)
+        .unwrap()
+        .unwrap();
+    let [member] = proof.members.retained_members.as_slice() else {
+        panic!("one retained placed member");
+    };
+    let source = moved.rust_clipped_npt_volume_bounds_mm3().unwrap();
+    let decoded = member.decoded_volume_bounds_mm3;
+    assert_eq!(member.source_volume_bounds_mm3, source);
+    assert!(decoded[0] <= decoded[1]);
+    assert!((decoded[0].midpoint(decoded[1]) - source[0].midpoint(source[1])).abs() < 1e-5);
+    let [(_, correspondence)] = proof.insert_correspondence.as_slice() else {
+        panic!("one placed source correspondence");
+    };
+    assert!(correspondence.maximum_position_error_mm <= tolerance);
+    assert!(correspondence.maximum_row_derivative_error_mm <= 1e-6);
+    assert!(correspondence.maximum_ruling_derivative_error_mm <= 1e-6);
+    // The decoded world box is the file's own transport, not the source box;
+    // it lies where the placed source does.
+    let bounds = moved.bounds().unwrap();
+    for i in 0..3 {
+        let [low, high] = [0, 1].map(|end| correspondence.decoded_bounds_mm[end][i]);
+        assert!(low < high);
+        assert!(low >= bounds.min[i] - 1. && high <= bounds.max[i] + 1.);
+    }
+    // Deterministic: a second export writes the same bytes.
+    moved.write_step(file.path()).unwrap();
+    assert_eq!(std::fs::read_to_string(file.path()).unwrap(), text);
+    // Move the written operator's target origin by 1 um along x.
+    let operator = text
+        .lines()
+        .find(|line| line.contains("(CARTESIAN_TRANSFORMATION_OPERATOR("))
+        .unwrap();
+    let arguments = operator
+        .split("(CARTESIAN_TRANSFORMATION_OPERATOR(")
+        .nth(1)
+        .unwrap();
+    let target = arguments.split(',').nth(2).unwrap();
+    let prefix = format!("{target}=CARTESIAN_POINT(");
+    let line = text.lines().find(|line| line.starts_with(&prefix)).unwrap();
+    let t = pose.translation_mm;
+    let shifted = format!(
+        "{target}=CARTESIAN_POINT('',({:.16E},{:.16E},{:.16E}));",
+        t[0] + 1e-3,
+        t[1],
+        t[2]
+    );
+    let tampered = text.replacen(line, &shifted, 1);
+    assert_ne!(tampered, text);
+    let refused = moved
+        .verify_partitioned_step_source(&tampered, tolerance, None)
+        .unwrap()
+        .unwrap_err();
+    assert!(refused.message.contains("placement"), "{}", refused.message);
 }

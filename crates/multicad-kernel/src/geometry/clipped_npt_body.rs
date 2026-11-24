@@ -1,6 +1,7 @@
 //! Placed occupied material of the unchanged local clipped NPT source.
-//! Local STEP export earns independent literal material and source
-//! correspondence. Imported geometry and placed STEP admission remain separate.
+//! STEP export earns independent literal material and source correspondence;
+//! a placed export also bounds its decoded file map against the occurrence.
+//! Imported geometry remains separate.
 use super::*;
 use multicad_core::references::{
     AnalyticGeometry, AnchoredFrame, TopologyElement, TopologyKey, TopologyKind,
