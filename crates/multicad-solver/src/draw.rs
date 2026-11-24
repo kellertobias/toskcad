@@ -31,6 +31,7 @@ pub fn prepare_draw(
         request,
         Vec::new(),
         session.parameters(),
+        |_, _| Ok(()),
     )
 }
 /// Draws onto an uncommitted candidate, such as a captured external
@@ -47,6 +48,32 @@ pub fn prepare_draw_on(
     report: Option<&ReferenceReport>,
     request: &DrawRequest,
 ) -> Result<DrawEdit, EditError> {
+    prepare_draw_on_with(
+        session,
+        expected_revision,
+        actor,
+        sketch,
+        base,
+        report,
+        request,
+        |_, _| Ok(()),
+    )
+}
+/// [`prepare_draw_on`] whose `finish` may add constraints, such as entered
+/// sizes, to the drawn source before it is solved, so they join the same
+/// transaction (CAD-383). `finish` sees the created curves in drawing order;
+/// an error from it prepares nothing.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_draw_on_with(
+    session: &Session,
+    expected_revision: u64,
+    actor: Actor,
+    sketch: EntityId,
+    base: &Prepared,
+    report: Option<&ReferenceReport>,
+    request: &DrawRequest,
+    finish: impl FnOnce(&mut Source, &[EntityId]) -> Result<(), String>,
+) -> Result<DrawEdit, EditError> {
     session.validate_preview(base).map_err(EditError::Command)?;
     if base.base_revision() != expected_revision {
         return Err(stale(sketch));
@@ -61,6 +88,7 @@ pub fn prepare_draw_on(
         request,
         prefix,
         base.parameters(),
+        finish,
     )
 }
 fn stale(sketch: EntityId) -> EditError {
@@ -81,6 +109,7 @@ fn prepare_draw_after(
     request: &DrawRequest,
     prefix: Vec<Mutation>,
     parameters: &multicad_core::parameters::EvaluatedParameters,
+    finish: impl FnOnce(&mut Source, &[EntityId]) -> Result<(), String>,
 ) -> Result<DrawEdit, EditError> {
     if session.revision() != expected_revision {
         return Err(stale(sketch));
@@ -89,6 +118,12 @@ fn prepare_draw_after(
         EditError::Input(InputError {
             source: Some(sketch),
             message: e.to_string(),
+        })
+    };
+    let finished = |message: String| {
+        EditError::Input(InputError {
+            source: Some(sketch),
+            message,
         })
     };
     let base = if prefix.is_empty() {
@@ -148,6 +183,7 @@ fn prepare_draw_after(
                 .filter(|c| !source.sketch.constraints.iter().any(|old| old.id == c.id))
                 .cloned(),
         );
+        finish(&mut canonical, &draft.created_curves).map_err(finished)?;
         let edit = crate::transaction::prepare_edit_after(
             session,
             expected_revision,
@@ -165,7 +201,8 @@ fn prepare_draw_after(
             created_curves: draft.created_curves,
         });
     }
-    let draft = sketch_draw::draft(&source, request).map_err(input)?;
+    let mut draft = sketch_draw::draft(&source, request).map_err(input)?;
+    finish(&mut draft.source, &draft.created_curves).map_err(finished)?;
     let edit = crate::transaction::prepare_edit_after(
         session,
         expected_revision,
