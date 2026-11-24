@@ -12,7 +12,7 @@ use super::{
     ensure, norm, scale, sub,
 };
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 
 /// Volume flux, area and the three first moments of area.
@@ -38,6 +38,18 @@ fn moments((s, [su, sv]): (Point, [Point; 2]), anchor: Point) -> Moments {
         s[1] * area,
         s[2] * area,
     ]
+}
+
+/// Add the Gauss-Legendre integral of `f` over one panel cut `refine` times
+/// to `total`, node by node exactly as [`quadrature`] does.
+fn panel(total: &mut Moments, pair: [f64; 2], refine: usize, f: &mut impl FnMut(f64) -> Moments) {
+    let width = (pair[1] - pair[0]) / refine as f64;
+    for piece in 0..refine {
+        let middle = pair[0] + width * (piece as f64 + 0.5);
+        for (node, weight) in GAUSS {
+            accumulate(total, f(middle + 0.5 * width * node), 0.5 * width * weight);
+        }
+    }
 }
 
 /// Gauss-Legendre integral of `f` over panels, each cut `refine` times.
@@ -99,6 +111,29 @@ struct UBasis {
     spans: Vec<usize>,
     /// Per entry, the `degree + 1` values then the `degree + 1` derivatives.
     values: Vec<f64>,
+    /// The v of every strip taken so far, by its exact bits.
+    seen: HashSet<u64, BuildHasherDefault<NodeHasher>>,
+    /// Running strip totals at v values that recur, as along a boundary
+    /// edge on one v row. See [`Prefix`].
+    prefixes: HashMap<u64, Prefix, BuildHasherDefault<NodeHasher>>,
+    /// Bytes held by `seen` and `prefixes`, bounded like the bases.
+    prefix_bytes: usize,
+}
+
+/// The running total of strips from the base at one v, after each of its
+/// leading whole panels.
+///
+/// A strip from the base sums its panels in order, node by node, and every
+/// panel before its last one ends at a knot break that does not depend on
+/// where the strip ends. Two strips at the same v therefore agree bit for
+/// bit up to the shorter one's last whole panel, and the longer one may
+/// continue from the stored total instead of summing that prefix again.
+#[derive(Default)]
+struct Prefix {
+    /// The end of each stored whole panel.
+    ends: Vec<f64>,
+    /// The running total after each stored whole panel.
+    totals: Vec<Moments>,
 }
 
 struct Integral<'a> {
@@ -122,20 +157,88 @@ impl Integral<'_> {
         let total = if let Surface::Nurbs { surface, closed } = self.surface {
             // `Surface::evaluate` confines each axis independently, then
             // combines the two bases; v and its basis are shared here.
-            let v = Surface::confine_axis(surface, *closed, 1, v);
-            let (sv, nv, dv) = surface.basis(1, v);
-            quadrature(&panels, self.refine, |s| {
+            let confined = Surface::confine_axis(surface, *closed, 1, v);
+            let (sv, nv, dv) = surface.basis(1, confined);
+            self.sum(&panels, sign, v, |s| {
                 let u = Surface::confine_axis(surface, *closed, 0, s);
-                Ok(self.with_basis(surface, u, |along| {
+                self.with_basis(surface, u, |along| {
                     moments(surface.combine(along, (sv, &nv, &dv)), self.anchor)
-                }))
+                })
             })
         } else {
-            quadrature(&panels, self.refine, |s| {
-                Ok(integrand(self.surface, [s, v], self.anchor))
+            self.sum(&panels, sign, v, |s| {
+                integrand(self.surface, [s, v], self.anchor)
             })
         };
-        total.unwrap_or_default().map(|g| g * sign)
+        total.map(|g| g * sign)
+    }
+
+    /// The quadrature of `f` over the strip `panels` at `v`, continuing a
+    /// recurring v's stored running total where its panels agree. Strips
+    /// below the base start with their partial panel and are summed afresh.
+    fn sum(&self, panels: &[f64], sign: f64, v: f64, mut f: impl FnMut(f64) -> Moments) -> Moments {
+        let key = v.to_bits();
+        let recurring = sign > 0. && {
+            let mut memo = self.memo.borrow_mut();
+            let memo = &mut *memo;
+            if memo.seen.contains(&key) {
+                true
+            } else {
+                if memo.prefix_bytes + size_of::<u64>() <= MEMO_BYTES {
+                    memo.seen.insert(key);
+                    memo.prefix_bytes += size_of::<u64>();
+                }
+                false
+            }
+        };
+        let mut total = [0.; 5];
+        if !recurring {
+            for pair in panels.windows(2) {
+                panel(&mut total, [pair[0], pair[1]], self.refine, &mut f);
+            }
+            return total;
+        }
+        // Taken out while summing: `f` borrows the memo for the bases.
+        let mut prefix = self
+            .memo
+            .borrow_mut()
+            .prefixes
+            .remove(&key)
+            .unwrap_or_default();
+        let whole = panels.len() - 2;
+        let agreed = prefix
+            .ends
+            .iter()
+            .zip(&panels[1..=whole])
+            .take_while(|(stored, end)| stored.to_bits() == end.to_bits())
+            .count();
+        if agreed > 0 {
+            total = prefix.totals[agreed - 1];
+        }
+        // Only a prefix that every stored panel agrees with is extended.
+        let mut extend = agreed == prefix.ends.len();
+        let entry_bytes = size_of::<f64>() + size_of::<Moments>();
+        for k in agreed..whole {
+            panel(&mut total, [panels[k], panels[k + 1]], self.refine, &mut f);
+            if extend {
+                let mut memo = self.memo.borrow_mut();
+                if memo.prefix_bytes + entry_bytes <= MEMO_BYTES {
+                    memo.prefix_bytes += entry_bytes;
+                    prefix.ends.push(panels[k + 1]);
+                    prefix.totals.push(total);
+                } else {
+                    extend = false;
+                }
+            }
+        }
+        panel(
+            &mut total,
+            [panels[whole], panels[whole + 1]],
+            self.refine,
+            &mut f,
+        );
+        self.memo.borrow_mut().prefixes.insert(key, prefix);
+        total
     }
 
     /// Call `f` with the u-axis basis at `u`, memoized while room remains.
@@ -193,8 +296,7 @@ impl Integral<'_> {
                 let along = (t - segment.t[0]) / (segment.t[1] - segment.t[0]);
                 let seed =
                     [0, 1].map(|axis| ends[0][axis] + (ends[1][axis] - ends[0][axis]) * along);
-                let uv = self.inverse.invert(point, Some(seed));
-                let (s, [su, sv]) = self.surface.evaluate(uv);
+                let (uv, (s, [su, sv])) = self.inverse.invert_evaluated(point, Some(seed));
                 ensure(distance(s, point) <= tolerance, Error::Invalid)?;
                 let (a, b, c) = (dot(su, su), dot(su, sv), dot(sv, sv));
                 let (ru, rv) = (dot(tangent, su), dot(tangent, sv));
@@ -403,5 +505,83 @@ mod tests {
         })
         .unwrap();
         assert_eq!(fresh.map(f64::to_bits), again.map(f64::to_bits));
+    }
+
+    #[test]
+    fn strips_at_a_recurring_v_continue_its_prefix_bit_for_bit() {
+        for closed in [[false, false], [true, false]] {
+            let surface = Surface::Nurbs {
+                surface: patch(),
+                closed,
+            };
+            for refine in [1, 2] {
+                let integral = Integral {
+                    surface: &surface,
+                    inverse: PreparedInverse::new(&surface),
+                    anchor: [0.4, -0.2, 0.1],
+                    base: [0.05, 0.],
+                    refine,
+                    memo: RefCell::default(),
+                };
+                // Longer, shorter, equal, on-break and wrapped strips at two
+                // recurring rows, interleaved, and one strip below the base.
+                let us = [0.3, 0.95, 0.2, 0.95, 0.45, 0.7, 1.0, 0.02, 1.35, 0.6, 0.3];
+                for &u in &us {
+                    for v in [0., 0.6] {
+                        let (low, high, sign) = if u < 0.05 {
+                            (u, 0.05, -1.)
+                        } else {
+                            (0.05, u, 1.)
+                        };
+                        let fresh = quadrature(&surface.breaks(0, low, high), refine, |s| {
+                            Ok(integrand(&surface, [s, v], integral.anchor))
+                        })
+                        .unwrap()
+                        .map(|g| g * sign);
+                        let continued = integral.strip([u, v]);
+                        assert_eq!(fresh.map(f64::to_bits), continued.map(f64::to_bits));
+                    }
+                }
+                let memo = integral.memo.borrow();
+                assert_eq!(memo.seen.len(), 2);
+                let stored: usize = memo.prefixes.values().map(|p| p.ends.len()).sum();
+                assert!(stored > 4, "{stored}");
+                assert!(memo.prefix_bytes <= MEMO_BYTES);
+            }
+        }
+    }
+
+    #[test]
+    fn a_full_prefix_budget_keeps_summing_without_storing() {
+        let surface = Surface::Nurbs {
+            surface: patch(),
+            closed: [false; 2],
+        };
+        let integral = Integral {
+            surface: &surface,
+            inverse: PreparedInverse::new(&surface),
+            anchor: [0.; 3],
+            base: [0.; 2],
+            refine: 2,
+            memo: RefCell::default(),
+        };
+        integral.strip([0.3, 0.4]);
+        integral.memo.borrow_mut().prefix_bytes = MEMO_BYTES;
+        for u in [0.5, 0.9, 0.7] {
+            let fresh = quadrature(&surface.breaks(0, 0., u), 2, |s| {
+                Ok(integrand(&surface, [s, 0.4], [0.; 3]))
+            })
+            .unwrap();
+            assert_eq!(
+                fresh.map(f64::to_bits),
+                integral.strip([u, 0.4]).map(f64::to_bits)
+            );
+        }
+        let memo = integral.memo.borrow();
+        assert!(memo.prefixes.values().all(|p| p.ends.is_empty()));
+        // A v first taken with the budget spent is never marked recurring.
+        drop(memo);
+        integral.strip([0.5, 0.8]);
+        assert!(!integral.memo.borrow().seen.contains(&0.8_f64.to_bits()));
     }
 }

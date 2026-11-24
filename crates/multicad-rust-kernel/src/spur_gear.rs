@@ -70,6 +70,8 @@ pub struct Profile {
     root_radius_mm: f64,
     area_mm2: f64,
     hub: Option<Hub>,
+    /// Rims built for disc classification against the outline.
+    pub(crate) disc_rims: clearance::DiscRims,
 }
 
 impl Profile {
@@ -108,6 +110,7 @@ impl Profile {
             root_radius_mm: spec.root_radius_mm,
             area_mm2: area.value(),
             hub: None,
+            disc_rims: Default::default(),
         })
     }
 

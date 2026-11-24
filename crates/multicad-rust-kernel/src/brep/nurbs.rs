@@ -63,30 +63,44 @@ pub(crate) const BASIS: usize = MAX_DEGREE + 1;
 /// every row is formed by the same operations in the same order as a
 /// separate evaluation of that degree, so both are bit-identical to it.
 fn basis(knots: &[f64], degree: usize, t: f64) -> (usize, [f64; BASIS], [f64; BASIS]) {
+    basis_in(knots, degree, t)
+}
+
+/// Entries of the short basis buffers used below this degree bound.
+const SHORT: usize = 8;
+
+/// [`basis`] in buffers of `N > degree` entries: the same arithmetic, so the
+/// same values, without filling and moving the unused entries of the longest
+/// buffers on every evaluation of a low-degree spline.
+fn basis_in<const N: usize>(knots: &[f64], degree: usize, t: f64) -> (usize, [f64; N], [f64; N]) {
     let count = knots.len() - degree - 1;
     let t = t.clamp(knots[degree], knots[count]);
     // The last span in `degree..count` whose knot does not exceed `t`, as
     // a scan up from `degree` finds it; knots never decrease.
     let above = degree + 1 + knots[degree + 1..count].partition_point(|&knot| t >= knot);
     let span = above - 1;
-    let mut value = [0.; BASIS];
+    let mut output = (span, [0.; N], [0.; N]);
+    let (_, value, derivative) = &mut output;
     value[0] = 1.;
-    let mut lower = value;
-    let mut next = [0.; BASIS];
+    // Only the first `degree + 1` entries are ever nonzero, so each round
+    // works on that prefix in place: entry `r` of the next round is the
+    // carry from entry `r - 1` plus its own share, summed in that order
+    // from zero.
+    let mut lower = [0.; N];
     for j in 1..=degree {
         if j == degree {
-            lower = value;
+            lower[..j].copy_from_slice(&value[..j]);
         }
-        next[..=j].fill(0.);
-        for r in 0..j {
+        let mut carry = 0.;
+        for (r, entry) in value[..j].iter_mut().enumerate() {
             let i = span + 1 + r - j;
-            let w = value[r] / (knots[i + j] - knots[i]);
-            next[r + 1] += (t - knots[i]) * w;
-            next[r] += (knots[i + j] - t) * w;
+            let w = *entry / (knots[i + j] - knots[i]);
+            let rising = 0. + (t - knots[i]) * w;
+            *entry = carry + (knots[i + j] - t) * w;
+            carry = rising;
         }
-        value[..=j].copy_from_slice(&next[..=j]);
+        value[j] = carry;
     }
-    let mut derivative = [0.; BASIS];
     for (m, slot) in derivative[..=degree].iter_mut().enumerate() {
         let i = span + m - degree;
         if m >= 1 {
@@ -97,7 +111,7 @@ fn basis(knots: &[f64], degree: usize, t: f64) -> (usize, [f64; BASIS], [f64; BA
         }
         *slot *= degree as f64;
     }
-    (span, value, derivative)
+    output
 }
 
 fn project(a: Homogeneous, derivatives: [Homogeneous; 2]) -> (Point, [Point; 2]) {
@@ -190,7 +204,16 @@ impl NurbsCurve {
     }
 
     pub fn evaluate(&self, t: f64) -> (Point, Point) {
-        let (span, value, derivative) = basis(&self.knots, self.degree, t);
+        if self.degree < SHORT {
+            let (span, value, derivative) = basis_in::<SHORT>(&self.knots, self.degree, t);
+            self.combine(span, &value, &derivative)
+        } else {
+            let (span, value, derivative) = basis(&self.knots, self.degree, t);
+            self.combine(span, &value, &derivative)
+        }
+    }
+
+    fn combine(&self, span: usize, value: &[f64], derivative: &[f64]) -> (Point, Point) {
         let mut sums = [[0.; 4]; 2];
         for k in 0..=self.degree {
             let control = self.control[span + k - self.degree];
@@ -288,9 +311,15 @@ impl NurbsSurface {
     }
 
     pub fn evaluate(&self, u: f64, v: f64) -> (Point, [Point; 2]) {
-        let (su, nu, du) = basis(&self.knots[0], self.degrees[0], u);
-        let (sv, nv, dv) = basis(&self.knots[1], self.degrees[1], v);
-        self.combine((su, &nu, &du), (sv, &nv, &dv))
+        if self.degrees.iter().all(|&degree| degree < SHORT) {
+            let (su, nu, du) = basis_in::<SHORT>(&self.knots[0], self.degrees[0], u);
+            let (sv, nv, dv) = basis_in::<SHORT>(&self.knots[1], self.degrees[1], v);
+            self.combine((su, &nu, &du), (sv, &nv, &dv))
+        } else {
+            let (su, nu, du) = basis(&self.knots[0], self.degrees[0], u);
+            let (sv, nv, dv) = basis(&self.knots[1], self.degrees[1], v);
+            self.combine((su, &nu, &du), (sv, &nv, &dv))
+        }
     }
 
     /// Span, nonzero basis values and derivatives of one parameter, exactly
@@ -306,14 +335,19 @@ impl NurbsSurface {
         (su, nu, du): (usize, &[f64], &[f64]),
         (sv, nv, dv): (usize, &[f64], &[f64]),
     ) -> (Point, [Point; 2]) {
+        let [p, q] = self.degrees;
+        let (nv, dv) = (&nv[..=q], &dv[..=q]);
         let mut sums = [[0.; 4]; 3];
-        for i in 0..=self.degrees[0] {
-            let row = (su + i - self.degrees[0]) * self.counts[1];
-            for j in 0..=self.degrees[1] {
-                let control = self.control[row + sv + j - self.degrees[1]];
-                accumulate(&mut sums[0], control, nu[i] * nv[j]);
-                accumulate(&mut sums[1], control, du[i] * nv[j]);
-                accumulate(&mut sums[2], control, nu[i] * dv[j]);
+        for i in 0..=p {
+            // Row `i` of the net, sliced once: the products and their order
+            // per sum are those of indexing each control point.
+            let start = (su + i - p) * self.counts[1] + sv - q;
+            let row = &self.control[start..=start + q];
+            let (value, derivative) = (nu[i], du[i]);
+            for ((&control, &across), &slope) in row.iter().zip(nv).zip(dv) {
+                accumulate(&mut sums[0], control, value * across);
+                accumulate(&mut sums[1], control, derivative * across);
+                accumulate(&mut sums[2], control, value * slope);
             }
         }
         project(sums[0], [sums[1], sums[2]])
@@ -598,5 +632,66 @@ mod tests {
             }
         }
         assert!(checked > 2_000);
+    }
+
+    /// The short buffers of low-degree evaluation hold exactly the values
+    /// of the full-length ones, and the evaluations agree bit for bit.
+    #[test]
+    fn short_basis_buffers_match_the_full_basis_bit_for_bit() {
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut unit = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1_u64 << 53) as f64
+        };
+        let mut checked = 0;
+        for degree in 1..SHORT {
+            let count = degree + 4;
+            let mut knots = vec![-0.3; degree + 1];
+            let mut knot = -0.3;
+            while knots.len() < count {
+                knot += if unit() < 0.15 { 0. } else { 0.05 + unit() };
+                knots.push(knot);
+            }
+            knots.extend(std::iter::repeat_n(knot + 0.7, degree + 1));
+            let [low, high] = [knots[degree], knots[count]];
+            let mut parameters: Vec<f64> = knots.clone();
+            parameters.extend([low - 1., high + 1.]);
+            parameters.extend((0..60).map(|_| low + (high - low) * unit()));
+            for &t in &parameters {
+                let (span, value, derivative) = basis(&knots, degree, t);
+                let (short_span, short_value, short_derivative) =
+                    basis_in::<SHORT>(&knots, degree, t);
+                assert_eq!(span, short_span);
+                for (long, short) in [(&value, &short_value), (&derivative, &short_derivative)] {
+                    assert!(long[SHORT..].iter().all(|&v| v.to_bits() == 0));
+                    for (a, b) in long[..SHORT].iter().zip(short) {
+                        assert_eq!(a.to_bits(), b.to_bits(), "degree {degree} at {t}");
+                    }
+                }
+                checked += 1;
+            }
+            let points: Vec<Point> = (0..count)
+                .map(|i| [i as f64, 0.3 * (i % 4) as f64, 0.2 * (i * i) as f64])
+                .collect();
+            let weights: Vec<f64> = (0..count).map(|i| 1. + 0.3 * (i % 3) as f64).collect();
+            let mut distinct = knots.clone();
+            distinct.dedup();
+            let multiplicities: Vec<usize> = distinct
+                .iter()
+                .map(|k| knots.iter().filter(|&&x| x == *k).count())
+                .collect();
+            let curve =
+                NurbsCurve::new(degree, points, Some(weights), distinct, multiplicities).unwrap();
+            for &t in &parameters {
+                let (span, value, derivative) = basis(&curve.knots, degree, t);
+                let (point, tangent) = curve.evaluate(t);
+                let (long_point, long_tangent) = curve.combine(span, &value, &derivative);
+                assert_eq!(point.map(f64::to_bits), long_point.map(f64::to_bits));
+                assert_eq!(tangent.map(f64::to_bits), long_tangent.map(f64::to_bits));
+            }
+        }
+        assert!(checked > 400);
     }
 }

@@ -91,6 +91,52 @@ impl<T> Cache<T> {
     }
 }
 
+/// The most recent exit radii by the exact bits of their section and side.
+///
+/// [`Wheel::crossing`] is a pure function of the wheel and its arguments,
+/// so a remembered radius is the value a fresh bisection returns. Bounding
+/// a cell asks for the radius at the cell's middle several times in a row:
+/// for the cell itself, and for the point and cell enclosures of its exit.
+#[derive(Debug, Default)]
+pub(crate) struct Crossings(std::sync::Mutex<[Option<(u64, u64, f64)>; CROSSINGS]>);
+
+const CROSSINGS: usize = 4;
+
+impl Clone for Crossings {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PartialEq for Crossings {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Crossings {
+    fn get(&self, v: f64, side: f64, compute: impl FnOnce() -> f64) -> f64 {
+        let key = (v.to_bits(), side.to_bits());
+        let remembered = |recent: &[Option<(u64, u64, f64)>; CROSSINGS]| {
+            recent
+                .iter()
+                .flatten()
+                .find(|(a, b, _)| (*a, *b) == key)
+                .map(|entry| entry.2)
+        };
+        // A poisoned lock only loses the memo: the radius is recomputed.
+        if let Some(found) = self.0.lock().ok().and_then(|recent| remembered(&recent)) {
+            return found;
+        }
+        let radius = compute();
+        if let Ok(mut recent) = self.0.lock() {
+            recent.rotate_right(1);
+            recent[0] = Some((key.0, key.1, radius));
+        }
+        radius
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Wheel {
     spec: WheelSpec,
@@ -104,6 +150,7 @@ pub struct Wheel {
     pub(crate) view_structure: Cache<bool>,
     pub(crate) exit_monotone: Cache<[bool; 2]>,
     pub(crate) remainders: Cache<Option<Box<[super::wheel_bounds::Remainder; 5]>>>,
+    crossings: Crossings,
 }
 
 pub(crate) fn turn<T: Real>([x, y]: [T; 2], angle: T) -> [T; 2] {
@@ -156,6 +203,7 @@ impl Wheel {
             view_structure: Cache::default(),
             exit_monotone: Cache::default(),
             remainders: Cache::default(),
+            crossings: Crossings::default(),
         };
         wheel.check(minimum_mm)?;
         Ok(wheel)
@@ -293,6 +341,11 @@ impl Wheel {
 
     /// Cutter radius where one flank leaves the blank at section `v`.
     pub(crate) fn crossing(&self, v: f64, side: f64) -> f64 {
+        self.crossings
+            .get(v, side, || self.bisect_crossing(v, side))
+    }
+
+    fn bisect_crossing(&self, v: f64, side: f64) -> f64 {
         let (mut lo, mut hi) = (WORM_ROOT, CUTTER_TIP);
         for _ in 0..64 {
             let r = (lo + hi) / 2.;
@@ -687,6 +740,43 @@ pub(crate) mod tests {
 
     pub(crate) fn wheel(spec: WheelSpec) -> Wheel {
         Wheel::new(spec, 1e-3, 1e7).unwrap()
+    }
+
+    #[test]
+    fn remembered_crossings_are_the_bisected_radii_and_never_affect_equality() {
+        let wheel = wheel(spec(1., 40, 1.5, 4., 0.05));
+        let fresh = wheel.clone();
+        let stations = [-0.75, 0., 0.4, -0.75, 0.75, 0.4, 0., 0.31, 0.75, -0.2, 0.];
+        for v in stations {
+            for side in [1., -1.] {
+                let expected = fresh.bisect_crossing(v, side).to_bits();
+                assert_eq!(wheel.crossing(v, side).to_bits(), expected);
+                assert_eq!(wheel.crossing(v, side).to_bits(), expected);
+            }
+        }
+        // Both flanks at one section are distinct entries.
+        assert_ne!(wheel.crossing(0.4, 1.), wheel.crossing(0.4, -1.));
+        assert!(
+            wheel
+                .crossings
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .all(Option::is_some)
+        );
+        assert!(
+            fresh
+                .crossings
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .all(Option::is_none)
+        );
+        assert_eq!(wheel, fresh);
+        let copy = wheel.clone();
+        assert!(copy.crossings.0.lock().unwrap().iter().all(Option::is_none));
     }
 
     #[test]
