@@ -878,4 +878,6 @@ pub(crate) fn section<R>(
 }
 
 #[cfg(test)]
+pub(crate) mod harness;
+#[cfg(test)]
 mod tests;
