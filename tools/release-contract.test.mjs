@@ -112,6 +112,10 @@ test('native regression suites are read-only and gate publication on every platf
   assert.match(packaging,/const testArgs=packageTestArguments\(process\.env\.MULTICAD_NATIVE_TEST_SHARD\?\?'full'\)/);
   assert.match(packaging,/run\('cargo',testArgs,\{env,stdio:'inherit'\}\);\n  run\('cargo',workspaceDocTestArguments\(\),\{env,stdio:'inherit'\}\)/);
   assert.deepEqual(workspaceDocTestArguments(),['test','--workspace','--doc','--profile','ci','--locked']);
+  // Every platform package job runs the packaged example/MCP workflow and the
+  // statically linked OpenCascade code audit on the archived executable.
+  assert.match(packaging,/rejectOCCTLibraries\(runtimeLibraries\);\n    checkStaticCode\(readFileSync\(layout\.executable\)\);/);
+  assert.match(packaging,/await mcpSmoke\(layout\.executable,/);
   const install=`- name: Install pinned cargo-nextest\n        run: cargo install cargo-nextest --version ${nextestVersion} --locked\n`;
   assert.equal(regression.split(install).length-1,1);
   assert.equal(release.split(install).length-1,2);

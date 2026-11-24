@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import {existsSync,mkdtempSync,mkdirSync,readFileSync,rmSync,writeFileSync,chmodSync,statSync,copyFileSync,cpSync} from 'node:fs';
-import {execFileSync,spawnSync} from 'node:child_process';
+import {execFileSync,spawn,spawnSync} from 'node:child_process';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import test from 'node:test';
-import {assembleRuntime,auditRuntime,checkProjectContainer,collectNotices,isNoticeFile,peImports,runtimeExecutable,rustBuildArgs,stageSourceSupport,validateExamples,validateBundledLibrary} from './native-package.mjs';
+import {assembleRuntime,auditRuntime,bundledExamplePath,checkProjectContainer,collectNotices,isNoticeFile,mcpSmoke,MCP_SMOKE_EXAMPLE,peImports,runtimeExecutable,rustBuildArgs,stageSourceSupport,validateExamples,validateBundledLibrary} from './native-package.mjs';
 import {readdirSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 
@@ -314,4 +314,41 @@ test('package validation lists every shipped demo and refuses missing, unlisted 
     rmSync(join(directory,'examples.json'));
     assert.throws(()=>validateExamples(directory),/Missing .*examples\.json/);
   }finally{rmSync(directory,{recursive:true,force:true});}
+});
+
+// A stand-in stdio server (not MultiCAD) exercises the client side of the
+// packaged MCP smoke: protocol order, backend identity and STEP closure.
+function fakeMcpServer(directory,{backend='rust',step='ISO-10303-21;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n',exitCode=0,parts=[{part:'p1',volume_mm3:12}]}={}){
+  const script=join(directory,'fake-mcp.mjs');
+  writeFileSync(script,`import {createInterface} from 'node:readline';import {writeFileSync} from 'node:fs';import {join} from 'node:path';
+const args=process.argv.slice(2);const exportDir=args[args.indexOf('--export-dir')+1];
+if(args[0]!=='--mcp'||!args.includes('--project'))process.exit(9);
+const reply=(id,result)=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id,result})+'\\n');
+const tool=(id,value)=>reply(id,{content:[{type:'text',text:JSON.stringify(value)}],structuredContent:value});
+createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);
+  if(m.method==='initialize')reply(m.id,{serverInfo:{name:'multicad'},capabilities:{tools:{}}});
+  else if(m.method==='tools/call'){const n=m.params.name;
+    if(n==='document_info')tool(m.id,{geometry_backend:${JSON.stringify(backend)},project_path:process.argv[process.argv.indexOf('--project')+1],revision:0,name:'Front panel'});
+    else if(n==='evaluate_model')tool(m.id,{parts:${JSON.stringify(parts)}});
+    else if(n==='export_step'){writeFileSync(join(exportDir,m.params.arguments.file_name),${JSON.stringify(step)});tool(m.id,{written:true});}}
+}).on('close',()=>process.exit(${exitCode}));
+`);
+  return (executable,args,options)=>spawn(process.execPath,[script,...args],options);
+}
+test('packaged MCP smoke opens a project, requires the Rust backend and a complete STEP export',async()=>{
+  const directory=mkdtempSync(join(tmpdir(),'multicad-mcp-smoke-'));
+  try{
+    const project=join(directory,'front-panel.tcd');writeFileSync(project,'');
+    const options=extra=>({project,exportDirectory:join(directory,'export'),timeoutMs:30000,...extra});
+    const summary=await mcpSmoke('multicad',options({spawnProcess:fakeMcpServer(directory)}));
+    assert.deepEqual(summary,{serverName:'multicad',geometryBackend:'rust',document:'Front panel',parts:1,exported:'p1',stepBytes:46});
+    await assert.rejects(mcpSmoke('multicad',options({spawnProcess:fakeMcpServer(directory,{backend:'opencascade'})})),/geometry backend opencascade/);
+    await assert.rejects(mcpSmoke('multicad',options({spawnProcess:fakeMcpServer(directory,{parts:[{part:'p1',volume_mm3:0}]})})),/no solid part/);
+    await assert.rejects(mcpSmoke('multicad',options({spawnProcess:fakeMcpServer(directory,{step:'ISO-10303-21;\nDATA;\n'})})),/complete ISO 10303-21/);
+    await assert.rejects(mcpSmoke('multicad',options({spawnProcess:fakeMcpServer(directory,{exitCode:3})})),/exited with 3/);
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});
+test('the packaged MCP smoke opens a listed bundled example',()=>{
+  assert(validateExamples().examples.includes(MCP_SMOKE_EXAMPLE));
+  assert.equal(bundledExamplePath('/r'),join('/r','examples',MCP_SMOKE_EXAMPLE));
 });

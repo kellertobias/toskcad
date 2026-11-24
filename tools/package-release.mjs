@@ -1,11 +1,12 @@
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {existsSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,realpathSync,renameSync,rmSync,writeFileSync} from 'node:fs';
+import {copyFileSync,existsSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,realpathSync,renameSync,rmSync,writeFileSync} from 'node:fs';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {requireCommit,requireVersion} from './release-policy.mjs';
 import {packageTestArguments,workspaceDocTestArguments} from './native-test-shard.mjs';
-import {assembleRuntime,auditRuntime,collectNotices,createSourceTree,rustBuildArgs} from './native-package.mjs';
+import {assembleRuntime,auditRuntime,bundledExamplePath,collectNotices,createSourceTree,mcpSmoke,rustBuildArgs} from './native-package.mjs';
+import {checkDiagnostics,checkStaticCode} from './verify-rust-runtime.mjs';
 export {assembleRuntime} from './native-package.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
@@ -138,10 +139,15 @@ export async function buildPackage(version){
     const layout=assembleRuntime(stage,binary,version);collectNotices(layout.resources,source,sourceMetadata);
     const runtimeLibraries=auditRuntime(layout.executable);
     rejectOCCTLibraries(runtimeLibraries);
+    checkStaticCode(readFileSync(layout.executable));
     diagnostics=run(layout.executable,['--diagnostics'],{cwd:scratch});
-    validateDiagnostics(diagnostics,version,commit,target);
+    validateDiagnostics(diagnostics,version,commit,target);checkDiagnostics(diagnostics);
     for(const folder of [stage,source])writeFileSync(join(folder,'BUILD-IDENTITY.json'),JSON.stringify(identity,null,2)+'\n');
     run(layout.executable,['--self-test',join(scratch,'smoke')],{cwd:scratch,stdio:'inherit'});
+    // A copy keeps the sealed bundle unchanged while the packaged MCP server opens it.
+    const mcp=join(scratch,'mcp-smoke');mkdirSync(mcp,{recursive:true});
+    const project=join(mcp,'example.tcd');copyFileSync(bundledExamplePath(layout.resources),project);
+    console.log(`Packaged MCP smoke: ${JSON.stringify(await mcpSmoke(layout.executable,{project,exportDirectory:join(mcp,'export'),cwd:scratch}))}`);
     writeFileSync(join(stage,'BUILD-IDENTITY.txt'),diagnostics+'\n');
     zip(scratch,stem,join(scratch,name));zip(scratch,sourceStem,join(scratch,sources));
     const hash=digest(join(scratch,name)),sourceHash=digest(join(scratch,sources));
