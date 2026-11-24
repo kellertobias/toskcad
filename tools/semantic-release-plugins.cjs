@@ -14,8 +14,9 @@ const analyze = [
     ],
   },
 ];
+// The pinned release-notes generator, capped below GitHub's body limit.
 const notes = [
-  require.resolve("@semantic-release/release-notes-generator"),
+  path.join(__dirname, "semantic-release-capped-notes.cjs"),
   { preset: "conventionalcommits" },
 ];
 const versionOutput = path.join(__dirname, "semantic-release-version-output.cjs");

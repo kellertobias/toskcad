@@ -163,3 +163,23 @@ test('Windows generator and package jobs partition the full suite and both gate 
   assert.equal(release.match(/MULTICAD_NATIVE_TEST_SHARD/g)?.length,1);
   assert.match(release,/needs: \[metadata, quality, build, owned-kernel, regression, windows_generators\]/);
 });
+
+test('hosted release notes stay below GitHub\'s body limit and link the full change list',async()=>{
+  const capped=require('./semantic-release-capped-notes.cjs');
+  assert(capped.NOTES_LIMIT<capped.GITHUB_RELEASE_BODY_LIMIT);
+  const notesPlugin=config.plugins.find(p=>Array.isArray(p)&&String(p[0]).endsWith('semantic-release-capped-notes.cjs'));
+  assert(notesPlugin,'release notes must go through the capped generator');
+  assert.deepEqual(notesPlugin[1],{preset:'conventionalcommits'});
+  const context={env:{GITHUB_REPOSITORY:'owner/repo'},lastRelease:{gitTag:'v0.1.0'},nextRelease:{gitTag:'v0.2.0'}};
+  const short='## 0.2.0\n\n* a change\n';
+  assert.equal(capped.capNotes(short,context),short);
+  const lines=Array.from({length:6000},(_,i)=>`* change ${i} ${'x'.repeat(40)}`);
+  const long=`## 0.2.0\n\n${lines.join('\n')}\n`;
+  const result=capped.capNotes(long,context);
+  assert(result.length<=capped.NOTES_LIMIT,`${result.length}`);
+  assert(result.endsWith('Full list of changes: https://github.com/owner/repo/compare/v0.1.0...v0.2.0\n'));
+  const body=result.split('\n\n---\n\n')[0];
+  assert(long.startsWith(body),'truncation keeps an unmodified prefix');
+  assert(lines.includes(body.split('\n').at(-1)),'truncation keeps whole lines');
+  assert.equal(capped.capNotes(long,{},1000).length<=1000,true);
+});
