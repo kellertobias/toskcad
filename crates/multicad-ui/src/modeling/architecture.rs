@@ -3,13 +3,18 @@
 //! are features with one output Part; the others are reusable source entities.
 use super::{
     FormStamp, PreviewState, TerminationViewport,
+    diagram::DiagramLink,
     dimension::DimensionField,
     form::{self, FormAction, ModelEvent, ModelRequest},
     guide_fields::GuideFields,
     outline::{OutlineEditor, OutlineKind, plan_targets},
 };
 use crate::{controls, egui};
+mod linked;
 mod stair_placement;
+mod visual;
+#[cfg(test)]
+mod visual_tests;
 use multicad_core::{
     commands::{Actor, Session},
     constraint_sketch::Dimension,
@@ -17,7 +22,7 @@ use multicad_core::{
     drawings::{self, GuideDefinition},
     model::{
         self, BodyOutput, EnvelopeDefinition, LevelDefinition, ModelPrepared, SlabDefinition,
-        SlabKind, StairDefinition, StairForm, Turn, length,
+        SlabKind, StairDefinition, StairForm, length,
     },
 };
 
@@ -270,6 +275,8 @@ pub(super) struct ArchitecturePanel {
     label: String,
     guide: GuideFields,
     error: Option<String>,
+    /// Callout ↔ field linking of the slab, pedestal and stair schematics.
+    link: DiagramLink,
 }
 fn mm(value: f64) -> Result<DimensionField, String> {
     DimensionField::from_dimension(&length(value), "mm")
@@ -365,6 +372,7 @@ impl ArchitecturePanel {
             label: String::new(),
             guide: GuideFields::new(document)?,
             error: None,
+            link: DiagramLink::default(),
         })
     }
     /// Reopen an applied slab, pedestal or stair feature for editing.
@@ -825,149 +833,10 @@ impl ArchitecturePanel {
                 );
             }
             ArchitectureKind::Slab | ArchitectureKind::Pedestal => {
-                ui.label("Level");
-                changed |= Self::level_combo(ui, "slab-level", &levels, &mut self.level, None);
-                let rooms = rooms(document);
-                ui.label("Room boundary");
-                Self::level_combo(
-                    ui,
-                    "slab-room",
-                    &rooms,
-                    &mut self.room,
-                    Some("None (draw or enter the outline)"),
-                );
-                if self.room.is_some() {
-                    ui.horizontal_wrapped(|ui| {
-                        for b in RoomBoundary::ALL {
-                            ui.radio_value(&mut self.room_boundary, b, b.label());
-                        }
-                    });
-                    let name = rooms
-                        .iter()
-                        .find(|(id, _)| Some(*id) == self.room)
-                        .map_or("", |(_, n)| n.as_str());
-                    ui.small(format!(
-                        "Only {name}'s boundary (green dashes in the viewport) is used; other rooms are not included. The outline is copied, so later wall edits do not move it."
-                    ));
-                    if ui.button("Use room boundary").clicked() {
-                        match self.use_room(document) {
-                            Ok(()) => changed = true,
-                            Err(e) => self.error = Some(e),
-                        }
-                    }
-                }
-                let plane = format!("the level floor (z = {} mm)", self.plane_z(document));
-                changed |= self.outline.show(ui, document, &plane);
-                if self.kind == ArchitectureKind::Pedestal {
-                    changed |= self.thickness.show(
-                        ui,
-                        "Pedestal height",
-                        "Raised above the level's floor",
-                    );
-                } else {
-                    changed |= ui
-                        .checkbox(
-                            &mut self.override_thickness,
-                            "Override the level's slab thickness",
-                        )
-                        .changed();
-                    if self.override_thickness {
-                        changed |= self.thickness.show(ui, "Thickness", "Below the floor");
-                    }
-                }
+                changed |= self.show_slab(ui, document, &levels);
             }
             ArchitectureKind::Stair => {
-                if ui
-                    .selectable_label(self.stair_placing, "Place in view")
-                    .clicked()
-                {
-                    self.stair_placing = !self.stair_placing;
-                    self.stair_anchor = None;
-                    changed = true;
-                }
-                ui.small(if self.stair_placing {
-                    if self.stair_anchor.is_some() {
-                        "Click the walking direction from the first riser."
-                    } else {
-                        "Click the first riser on the base level, then the walking direction."
-                    }
-                } else {
-                    "Use Place in view to reposition the stair graphically."
-                });
-                ui.checkbox(&mut self.stair_snap, "Snap placement to 10 mm");
-                ui.label("From level");
-                changed |= Self::level_combo(ui, "stair-level", &levels, &mut self.level, None);
-                ui.label("To level");
-                changed |= Self::level_combo(
-                    ui,
-                    "stair-to-level",
-                    &levels,
-                    &mut self.to_level,
-                    Some("Floor-to-floor height of the base level"),
-                );
-                ui.label("Form");
-                let forms = [
-                    (StairForm::Straight, "Straight"),
-                    (
-                        StairForm::QuarterTurn { turn: Turn::Left },
-                        "Quarter turn left",
-                    ),
-                    (
-                        StairForm::QuarterTurn { turn: Turn::Right },
-                        "Quarter turn right",
-                    ),
-                    (StairForm::HalfTurn { turn: Turn::Left }, "Half turn left"),
-                    (StairForm::HalfTurn { turn: Turn::Right }, "Half turn right"),
-                ];
-                let selected = forms
-                    .iter()
-                    .find(|(f, _)| *f == self.form)
-                    .map_or("Straight", |(_, l)| l);
-                controls::inspector_combo(ui, "stair-form")
-                    .selected_text(selected)
-                    .show_ui(ui, |ui| {
-                        for (form, label) in forms {
-                            changed |= ui.selectable_value(&mut self.form, form, label).changed();
-                        }
-                    });
-                ui.label("Start of the first riser (x, y mm)");
-                ui.horizontal(|ui| {
-                    for v in &mut self.start {
-                        changed |= ui.add(egui::DragValue::new(v).speed(10.)).changed();
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Direction °");
-                    changed |= ui
-                        .add(egui::DragValue::new(&mut self.direction_deg).range(-360.0..=360.0))
-                        .changed();
-                });
-                changed |= self.width.show(ui, "Width", "Clear stair width");
-                ui.horizontal(|ui| {
-                    ui.label("Risers");
-                    changed |= ui
-                        .add(egui::DragValue::new(&mut self.risers).range(2..=64))
-                        .changed();
-                });
-                changed |= self
-                    .going
-                    .show(ui, "Going", "Horizontal depth of one tread");
-                if let Ok(stair) = self.stair(document)
-                    && let Ok(parameters) = multicad_core::parameters::evaluate(document)
-                    && let Ok(resolved) = model::resolve_stair(document, &parameters, &stair)
-                {
-                    let c = resolved.check;
-                    ui.small(format!(
-                        "Rise {:.0} mm · riser {:.1} mm · going {:.0} mm · 2R+G {:.0} mm · run {:.0} mm",
-                        c.rise_mm, c.riser_mm, c.going_mm, c.step_measure_mm, c.run_mm
-                    ));
-                    for note in &c.notes {
-                        ui.small(note);
-                    }
-                    ui.small(
-                        "Geometric measures only; not a building-code or accessibility approval.",
-                    );
-                }
+                changed |= self.show_stair(ui, document, &levels);
             }
             ArchitectureKind::Envelope => {
                 ui.label("Target Part or Instance");
