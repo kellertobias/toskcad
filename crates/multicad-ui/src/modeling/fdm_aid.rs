@@ -319,11 +319,7 @@ impl FdmAidPanel {
         self.stamp
     }
     pub fn label(&self) -> &'static str {
-        match self.kind {
-            AidKind::Tab => "Breakaway tab",
-            AidKind::Bridge => "Thin bridge",
-            AidKind::Support => "Removable support",
-        }
+        visual::label(self.kind)
     }
     pub fn request(&self, document: &Document, enabled: bool) -> Result<FdmAidCommand, String> {
         if self.picking.is_some() {
