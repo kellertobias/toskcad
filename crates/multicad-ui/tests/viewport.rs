@@ -691,8 +691,17 @@ fn old_revision_generation_and_foreign_document_cannot_replace_visible_scene() {
 #[test]
 fn malformed_meshes_placements_and_rays_fail_and_unnamed_faces_remain_body_only() {
     let id = EntityId::new();
-    assert!(Geometry::new(id, vec![[0.; 3]], vec![0, 1, 0], vec![0], vec![]).is_err());
-    assert!(Geometry::new(id, vec![[f64::NAN; 3]], vec![0, 0, 0], vec![0], vec![]).is_err());
+    assert!(Geometry::new(id, vec![[0.; 3]], vec![0, 1, 0], vec![0], vec![].into()).is_err());
+    assert!(
+        Geometry::new(
+            id,
+            vec![[f64::NAN; 3]],
+            vec![0, 0, 0],
+            vec![0],
+            vec![].into()
+        )
+        .is_err()
+    );
     assert!(Ray::new([0.; 3], [0.; 3]).is_err());
     assert!(Ray::new([0.; 3], [f64::MAX; 3]).is_err());
     assert!(

@@ -304,7 +304,8 @@ fn editor_face(source: EntityId, z: f64) -> FaceInput {
             boundary: Default::default(),
             frames: vec![AnchoredFrame { origin, frame }],
             geometry: Some(AnalyticGeometry::Plane { frame }),
-        }],
+        }]
+        .into(),
     };
     capture_profile_face(&snapshot, key, None).unwrap()
 }

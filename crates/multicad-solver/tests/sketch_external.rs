@@ -61,7 +61,8 @@ fn fixture(
             boundary: BTreeSet::new(),
             frames: vec![],
             geometry: Some(geometry),
-        }],
+        }]
+        .into(),
     };
     let intent = GeometryIntent::capture(&snapshot, snapshot.elements[0].key).unwrap();
     let map = BTreeMap::from([(owner, snapshot)]);

@@ -244,7 +244,7 @@ impl EntryChamferBody {
         let snapshot = TopologySnapshot {
             owner,
             revision,
-            elements,
+            elements: elements.into(),
         };
         snapshot.validate().map_err(|e| {
             error(

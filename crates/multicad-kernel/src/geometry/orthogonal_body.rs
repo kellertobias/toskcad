@@ -1448,7 +1448,7 @@ impl OrthogonalBody {
         let topology = TopologySnapshot {
             owner: feature,
             revision: 0,
-            elements,
+            elements: elements.into(),
         };
         topology.validate().map_err(invalid)?;
         Ok(Self {

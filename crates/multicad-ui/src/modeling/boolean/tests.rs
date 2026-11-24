@@ -69,7 +69,7 @@ fn display(document: &Document, revision: u64, bodies: &[CreatedBody]) -> Arc<Sc
                     vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
                     vec![0, 1, 2],
                     vec![0],
-                    vec![],
+                    vec![].into(),
                 )
                 .unwrap(),
             )

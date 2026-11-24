@@ -326,7 +326,7 @@ pub(crate) fn snapshot(
     let snapshot = TopologySnapshot {
         owner,
         revision,
-        elements: build.elements,
+        elements: build.elements.into(),
     };
     snapshot.validate()?;
     Ok(snapshot)
@@ -791,7 +791,7 @@ impl PlacedPolygon {
         let snapshot = TopologySnapshot {
             owner,
             revision,
-            elements: build.elements,
+            elements: build.elements.into(),
         };
         snapshot.validate()?;
         Ok(snapshot)
@@ -994,7 +994,7 @@ pub(crate) fn cylinder_snapshot_dimensions(
     let snapshot = TopologySnapshot {
         owner,
         revision,
-        elements: build.elements,
+        elements: build.elements.into(),
     };
     snapshot.validate()?;
     Ok(snapshot)

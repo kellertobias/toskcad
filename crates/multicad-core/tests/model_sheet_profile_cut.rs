@@ -107,7 +107,8 @@ fn fixture() -> (Session, SheetRequest, ProfileSource) {
                 },
             }],
             geometry: None,
-        }],
+        }]
+        .into(),
     };
     let new = sketch::prepare_new(
         &session,

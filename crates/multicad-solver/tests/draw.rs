@@ -238,7 +238,8 @@ fn snapshot(owner: EntityId, revision: u64) -> TopologySnapshot {
                     v: [0., 1., 0.],
                 },
             }],
-        }],
+        }]
+        .into(),
     }
 }
 #[test]

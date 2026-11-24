@@ -308,7 +308,7 @@ impl RepairedPhillipsBody {
         let snapshot = TopologySnapshot {
             owner,
             revision,
-            elements: graph.elements,
+            elements: graph.elements.into(),
         };
         snapshot.validate().map_err(unsupported)?;
         Ok(snapshot)

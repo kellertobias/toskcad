@@ -618,7 +618,7 @@ impl NormalSweepBody {
         TopologySnapshot {
             owner,
             revision,
-            elements,
+            elements: elements.into(),
         }
     }
 }

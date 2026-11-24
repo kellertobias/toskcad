@@ -193,7 +193,87 @@ pub struct TopologyElement {
 pub struct TopologySnapshot {
     pub owner: EntityId,
     pub revision: u64,
-    pub elements: Vec<TopologyElement>,
+    pub elements: TopologyElements,
+}
+/// The element list of a [`TopologySnapshot`]. Clones share one immutable
+/// list; the first mutation of a shared list copies it (copy on write), so
+/// every owner observes exactly the values it would hold with its own copy.
+/// Re-stamping or re-owning a snapshot therefore no longer copies elements.
+/// Serialized exactly like a plain list.
+#[derive(Clone, Default, PartialEq)]
+pub struct TopologyElements(std::sync::Arc<Vec<TopologyElement>>);
+impl TopologyElements {
+    /// The owned list, copied only when it is still shared.
+    pub fn into_vec(self) -> Vec<TopologyElement> {
+        std::sync::Arc::unwrap_or_clone(self.0)
+    }
+}
+impl std::fmt::Debug for TopologyElements {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.as_slice().fmt(f)
+    }
+}
+impl std::ops::Deref for TopologyElements {
+    type Target = Vec<TopologyElement>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TopologyElements {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        std::sync::Arc::make_mut(&mut self.0)
+    }
+}
+impl From<Vec<TopologyElement>> for TopologyElements {
+    fn from(elements: Vec<TopologyElement>) -> Self {
+        Self(std::sync::Arc::new(elements))
+    }
+}
+impl From<TopologyElements> for Vec<TopologyElement> {
+    fn from(elements: TopologyElements) -> Self {
+        elements.into_vec()
+    }
+}
+impl FromIterator<TopologyElement> for TopologyElements {
+    fn from_iter<I: IntoIterator<Item = TopologyElement>>(iter: I) -> Self {
+        Vec::from_iter(iter).into()
+    }
+}
+impl Extend<TopologyElement> for TopologyElements {
+    fn extend<I: IntoIterator<Item = TopologyElement>>(&mut self, iter: I) {
+        std::ops::DerefMut::deref_mut(self).extend(iter)
+    }
+}
+impl IntoIterator for TopologyElements {
+    type Item = TopologyElement;
+    type IntoIter = std::vec::IntoIter<TopologyElement>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_vec().into_iter()
+    }
+}
+impl<'a> IntoIterator for &'a TopologyElements {
+    type Item = &'a TopologyElement;
+    type IntoIter = std::slice::Iter<'a, TopologyElement>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+impl<'a> IntoIterator for &'a mut TopologyElements {
+    type Item = &'a mut TopologyElement;
+    type IntoIter = std::slice::IterMut<'a, TopologyElement>;
+    fn into_iter(self) -> Self::IntoIter {
+        std::ops::DerefMut::deref_mut(self).iter_mut()
+    }
+}
+impl Serialize for TopologyElements {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.as_slice().serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for TopologyElements {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Vec::deserialize(deserializer).map(Self::from)
+    }
 }
 impl TopologySnapshot {
     pub fn validate(&self) -> Result<(), String> {

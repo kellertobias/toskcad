@@ -319,7 +319,7 @@ impl CosmeticFastenerBody {
         let snapshot = TopologySnapshot {
             owner,
             revision,
-            elements: builder.into_elements(),
+            elements: builder.into_elements().into(),
         };
         snapshot.validate().map_err(input)?;
         Ok(snapshot)

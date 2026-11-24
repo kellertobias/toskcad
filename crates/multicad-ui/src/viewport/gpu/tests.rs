@@ -691,7 +691,7 @@ fn gpu_uploads_only_drawn_geometry_and_reuses_buffers_through_visibility_and_res
                 vec![[-size, -size, 0.], [size, -size, 0.], [0., size, 0.]],
                 vec![0, 1, 2],
                 vec![0],
-                vec![],
+                vec![].into(),
             )
             .unwrap(),
         )

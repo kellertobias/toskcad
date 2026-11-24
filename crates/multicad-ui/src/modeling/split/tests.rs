@@ -39,7 +39,7 @@ fn display(doc: &Document, revision: u64, outputs: &[CreatedBody], metadata: boo
                     vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
                     vec![0, 1, 2],
                     vec![0],
-                    vec![],
+                    vec![].into(),
                 )
                 .unwrap(),
             )

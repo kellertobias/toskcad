@@ -63,7 +63,8 @@ fn fixture() -> (Session, ConnectionReceiverRequest, EntityId) {
             boundary: Default::default(),
             frames: vec![AnchoredFrame { origin, frame }],
             geometry: Some(AnalyticGeometry::Plane { frame }),
-        }],
+        }]
+        .into(),
     };
     let capture = capture_profile_face(&snapshot, snapshot.elements[0].key, None).unwrap();
     let path = OccurrencePath {

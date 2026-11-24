@@ -367,7 +367,7 @@ impl SceneBackend for Backend {
                         solid.mesh.vertices.as_chunks::<3>().0.to_vec(),
                         solid.mesh.indices,
                         solid.mesh.face_indices,
-                        solid.topology,
+                        solid.topology.into(),
                     )?
                     .with_topology_display(
                         solid

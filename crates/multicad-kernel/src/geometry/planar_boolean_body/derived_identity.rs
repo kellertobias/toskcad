@@ -294,7 +294,8 @@ mod tests {
                 element(0, &["a"], &["x"]),
                 element(1, &["a", "b"], &["x"]),
                 element(2, &["a"], &["y"]),
-            ],
+            ]
+            .into(),
         };
         assert_eq!(ambiguous(&snapshot, &mut { MAX_WORK }).unwrap(), vec![0]);
         assert_eq!(

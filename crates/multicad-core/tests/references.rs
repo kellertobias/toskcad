@@ -59,12 +59,12 @@ fn source_identity_survives_ordinal_reordering_and_attachment_is_not_accumulated
     let mut snapshot = TopologySnapshot {
         owner: id,
         revision: 0,
-        elements: vec![face(5, &top, 10.)],
+        elements: vec![face(5, &top, 10.)].into(),
     };
     let intent = attached(&snapshot);
     for (revision, height, ordinal) in [(0, 10., 5), (1, 20., 1), (2, 40., 9)] {
         snapshot.revision = revision;
-        snapshot.elements = vec![face(ordinal, &top, height)];
+        snapshot.elements = vec![face(ordinal, &top, height)].into();
         let Resolution::Resolved {
             key,
             frame: Some(frame),
@@ -92,7 +92,7 @@ fn split_deleted_and_geometrically_identical_unrelated_faces_do_not_silently_reb
     let mut snapshot = TopologySnapshot {
         owner: id,
         revision: 0,
-        elements: vec![face(0, &top, 10.)],
+        elements: vec![face(0, &top, 10.)].into(),
     };
     let intent = attached(&snapshot);
     snapshot.elements.push(face(1, &top, 10.));
@@ -103,7 +103,7 @@ fn split_deleted_and_geometrically_identical_unrelated_faces_do_not_silently_reb
         }
     );
     assert!(GeometryIntent::capture(&snapshot, snapshot.elements[0].key).is_err());
-    snapshot.elements = vec![face(0, &origin(EntityId::new(), "cap.end"), 10.)];
+    snapshot.elements = vec![face(0, &origin(EntityId::new(), "cap.end"), 10.)].into();
     assert_eq!(resolve(&intent, &snapshot, 0), Resolution::Missing);
     snapshot.elements.clear();
     assert_eq!(resolve(&intent, &snapshot, 0), Resolution::Missing);
@@ -114,7 +114,7 @@ fn fixture() -> (Session, TopologySnapshot, ReferenceAddress, EntityId) {
     let snapshot = TopologySnapshot {
         owner: feature.id,
         revision: 0,
-        elements: vec![face(0, &top, 18.)],
+        elements: vec![face(0, &top, 18.)].into(),
     };
     let intent = attached(&snapshot);
     let mut link = Link::new(feature.id, "face");
@@ -162,7 +162,8 @@ fn inspection_rechecks_replaced_topology_shared_by_multiple_intents() {
     };
 
     assert!(matches!(check(&snapshot), Resolution::Resolved { .. }));
-    snapshot.elements.push(snapshot.elements[0].clone());
+    let copy = snapshot.elements[0].clone();
+    snapshot.elements.push(copy);
     assert!(matches!(check(&snapshot), Resolution::Invalid { .. }));
     snapshot.elements.pop();
     snapshot.revision = 1;

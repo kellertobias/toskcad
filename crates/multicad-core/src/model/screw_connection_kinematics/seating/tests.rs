@@ -359,7 +359,8 @@ fn public_bound_driver_uses_authored_spacing_and_keeps_exact_wood_datum() {
             boundary: Default::default(),
             frames: vec![AnchoredFrame { origin, frame }],
             geometry: Some(AnalyticGeometry::Plane { frame }),
-        }],
+        }]
+        .into(),
     };
     let face = model::capture_profile_face(&topology, key, None).unwrap();
     let axis = EntityId::new();

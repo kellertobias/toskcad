@@ -94,7 +94,8 @@ fn fixture() -> Fixture {
             boundary: Default::default(),
             frames: vec![AnchoredFrame { origin, frame }],
             geometry: Some(AnalyticGeometry::Plane { frame }),
-        }],
+        }]
+        .into(),
     };
     let face = capture_profile_face(&topology, key, None).unwrap();
     let mut axis = ScrewConnectionAxisDefinition::new(

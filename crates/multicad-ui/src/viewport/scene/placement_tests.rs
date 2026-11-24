@@ -249,7 +249,7 @@ fn only_instanced_geometry_builds_its_picking_index_until_isolated() {
                 vec![[0., 0., z], [2., 0., z], [0., 2., z], [90., 90., 90.]],
                 vec![0, 1, 2],
                 vec![0],
-                vec![],
+                vec![].into(),
             )
             .unwrap(),
         )

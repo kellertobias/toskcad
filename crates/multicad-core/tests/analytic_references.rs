@@ -19,7 +19,8 @@ fn invalid_or_mismatched_exact_geometry_never_enters_a_reference_snapshot() {
                 a_mm: [0.; 3],
                 b_mm: [0.; 3],
             }),
-        }],
+        }]
+        .into(),
     };
     assert!(snapshot.validate().is_err());
     snapshot.elements[0].geometry = Some(AnalyticGeometry::Point {

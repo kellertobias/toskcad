@@ -154,7 +154,8 @@ fn face_snapshot(owner: EntityId, revision: u64, height: f64) -> TopologySnapsho
                     v: [0., 1., 0.],
                 },
             }],
-        }],
+        }]
+        .into(),
     }
 }
 fn source_session() -> (Session, EntityId, TopologySnapshot) {

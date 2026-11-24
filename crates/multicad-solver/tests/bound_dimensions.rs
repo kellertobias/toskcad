@@ -401,7 +401,8 @@ fn attached_semantic_sketch_never_uses_absent_stale_or_unresolved_frames() {
                         v: [0., 1., 0.],
                     },
                 }],
-            }],
+            }]
+            .into(),
         }
     };
     let mut session = Session::new(

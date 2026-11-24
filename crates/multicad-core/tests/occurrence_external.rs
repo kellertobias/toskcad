@@ -55,7 +55,8 @@ fn fixture() -> (Session, EntityId, ExternalCatalog) {
                 a_mm: [0., 0., 0.],
                 b_mm: [20., 0., 0.],
             }),
-        }],
+        }]
+        .into(),
     };
     let query = ExternalQuery {
         reference: EntityId::new(),
