@@ -41,6 +41,7 @@ fn cap(model: &Model, source: EntityId, role: &str) -> AlignmentInput {
         .unwrap();
     let mut intent = GeometryIntent::capture(snapshot, face.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: origin,
         offset_mm: [0.; 3],
         angle_rad: 0.,

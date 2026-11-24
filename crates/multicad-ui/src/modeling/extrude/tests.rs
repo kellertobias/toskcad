@@ -535,6 +535,7 @@ fn face_links_remain_sole_preserved_selectors_and_shared_ends_are_deduplicated()
                 origins: BTreeSet::from([origin.clone()]),
                 boundary: None,
                 attachment: Some(Attachment {
+                    outward: false,
                     anchor: origin,
                     offset_mm: [2., 3., 0.],
                     angle_rad: 0.5,

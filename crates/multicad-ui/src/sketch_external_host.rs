@@ -26,6 +26,7 @@ impl SketchEditor {
         resources: &multicad_core::project_file::ProjectResources,
     ) -> bool {
         self.external.poll_native(session, resources);
+        self.poll_projection(session, resources);
         if let Some(result) = self.external.poll_query(session, resources) {
             let result = result.and_then(|proposal| {
                 let sketch = self.selected.ok_or("Open the owning sketch")?;
@@ -41,7 +42,7 @@ impl SketchEditor {
         {
             self.constraints.complete_external_native(result);
         }
-        self.external.native_pending() || self.external.query_pending()
+        self.external.native_pending() || self.external.query_pending() || self.projection_pending()
     }
 
     pub(super) fn refresh_external(&mut self, session: &Session, feed: &SceneFeed) {

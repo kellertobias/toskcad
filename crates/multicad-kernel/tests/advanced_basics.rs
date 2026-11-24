@@ -121,6 +121,7 @@ fn reflection_preserves_volume_source_and_right_handed_outward_plane_anchors() {
     let anchor = face.frames[0].origin.clone();
     let mut intent = GeometryIntent::capture(&before, key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor,
         offset_mm: [0.; 3],
         angle_rad: 0.,

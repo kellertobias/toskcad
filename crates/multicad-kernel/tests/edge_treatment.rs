@@ -394,6 +394,7 @@ fn chamfer_face_reference_and_anchor_follow_upstream_dimensions_and_round_trip_s
     let face = generated(&initial_topology, std::slice::from_ref(&edge))[0];
     let mut intent = GeometryIntent::capture(&initial_topology, face.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: edge.origin.clone(),
         offset_mm: [0.; 3],
         angle_rad: 0.,

@@ -531,6 +531,7 @@ fn native_controller_all_joint_types_and_component_local_frame_picks() {
                 .contains("explicitly named")
             );
             intent.attachment = Some(Attachment {
+                outward: false,
                 anchor: face.frames[0].origin.clone(),
                 offset_mm: [0.; 3],
                 angle_rad: 0.,

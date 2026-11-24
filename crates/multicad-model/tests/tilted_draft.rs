@@ -151,6 +151,7 @@ fn tilted_draft_saved_parameters_attachments_occurrences_and_history_rebuild() {
         .unwrap();
     let mut attachment = GeometryIntent::capture(output, face.key).unwrap();
     attachment.attachment = Some(Attachment {
+        outward: false,
         anchor,
         offset_mm: [0.; 3],
         angle_rad: 0.,

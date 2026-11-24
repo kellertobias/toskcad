@@ -194,6 +194,7 @@ fn saved_annular_mirrors_keep_cap_datums_after_two_reflections_and_parameter_edi
                 .unwrap()
                 .clone();
             intent.attachment = Some(Attachment {
+                outward: false,
                 anchor: Origin {
                     source: part.feature,
                     role: if cap == 0 { "cap.start" } else { "cap.end" }.into(),

@@ -10,6 +10,7 @@
 use multicad_core::{
     constraint_sketch::{CurveKind, Sketch},
     document::EntityId,
+    references::TopologyKey,
 };
 use multicad_precision::PortableMath as _;
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,6 +46,10 @@ pub enum Axis {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TargetKey {
     Point(EntityId),
+    /// A vertex of the sketch's supporting face, not yet in the sketch.
+    /// Committing a placement here first captures it as a canonical
+    /// projected reference (CAD-383).
+    Support(TopologyKey),
     LineMidpoint(EntityId),
     /// Sorted ids of the lines that form the recognized shape.
     ShapeCenter(Vec<EntityId>),
@@ -76,7 +81,7 @@ impl TargetKey {
     /// within a class the nearest target (in screen pixels) wins.
     pub fn class(&self) -> u8 {
         match self {
-            Self::Point(_) => 0,
+            Self::Point(_) | Self::Support(_) => 0,
             Self::LineMidpoint(_)
             | Self::ShapeCenter(_)
             | Self::Reference(_)
@@ -111,6 +116,8 @@ pub enum ShapeKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetKind {
     Endpoint,
+    /// A corner of the supporting face (see [`TargetKey::Support`]).
+    FaceCorner,
     /// A circle or arc center point.
     Center,
     LineMidpoint,
@@ -128,6 +135,7 @@ impl TargetKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Endpoint => "Endpoint",
+            Self::FaceCorner => "Face corner",
             Self::Center => "Center",
             Self::LineMidpoint => "Midpoint",
             Self::ShapeCenter(ShapeKind::Rectangle) => "Rectangle center",
@@ -166,7 +174,7 @@ pub enum Marker {
 impl TargetKind {
     pub fn marker(self) -> Marker {
         match self {
-            Self::Endpoint | Self::Reference => Marker::Vertex,
+            Self::Endpoint | Self::FaceCorner | Self::Reference => Marker::Vertex,
             Self::Center | Self::ShapeCenter(_) => Marker::Center,
             Self::LineMidpoint | Self::ReferenceMidpoint => Marker::Midpoint,
             Self::GuideIntersection | Self::GuideOnLine | Self::Perpendicular | Self::Tangent => {
@@ -227,6 +235,7 @@ pub struct SnapGeometry {
     circles: Vec<(EntityId, [f64; 2], f64)>,
     arcs: Vec<Arc>,
     centers: Vec<(Vec<EntityId>, [f64; 2], ShapeKind)>,
+    support: Vec<(TopologyKey, [f64; 2])>,
 }
 
 fn sub(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
@@ -322,6 +331,16 @@ impl SnapGeometry {
         }
         geometry.centers = shape_centers(&position, &edges);
         geometry
+    }
+    /// Adds the supporting face's corners, in sketch coordinates. A corner
+    /// that an existing sketch point already occupies is left to that point,
+    /// so a projected corner is reused rather than projected twice.
+    pub fn with_support(mut self, corners: Vec<(TopologyKey, [f64; 2])>) -> Self {
+        self.support = corners
+            .into_iter()
+            .filter(|(_, at)| !self.points.iter().any(|p| len(sub(p.1, *at)) <= 1e-9))
+            .collect();
+        self
     }
     fn point(&self, id: EntityId) -> Option<[f64; 2]> {
         self.points.iter().find(|p| p.0 == id).map(|p| p.1)
@@ -508,6 +527,16 @@ fn candidates(geometry: &SnapGeometry, references: &[Reference], q: &Query) -> V
             kind,
             position,
             Some(id),
+            vec![],
+            POINT_SNAP_PX,
+        );
+    }
+    for &(key, position) in &geometry.support {
+        push(
+            TargetKey::Support(key),
+            TargetKind::FaceCorner,
+            position,
+            None,
             vec![],
             POINT_SNAP_PX,
         );

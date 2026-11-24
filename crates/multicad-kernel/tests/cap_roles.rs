@@ -77,6 +77,7 @@ fn cap_frame(solid: &Solid, id: EntityId, role: &str) -> multicad_core::referenc
     assert_eq!(caps.len(), 1, "ambiguous logical cap {role}");
     let mut intent = GeometryIntent::capture(&snapshot, caps[0].key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: origin,
         offset_mm: [0.; 3],
         angle_rad: 0.,

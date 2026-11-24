@@ -1,5 +1,23 @@
 use super::*;
 
+const RECT: egui::Rect = egui::Rect {
+    min: egui::Pos2::ZERO,
+    max: egui::Pos2::new(800., 600.),
+};
+fn camera() -> crate::camera::Camera {
+    crate::camera::Camera {
+        yaw: 0.,
+        pitch: 0.8,
+        scale: 2.4,
+        target: [0.; 3],
+        perspective: false,
+    }
+}
+fn screen(point: [f32; 3]) -> egui::Pos2 {
+    let [x, y, _] = camera().project(point, RECT);
+    egui::pos2(x, y)
+}
+
 fn canvas(
     ctx: &egui::Context,
     controller: &mut SymbolController,
@@ -7,7 +25,7 @@ fn canvas(
     events: Vec<egui::Event>,
 ) -> bool {
     let mut owned = false;
-    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.));
+    let rect = RECT;
     let mut output = ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(rect),
@@ -24,13 +42,7 @@ fn canvas(
                     crate::modeling::PlacementViewport {
                         scene: None,
                         rect,
-                        camera: crate::camera::Camera {
-                            yaw: 0.,
-                            pitch: 0.8,
-                            scale: 2.4,
-                            target: [0.; 3],
-                            perspective: false,
-                        },
+                        camera: camera(),
                         basis: Default::default(),
                         start_allowed: true,
                         snap: crate::modeling::TransformSnap::OFF,
@@ -105,8 +117,12 @@ fn library_gizmo_moves_display_preserves_inputs_and_validates_without_committing
     };
     let ctx = egui::Context::default();
     canvas(&ctx, &mut controller, &session, vec![]);
-    let start = egui::pos2(475., 300.);
-    let end = egui::pos2(523., 300.);
+    // The X move handle 75 px from the origin along the projected +X axis,
+    // dragged 48 px (20 mm at this scale) further along it.
+    let origin = screen([0.; 3]);
+    let x_axis = (screen([1., 0., 0.]) - origin).normalized();
+    let start = origin + x_axis * 75.;
+    let end = start + x_axis * 48.;
     assert!(canvas(
         &ctx,
         &mut controller,

@@ -664,6 +664,7 @@ fn rust_revolve_rebuilds_signed_and_full_sketch_sweeps_with_holes_and_native_fac
                 .unwrap();
             let mut intent = GeometryIntent::capture(&actual.topology, cap.key).unwrap();
             intent.attachment = Some(references::Attachment {
+                outward: false,
                 anchor: cap
                     .origins
                     .iter()

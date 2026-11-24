@@ -257,6 +257,7 @@ fn rust_circular_extrusion_to_face_follows_the_reference_and_keeps_a_through_cut
     let original_anchor = &target_cap.frames[0];
     let mut intent = GeometryIntent::capture(&target_shape.topology, target_cap.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: original_anchor.origin.clone(),
         offset_mm: [1.5, 2., 0.],
         angle_rad: std::f64::consts::FRAC_PI_2,
@@ -1010,6 +1011,7 @@ fn signed_face_offset_uses_native_outward_normal_with_opposing_inherited_frames(
                 let mut intent = captured.clone();
                 if anchored {
                     intent.attachment = Some(Attachment {
+                        outward: false,
                         anchor: opposite.origin.clone(),
                         offset_mm: [0.; 3],
                         angle_rad: 0.,

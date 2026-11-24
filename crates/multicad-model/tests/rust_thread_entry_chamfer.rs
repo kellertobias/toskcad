@@ -344,6 +344,7 @@ fn enabling_editing_and_disabling_entry_preserves_original_finite_far_rims_and_b
             .unwrap();
         let mut attachment = GeometryIntent::capture(original_snapshot, cap.key).unwrap();
         attachment.attachment = Some(Attachment {
+            outward: false,
             anchor: cap.frames[0].origin.clone(),
             offset_mm: [0.2, -0.3, 0.4],
             angle_rad: 0.37,

@@ -151,6 +151,7 @@ fn raw_concave_cut_and_join_rebuild_saved_sources_references_and_parameter_histo
         let face=topology.elements.iter().find(|e|matches!(e.geometry,Some(AnalyticGeometry::Plane{frame})if frame.normal()==[1.,0.,0.] && (frame.origin_mm[0]-6.).abs()<1e-8)).unwrap();
         let mut reference = GeometryIntent::capture(topology, face.key).unwrap();
         reference.attachment = Some(Attachment {
+            outward: false,
             anchor: face.frames[0].origin.clone(),
             offset_mm: [0.; 3],
             angle_rad: 0.,

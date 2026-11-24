@@ -250,6 +250,7 @@ fn saved_rust_shell_rebuilds_signed_walls_and_linked_occurrences() {
     let rim = find(&opening);
     let mut rim_intent = GeometryIntent::capture(topology, rim.key).unwrap();
     rim_intent.attachment = Some(Attachment {
+        outward: false,
         anchor: opening,
         offset_mm: [0.; 3],
         angle_rad: 0.,
@@ -279,6 +280,7 @@ fn saved_rust_shell_rebuilds_signed_walls_and_linked_occurrences() {
 
     let mut offset_intent = GeometryIntent::capture(topology, find(&offset).key).unwrap();
     offset_intent.attachment = Some(Attachment {
+        outward: false,
         anchor: offset,
         offset_mm: [0.; 3],
         angle_rad: 0.,
@@ -450,6 +452,7 @@ fn saved_two_opening_shell_preserves_rims_offset_refs_undo_and_redo() {
         let mut intent = GeometryIntent::capture(topology, element.key).unwrap();
         let reference = intent.id;
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor,
             offset_mm: [0.; 3],
             angle_rad: 0.,

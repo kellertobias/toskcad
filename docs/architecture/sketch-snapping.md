@@ -30,7 +30,7 @@ The shown target always has a marker at its exact position, so snapped placement
 
 | Marker | Targets | Cursor |
 | --- | --- | --- |
-| Filled square, highlight color | Existing sketch points (corners, vertices, poles) and acquired references | Crosshair |
+| Filled square, highlight color | Existing sketch points (corners, vertices, poles), supporting-face corners and acquired references | Crosshair |
 | Ring with dot | Circle, arc and shape centers | Crosshair |
 | Triangle | Line midpoints and the midpoint of two references | Crosshair |
 | Cross | Guide intersections, guide on line, perpendicular feet, tangent points | Crosshair |
@@ -38,6 +38,15 @@ The shown target always has a marker at its exact position, so snapped placement
 | None (dotted guide only) | Horizontal or vertical alignment | Unchanged |
 
 The label is drawn in the marker's color. Without a target the cursor is unchanged.
+
+## Supporting-face corners
+
+In a face-attached sketch, while Line, Rectangle or Circle is active, the vertices of the face's producer that lie in the sketch plane are offered as "Face corner" targets (class 0, like existing points). A corner already occupied by a sketch point is left to that point. Placing a point on a face corner does not create a free point. The corner is first captured as a canonical projected reference (Project, reference only, the CAD-128 mechanism). The drawing then reuses that reference's output point.
+
+- **One transaction.** The capture and the drawing form one candidate. The sketch stays locked while the asynchronous native candidate validation runs, and the candidate commits as one Undo step only if that validation passes. A failed check, an unsupported target or a stale scene leaves the document unchanged.
+- **Placement.** The corner and the sketch both live in the producer's local coordinates, so the capture is exact whatever the part or occurrence pose.
+- **Later changes.** The reference follows upstream edits and reports Missing or Ambiguous through the existing reference repair rules.
+- **Not offered.** Edges of the supporting face are not offered as snap targets. Polyline, arc and multi-click tools do not offer face corners.
 
 ## Perpendicular and tangent targets
 

@@ -89,6 +89,7 @@ fn modeled_external_cut_keeps_fitted_family_stock_history_and_reopen() {
         attached.origins = std::collections::BTreeSet::from([anchor.clone()]);
         attached.boundary = None;
         attached.attachment = Some(Attachment {
+            outward: false,
             anchor,
             offset_mm: [0.; 3],
             angle_rad: 0.,

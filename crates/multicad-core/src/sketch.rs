@@ -438,6 +438,7 @@ pub fn prepare_new(
                 anchor: anchored.origin.clone(),
                 offset_mm: [0., 0., options.normal_offset_mm],
                 angle_rad: options.angle_rad,
+                outward: true,
             });
             let Resolution::Resolved {
                 frame: Some(resolved),

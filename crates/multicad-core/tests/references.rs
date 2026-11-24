@@ -46,6 +46,7 @@ fn face(ordinal: u32, origin: &Origin, z: f64) -> TopologyElement {
 fn attached(snapshot: &TopologySnapshot) -> GeometryIntent {
     let mut intent = GeometryIntent::capture(snapshot, snapshot.elements[0].key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: snapshot.elements[0].origins.first().unwrap().clone(),
         offset_mm: [5., 7., 2.],
         angle_rad: std::f64::consts::FRAC_PI_2,

@@ -284,6 +284,7 @@ fn capture(snapshot: &TopologySnapshot, source: &Origin, kind: TopologyKind) -> 
 fn anchor(snapshot: &TopologySnapshot, source: &Origin) -> GeometryIntent {
     let mut intent = capture(snapshot, source, TopologyKind::Face);
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: source.clone(),
         offset_mm: [0.; 3],
         angle_rad: 0.,

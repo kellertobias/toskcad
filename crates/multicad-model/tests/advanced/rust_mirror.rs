@@ -84,6 +84,7 @@ fn saved_mirror(u: [f64; 3], v: [f64; 3]) {
     let mut intent = GeometryIntent::capture(reflected, cap.key).unwrap();
     let anchor = cap.frames[0].origin.clone();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor,
         offset_mm: [0.; 3],
         angle_rad: 0.,

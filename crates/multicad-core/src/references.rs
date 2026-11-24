@@ -39,6 +39,11 @@ pub struct Attachment {
     pub anchor: Origin,
     pub offset_mm: [f64; 3],
     pub angle_rad: f64,
+    /// Orient the anchor frame so its normal leaves the face's actual
+    /// material side before the offset and angle apply. Absent in files
+    /// written before CAD-382, which keep the semantic source frame as is.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub outward: bool,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -147,6 +152,14 @@ impl ReferenceFrame {
             Err("Invalid reference frame".into())
         } else {
             Ok(())
+        }
+    }
+    /// The same frame seen from the other side: the normal reverses, `u`
+    /// and the origin stay.
+    fn reversed(self) -> Self {
+        Self {
+            v: self.v.map(|v| -v),
+            ..self
         }
     }
     fn attached(self, attachment: &Attachment) -> Self {
@@ -347,6 +360,19 @@ fn matching<'a>(
         })
         .collect()
 }
+/// A face's semantic source frame seen from outside the material: when its
+/// normal opposes the face's current B-rep plane normal, the normal reverses
+/// (`u` and the origin stay). Without planar B-rep geometry nothing is guessed.
+pub fn outward_frame(element: &TopologyElement, frame: ReferenceFrame) -> ReferenceFrame {
+    match element.geometry {
+        Some(AnalyticGeometry::Plane { frame: face })
+            if dot(frame.normal(), face.normal()) < 0. =>
+        {
+            frame.reversed()
+        }
+        _ => frame,
+    }
+}
 pub fn resolve(intent: &GeometryIntent, snapshot: &TopologySnapshot, revision: u64) -> Resolution {
     resolve_with_validation(intent, snapshot, revision, || snapshot.validate())
 }
@@ -383,6 +409,11 @@ fn resolve_with_validation(
             .map(|f| &f.frame)
         else {
             return Resolution::UnavailableFrame;
+        };
+        let frame = if attachment.outward {
+            outward_frame(element, *frame)
+        } else {
+            *frame
         };
         let frame = frame.attached(attachment);
         if let Err(message) = frame.validate() {

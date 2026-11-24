@@ -331,6 +331,7 @@ fn named_cap_reference_follows_plane_edits_without_replacing_authored_curve_orig
         .unwrap();
     let mut intent = GeometryIntent::capture(&first, cap.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: origin(id, "cap.end"),
         offset_mm: [2., 3., 0.],
         angle_rad: 0.,

@@ -65,6 +65,7 @@ impl SketchEditor {
     ) -> ([f64; 2], Option<EntityId>) {
         let grid = self.snap.then_some(self.spacing);
         self.snap_assist.bind(sketch);
+        self.support_snap = None;
         if !self.geometry_snap {
             self.snap_assist.pointer_left();
             return snap::placement(None, raw, grid);
@@ -72,7 +73,8 @@ impl SketchEditor {
         let geometry = self
             .read_solved_source(session.document(), sketch, session.revision())
             .map(|(source, _, _)| SnapGeometry::from_sketch(&source.sketch))
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .with_support(self.support_corners(session, sketch));
         self.snap_assist.revalidate(&geometry);
         let project = to_screen(self.camera, frame, rect);
         let query = Query {
@@ -99,6 +101,10 @@ impl SketchEditor {
             }
             None => {}
         }
+        self.support_snap = outcome.target.as_ref().and_then(|t| match t.key {
+            snap::TargetKey::Support(key) => Some(key),
+            _ => None,
+        });
         if let Some(icon) = outcome.target.as_ref().and_then(|t| snap_cursor(t.kind)) {
             ui.ctx().set_cursor_icon(icon);
         }

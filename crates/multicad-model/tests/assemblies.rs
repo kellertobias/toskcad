@@ -589,6 +589,7 @@ fn semantic_component_anchor_tracks_current_native_faces_and_rejects_missing_ref
         .unwrap();
     let mut intent = GeometryIntent::capture(&topology, face.key).unwrap();
     intent.attachment = Some(references::Attachment {
+        outward: false,
         anchor: origin,
         offset_mm: [0.; 3],
         angle_rad: 0.,

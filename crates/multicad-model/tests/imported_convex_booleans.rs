@@ -110,6 +110,7 @@ fn saved_imported_tetrahedron_booleans_follow_embedded_source_and_tool_edits() {
         let retained = GeometryIntent::capture(topology, left.key).unwrap();
         let mut attachment = retained.clone();
         attachment.attachment = Some(Attachment {
+            outward: false,
             anchor: left.frames[0].origin.clone(),
             offset_mm: [0.; 3],
             angle_rad: 0.,

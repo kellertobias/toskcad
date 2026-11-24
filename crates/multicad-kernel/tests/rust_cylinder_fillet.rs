@@ -650,6 +650,7 @@ fn imported_rounded_regions_and_cap_datums_do_not_follow_arbitrary_step_axis_rol
         for anchor in &old.frames {
             let mut datum = intent.clone();
             datum.attachment = Some(Attachment {
+                outward: false,
                 anchor: anchor.origin.clone(),
                 offset_mm: [0.25, -0.5, 0.75],
                 angle_rad: 0.3,

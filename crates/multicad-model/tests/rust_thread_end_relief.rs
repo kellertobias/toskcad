@@ -74,6 +74,7 @@ fn canonical_metric_relief_preserves_source_saved_edits_history_and_far_cap() {
         let anchor = cap.frames[0].origin.clone();
         let mut attached = intent.clone();
         attached.attachment = Some(Attachment {
+            outward: false,
             anchor,
             offset_mm: [0.2, -0.3, 0.4],
             angle_rad: 0.37,

@@ -379,11 +379,12 @@ fn near(a: [f64; 3], b: [f64; 3], tolerance: f64) -> bool {
 
 #[test]
 fn face_sketches_look_at_their_face_from_outside_on_a_moved_and_rotated_part() {
-    // Top and two sides of a translated, quarter-turned box. The bottom
-    // (prism start cap) is not listed: its kernel reference frame normal
-    // points into the part, an open CAD-382 decision.
+    // Top, bottom and two sides of a translated, quarter-turned box. The
+    // bottom is the prism start cap, whose semantic frame normal points into
+    // the part; new face sketches orient it outward at attach time.
     for (local_point, local_normal) in [
         ([30., 20., 18.], [0., 0., 1.]),
+        ([30., 20., 0.], [0., 0., -1.]),
         ([100., 30., 9.], [1., 0., 0.]),
         ([50., 0., 9.], [0., -1., 0.]),
     ] {
@@ -436,15 +437,13 @@ fn face_sketches_look_at_their_face_from_outside_on_a_moved_and_rotated_part() {
             near(toward_eye(&editor.camera), toward_eye(&entered), 1e-6),
             "{local_normal:?}: reopened view differs"
         );
-        // Sketch coordinates land on that face, inside its outline.
+        // Sketch coordinates land on that face, inside its outline. The
+        // rectangle starts at the clicked point: where the face lies relative
+        // to the frame origin depends on which side the frame is seen from.
+        let at = world.coordinates(face_point);
+        let far = [at[0] + 2., at[1] + 1.];
         editor
-            .add(
-                &mut session,
-                DrawTool::Rectangle,
-                [1., 1.],
-                [3., 2.],
-                Channel::Ui,
-            )
+            .add(&mut session, DrawTool::Rectangle, at, far, Channel::Ui)
             .unwrap();
         // The quarter-turned box stays axis aligned, so its world bounds are
         // exact; the drawn corner sits on the face, inside the part outline.
@@ -459,7 +458,7 @@ fn face_sketches_look_at_their_face_from_outside_on_a_moved_and_rotated_part() {
                 }))
             })
             .collect();
-        let corner = world.point([3., 2.]);
+        let corner = world.point(far);
         let on_face: f64 = (0..3)
             .map(|i| (corner[i] - face_point[i]) * normal[i])
             .sum();
@@ -484,4 +483,58 @@ fn face_sketches_look_at_their_face_from_outside_on_a_moved_and_rotated_part() {
             panel.document.get(panel.instance)
         );
     }
+}
+
+#[test]
+fn clicking_a_face_while_picking_enters_its_sketch_without_use_plane() {
+    let panel = Panel::new();
+    let mut session = Session::new(panel.document.clone()).unwrap();
+    let top = panel.pose.vector([0., 0., 1.]);
+    let mut editor = panel.editor(0, top);
+    editor.begin();
+    assert!(editor.picking && !editor.editing);
+    let point = panel.screen(&editor, [30., 20., 18.]);
+    // Hovering shows the ordinary face highlight before anything is created.
+    let ctx = egui::Context::default();
+    for events in [vec![], vec![egui::Event::PointerMoved(point)], vec![]] {
+        ctx.run_ui(input(events), |ui| {
+            editor.canvas(ui, &mut session, true, Some(panel.scene(0)), true)
+        })
+        .drop_without_applying_deltas();
+    }
+    assert!(
+        matches!(
+            editor.solid.reference_highlight(),
+            Some(crate::viewport::Selection::Face { instance, .. }) if *instance == panel.instance
+        ),
+        "hovered face is highlighted"
+    );
+    assert_eq!(session.document(), &panel.document);
+    click(&mut editor, &mut session, panel.scene(0), true, point);
+    assert!(editor.editing && !editor.picking, "{}", editor.message);
+    assert_eq!(session.revision(), 1);
+    assert_eq!(sketches(session.document()), 1);
+    let id = editor.selected.unwrap();
+    // A repeated click on the same face never adds a second sketch.
+    click(&mut editor, &mut session, panel.scene(0), true, point);
+    click(&mut editor, &mut session, panel.scene(1), true, point);
+    assert_eq!(sketches(session.document()), 1);
+    assert_eq!(editor.selected, Some(id));
+    // The face attachment is canonical and persists through save/reopen.
+    let opened = reopened(session.document());
+    let plane = opened
+        .entities()
+        .find_map(|e| match &e.data {
+            EntityData::Plane {
+                anchor: Some(anchor),
+                ..
+            } => Some(anchor.target),
+            _ => None,
+        })
+        .expect("face attachment saved");
+    assert_eq!(plane, panel.producer);
+    // The cancellation contract still holds for a face-click sketch.
+    editor.abort(&mut session, Channel::Ui).unwrap();
+    assert_eq!(session.document(), &panel.document);
+    assert!(!session.can_undo());
 }

@@ -501,6 +501,7 @@ impl AlignmentPanel {
                 let pending = self.pending.take().expect("shown capture");
                 let mut input = pending.input;
                 input.intent.attachment = Some(Attachment {
+                    outward: false,
                     anchor,
                     offset_mm: [0.; 3],
                     angle_rad: 0.,

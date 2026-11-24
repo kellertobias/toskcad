@@ -245,6 +245,7 @@ fn cap_reference_follows_signed_angle_and_offset_axis_after_dimension_edit() {
         .unwrap();
     let mut intent = GeometryIntent::capture(&first, cap.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: origin(id, "cap.end"),
         offset_mm: [2., 3., 0.],
         angle_rad: 0.,

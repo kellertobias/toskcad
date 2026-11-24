@@ -44,6 +44,7 @@ fn split_occupied_components_keep_source_labels_pose_and_real_step() {
                 let anchor = face.frames.first()?;
                 let mut intent = GeometryIntent::capture(&before, face.key).ok()?;
                 intent.attachment = Some(Attachment {
+                    outward: false,
                     anchor: anchor.origin.clone(),
                     offset_mm: [0.25, -0.5, 0.75],
                     angle_rad: 0.3,

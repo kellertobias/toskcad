@@ -164,6 +164,7 @@ fn subsets_pose_authored_cap_frames_cancel_and_refuse_atomically() {
         let mut intent = GeometryIntent::capture(&moved_before, face.key).unwrap();
         if let Some(anchor) = face.frames.first() {
             intent.attachment = Some(Attachment {
+                outward: false,
                 anchor: anchor.origin.clone(),
                 offset_mm: [0.; 3],
                 angle_rad: 0.,

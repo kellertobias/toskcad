@@ -224,6 +224,7 @@ fn saved_nway_intersection_reuses_common_material_for_cut_join_scale_and_paramet
     let face=topology.elements.iter().find(|face|matches!(face.geometry,Some(AnalyticGeometry::Plane{frame})if frame.normal()[1] < -0.99)).unwrap();
     let mut intent = GeometryIntent::capture(topology, face.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: face.frames[0].origin.clone(),
         offset_mm: [0.25, -0.5, 0.75],
         angle_rad: 0.3,

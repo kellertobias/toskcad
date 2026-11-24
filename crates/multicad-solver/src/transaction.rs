@@ -84,6 +84,35 @@ pub(crate) fn prepare_edit_with(
     label: Option<&str>,
     extra: Vec<multicad_core::document::Mutation>,
 ) -> Result<SketchEdit, EditError> {
+    prepare_edit_after(
+        session,
+        expected_revision,
+        actor,
+        id,
+        source,
+        report,
+        seed,
+        label,
+        Vec::new(),
+        extra,
+    )
+}
+/// [`prepare_edit_with`] on top of `prefix`: the sketch source replaces the
+/// sketch as `prefix` left it, and both join one transaction (CAD-383 adds a
+/// captured reference and the geometry drawn onto it this way).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_edit_after(
+    session: &Session,
+    expected_revision: u64,
+    actor: Actor,
+    id: EntityId,
+    source: Source,
+    report: Option<&multicad_core::references::ReferenceReport>,
+    seed: Option<&multicad_core::constraint_sketch::Sketch>,
+    label: Option<&str>,
+    prefix: Vec<multicad_core::document::Mutation>,
+    extra: Vec<multicad_core::document::Mutation>,
+) -> Result<SketchEdit, EditError> {
     if session.revision() != expected_revision {
         return Err(EditError::Command(CommandError {
             code: multicad_core::commands::ErrorCode::StaleRevision,
@@ -92,7 +121,17 @@ pub(crate) fn prepare_edit_with(
             parameter: None,
         }));
     }
-    let target = session.document().get(id).ok_or_else(|| {
+    let base = if prefix.is_empty() {
+        session.document().clone()
+    } else {
+        session.document().edited(&prefix).map_err(|e| {
+            EditError::Input(InputError {
+                source: Some(id),
+                message: e.to_string(),
+            })
+        })?
+    };
+    let target = base.get(id).ok_or_else(|| {
         EditError::Input(InputError {
             source: Some(id),
             message: "Sketch does not exist".into(),
@@ -116,12 +155,13 @@ pub(crate) fn prepare_edit_with(
     if semantic {
         // One canonical source edit installs bindings and links. Solved RHS and
         // coordinates are returned independently, never serialized into source.
-        let mut edits = source.replace(session.document(), id).map_err(|e| {
+        let mut edits = prefix.clone();
+        edits.extend(source.replace(&base, id).map_err(|e| {
             EditError::Input(InputError {
                 source: Some(id),
                 message: e.to_string(),
             })
-        })?;
+        })?);
         edits.extend(extra);
         let prepared = session
             .prepare(Request {
@@ -154,12 +194,13 @@ pub(crate) fn prepare_edit_with(
             u: source.u,
             sketch: solved.clone(),
         };
-        let mut edits = solved_source.replace(session.document(), id).map_err(|e| {
+        let mut edits = prefix;
+        edits.extend(solved_source.replace(&base, id).map_err(|e| {
             EditError::Input(InputError {
                 source: Some(id),
                 message: e.to_string(),
             })
-        })?;
+        })?);
         edits.extend(extra);
         Some(
             session

@@ -94,6 +94,7 @@ pub fn document() -> Result<Document, String> {
         .ok_or("Native panel has no top cap")?;
     let mut intent = GeometryIntent::capture(&initial, top.key)?;
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: origin(panel.id, "cap.end"),
         offset_mm: [0.; 3],
         angle_rad: 0.,

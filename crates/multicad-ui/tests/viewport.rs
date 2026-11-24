@@ -562,6 +562,7 @@ fn instance_frames_are_in_world_coordinates_and_camera_rays_match_both_projectio
             .unwrap()
             .clone();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor,
             offset_mm: [20., 25., 0.],
             angle_rad: 0.,

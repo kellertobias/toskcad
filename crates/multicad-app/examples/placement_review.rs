@@ -161,6 +161,7 @@ fn cap(
     }
     let mut intent = GeometryIntent::capture(snapshot, face.key)?;
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor,
         offset_mm: [0.; 3],
         angle_rad: 0.,

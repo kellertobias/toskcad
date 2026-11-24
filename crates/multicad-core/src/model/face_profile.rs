@@ -164,6 +164,7 @@ pub fn capture_profile_face(
     let mut intent = GeometryIntent::capture(snapshot, key)
         .map_err(|_| "This face has no unique persistent source; choose another face")?;
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: frame.origin.clone(),
         offset_mm: [0.; 3],
         angle_rad: 0.,

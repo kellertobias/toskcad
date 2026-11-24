@@ -301,6 +301,7 @@ fn rust_box_join_cut_and_intersect_keep_exact_stock_and_reopen_with_verified_ste
         .unwrap();
     let mut left_intent = GeometryIntent::capture(original_topology, left.key).unwrap();
     left_intent.attachment = Some(Attachment {
+        outward: false,
         anchor,
         offset_mm: [0.; 3],
         angle_rad: 0.,
@@ -575,6 +576,7 @@ fn rust_box_void_exports_one_logical_solid_after_saved_pose_and_dimension_edits(
                 intent.origins = BTreeSet::from([anchor.clone()]);
                 intent.boundary = None;
                 intent.attachment = Some(Attachment {
+                    outward: false,
                     anchor,
                     offset_mm: [0.; 3],
                     angle_rad: 0.,

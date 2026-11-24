@@ -325,7 +325,7 @@ impl Context {
         }
     }
     pub fn constrain(&self, camera: &mut Camera) {
-        camera.yaw = 0.;
+        camera.yaw = Camera::PLAN_YAW;
         camera.pitch = std::f32::consts::FRAC_PI_2;
         camera.perspective = false;
         if let Ok(elevation) = self.elevation() {

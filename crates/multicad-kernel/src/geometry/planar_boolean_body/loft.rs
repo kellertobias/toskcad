@@ -552,6 +552,7 @@ mod tests {
                 origins: BTreeSet::from([anchor.clone()]),
                 boundary: None,
                 attachment: Some(Attachment {
+                    outward: false,
                     anchor,
                     offset_mm: [2., 0., 0.],
                     angle_rad: 0.,

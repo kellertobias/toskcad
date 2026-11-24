@@ -222,6 +222,7 @@ fn saved_circular_mirrors_keep_cap_datums_after_two_reflections_and_parameter_ed
                 .unwrap()
                 .clone();
             intent.attachment = Some(Attachment {
+                outward: false,
                 anchor: Origin {
                     source: part.producer,
                     role: if cap == 0 { "cap.start" } else { "cap.end" }.into(),

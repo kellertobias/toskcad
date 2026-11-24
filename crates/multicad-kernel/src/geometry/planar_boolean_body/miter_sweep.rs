@@ -261,6 +261,7 @@ mod tests {
                 origins,
                 boundary: None,
                 attachment: Some(Attachment {
+                    outward: false,
                     anchor,
                     offset_mm: [0.; 3],
                     angle_rad: 0.,

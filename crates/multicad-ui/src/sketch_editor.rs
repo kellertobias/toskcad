@@ -68,6 +68,11 @@ mod snap_host;
 #[cfg(test)]
 #[path = "sketch_snap_host_tests.rs"]
 mod snap_host_tests;
+#[path = "sketch_support_projection.rs"]
+mod support_projection;
+#[cfg(test)]
+#[path = "sketch_support_projection_tests.rs"]
+mod support_projection_tests;
 #[path = "sketch_surface_structure_host.rs"]
 mod surface_structure_host;
 #[path = "sketch_symbol_host.rs"]
@@ -166,6 +171,12 @@ pub struct SketchEditor {
     pub tool: Option<DrawTool>,
     first: Option<[f64; 2]>,
     first_anchor: Option<EntityId>,
+    /// The face corner under the first placement, captured on completion.
+    first_support: Option<multicad_core::references::TopologyKey>,
+    /// The face corner the current snap target sits on (CAD-383).
+    support_snap: Option<multicad_core::references::TopologyKey>,
+    /// A drawing onto face corners awaiting native validation.
+    projection: Option<support_projection::Pending>,
     arc_start: Option<([f64; 2], Option<EntityId>)>,
     arc_clockwise: bool,
     polyline_start: Option<([f64; 2], EntityId)>,
@@ -282,6 +293,9 @@ impl Default for SketchEditor {
             tool: None,
             first: None,
             first_anchor: None,
+            first_support: None,
+            support_snap: None,
+            projection: None,
             arc_start: None,
             arc_clockwise: false,
             polyline_start: None,
@@ -466,6 +480,8 @@ impl SketchEditor {
         self.reset_profile_clicks();
         self.first = None;
         self.first_anchor = None;
+        self.first_support = None;
+        self.support_snap = None;
         self.arc_start = None;
         self.polyline_start = None;
         self.polyline_segments = 0;
@@ -1791,7 +1807,7 @@ impl SketchEditor {
             )
         }) {
             self.camera = Camera {
-                yaw: 0.,
+                yaw: Camera::PLAN_YAW,
                 pitch: std::f32::consts::FRAC_PI_2,
                 scale: 0.05,
                 target: [0.; 3],
@@ -1852,7 +1868,7 @@ impl SketchEditor {
             )
         }) {
             self.camera = Camera {
-                yaw: 0.,
+                yaw: Camera::PLAN_YAW,
                 pitch: std::f32::consts::FRAC_PI_2,
                 scale: 0.05,
                 target: [0.; 3],
@@ -1943,6 +1959,7 @@ impl SketchEditor {
             || self.acquisition.is_some()
             || self.external.active()
             || self.trim_worker.pending()
+            || self.projection.is_some()
     }
     pub fn cancel(&mut self) {
         if self.measurement.active() {
@@ -2272,9 +2289,17 @@ impl SketchEditor {
             "Sketch ready. Choose Line or Rectangle; coordinates are millimeters.".into();
         Ok(())
     }
+    /// Look at the sketch plane from its positive-normal (outward) side. When
+    /// the normal is vertical the heading is free, so it is chosen to put the
+    /// sketch U axis to the right and V up (CAD-382).
     fn orient_to(&mut self, frame: Frame) {
         self.architecture.set_enabled(false, &mut self.camera);
-        self.camera.yaw = frame.n[0].portable_atan2(frame.n[1]) as f32;
+        let horizontal = (frame.n[0] * frame.n[0] + frame.n[1] * frame.n[1]).sqrt();
+        self.camera.yaw = if horizontal < 1e-6 {
+            frame.u[1].portable_atan2(-frame.u[0]) as f32
+        } else {
+            frame.n[0].portable_atan2(frame.n[1]) as f32
+        };
         self.camera.pitch = frame.n[2].clamp(-1., 1.).portable_asin() as f32;
         self.camera.target = frame.origin.map(|v| v as f32);
     }
@@ -4369,8 +4394,9 @@ impl SketchEditor {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.viewport_rect = Some(rect);
         if developed_view {
-            self.camera.yaw = 0.;
-            self.camera.pitch = -std::f32::consts::FRAC_PI_2;
+            // Flat patterns read in plan: +X right, +Y up, seen from above.
+            self.camera.yaw = Camera::PLAN_YAW;
+            self.camera.pitch = std::f32::consts::FRAC_PI_2;
             self.camera.perspective = false;
             let home = std::mem::take(&mut self.home_requested);
             if (home || self.fit_requested)
@@ -5060,8 +5086,17 @@ impl SketchEditor {
             self.plane_picker
                 .paint_preview(&painter, self.camera, rect, context);
             if response.clicked() {
-                let chosen = self.plane_picker.click_hovered(context);
-                match chosen {
+                // CAD-381: a valid planar face is an unambiguous target, so
+                // clicking it creates and enters the sketch at once. Datum and
+                // construction planes keep the explicit Use plane confirmation.
+                match self.plane_picker.click_hovered(context) {
+                    Ok(preview) if matches!(preview.choice, PlaneChoice::Face(_)) => {
+                        if let Err(error) = self.create_on_plane(session, preview, Channel::Ui) {
+                            self.message = format!(
+                                "{error}. The document is unchanged; choose another face or plane."
+                            );
+                        }
+                    }
                     Ok(_) => {
                         self.message =
                             "Plane selected · adjust offset or angle, then Use plane".into()
@@ -5278,6 +5313,9 @@ impl SketchEditor {
                 }
             }
         }
+        // A face-corner drawing whose native check finished commits here,
+        // where the canvas holds the session for writing (CAD-383).
+        self.finish_projection(session);
         self.begin_snap_frame();
         self.sync_inline_input();
         // Enter in an inline field commits the last shown placement, as if the
@@ -5300,6 +5338,7 @@ impl SketchEditor {
             let clicked = response.clicked() || inline_commit;
             // Geometry targets and assistive lines win over the optional grid.
             let (mut p, mut anchor) = self.snap_pointer(ui, session, id, frame, rect, pointer, raw);
+            let snapped = p;
             // Closing a chain is an explicit vertex target, independent of the
             // optional grid/near-point snapping preference.
             if tool == DrawTool::Polyline
@@ -5344,6 +5383,10 @@ impl SketchEditor {
                 self.inline.last_point = Some(p);
             }
             self.snap_assist.settle(p);
+            // A face-corner target holds only while nothing moved the point.
+            let support = self
+                .support_snap
+                .filter(|_| anchor.is_none() && p == snapped && support_projection::projects(tool));
             let cursor = project(frame.point(p), &self.camera);
             painter.circle_stroke(
                 cursor,
@@ -5497,6 +5540,21 @@ impl SketchEditor {
                             if closing && segments < 2 {
                                 self.message =
                                     "A closed polyline needs at least three vertices".into();
+                            } else if (self.first_support.is_some() || support.is_some())
+                                && support_projection::projects(tool)
+                            {
+                                let radius = (p[0] - a[0]).portable_hypot(p[1] - a[1]);
+                                let first = (point(a, self.first_anchor), self.first_support);
+                                if let Err(error) = self.draw_on_corners(
+                                    session,
+                                    tool,
+                                    first,
+                                    (point(p, anchor), support),
+                                    radius,
+                                    Channel::Ui,
+                                ) {
+                                    self.message = error;
+                                }
                             } else if let Err(error) = self.draw_dimensioned(
                                 session,
                                 &DrawRequest {
@@ -5523,6 +5581,7 @@ impl SketchEditor {
                     } else {
                         self.first = Some(p);
                         self.first_anchor = anchor;
+                        self.first_support = support;
                         self.set_tool_status();
                     }
                 }
@@ -7112,25 +7171,10 @@ mod tests {
             .project(pose.point([30., 20., 18.]).map(|v| v as f32), rect);
         let point = Pos2::new(point[0], point[1]);
         let ctx = egui::Context::default();
-        for events in [
-            vec![],
-            vec![],
-            vec![
-                egui::Event::PointerMoved(point),
-                egui::Event::PointerButton {
-                    pos: point,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
-            vec![egui::Event::PointerButton {
-                pos: point,
-                button: egui::PointerButton::Primary,
-                pressed: false,
-                modifiers: egui::Modifiers::NONE,
-            }],
-        ] {
+        // CAD-381: a face click now enters its sketch directly, so the
+        // offset/angle variant goes through the Inspector Use plane path:
+        // hovering previews the face without editing the source.
+        for events in [vec![], vec![], vec![egui::Event::PointerMoved(point)]] {
             ctx.run_ui(input(events), |ui| {
                 editor.canvas(ui, &mut session, true, Some(scene(0, 1)), true)
             })
@@ -7140,7 +7184,7 @@ mod tests {
         assert_eq!(
             session.document(),
             &before,
-            "A face click only selects a source-neutral preview"
+            "A face hover only selects a source-neutral preview"
         );
         let get_preview = |editor: &SketchEditor| {
             editor
@@ -8535,6 +8579,7 @@ mod tests {
             .unwrap();
         let mut intent = GeometryIntent::capture(&snapshot, top.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: top
                 .origins
                 .iter()

@@ -152,6 +152,7 @@ fn profile_constructors_retain_holes_signed_extrusion_frames_and_authored_refere
                 .unwrap();
             let mut intent = GeometryIntent::capture(&topology, cap.key).unwrap();
             intent.attachment = Some(Attachment {
+                outward: false,
                 anchor: cap.frames[0].origin.clone(),
                 offset_mm: [0.25, -0.5, 0.75],
                 angle_rad: 0.3,
