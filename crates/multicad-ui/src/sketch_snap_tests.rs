@@ -1,5 +1,6 @@
 use super::*;
 use multicad_core::constraint_sketch::{Curve, Point};
+use multicad_core::references::TopologyKind;
 
 /// Screen pixels per sketch millimeter in these tests.
 const SCALE: f32 = 4.;
@@ -517,4 +518,85 @@ fn circles_and_arcs_offer_radial_feet_and_tangent_points_from_the_line_start() {
     assert_eq!(behind.len(), 1, "{behind:?}");
     assert!(matches!(behind[0].0, TargetKey::Perpendicular(_, 1)));
     assert!(len(sub(behind[0].2, [h, h])) < 1e-9);
+}
+
+fn support_key(kind: TopologyKind, ordinal: u32) -> TopologyKey {
+    TopologyKey { kind, ordinal }
+}
+#[test]
+fn support_face_corners_and_edges_snap_exactly_and_existing_sketch_geometry_wins() {
+    let mut b = Builder::default();
+    let existing = b.point([30., 20.]);
+    let corner = support_key(TopologyKind::Vertex, 0);
+    let edge = support_key(TopologyKind::Edge, 1);
+    let arc = support_key(TopologyKind::Edge, 2);
+    let geometry = b
+        .geometry()
+        .with_support(vec![
+            (corner, [0., 0.]),
+            // Already in the sketch: reused by identity, not offered again.
+            (support_key(TopologyKind::Vertex, 3), [30., 20.]),
+        ])
+        .with_support_edges(vec![
+            (edge, SupportEdge::Line([0., -10.], [30., -10.])),
+            (
+                arc,
+                SupportEdge::Arc {
+                    center: [60., 0.],
+                    radius: 5.,
+                    start: 0.,
+                    sweep: std::f64::consts::PI,
+                },
+            ),
+        ]);
+
+    let target = resolve(&geometry, &[], &query_px([0., 0.], 3., 2.), None).unwrap();
+    assert_eq!(target.key, TargetKey::Support(corner));
+    assert_eq!(target.kind, TargetKind::FaceCorner);
+    assert_eq!(
+        target.position,
+        [0., 0.],
+        "the exact face corner, not the pointer"
+    );
+    assert_eq!(
+        target.anchor, None,
+        "the projected point does not exist yet"
+    );
+    assert_eq!(target.kind.marker(), Marker::Vertex);
+
+    let target = resolve(&geometry, &[], &query_px([12., -10.], 0., 3.), None).unwrap();
+    assert_eq!(target.key, TargetKey::Support(edge));
+    assert_eq!(target.kind, TargetKind::FaceEdge);
+    assert_eq!(target.kind.label(), "Face edge");
+    assert_eq!(target.position[1], -10., "exactly on the face edge");
+    assert_eq!(target.kind.marker(), Marker::Edge);
+
+    let on_arc = resolve(&geometry, &[], &query([60., 5.2]), None).unwrap();
+    assert_eq!(on_arc.key, TargetKey::Support(arc));
+    assert!((on_arc.position[1] - 5.).abs() < 1e-12);
+    // Outside the arc's sweep there is no target.
+    assert!(resolve(&geometry, &[], &query([60., -5.2]), None).is_none());
+
+    // The existing point keeps its identity.
+    let target = resolve(&geometry, &[], &query([30., 20.]), None).unwrap();
+    assert_eq!(target.anchor, Some(existing));
+    // A face corner beats an edge of the face nearby (point class first).
+    let geometry = geometry.with_support_edges(vec![(
+        support_key(TopologyKind::Edge, 4),
+        SupportEdge::Line([-10., 0.], [10., 0.]),
+    )]);
+    let target = resolve(&geometry, &[], &query_px([0., 0.], 2., 0.), None).unwrap();
+    assert_eq!(target.key, TargetKey::Support(corner));
+    // An edge already drawn in the sketch is not offered again.
+    let mut b = Builder::default();
+    let (p, q) = (b.point([0., -10.]), b.point([30., -10.]));
+    b.line(p, q);
+    let drawn = b
+        .geometry()
+        .with_support_edges(vec![(edge, SupportEdge::Line([30., -10.], [0., -10.]))]);
+    let target = resolve(&drawn, &[], &query_px([12., -10.], 0., 3.), None).unwrap();
+    assert!(matches!(target.key, TargetKey::OnCurve(_)), "{target:?}");
+    // Support targets are not dwell-acquirable references.
+    assert!(!TargetKey::Support(corner).acquirable());
+    assert!(!TargetKey::Support(edge).acquirable());
 }

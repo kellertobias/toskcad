@@ -34,19 +34,21 @@ The shown target always has a marker at its exact position, so snapped placement
 | Ring with dot | Circle, arc and shape centers | Crosshair |
 | Triangle | Line midpoints and the midpoint of two references | Crosshair |
 | Cross | Guide intersections, guide on line, perpendicular feet, tangent points | Crosshair |
-| Small ring | A point on an existing line, circle or arc | Cell |
+| Small ring | A point on an existing line, circle or arc, or on a supporting-face edge | Cell |
 | None (dotted guide only) | Horizontal or vertical alignment | Unchanged |
 
 The label is drawn in the marker's color. Without a target the cursor is unchanged.
 
-## Supporting-face corners
+## Supporting-face corners and edges
 
-In a face-attached sketch, while Line, Rectangle or Circle is active, the vertices of the face's producer that lie in the sketch plane are offered as "Face corner" targets (class 0, like existing points). A corner already occupied by a sketch point is left to that point. Placing a point on a face corner does not create a free point. The corner is first captured as a canonical projected reference (Project, reference only, the CAD-128 mechanism). The drawing then reuses that reference's output point.
+In a face-attached sketch, every draw tool that places points (all except Fillet, Chamfer, Text and, for now, Spline) offers the supporting face's producer geometry that lies in the sketch plane. Vertices are "Face corner" targets (class 0, like existing points, vertex marker). Straight and circular edges are "Face edge" targets (class 3, like a point on a sketch curve, edge marker); the target is the exact foot on the edge. A corner or edge already occupied by sketch geometry is left to that geometry.
 
-- **One transaction.** The capture and the drawing form one candidate. The sketch stays locked while the asynchronous native candidate validation runs, and the candidate commits as one Undo step only if that validation passes. A failed check, an unsupported target or a stale scene leaves the document unchanged.
-- **Placement.** The corner and the sketch both live in the producer's local coordinates, so the capture is exact whatever the part or occurrence pose.
-- **Later changes.** The reference follows upstream edits and reports Missing or Ambiguous through the existing reference repair rules.
-- **Not offered.** Edges of the supporting face are not offered as snap targets. Polyline, arc and multi-click tools do not offer face corners.
+Placing a point on a face corner or edge creates nothing at once. When the gesture commits, each corner or edge it placed a point on is captured as a canonical projected reference (Project, reference only, the CAD-128 mechanism). A drawn point on a corner reuses the projected point by identity. A point on an edge lies exactly on the projected edge; the sketch model has no point-on-curve constraint, so it is not held there afterwards.
+
+- **One transaction.** Each capture is prepared against the same base document and the captures are merged (`merge_capture_previews`), which refuses captures that edit existing source, touch other entities or share identities. The drawn geometry and any entered inline sizes are added to that candidate. The sketch stays locked while the asynchronous native candidate validation runs, and the candidate commits as one Undo step only if that validation passes. The status reports the commit only after it happened. A polyline continues from the end of a composed segment.
+- **Refusals.** A corner or edge that is no longer in the native geometry is reported as "Missing face reference"; one that resolves to several elements as "Ambiguous face reference (N projections)". A failed check, an unsupported target, a stale scene or a project change during the projection leaves the document unchanged. Escape withdraws a queued or running projection.
+- **Placement.** The face and the sketch both live in the producer's local coordinates, so the capture is exact whatever the part or occurrence pose.
+- **Later changes.** The references follow upstream edits and report Missing or Ambiguous in the native reference report through the existing reference repair rules.
 
 ## Perpendicular and tangent targets
 

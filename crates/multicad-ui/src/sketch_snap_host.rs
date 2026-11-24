@@ -74,7 +74,8 @@ impl SketchEditor {
             .read_solved_source(session.document(), sketch, session.revision())
             .map(|(source, _, _)| SnapGeometry::from_sketch(&source.sketch))
             .unwrap_or_default()
-            .with_support(self.support_corners(session, sketch));
+            .with_support(self.support_corners(session, sketch))
+            .with_support_edges(self.support_edges(session, sketch));
         self.snap_assist.revalidate(&geometry);
         let project = to_screen(self.camera, frame, rect);
         let query = Query {

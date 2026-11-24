@@ -244,6 +244,10 @@ impl SketchEditor {
     }
     /// Status line after a pointer gesture committed geometry.
     pub(super) fn set_committed_status(&mut self, tool: DrawTool) {
+        // A drawing onto face references commits later, after its check.
+        if self.projection_pending() {
+            return;
+        }
         if let Some(guide) = self.tool_guide() {
             let noun = tool.noun();
             let mut noun = noun.to_owned();

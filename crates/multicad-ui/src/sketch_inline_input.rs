@@ -146,6 +146,74 @@ pub(crate) fn authored(document: &Document, id: EntityId) -> Result<Source, Stri
     }
 }
 
+/// Entered sizes become driving dimensions of the drawn geometry. Returns
+/// each new line as (curve, start, end) with its drawn positions.
+#[allow(clippy::type_complexity)]
+pub(super) fn size_constraints(
+    source: &mut Source,
+    created_curves: &[EntityId],
+    sizes: &[(Field, Dimension)],
+) -> Result<Vec<(EntityId, (EntityId, [f64; 2]), (EntityId, [f64; 2]))>, String> {
+    let position = |source: &Source, point| {
+        source
+            .sketch
+            .points
+            .iter()
+            .find(|p| p.id == point)
+            .map(|p| p.position_mm)
+    };
+    // (curve, (start id, position), (end id, position)) of each new line.
+    type End = (EntityId, [f64; 2]);
+    let drawn: &Source = source;
+    let lines: Vec<(EntityId, End, End)> = created_curves
+        .iter()
+        .filter_map(|curve| {
+            let curve = drawn.sketch.curves.iter().find(|c| c.id == *curve)?;
+            let multicad_core::constraint_sketch::CurveKind::Line { start, end } = curve.kind
+            else {
+                return None;
+            };
+            Some((
+                curve.id,
+                (start, position(drawn, start)?),
+                (end, position(drawn, end)?),
+            ))
+        })
+        .collect();
+    let horizontal = |vertical: bool| {
+        lines
+            .iter()
+            .find(|(_, (_, a), (_, b))| {
+                let (along, across) = if vertical { (1, 0) } else { (0, 1) };
+                (a[across] - b[across]).abs() < 1e-9 && (a[along] - b[along]).abs() > 1e-9
+            })
+            .map(|l| l.0)
+    };
+    for (field, dimension) in sizes.iter().cloned() {
+        let kind = match field {
+            Field::Width => ConstraintKind::Length {
+                line: horizontal(false).ok_or("The rectangle has no horizontal side")?,
+                dimension,
+            },
+            Field::Height => ConstraintKind::Length {
+                line: horizontal(true).ok_or("The rectangle has no vertical side")?,
+                dimension,
+            },
+            Field::Diameter => ConstraintKind::Diameter {
+                curve: *created_curves.first().ok_or("No circle was drawn")?,
+                dimension,
+            },
+            Field::Length => ConstraintKind::Length {
+                line: lines.last().ok_or("No line was drawn")?.0,
+                dimension,
+            },
+            Field::X | Field::Y => continue,
+        };
+        source.add_constraint(kind);
+    }
+    Ok(lines)
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct InlineInput {
     stage: Option<(DrawTool, bool)>,
@@ -280,6 +348,11 @@ impl SketchEditor {
             }
             _ => vec![],
         };
+        if self.support_requested(request) {
+            // The face references, the drawing and the sizes are one edit.
+            let used = self.support_used.clone();
+            return self.draw_on_support(session, request, &used, sizes, Some(tool), channel);
+        }
         if sizes.is_empty() {
             return self.draw(session, request, channel);
         }
@@ -306,63 +379,7 @@ impl SketchEditor {
             )
         })?;
         let mut source = authored(preview.document(), id)?;
-        let position = |source: &Source, point| {
-            source
-                .sketch
-                .points
-                .iter()
-                .find(|p| p.id == point)
-                .map(|p| p.position_mm)
-        };
-        // (curve, (start id, position), (end id, position)) of each new line.
-        type End = (EntityId, [f64; 2]);
-        let lines: Vec<(EntityId, End, End)> = drawn
-            .created_curves
-            .iter()
-            .filter_map(|curve| {
-                let curve = source.sketch.curves.iter().find(|c| c.id == *curve)?;
-                let multicad_core::constraint_sketch::CurveKind::Line { start, end } = curve.kind
-                else {
-                    return None;
-                };
-                Some((
-                    curve.id,
-                    (start, position(&source, start)?),
-                    (end, position(&source, end)?),
-                ))
-            })
-            .collect();
-        let horizontal = |vertical: bool| {
-            lines
-                .iter()
-                .find(|(_, (_, a), (_, b))| {
-                    let (along, across) = if vertical { (1, 0) } else { (0, 1) };
-                    (a[across] - b[across]).abs() < 1e-9 && (a[along] - b[along]).abs() > 1e-9
-                })
-                .map(|l| l.0)
-        };
-        for (field, dimension) in sizes {
-            let kind = match field {
-                Field::Width => ConstraintKind::Length {
-                    line: horizontal(false).ok_or("The rectangle has no horizontal side")?,
-                    dimension,
-                },
-                Field::Height => ConstraintKind::Length {
-                    line: horizontal(true).ok_or("The rectangle has no vertical side")?,
-                    dimension,
-                },
-                Field::Diameter => ConstraintKind::Diameter {
-                    curve: *drawn.created_curves.first().ok_or("No circle was drawn")?,
-                    dimension,
-                },
-                Field::Length => ConstraintKind::Length {
-                    line: lines.last().ok_or("No line was drawn")?.0,
-                    dimension,
-                },
-                Field::X | Field::Y => continue,
-            };
-            source.add_constraint(kind);
-        }
+        let lines = size_constraints(&mut source, &drawn.created_curves, &sizes)?;
         let edit = multicad_solver::prepare_edit_with_report(
             session,
             session.revision(),
