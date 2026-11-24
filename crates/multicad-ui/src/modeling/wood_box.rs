@@ -1,5 +1,11 @@
+mod linked;
+mod visual;
+#[cfg(test)]
+mod visual_tests;
+
 use super::{
     FormStamp, PreviewState,
+    diagram::DiagramLink,
     dimension::DimensionField,
     form::{self, FormAction, ModelEvent, ModelRequest},
 };
@@ -21,6 +27,8 @@ pub(super) struct WoodBoxPanel {
     stock: Option<EntityId>,
     diagnostic: Option<(FormStamp, Diagnostic)>,
     revision: Option<u64>,
+    /// Callout ↔ field linking of the box schematic.
+    link: DiagramLink,
 }
 fn stocks(document: &Document) -> Vec<(EntityId, String)> {
     document
@@ -85,6 +93,7 @@ impl WoodBoxPanel {
             source,
             diagnostic: None,
             revision: None,
+            link: DiagramLink::default(),
         })
     }
     pub fn stamp(&self) -> FormStamp {
@@ -155,15 +164,18 @@ impl WoodBoxPanel {
                     .desired_width(controls::inspector_width(ui)),
             )
             .changed();
+        let mut link = std::mem::take(&mut self.link);
+        self.paint_diagram(ui, document, &mut link);
         ui.label("Outside dimensions");
-        for (field, label) in self.size.iter_mut().zip(["Width", "Depth", "Height"]) {
-            ui.horizontal(|ui| {
-                changed |= field.show(
-                    ui,
-                    label,
-                    "Outside design envelope; formulas may reference project parameters",
-                );
-            });
+        for (i, label) in ["Width", "Depth", "Height"].into_iter().enumerate() {
+            changed |= link.field(
+                ui,
+                visual::SIZE[i],
+                &mut self.size[i],
+                visual::SIZE[i],
+                label,
+                "Outside design envelope; formulas may reference project parameters",
+            );
         }
         ui.label("Panel stock / thickness / material");
         let choices = stocks(document);
@@ -219,12 +231,33 @@ impl WoodBoxPanel {
                     }
                 }
             });
-        ui.collapsing("Placement", |ui| {
-            for (field, label) in self.origin.iter_mut().zip(["X", "Y", "Z"]) {
-                changed |= field.show(ui, label, "World origin of the outside envelope");
+        let title = format!(
+            "Placement · {} · {}",
+            self.callout_value(visual::ORIGIN[0]),
+            super::diagram::field_value(&self.rotation)
+        );
+        let reveal = link.reveals(&visual::PLACEMENT);
+        super::diagram::section(ui, "wood-box-placement", &title, reveal, |ui| {
+            for (i, label) in ["X", "Y", "Z"].into_iter().enumerate() {
+                changed |= link.field(
+                    ui,
+                    visual::ORIGIN[i],
+                    &mut self.origin[i],
+                    visual::ORIGIN[i],
+                    label,
+                    "World origin of the outside envelope",
+                );
             }
-            changed |= self.rotation.show(ui, "Rotation", "Rotation about world Z");
+            changed |= link.field(
+                ui,
+                visual::ROTATION,
+                &mut self.rotation,
+                visual::ROTATION,
+                "Rotation",
+                "Rotation about world Z",
+            );
         });
+        self.link = link;
         if changed {
             self.stamp.changed();
             self.diagnostic = None;
