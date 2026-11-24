@@ -2,9 +2,14 @@
 //! or edit an applied sheet part. Thickness comes from the stock; the inside
 //! radius and K-factor come from the stock unless overridden here.
 mod edges;
+mod linked;
+mod visual;
+#[cfg(test)]
+mod visual_tests;
 
 use super::{
     FormStamp, PreviewState,
+    diagram::DiagramLink,
     dimension::DimensionField,
     form::{self, FormAction, ModelEvent, ModelRequest},
 };
@@ -279,6 +284,8 @@ pub(super) struct SheetPanel {
     k_override: bool,
     k_factor: DimensionField,
     error: Option<String>,
+    /// Callout ↔ field linking of the base-sheet schematic.
+    link: DiagramLink,
 }
 impl SheetPanel {
     pub fn new(document: &Document, name: String) -> Self {
@@ -309,6 +316,7 @@ impl SheetPanel {
             k_override: false,
             k_factor: field(first.map_or(0.4, |s| s.4), "ratio"),
             error: None,
+            link: DiagramLink::default(),
         }
     }
     /// Open an applied sheet part for editing in place.
@@ -596,56 +604,7 @@ impl SheetPanel {
                 return Some(ModelEvent::CreateStock(ToolStock::Sheet));
             }
             ui.separator();
-            if self.kept_base.is_some() {
-                ui.small("The base comes from a sketch region or a converted solid and is kept.");
-            } else {
-                ui.label("Plane");
-                controls::inspector_combo(ui, "sheet-plane")
-                    .selected_text(plane_label(self.plane))
-                    .show_ui(ui, |ui| {
-                        for plane in [PanelPlane::Xy, PanelPlane::Xz, PanelPlane::Yz] {
-                            changed |= ui
-                                .selectable_value(&mut self.plane, plane, plane_label(plane))
-                                .changed();
-                        }
-                    });
-                changed |=
-                    self.length
-                        .show(ui, "Length (u)", "Base size along the plane's first axis");
-                changed |=
-                    self.width
-                        .show(ui, "Width (v)", "Base size along the plane's second axis");
-                for (axis, f) in ["X", "Y", "Z"].iter().zip(&mut self.origin) {
-                    changed |= f.show(
-                        ui,
-                        &format!("Origin {axis}"),
-                        "World position of the base sheet's minimum corner",
-                    );
-                }
-            }
-            changed |= ui
-                .checkbox(&mut self.reverse, "Material on the other side")
-                .changed();
-            changed |= ui
-                .checkbox(&mut self.radius_override, "Override inside radius")
-                .changed();
-            if self.radius_override {
-                changed |= self.radius.show(
-                    ui,
-                    "Inside radius",
-                    "Inside bend radius for this part instead of the stock value",
-                );
-            }
-            changed |= ui
-                .checkbox(&mut self.k_override, "Override K-factor")
-                .changed();
-            if self.k_override {
-                changed |= self.k_factor.show(
-                    ui,
-                    "K-factor",
-                    "Neutral-axis position as a fraction of thickness, 0–1",
-                );
-            }
+            changed |= self.show_base(ui, document);
             ui.separator();
         }
         ui.strong("Flanges");
