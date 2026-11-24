@@ -734,7 +734,7 @@ fn a_polyline_segment_between_face_corners_commits_once_and_the_chain_continues(
         h.editor
             .inline
             .last_point
-            .is_some_and(|p| (p[0] - expected[0]).hypot(p[1] - expected[1]) < 1e-3)
+            .is_some_and(|p| (p[0] - expected[0]).portable_hypot(p[1] - expected[1]) < 1e-3)
     });
     host.click(free);
     assert_eq!(
@@ -771,9 +771,9 @@ fn an_arc_centred_on_a_face_corner_reuses_both_projected_corners() {
     host.click(a);
     host.hover_support(c, TargetKind::FaceCorner);
     host.click(c);
-    let radius = SIZE[0].hypot(SIZE[1]);
+    let radius = SIZE[0].portable_hypot(SIZE[1]);
     let angle = 80f64.to_radians();
-    host.click(stock.corner(radius * angle.cos(), radius * angle.sin()));
+    host.click(stock.corner(radius * angle.portable_cos(), radius * angle.portable_sin()));
     host.settle_support();
     assert_eq!(
         host.session.revision(),

@@ -29,6 +29,9 @@ pub(super) fn projects(tool: DrawTool) -> bool {
     !matches!(tool, DrawTool::Fillet | DrawTool::Chamfer | DrawTool::Text)
 }
 
+/// A polyline's first vertex (position, point) and its committed segments.
+type PolylineChain = (Option<([f64; 2], EntityId)>, usize);
+
 /// A drawing onto face references, waiting for its native check.
 pub(super) struct Pending {
     prepared: Prepared,
@@ -38,7 +41,7 @@ pub(super) struct Pending {
     /// The solved candidate sketch, to continue a polyline after commit.
     solved: Option<multicad_core::constraint_sketch::Sketch>,
     /// A polyline's first vertex and segment count, to continue the chain.
-    polyline: Option<(Option<([f64; 2], EntityId)>, usize)>,
+    polyline: Option<PolylineChain>,
 }
 
 /// The point inputs of a draw request a placement may sit on.
