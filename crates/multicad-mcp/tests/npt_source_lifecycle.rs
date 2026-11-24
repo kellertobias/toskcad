@@ -1,5 +1,5 @@
-//! Source/native lifecycle only; the unchanged rounded_threads NPT regression
-//! additionally requires independent STEP export/readback and remains separate.
+//! Source/native lifecycle, including the placed occurrence's STEP export with
+//! independent readback of its written map.
 use multicad_core::{
     commands::{Actor, Channel},
     document::Document,
@@ -209,6 +209,32 @@ fn clipped_npt_placed_sources_keep_pose_through_edits_history_and_fresh_reopen()
                 .length_mm,
             intent.default_length_mm()
         );
-        assert!(!solid.supports_step_export());
+        // The placed occurrence exports through the normal tool and its
+        // independent readback admits the decoded file map.
+        assert!(solid.supports_step_export());
+        let before = reopened.document();
+        let exported = run(
+            &reopened,
+            "export_step",
+            json!({"part":made["part"],"file_name":"posed-npt.step"}),
+        );
+        let file = dir.path().join("posed-npt.step");
+        assert!(file.is_file());
+        assert!(
+            std::fs::read_to_string(&file)
+                .unwrap()
+                .contains("MAPPED_ITEM(")
+        );
+        assert!(exported["readback_volume_mm3"].is_null());
+        let decoded =
+            &exported["step_verification"]["retained_members"][0]["decoded_volume_bounds_mm3"];
+        let [low, high] = [0, 1].map(|i| decoded[i].as_f64().unwrap());
+        assert!(low <= volume && volume <= high, "{low}..{high} vs {volume}");
+        assert!(high - low < 1e-5);
+        let correspondence = exported["step_verification"]["source_correspondence"]
+            .as_array()
+            .unwrap();
+        assert_eq!(correspondence.len(), 1);
+        assert_eq!(reopened.document(), before);
     }
 }

@@ -73,14 +73,65 @@ impl Writer {
 // Only a sealed verified candidate may replay with a distinct actual-encoding
 // phase. Its preparation was already charged by verified construction. The
 // legacy public source-candidate API above retains its inherited-work contract.
+/// A Native occurrence of the unchanged local chart: the columns of its
+/// literal linear map and its translation. The written operator is the
+/// normalized basis of these columns with one uniform scale, so it is a
+/// distinct map; independent readback must bound their difference.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OccurrenceMap {
+    pub columns: [[f64; 3]; 3],
+    pub origin_mm: [f64; 3],
+}
+impl OccurrenceMap {
+    /// Whether the placed append admits this map's operator domain.
+    pub fn admitted(self) -> bool {
+        self.operator().is_ok()
+    }
+    /// The operator's uniform scale and normalized axes. The domain admits
+    /// only a proper map whose first two columns are within 1e-4 of an
+    /// orthonormal pair, so EXPRESS normalization keeps a nonsingular basis.
+    pub(super) fn operator(self) -> Result<(f64, [[f64; 3]; 3]), Error> {
+        let Self { columns, origin_mm } = self;
+        if columns
+            .iter()
+            .flatten()
+            .chain(&origin_mm)
+            .any(|x| !x.is_finite())
+        {
+            return Err(Error::Invalid);
+        }
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let scale = dot(columns[0], columns[0]).sqrt();
+        if !scale.is_finite() || scale <= 0. {
+            return Err(Error::Invalid);
+        }
+        let axes = columns.map(|c| c.map(|v| v / scale));
+        let [u, v, n] = axes;
+        let cross = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        if [dot(u, u) - 1., dot(v, v) - 1., dot(u, v), dot(n, n) - 1.]
+            .into_iter()
+            .any(|e| !e.is_finite() || e.abs() > 1e-4)
+            || dot(cross, n) <= 0.5
+        {
+            return Err(Error::Unresolved);
+        }
+        Ok((scale, axes))
+    }
+}
 pub(super) fn append_verified_replay(
     writer: &mut Writer,
     candidate: &super::verified::VerifiedCandidate<'_, '_>,
+    placement: Option<OccurrenceMap>,
     maximum_work: usize,
     maximum_bytes: usize,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<EncodingReceipt, Error> {
     let plan = candidate.source_plan();
+    let operator = placement.map(OccurrenceMap::operator).transpose()?;
     let mut receipt = None;
     writer.append_typed(|file| {
         let mut work = Work::new(maximum_work, interrupt)?;
@@ -89,11 +140,48 @@ pub(super) fn append_verified_replay(
         let solid = emit::body(&mut encoder, plan)?;
         encoder.reserve(4096)?;
         encoder.work.charge(4096)?;
+        let item = match (placement, operator) {
+            (Some(map), Some((scale, axes))) => {
+                // Fourteen fixed records well under 4 KiB; each is charged
+                // and reserved again by the encoder's own entity admission.
+                encoder.reserve(4096)?;
+                let zero = encoder.point([0.; 3])?;
+                let z = encoder.entity(format_args!("DIRECTION('',(0.,0.,1.))"))?;
+                let x = encoder.entity(format_args!("DIRECTION('',(1.,0.,0.))"))?;
+                let axis = encoder.entity(format_args!("AXIS2_PLACEMENT_3D('',{zero},{z},{x})"))?;
+                let length = encoder.entity(format_args!(
+                    "(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))"
+                ))?;
+                let angle = encoder.entity(format_args!(
+                    "(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.))"
+                ))?;
+                let solid_angle = encoder.entity(format_args!(
+                    "(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT())"
+                ))?;
+                let context = encoder.entity(format_args!(
+                    "(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNIT_ASSIGNED_CONTEXT(({length},{angle},{solid_angle}))REPRESENTATION_CONTEXT('',''))"
+                ))?;
+                let local = encoder.entity(format_args!(
+                    "SHAPE_REPRESENTATION('',({solid},{axis}),{context})"
+                ))?;
+                let source = encoder.entity(format_args!("REPRESENTATION_MAP({axis},{local})"))?;
+                let target = encoder.point(map.origin_mm)?;
+                let [a, b, c] = axes.map(Coordinates);
+                let a = encoder.entity(format_args!("DIRECTION('',{a})"))?;
+                let b = encoder.entity(format_args!("DIRECTION('',{b})"))?;
+                let c = encoder.entity(format_args!("DIRECTION('',{c})"))?;
+                let operator = encoder.entity(format_args!(
+                    "(CARTESIAN_TRANSFORMATION_OPERATOR({a},{b},{target},{scale:.16E})CARTESIAN_TRANSFORMATION_OPERATOR_3D({c})FUNCTIONALLY_DEFINED_TRANSFORMATION('','')GEOMETRIC_REPRESENTATION_ITEM()REPRESENTATION_ITEM(''))"
+                ))?;
+                encoder.entity(format_args!("MAPPED_ITEM('',{source},{operator})"))?
+            }
+            _ => solid,
+        };
         receipt = Some(EncodingReceipt {
             work: encoder.work.used,
             bytes: encoder.peak,
         });
-        Ok::<_, Error>(solid)
+        Ok::<_, Error>(item)
     })?;
     Ok(receipt.expect("successful sealed verified replay"))
 }

@@ -1,4 +1,5 @@
 //! Explicit bounded encode/independent-readback/source-correspondence pipeline.
+use super::writer::OccurrenceMap;
 use super::*;
 use crate::step_read::{
     npt_stock::{MaterialOptions, OwnedMaterial, Selected},
@@ -311,6 +312,28 @@ impl super::super::Writer {
         options: VerifiedOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<VerifiedAppendReceipt, Error> {
+        self.append_verified_npt_with(candidate, options, None, interrupt)
+    }
+    /// The same atomic replay of the verified LOCAL chart inside one mapped
+    /// item carrying the occurrence's normalized operator. The local proof
+    /// never certifies that operator: a consumer must decode the written map
+    /// and bound its difference from the occurrence before admitting it.
+    pub fn append_placed_verified_source_npt_candidate(
+        &mut self,
+        candidate: &VerifiedCandidate<'_, '_>,
+        options: VerifiedOptions,
+        placement: OccurrenceMap,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<VerifiedAppendReceipt, Error> {
+        self.append_verified_npt_with(candidate, options, Some(placement), interrupt)
+    }
+    fn append_verified_npt_with(
+        &mut self,
+        candidate: &VerifiedCandidate<'_, '_>,
+        options: VerifiedOptions,
+        placement: Option<OccurrenceMap>,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<VerifiedAppendReceipt, Error> {
         options.validate()?;
         let mut pipeline = Pipeline {
             used: 0,
@@ -341,6 +364,7 @@ impl super::super::Writer {
         let encoded = writer::append_verified_replay(
             self,
             candidate,
+            placement,
             maximum_work,
             maximum_bytes,
             interrupt,
