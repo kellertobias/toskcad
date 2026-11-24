@@ -193,8 +193,7 @@ impl Integral<'_> {
                 let along = (t - segment.t[0]) / (segment.t[1] - segment.t[0]);
                 let seed =
                     [0, 1].map(|axis| ends[0][axis] + (ends[1][axis] - ends[0][axis]) * along);
-                let uv = self.inverse.invert(point, Some(seed));
-                let (s, [su, sv]) = self.surface.evaluate(uv);
+                let (uv, (s, [su, sv])) = self.inverse.invert_evaluated(point, Some(seed));
                 ensure(distance(s, point) <= tolerance, Error::Invalid)?;
                 let (a, b, c) = (dot(su, su), dot(su, sv), dot(sv, sv));
                 let (ru, rv) = (dot(tangent, su), dot(tangent, sv));

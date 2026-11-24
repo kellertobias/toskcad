@@ -5,6 +5,9 @@ use multicad_precision::PortableMath as _;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 mod prepared_inverse;
 use prepared_inverse::Candidate;
+
+/// A point with its partial derivatives along u and v.
+pub(crate) type Evaluation = (Point, [Point; 2]);
 pub(crate) use prepared_inverse::PreparedInverse;
 
 /// A right-handed orthonormal placement.
@@ -271,6 +274,18 @@ impl Surface {
         seed: Option<[f64; 2]>,
         prepared: Option<&PreparedInverse<'_>>,
     ) -> [f64; 2] {
+        self.invert_evaluated(point, seed, prepared).0
+    }
+
+    /// [`Self::invert_prepared`] with [`Self::evaluate`] at the returned
+    /// parameters, where the search already holds it for exactly those.
+    fn invert_evaluated(
+        &self,
+        point: Point,
+        seed: Option<[f64; 2]>,
+        prepared: Option<&PreparedInverse<'_>>,
+    ) -> ([f64; 2], Option<Evaluation>) {
+        let mut evaluated = None;
         let free = seed.map_or(0., |seed| seed[0]);
         let angle = |frame: &Frame, flip: bool| {
             let l = frame.local(point);
@@ -311,12 +326,21 @@ impl Surface {
                         .rem_euclid(TAU),
                 ]
             }
-            _ => self.closest(point, seed, prepared),
+            _ => {
+                let (uv, evaluation) = self.closest(point, seed, prepared);
+                evaluated = Some((uv, evaluation));
+                uv
+            }
         };
         let periods = self.periods();
-        seed.map_or(uv, |seed| {
+        let uv = seed.map_or(uv, |seed| {
             [0, 1].map(|axis| nearest(uv[axis], seed[axis], periods[axis]))
-        })
+        });
+        // A shift by whole periods may round differently on evaluation.
+        let evaluation = evaluated
+            .filter(|(found, _)| found.map(f64::to_bits) == uv.map(f64::to_bits))
+            .map(|(_, evaluation)| evaluation);
+        (uv, evaluation)
     }
 
     pub(crate) fn candidates(&self, point: Point) -> Vec<[f64; 2]> {
@@ -367,7 +391,7 @@ impl Surface {
         point: Point,
         seed: Option<[f64; 2]>,
         prepared: Option<&PreparedInverse<'_>>,
-    ) -> [f64; 2] {
+    ) -> ([f64; 2], Evaluation) {
         let residual = |uv: [f64; 2]| distance(self.evaluate(uv).0, point);
         // Newton from the few candidates nearest the point: evaluating every
         // candidate is cheap, refining every one is not.
@@ -384,26 +408,27 @@ impl Surface {
                     .collect(),
             };
             ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
-            let mut best = (f64::INFINITY, [0.; 2]);
+            let mut best = (f64::INFINITY, [0.; 2], None);
             for &(_, candidate) in ranked.iter().take(4) {
-                let refined = self.newton(point, candidate);
-                let d = residual(refined);
+                let (refined, evaluation) = self.newton(point, candidate);
+                let d = distance(evaluation.0, point);
                 if d < best.0 {
-                    best = (d, refined);
+                    best = (d, refined, Some(evaluation));
                 }
             }
-            best
+            let (d, uv, evaluation) = best;
+            (d, uv, evaluation.unwrap_or_else(|| self.evaluate(uv)))
         };
         match seed {
             Some(seed) => {
-                let local = self.newton(point, seed);
-                let d = residual(local);
+                let (local, evaluation) = self.newton(point, seed);
+                let d = distance(evaluation.0, point);
                 // A seeded search that settles on a foot point near the
                 // surface, where the offset meets both tangents squarely,
                 // keeps it. One that lands elsewhere fell into another
                 // basin, and a distant foot can be a saddle or the far side
                 // of the surface: the global search decides.
-                let (s, tangents) = self.evaluate(local);
+                let (s, tangents) = evaluation;
                 let offset = sub(point, s);
                 let square = tangents
                     .iter()
@@ -413,27 +438,37 @@ impl Surface {
                 let rounding = 64. * f64::EPSILON * norm(point);
                 let near = 1e-6 + rounding;
                 if d <= 1e-9 + rounding || (square && d <= near) {
-                    return local;
+                    return (local, evaluation);
                 }
-                let (other, uv) = global();
-                if other < d { uv } else { local }
+                let (other, uv, found) = global();
+                if other < d {
+                    (uv, found)
+                } else {
+                    (local, evaluation)
+                }
             }
-            None => global().1,
+            None => {
+                let (_, uv, evaluation) = global();
+                (uv, evaluation)
+            }
         }
     }
 
     /// The best iterate of a Newton descent. Where a derivative stalls, as
     /// at a spline end, a full step can overshoot along the flat direction;
     /// the search never returns a point farther than one it already found.
-    fn newton(&self, point: Point, start: [f64; 2]) -> [f64; 2] {
+    ///
+    /// Also returns [`Self::evaluate`] at the returned parameters.
+    fn newton(&self, point: Point, start: [f64; 2]) -> ([f64; 2], Evaluation) {
         let mut uv = start;
-        let mut best = (f64::INFINITY, start);
+        let mut best = (f64::INFINITY, start, None);
         for _ in 0..60 {
-            let (s, [su, sv]) = self.evaluate(uv);
+            let evaluation = self.evaluate(uv);
+            let (s, [su, sv]) = evaluation;
             let r = sub(point, s);
             let d = norm(r);
             if d < best.0 {
-                best = (d, uv);
+                best = (d, uv, Some(evaluation));
             }
             let (a, b, c) = (dot(su, su), dot(su, sv), dot(sv, sv));
             let (ru, rv) = (dot(r, su), dot(r, sv));
@@ -462,10 +497,12 @@ impl Surface {
                 break;
             }
         }
-        if distance(self.evaluate(uv).0, point) < best.0 {
-            uv
+        let last = self.evaluate(uv);
+        if distance(last.0, point) < best.0 {
+            (uv, last)
         } else {
-            best.1
+            let (_, uv, evaluation) = best;
+            (uv, evaluation.unwrap_or_else(|| self.evaluate(uv)))
         }
     }
 

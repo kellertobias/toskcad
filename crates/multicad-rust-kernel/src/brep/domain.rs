@@ -80,8 +80,7 @@ impl UvLoop {
                     let (point, tangent) = curve.evaluate(t);
                     let seed =
                         [0, 1].map(|axis| ends[0][axis] + (ends[1][axis] - ends[0][axis]) * along);
-                    let uv = inverse.invert(point, Some(seed));
-                    let (_, [su, sv]) = surface.evaluate(uv);
+                    let (uv, (_, [su, sv])) = inverse.invert_evaluated(point, Some(seed));
                     let (a, b, c) = (dot(su, su), dot(su, sv), dot(sv, sv));
                     let (ru, rv) = (dot(tangent, su), dot(tangent, sv));
                     let determinant = a * c - b * b;
@@ -219,10 +218,9 @@ fn walk_incidence(
     visit: impl FnMut([f64; 2]),
 ) -> Result<()> {
     let inverse = PreparedInverse::new(surface);
-    walk_incidence_prepared(surface, &inverse, points, tolerance, visit)
+    walk_incidence_prepared(&inverse, points, tolerance, visit)
 }
 fn walk_incidence_prepared(
-    surface: &Surface,
     inverse: &PreparedInverse<'_>,
     points: &[Raw],
     tolerance: f64,
@@ -230,10 +228,10 @@ fn walk_incidence_prepared(
 ) -> Result<()> {
     let mut previous: Option<[f64; 2]> = None;
     for point in points {
-        let uv = inverse.invert(point.position, previous);
+        let (uv, (position, _)) = inverse.invert_evaluated(point.position, previous);
         previous = Some(uv);
         ensure(
-            distance(surface.evaluate(uv).0, point.position) <= tolerance,
+            distance(position, point.position) <= tolerance,
             Error::Invalid,
         )?;
         visit(uv);
@@ -253,7 +251,7 @@ pub(crate) fn unroll(
     let mut free = Vec::with_capacity(points.len());
     // Each point is sought from its predecessor: loop points lie close
     // together, and a global search per point would scale with the net.
-    walk_incidence_prepared(surface, &inverse, &points, tolerance, |uv| {
+    walk_incidence_prepared(&inverse, &points, tolerance, |uv| {
         let pole = surface.is_pole(uv, tolerance);
         let seam = seams(surface, relative(surface, uv));
         free.push((uv, pole, pole || seam[0] || seam[1], seam));

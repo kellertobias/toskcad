@@ -28,6 +28,16 @@ impl<'a> PreparedInverse<'a> {
     pub(crate) fn invert(&self, point: Point, seed: Option<[f64; 2]>) -> [f64; 2] {
         self.surface.invert_prepared(point, seed, Some(self))
     }
+    /// [`Self::invert`] with the surface evaluated at the returned
+    /// parameters, bit for bit as [`Surface::evaluate`] there.
+    pub(crate) fn invert_evaluated(
+        &self,
+        point: Point,
+        seed: Option<[f64; 2]>,
+    ) -> ([f64; 2], Evaluation) {
+        let (uv, evaluation) = self.surface.invert_evaluated(point, seed, Some(self));
+        (uv, evaluation.unwrap_or_else(|| self.surface.evaluate(uv)))
+    }
     pub(super) fn candidates(&self) -> Option<&[Candidate]> {
         self.grid.get_or_init(|| self.prepare()).as_deref()
     }
