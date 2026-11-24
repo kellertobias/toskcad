@@ -351,6 +351,32 @@ pub enum Mutation {
     SetHierarchy(Hierarchy),
 }
 impl Document {
+    /// The mutations that turn this document into `target`, so a prepared
+    /// candidate can be extended and committed as one transaction. Applying
+    /// them with [`Document::edited`] reproduces `target`'s source exactly.
+    pub fn mutations_to(&self, target: &Document) -> Vec<Mutation> {
+        let (from, to) = (&self.0.source, &target.0.source);
+        let mut edits: Vec<Mutation> = from
+            .entities
+            .keys()
+            .filter(|id| !to.entities.contains_key(id))
+            .map(|id| Mutation::Remove(*id))
+            .collect();
+        for (id, entity) in &to.entities {
+            match from.entities.get(id) {
+                None => edits.push(Mutation::Insert(entity.clone())),
+                Some(old) if old != entity => edits.push(Mutation::Replace(entity.clone())),
+                Some(_) => {}
+            }
+        }
+        if from.name != to.name {
+            edits.push(Mutation::RenameDocument(to.name.clone()));
+        }
+        if from.hierarchy != to.hierarchy {
+            edits.push(Mutation::SetHierarchy(to.hierarchy.clone()));
+        }
+        edits
+    }
     pub fn edited(&self, edits: &[Mutation]) -> Result<Self, DocumentError> {
         let mut candidate = self.clone();
         for edit in edits {
