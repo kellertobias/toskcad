@@ -1,6 +1,12 @@
 //! Editable surface relief settings. File selection only changes this draft.
+mod linked;
+mod visual;
+#[cfg(test)]
+mod visual_tests;
+
 use super::{
     FormStamp, PreviewState,
+    diagram::{self, Choice, DiagramLink, Key},
     dimension::DimensionField,
     form::{self, FormAction, ModelEvent, ModelRequest},
 };
@@ -32,6 +38,8 @@ pub(super) struct SurfaceStructurePanel {
     picking: bool,
     picking_available: bool,
     image_requested: bool,
+    /// Callout ↔ field linking of the relief schematic.
+    link: DiagramLink,
 }
 
 impl SurfaceStructurePanel {
@@ -71,6 +79,7 @@ impl SurfaceStructurePanel {
             picking: true,
             picking_available: false,
             image_requested: false,
+            link: DiagramLink::default(),
         })
     }
     pub fn stamp(&self) -> FormStamp {
@@ -220,21 +229,59 @@ impl SurfaceStructurePanel {
             ui.small("Click a planar face. Hold Shift to add or remove a face.");
         }
         ui.separator();
-        ui.label("Pattern");
         let mut changed = false;
-        controls::inspector_combo(ui, "surface-structure-pattern")
-            .selected_text(pattern_label(&self.pattern))
-            .show_ui(ui, |ui| {
-                for pattern in [Pattern::Ribs, Pattern::Waves, Pattern::Stipple] {
-                    let label = pattern_label(&pattern);
-                    changed |= ui
-                        .selectable_value(&mut self.pattern, pattern, label)
-                        .changed();
-                }
-                if matches!(self.pattern, Pattern::HeightMap { .. }) {
-                    ui.label("Height map imported");
-                }
-            });
+        let mut link = std::mem::take(&mut self.link);
+        link.invalid = diagram::first_invalid(document, self.linked_fields());
+        let schematic = visual::diagram(self.kind(), &self.diagram_values(document), self.image());
+        let values: Vec<(Key, String)> = schematic
+            .keys()
+            .into_iter()
+            .map(|k| (k, self.callout_value(k)))
+            .collect();
+        let value = |key: Key| {
+            values
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map_or_else(String::new, |(_, v)| v.clone())
+        };
+        link.diagram(
+            ui,
+            ("surface-structure", self.feature),
+            &schematic,
+            240.,
+            &value,
+        );
+        ui.small("One face with its relief window and border · click a callout to edit it");
+        ui.label("Pattern");
+        let mut kind = self.kind();
+        let choices: Vec<Choice<'_, visual::Kind>> = [
+            (
+                visual::Kind::Ribs,
+                "Ribs",
+                "Parallel raised or recessed bars",
+            ),
+            (visual::Kind::Waves, "Waves", "Smooth periodic waves"),
+            (visual::Kind::Stipple, "Stipple", "A grid of rounded dots"),
+        ]
+        .into_iter()
+        .map(|(value, label, hint)| Choice {
+            value,
+            label,
+            hint,
+            art: visual::tile_art(value),
+        })
+        .collect();
+        if diagram::choice_grid(ui, "surface-structure-pattern", &mut kind, &choices, true) {
+            self.pattern = match kind {
+                visual::Kind::Ribs => Pattern::Ribs,
+                visual::Kind::Waves => Pattern::Waves,
+                _ => Pattern::Stipple,
+            };
+            changed = true;
+        }
+        if matches!(self.pattern, Pattern::HeightMap { .. }) {
+            ui.small("Height map imported");
+        }
         if ui.button("Import grayscale PNG…").clicked() {
             self.image_requested = true;
         }
@@ -257,8 +304,10 @@ impl SurfaceStructurePanel {
                     .inner;
             }
         } else {
-            changed |= self.pitch.show_named(
+            changed |= link.field(
                 ui,
+                visual::PITCH,
+                &mut self.pitch,
                 "surface-pitch",
                 "Pattern pitch",
                 "Physical spacing between repeats.",
@@ -272,48 +321,72 @@ impl SurfaceStructurePanel {
                 .selectable_value(&mut self.direction, Direction::Recessed, "Recessed")
                 .changed();
         });
-        changed |= self.amplitude.show_named(
+        changed |= link.field(
             ui,
+            visual::AMPLITUDE,
+            &mut self.amplitude,
             "surface-amplitude",
             "Relief height or depth",
             "Maximum physical relief above or below each face.",
         );
-        changed |= self.size[0].show_named(
+        changed |= link.field(
             ui,
+            visual::SIZE[0],
+            &mut self.size[0],
             "surface-width",
             "Width U",
             "Width of the rotated relief window.",
         );
-        changed |= self.size[1].show_named(
+        changed |= link.field(
             ui,
+            visual::SIZE[1],
+            &mut self.size[1],
             "surface-height",
             "Height V",
             "Height of the rotated relief window.",
         );
-        changed |= self.offset[0].show_named(
-            ui,
-            "surface-offset-u",
-            "Offset U",
-            "Shift the window from the face extent midpoint.",
+        let title = format!(
+            "Window placement · offset {} · {} · border {}",
+            self.callout_value(visual::OFFSET[0]),
+            diagram::field_value(&self.rotation),
+            diagram::field_value(&self.border)
         );
-        changed |= self.offset[1].show_named(
-            ui,
-            "surface-offset-v",
-            "Offset V",
-            "Shift the window from the face extent midpoint.",
-        );
-        changed |= self.rotation.show_named(
-            ui,
-            "surface-rotation",
-            "Rotation",
-            "Rotate the window and pattern together about the outward normal.",
-        );
-        changed |= self.border.show_named(
-            ui,
-            "surface-border",
-            "Face border",
-            "Keep this much of each face flat at its boundary.",
-        );
+        let reveal = link.reveals(&visual::PLACEMENT);
+        diagram::section(ui, "surface-placement-section", &title, reveal, |ui| {
+            changed |= link.field(
+                ui,
+                visual::OFFSET[0],
+                &mut self.offset[0],
+                "surface-offset-u",
+                "Offset U",
+                "Shift the window from the face extent midpoint.",
+            );
+            changed |= link.field(
+                ui,
+                visual::OFFSET[1],
+                &mut self.offset[1],
+                "surface-offset-v",
+                "Offset V",
+                "Shift the window from the face extent midpoint.",
+            );
+            changed |= link.field(
+                ui,
+                visual::ROTATION,
+                &mut self.rotation,
+                "surface-rotation",
+                "Rotation",
+                "Rotate the window and pattern together about the outward normal.",
+            );
+            changed |= link.field(
+                ui,
+                visual::BORDER,
+                &mut self.border,
+                "surface-border",
+                "Face border",
+                "Keep this much of each face flat at its boundary.",
+            );
+        });
+        self.link = link;
         ui.small(
             "Each face has its own mapping and flat border. Patterns stop before shared edges.",
         );
@@ -340,14 +413,5 @@ impl SurfaceStructurePanel {
             Some(FormAction::Cancel) => Some(ModelEvent::Cancel),
             None => changed.then_some(ModelEvent::Changed),
         }
-    }
-}
-
-fn pattern_label(pattern: &Pattern) -> &'static str {
-    match pattern {
-        Pattern::Ribs => "Ribs",
-        Pattern::Waves => "Waves",
-        Pattern::Stipple => "Stipple",
-        Pattern::HeightMap { .. } => "Height map",
     }
 }
