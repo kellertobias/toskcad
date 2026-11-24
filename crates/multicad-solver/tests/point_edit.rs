@@ -408,6 +408,7 @@ fn attached_point_edits_require_current_geometry_and_reject_a_collapsed_free_edg
     };
     let mut intent = GeometryIntent::capture(&snapshot, key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: origin,
         offset_mm: [0.; 3],
         angle_rad: 0.,

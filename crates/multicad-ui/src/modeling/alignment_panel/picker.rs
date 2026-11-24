@@ -130,6 +130,7 @@ impl AlignmentPanel {
                 }
                 if element.frames.len() == 1 {
                     intent.attachment = Some(Attachment {
+                        outward: false,
                         anchor: element.frames[0].origin.clone(),
                         offset_mm: [0.; 3],
                         angle_rad: 0.,

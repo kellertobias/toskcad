@@ -103,6 +103,7 @@ fn normal_commands_keep_real_family_fit_units_references_edit_history_and_reopen
             s.commit(prepared.prepared).unwrap();
             let mut attached = intent.clone();
             attached.attachment = Some(Attachment {
+                outward: false,
                 anchor: cap.frames[0].origin.clone(),
                 offset_mm: [0.2, -0.3, 0.4],
                 angle_rad: 0.37,

@@ -1441,6 +1441,7 @@ fn smooth_planar_loft_keeps_the_intermediate_station_attachment() {
         .unwrap();
     near(anchor.frame.origin_mm[2], 1.5);
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: anchor.origin.clone(),
         offset_mm: [0.; 3],
         angle_rad: 0.,

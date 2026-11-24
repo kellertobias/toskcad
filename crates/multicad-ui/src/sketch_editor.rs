@@ -8538,6 +8538,7 @@ mod tests {
             .unwrap();
         let mut intent = GeometryIntent::capture(&snapshot, top.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: top
                 .origins
                 .iter()

@@ -302,6 +302,7 @@ fn referenced_alignment_native_preview_rebuilds_saved_driver_and_missing_target_
             .unwrap();
         let mut intent = GeometryIntent::capture(&snapshot, face.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: face.frames[0].origin.clone(),
             offset_mm: [0.; 3],
             angle_rad: 0.,
@@ -375,6 +376,7 @@ fn referenced_alignment_native_preview_rebuilds_saved_driver_and_missing_target_
     target.origins = BTreeSet::from([absent.clone()]);
     target.boundary = None;
     target.attachment = Some(Attachment {
+        outward: false,
         anchor: absent,
         offset_mm: [0.; 3],
         angle_rad: 0.,

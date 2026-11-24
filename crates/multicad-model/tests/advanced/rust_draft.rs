@@ -246,6 +246,7 @@ fn saved_four_side_draft_keeps_every_selected_datum_after_signed_parameter_edits
         };
         let mut intent = GeometryIntent::capture(topology, face.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor,
             offset_mm: [0.; 3],
             angle_rad: 0.,
@@ -441,6 +442,7 @@ fn saved_rust_draft_rebuilds_signed_bound_angles_and_keeps_the_neutral_face_line
         .unwrap();
     let mut intent = GeometryIntent::capture(topology, face.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor,
         offset_mm: [0.; 3],
         angle_rad: 0.,

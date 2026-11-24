@@ -306,6 +306,7 @@ fn real_pose_geometry_feedback_and_fake_deferred_role_cycles_are_rejected() {
     let before = f.s.document().clone();
     let mut capture = intent(f.receiver.feature, TopologyKind::Face, "cap.end");
     capture.attachment = Some(references::Attachment {
+        outward: false,
         anchor: capture.origins.first().unwrap().clone(),
         offset_mm: [0.; 3],
         angle_rad: 0.,
@@ -349,6 +350,7 @@ fn raw_cross_part_producer_tampering_and_offset_captures_are_rejected() {
     let mut f = fixture();
     let mut offset = f.request.clone();
     offset.references[1].intent.attachment = Some(references::Attachment {
+        outward: false,
         anchor: offset.references[1].intent.origins.first().unwrap().clone(),
         offset_mm: [1., 0., 0.],
         angle_rad: 0.,

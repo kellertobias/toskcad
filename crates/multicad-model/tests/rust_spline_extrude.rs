@@ -172,6 +172,7 @@ fn saved_driven_spline_extrusion_updates_datums_occurrences_history_and_real_ste
             .unwrap();
         let mut intent = GeometryIntent::capture(topology, cap.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: cap.frames[0].origin.clone(),
             offset_mm: [0.125, -0.25, 0.75],
             angle_rad: 0.2,

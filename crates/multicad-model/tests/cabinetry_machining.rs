@@ -189,6 +189,7 @@ fn rust_machines_a_blind_rectangular_pocket_with_the_bottom_material_intact() {
         .expect("source panel has an authored top face");
     let mut intent = GeometryIntent::capture(source, cap.0.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: cap.1.origin.clone(),
         offset_mm: [0.; 3],
         angle_rad: 0.,

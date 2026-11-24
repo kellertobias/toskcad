@@ -436,6 +436,7 @@ fn unrelated_relief_edit_retains_imported_finite_face_datums() {
     let bottom = old.elements.iter().find(|e|matches!(e.geometry,Some(multicad_core::references::AnalyticGeometry::Plane {frame}) if frame.normal()[2] < -0.99)).unwrap();
     let mut intent = GeometryIntent::capture(&old, bottom.key).unwrap();
     intent.attachment = Some(multicad_core::references::Attachment {
+        outward: false,
         anchor: bottom.frames[0].origin.clone(),
         offset_mm: [0.; 3],
         angle_rad: 0.,

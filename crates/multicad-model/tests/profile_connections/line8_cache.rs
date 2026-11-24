@@ -379,6 +379,7 @@ fn support_capture(model: &Model, source: EntityId) -> model::AlignmentInput {
     let face=snapshot.elements.iter().find(|element|element.key.kind==TopologyKind::Face && matches!(element.geometry,Some(AnalyticGeometry::Plane{frame})if frame.normal()[2]>0.9) && !element.frames.is_empty()).unwrap();
     let mut intent = GeometryIntent::capture(snapshot, face.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: face.frames[0].origin.clone(),
         offset_mm: [0.; 3],
         angle_rad: 0.,

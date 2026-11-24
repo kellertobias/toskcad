@@ -202,14 +202,19 @@ fn preview(
             }
             GeometryIntent::capture(&face.snapshot, face.key)
                 .map_err(|_| "The face cannot be referenced uniquely; choose another face")?;
+            // New face sketches attach outward (CAD-382), as core resolves.
             let frame = face
                 .snapshot
                 .elements
                 .iter()
                 .find(|e| e.key == face.key)
-                .and_then(|e| e.frames.iter().find(|f| f.origin == face.anchor))
-                .ok_or("The selected face has no planar reference frame")?
-                .frame;
+                .and_then(|e| {
+                    e.frames
+                        .iter()
+                        .find(|f| f.origin == face.anchor)
+                        .map(|f| multicad_core::references::outward_frame(e, f.frame))
+                })
+                .ok_or("The selected face has no planar reference frame")?;
             frame
                 .validate()
                 .map_err(|_| "The selected planar frame is invalid")?;
@@ -332,6 +337,7 @@ fn face_from_hit(
         .frame
         .validate()
         .map_err(|_| "The face has an invalid planar reference frame")?;
+    let outward = multicad_core::references::outward_frame(element, anchored.frame);
     Ok(Some(PlaneChoice::Face(Arc::new(FacePlane {
         producer: snapshot.owner,
         occurrence: hit.instance,
@@ -341,8 +347,8 @@ fn face_from_hit(
         snapshot,
         key,
         anchor: anchored.origin.clone(),
-        local_frame: from_reference(anchored.frame),
-        world_frame: from_reference(transform.frame(anchored.frame)),
+        local_frame: from_reference(outward),
+        world_frame: from_reference(transform.frame(outward)),
         occurrence_transform: transform,
     }))))
 }
@@ -1087,6 +1093,7 @@ mod tests {
             .unwrap();
         let mut intent = GeometryIntent::capture(&snapshot, face.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: face.frames[0].origin.clone(),
             offset_mm: [5., 5., 0.],
             angle_rad: 0.,
@@ -1170,6 +1177,7 @@ mod tests {
             .unwrap();
         let mut intent = GeometryIntent::capture(&snapshot, cap.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: cap.frames[0].origin.clone(),
             offset_mm: [0.; 3],
             angle_rad: 0.,
@@ -1341,6 +1349,7 @@ mod tests {
             .unwrap();
         let mut intent = GeometryIntent::capture(&snapshot, cap.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: cap.frames[0].origin.clone(),
             offset_mm: [0.; 3],
             angle_rad: 0.,

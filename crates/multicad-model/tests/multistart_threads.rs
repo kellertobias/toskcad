@@ -43,6 +43,7 @@ fn saved_sourced_lead_screw_starts_keep_cap_datums_history_and_verified_exchange
             .unwrap();
         let mut intent = GeometryIntent::capture(topology, cap.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: Origin {
                 source: request.feature,
                 role: "cap.start".into(),

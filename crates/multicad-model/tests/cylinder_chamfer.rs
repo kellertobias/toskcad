@@ -140,6 +140,7 @@ fn placed_cylinder_chamfer_survives_saved_dimension_edits_references_and_history
             .into(),
         };
         cap_anchor.attachment = Some(Attachment {
+            outward: false,
             anchor,
             offset_mm: [0.; 3],
             angle_rad: 0.,

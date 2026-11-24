@@ -225,6 +225,7 @@ fn reverse_through_thread_keeps_stock_caps_wall_and_rims_and_removes_real_materi
         let mut intent = GeometryIntent::capture(&before, element.key).unwrap();
         if let Some(anchor) = element.frames.first() {
             intent.attachment = Some(Attachment {
+                outward: false,
                 anchor: anchor.origin.clone(),
                 offset_mm: [0.; 3],
                 angle_rad: 0.,

@@ -269,6 +269,7 @@ fn authored_untouched_stock_cap_keeps_its_physical_attachment_chart() {
         .frame;
     let mut intent = GeometryIntent::capture(&before, old.key).unwrap();
     intent.attachment = Some(multicad_core::references::Attachment {
+        outward: false,
         anchor: origin,
         offset_mm: [0.; 3],
         angle_rad: 0.,

@@ -170,6 +170,7 @@ fn authored_spline_sweeps_keep_source_origins_cap_charts_and_real_step_in_both_s
                 }
                 let mut intent = GeometryIntent::capture(&snapshot, cap.key).unwrap();
                 intent.attachment = Some(Attachment {
+                    outward: false,
                     anchor: anchor.origin.clone(),
                     offset_mm: [0.25, -0.5, 0.75],
                     angle_rad: 0.3,

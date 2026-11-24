@@ -185,6 +185,7 @@ fn placed_cap_reference_evaluates_before_downstream_sketch_and_follows_pose_para
         .unwrap();
     let mut intent = GeometryIntent::capture(snapshot, element.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: cap,
         offset_mm: [0.; 3],
         angle_rad: 0.,

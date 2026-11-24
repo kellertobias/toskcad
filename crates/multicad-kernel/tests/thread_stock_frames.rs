@@ -84,6 +84,7 @@ fn verify_source_intents(before: &TopologySnapshot, after: &TopologySnapshot) {
         }
         let mut intent = GeometryIntent::capture(before, element.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: element.frames[0].origin.clone(),
             offset_mm: [2., 3., 0.],
             angle_rad: 0.2,

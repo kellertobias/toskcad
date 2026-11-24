@@ -134,6 +134,7 @@ fn rust_cylinder_mirror_preserves_every_named_boundary_and_reflects_cap_and_rim_
                     intent.boundary = Some(original.boundary.clone());
                     if original.key.kind == TopologyKind::Face && original.key.ordinal < 2 {
                         intent.attachment = Some(Attachment {
+                            outward: false,
                             anchor: Origin {
                                 source: source_id,
                                 role: if original.key.ordinal == 0 {
@@ -276,6 +277,7 @@ fn rust_cylinder_mirror_preserves_every_named_boundary_and_reflects_cap_and_rim_
                         let mut datum = GeometryIntent::capture(&before, original.key).unwrap();
                         datum.boundary = Some(original.boundary.clone());
                         datum.attachment = Some(Attachment {
+                            outward: false,
                             anchor: anchor.origin.clone(),
                             offset_mm: [0.25, -0.5, 0.75],
                             angle_rad: 0.3,
@@ -475,6 +477,7 @@ fn rust_cylinder_mirror_uses_the_true_inverse_for_admitted_source_chart_residual
             near_point(back.frames[0].frame.v, old.frames[0].frame.v);
             let mut datum = GeometryIntent::capture(&before, old.key).unwrap();
             datum.attachment = Some(Attachment {
+                outward: false,
                 anchor: old.frames[0].origin.clone(),
                 offset_mm: [0.5, -0.25, 1.],
                 angle_rad: 0.2,

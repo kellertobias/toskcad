@@ -462,6 +462,7 @@ fn legacy_explicit_instance_anchor_is_already_world_and_never_receives_a_second_
     let key = top(&world, fixture.producer);
     let mut intent = GeometryIntent::capture(&world, key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: Origin {
             source: fixture.producer,
             role: "cap.end".into(),

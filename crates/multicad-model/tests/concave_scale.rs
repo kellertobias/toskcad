@@ -175,6 +175,7 @@ fn saved_concave_scale_preserves_part_occurrence_datums_and_supports_a_later_cut
         .unwrap();
     let mut intent = GeometryIntent::capture(topology, cap.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: cap.frames[0].origin.clone(),
         offset_mm: [0.; 3],
         angle_rad: 0.,

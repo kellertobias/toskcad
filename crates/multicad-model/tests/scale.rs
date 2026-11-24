@@ -468,6 +468,7 @@ fn an_existing_face_aligned_occurrence_retains_its_rigid_driver_chain_when_scale
     let mut intent =
         multicad_core::references::GeometryIntent::capture(topology, face.key).unwrap();
     intent.attachment = Some(multicad_core::references::Attachment {
+        outward: false,
         anchor: multicad_core::references::Origin {
             source: part.feature,
             role: "cap.start".into(),
@@ -589,6 +590,7 @@ fn saved_rotated_axis_scale_preserves_every_authored_boundary_intent() {
         .position(|intent| intent.kind == TopologyKind::Face && intent.origins.contains(&cap))
         .unwrap();
     intents[cap_index].attachment = Some(Attachment {
+        outward: false,
         anchor: cap,
         offset_mm: [0.; 3],
         angle_rad: 0.,
@@ -801,6 +803,7 @@ fn saved_axis_aligned_scale_keeps_exact_rectangular_and_round_cut_providers() {
             .unwrap();
         let mut anchor = GeometryIntent::capture(topology, element.key).unwrap();
         anchor.attachment = Some(Attachment {
+            outward: false,
             anchor: cap,
             offset_mm: [0.; 3],
             angle_rad: 0.,
@@ -950,6 +953,7 @@ fn rust_compound_scale_rebuilds_saved_pattern_parts_and_owned_occurrences_atomic
             })
             .unwrap();
         intents[cap_index].attachment = Some(Attachment {
+            outward: false,
             anchor: cap,
             offset_mm: [0.; 3],
             angle_rad: 0.,
@@ -1311,6 +1315,7 @@ fn indexed_planar_scale_rebuilds_saved_cut_part_occurrences_datums_and_parameter
         .unwrap();
     let mut intent = GeometryIntent::capture(topology, face.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: face.frames[0].origin.clone(),
         offset_mm: [0.; 3],
         angle_rad: 0.,

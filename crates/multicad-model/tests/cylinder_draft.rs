@@ -123,6 +123,7 @@ fn cylinder_draft_keeps_saved_cap_datums_rim_references_instances_and_parameter_
             .unwrap();
         let mut intent = GeometryIntent::capture(topology, cap.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: Origin {
                 source: primitive.feature,
                 role: ["cap.start", "cap.end"][end].into(),

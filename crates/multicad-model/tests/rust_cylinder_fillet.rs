@@ -104,6 +104,7 @@ fn saved_bound_cylinder_fillets_keep_caps_through_edits_history_reopen_and_step(
         for (cap, original) in caps.iter().take(2).enumerate() {
             let mut intent = original.clone();
             intent.attachment = Some(Attachment {
+                outward: false,
                 anchor: Origin {
                     source: source.feature,
                     role: if cap == 0 { "cap.start" } else { "cap.end" }.into(),

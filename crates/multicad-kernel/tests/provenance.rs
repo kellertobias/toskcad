@@ -86,6 +86,7 @@ fn real_face_sketch_and_hole_follow_dimension_changes_and_refuse_unresolved_fall
         .unwrap();
     let mut intent = GeometryIntent::capture(&initial, cap(&initial, panel.id)).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: origin(panel.id, "cap.end"),
         offset_mm: [0.; 3],
         angle_rad: 0.,
@@ -312,6 +313,7 @@ fn deleted_face_does_not_rebind_to_a_new_parallel_face_and_transform_preserves_s
     let snapshot = base.topology_snapshot(panel, 0).unwrap();
     let mut intent = GeometryIntent::capture(&snapshot, cap(&snapshot, panel)).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: origin(panel, "cap.end"),
         offset_mm: [5., 7., 0.],
         angle_rad: 0.,
@@ -411,6 +413,7 @@ fn worker_receipts_publish_owned_reference_data_with_revision_guards() {
     let first = first.solids[0].as_ref().unwrap().topology_snapshot(feature);
     let mut intent = GeometryIntent::capture(&first, cap(&first, feature)).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: origin(feature, "cap.end"),
         offset_mm: [0.; 3],
         angle_rad: 0.,

@@ -214,6 +214,7 @@ fn fixture(directory: &std::path::Path, text: &str) -> Fixture {
         intent.boundary = Some(face.boundary.clone());
         faces.push(intent.clone());
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: face.frames[0].origin.clone(),
             offset_mm: [0.25, -0.5, 0.75],
             angle_rad: 0.3,

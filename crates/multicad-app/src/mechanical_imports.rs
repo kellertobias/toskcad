@@ -526,6 +526,7 @@ mod tests {
             let mut intent = GeometryIntent::capture(topology, face.key).unwrap();
             intent.boundary = Some(face.boundary.clone());
             intent.attachment = Some(Attachment {
+                outward: false,
                 anchor: face.frames[0].origin.clone(),
                 offset_mm: [0.25, -0.5, 0.75],
                 angle_rad: 0.3,

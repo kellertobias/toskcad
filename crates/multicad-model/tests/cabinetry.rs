@@ -2056,6 +2056,7 @@ fn rust_rebuilds_the_bundled_cabinet_panels_finger_joints_and_drawer_grooves() {
                 let anchor = face.frames.iter().find(|f| f.origin.role == role).unwrap();
                 let mut intent = GeometryIntent::capture(&a.topology, face.key).unwrap();
                 intent.attachment = Some(Attachment {
+                    outward: false,
                     anchor: anchor.origin.clone(),
                     offset_mm: [0.; 3],
                     angle_rad: 0.,
@@ -2328,6 +2329,7 @@ fn rust_rebuilds_both_hinge_boring_groups_on_each_bundled_cabinet_door() {
             .unwrap();
         let mut intent = GeometryIntent::capture(snapshot, entry.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: anchor.origin.clone(),
             offset_mm: [0.; 3],
             angle_rad: 0.,
@@ -2387,6 +2389,7 @@ fn rust_drills_bundled_drawer_runner_holes_after_finger_joints_and_grooves() {
             .unwrap();
         let mut intent = GeometryIntent::capture(topology, entry.key).unwrap();
         intent.attachment = Some(Attachment {
+            outward: false,
             anchor: anchor.origin.clone(),
             offset_mm: [0.; 3],
             angle_rad: 0.,

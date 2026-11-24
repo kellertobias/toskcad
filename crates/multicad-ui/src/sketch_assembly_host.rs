@@ -473,6 +473,7 @@ impl SketchEditor {
             let pending = self.assembly_anchor.take().expect("shown anchor choice");
             let mut input = pending.input;
             input.intent.attachment = Some(Attachment {
+                outward: false,
                 anchor: pending.frames[index].origin.clone(),
                 offset_mm: [0.; 3],
                 angle_rad: 0.,
@@ -587,6 +588,7 @@ impl SketchEditor {
         match result {
             Ok(mut pending) if pending.frames.len() == 1 => {
                 pending.input.intent.attachment = Some(Attachment {
+                    outward: false,
                     anchor: pending.frames[0].origin.clone(),
                     offset_mm: [0.; 3],
                     angle_rad: 0.,

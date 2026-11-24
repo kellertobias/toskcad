@@ -373,6 +373,7 @@ fn saved_face_offset_plane_keeps_authored_side_frames_after_edit() {
         .unwrap();
     let mut intent = GeometryIntent::capture(topology, cap.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor,
         offset_mm: [0.; 3],
         angle_rad: 0.,

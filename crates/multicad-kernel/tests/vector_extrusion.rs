@@ -206,6 +206,7 @@ fn named_cap_references_follow_full_displacement_and_survive_dimension_changes()
         .unwrap();
     let mut intent = GeometryIntent::capture(&first, cap.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: origin(feature, "cap.end"),
         offset_mm: [2., 3., 0.],
         angle_rad: 0.,

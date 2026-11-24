@@ -292,6 +292,7 @@ fn unproved_axis_reparameterization_requires_reference_repair_instead_of_wrong_c
         .unwrap();
     let mut intent = GeometryIntent::capture(&snapshots[0], cap.key).unwrap();
     intent.attachment = Some(Attachment {
+        outward: false,
         anchor: cap.frames[0].origin.clone(),
         offset_mm: [0.2, -0.3, 0.4],
         angle_rad: 0.2,
