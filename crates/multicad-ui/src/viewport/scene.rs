@@ -196,7 +196,7 @@ pub struct Geometry {
     indices: Vec<u32>,
     triangle_faces: Vec<u32>,
     face_colors: BTreeMap<u32, [u8; 4]>,
-    topology: Vec<TopologyElement>,
+    topology: TopologyElements,
     picking: OnceLock<PickingIndex>,
     mesh_bounds: OnceLock<Bounds>,
     edges: Vec<DisplayEdge>,
@@ -219,7 +219,7 @@ impl Geometry {
         vertices: Vec<Point>,
         indices: Vec<u32>,
         triangle_faces: Vec<u32>,
-        topology: Vec<TopologyElement>,
+        topology: TopologyElements,
     ) -> Result<Self, String> {
         let geometry = Self::new_deferred(id, vertices, indices, triangle_faces, topology)?;
         geometry.picking_index();
@@ -234,7 +234,7 @@ impl Geometry {
         vertices: Vec<Point>,
         indices: Vec<u32>,
         triangle_faces: Vec<u32>,
-        topology: Vec<TopologyElement>,
+        topology: TopologyElements,
     ) -> Result<Self, String> {
         if id.is_nil()
             || vertices.is_empty()

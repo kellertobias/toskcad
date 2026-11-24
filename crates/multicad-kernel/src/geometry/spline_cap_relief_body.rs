@@ -427,7 +427,7 @@ impl SplineCapReliefBody {
         TopologySnapshot {
             owner,
             revision,
-            elements,
+            elements: elements.into(),
         }
     }
 }

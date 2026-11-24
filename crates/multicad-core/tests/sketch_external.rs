@@ -56,7 +56,7 @@ fn fixture() -> (
     let snapshot = TopologySnapshot {
         owner,
         revision: 7,
-        elements: vec![element],
+        elements: vec![element].into(),
     };
     let intent = GeometryIntent::capture(&snapshot, snapshot.elements[0].key).unwrap();
     (

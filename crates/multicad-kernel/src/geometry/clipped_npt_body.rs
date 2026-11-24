@@ -338,7 +338,7 @@ impl ClippedNptBody {
         let mut snapshot = TopologySnapshot {
             owner,
             revision,
-            elements,
+            elements: elements.into(),
         };
         self.place_topology(&mut snapshot);
         snapshot

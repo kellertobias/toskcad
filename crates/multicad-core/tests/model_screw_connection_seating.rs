@@ -39,7 +39,8 @@ fn fixture() -> (Session, ScrewConnectionRequest, ResolvedMechanicalPart) {
                 frame: frame(0.),
             }],
             geometry: Some(AnalyticGeometry::Plane { frame: frame(0.) }),
-        }],
+        }]
+        .into(),
     };
     let face = capture_profile_face(&topology, topology.elements[0].key, None).unwrap();
     let axis = EntityId::new();

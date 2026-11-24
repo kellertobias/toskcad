@@ -599,7 +599,8 @@ mod tests {
             for duplicate in [false, true] {
                 let mut metadata = original.stock_topology.clone();
                 if duplicate {
-                    metadata.elements.push(metadata.elements[index].clone());
+                    let copy = metadata.elements[index].clone();
+                    metadata.elements.push(copy);
                 } else {
                     metadata.elements.remove(index);
                 }

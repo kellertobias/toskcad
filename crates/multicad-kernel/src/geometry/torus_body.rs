@@ -160,7 +160,7 @@ impl TorusBody {
         TopologySnapshot {
             owner,
             revision,
-            elements: vec![face, equator, meridian, vertex],
+            elements: vec![face, equator, meridian, vertex].into(),
         }
     }
 }

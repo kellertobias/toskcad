@@ -85,7 +85,7 @@ pub(super) fn assemble(
     let result = TopologySnapshot {
         owner,
         revision,
-        elements: faces,
+        elements: faces.into(),
     };
     result.validate().map_err(|e| unavailable(&e))?;
     Ok(result)

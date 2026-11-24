@@ -222,7 +222,7 @@ impl SolidSnapshot {
         TopologySnapshot {
             owner,
             revision: self.key.revision,
-            elements: self.topology.clone(),
+            elements: self.topology.clone().into(),
         }
     }
 }
@@ -670,7 +670,10 @@ fn display_snapshot(
         // Owned bodies derive their names from source geometry instead of a
         // stored native naming table.
         topology: if solid.uses_rust_geometry() {
-            solid.topology_snapshot(EntityId::new(), 0)?.elements
+            solid
+                .topology_snapshot(EntityId::new(), 0)?
+                .elements
+                .into_vec()
         } else {
             solid.provenance.clone()
         },

@@ -331,7 +331,7 @@ impl CosmeticPhillipsBody {
         Ok(TopologySnapshot {
             owner,
             revision,
-            elements,
+            elements: elements.into(),
         })
     }
     pub(super) fn mesh(

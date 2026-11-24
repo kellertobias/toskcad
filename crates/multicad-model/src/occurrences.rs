@@ -115,12 +115,21 @@ fn equivalent(a: Option<AnalyticGeometry>, b: Option<AnalyticGeometry>, toleranc
         _ => false,
     }
 }
-pub(crate) fn build(
-    inputs: Inputs<'_>,
+/// The resolved placement of one occurrence: everything [`place`] reads
+/// besides the source solid and topology it names.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Placement {
+    pub component: EntityId,
+    pub producer: EntityId,
+    pub pose: RigidPose,
+}
+/// Resolve an occurrence's component, producer and refined pose.
+pub(crate) fn resolve(
+    inputs: &Inputs<'_>,
     instance: EntityId,
     revision: u64,
-) -> Result<(OccurrenceSnapshot, Solid), ModelError> {
-    let Inputs {
+) -> Result<Placement, ModelError> {
+    let &Inputs {
         document,
         parameters,
         body_heads,
@@ -175,6 +184,87 @@ pub(crate) fn build(
         },
         nominal_pose,
     )?;
+    Ok(Placement {
+        component: *component,
+        producer,
+        pose,
+    })
+}
+/// Every input [`place`] and the following canonical leaf expansion read
+/// besides the policy and compiler options: the resolved placement, the
+/// source topology stamp, nested leaf metadata and the exact source and
+/// nested leaf solids (CAD-396). None when an input is missing; [`place`]
+/// then reports the ordinary error.
+pub(crate) fn placement_inputs(
+    inputs: &Inputs<'_>,
+    store: &crate::assemblies::LeafStore,
+    instance: EntityId,
+    revision: u64,
+    placement: Placement,
+) -> Option<(Vec<u8>, Vec<Solid>)> {
+    use std::fmt::Write as _;
+    let Placement {
+        component,
+        producer,
+        pose,
+    } = placement;
+    let topology = inputs.topologies.get(&producer)?;
+    let assembly = matches!(
+        inputs.document.get(component).map(|e| &e.data),
+        Some(EntityData::Assembly { .. })
+    );
+    let mut content = String::new();
+    write!(
+        content,
+        "{instance}|{component}|{producer}|{pose:?}|{assembly}|{}|{}|{}|",
+        topology.owner == producer,
+        topology.revision == revision,
+        topology.elements.len()
+    )
+    .ok()?;
+    let mut solids = vec![inputs.solids.get(&producer)?.share().ok()?];
+    if assembly {
+        for (path, leaf) in crate::assemblies::LeafStore::paths(&store.snapshots, component) {
+            write!(
+                content,
+                "leaf|{:?}|{}|{}|{:?}|{}|{}|",
+                path.members,
+                leaf.component,
+                leaf.producer,
+                leaf.pose,
+                leaf.topology.owner == component,
+                leaf.topology.revision == revision
+            )
+            .ok()?;
+            solids.push(store.solids.get(path)?.share().ok()?);
+        }
+    }
+    Some((content.into_bytes(), solids))
+}
+/// Place the resolved occurrence's exact source solid and topology.
+pub(crate) fn place(
+    inputs: &Inputs<'_>,
+    instance: EntityId,
+    revision: u64,
+    placement: Placement,
+) -> Result<(OccurrenceSnapshot, Solid), ModelError> {
+    let &Inputs {
+        solids,
+        topologies,
+        policy,
+        ..
+    } = inputs;
+    let Placement {
+        component,
+        producer,
+        pose,
+    } = placement;
+    let source = solids.get(&producer).ok_or_else(|| {
+        error(
+            Some(instance),
+            "Occurrence source geometry is unavailable before its placement",
+        )
+    })?;
     let source_topology = topologies.get(&producer).ok_or_else(|| {
         error(
             Some(instance),
@@ -280,7 +370,7 @@ pub(crate) fn build(
 
     let snapshot = OccurrenceSnapshot {
         instance,
-        component: *component,
+        component,
         producer,
         pose,
         bounds: solid.bounds().map_err(|e| error(Some(instance), e))?,

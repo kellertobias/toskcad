@@ -378,7 +378,7 @@ impl CosmeticProfiledBody {
         TopologySnapshot {
             owner,
             revision,
-            elements,
+            elements: elements.into(),
         }
     }
     pub(crate) fn planar_loops(&self, face: u32) -> Vec<Vec<(u32, bool)>> {

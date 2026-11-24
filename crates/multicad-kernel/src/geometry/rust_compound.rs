@@ -271,7 +271,7 @@ impl RustCompound {
         Ok(TopologySnapshot {
             owner,
             revision,
-            elements,
+            elements: elements.into(),
         })
     }
 

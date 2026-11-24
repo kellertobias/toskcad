@@ -1189,7 +1189,7 @@ impl PlanarBooleanBody {
         TopologySnapshot {
             owner,
             revision,
-            elements,
+            elements: elements.into(),
         }
     }
 

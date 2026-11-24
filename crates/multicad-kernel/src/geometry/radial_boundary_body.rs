@@ -593,7 +593,7 @@ impl RadialBoundaryBody {
         Ok(TopologySnapshot {
             owner,
             revision,
-            elements,
+            elements: elements.into(),
         })
     }
 

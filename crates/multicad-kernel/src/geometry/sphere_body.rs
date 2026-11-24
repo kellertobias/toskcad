@@ -140,7 +140,8 @@ impl SphereBody {
                 seam,
                 pole(0, -1., "primitive.sphere.pole.south"),
                 pole(1, 1., "primitive.sphere.pole.north"),
-            ],
+            ]
+            .into(),
         }
     }
 }

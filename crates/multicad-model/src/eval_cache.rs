@@ -57,6 +57,23 @@
 //! providers qualify. Receipts cover the entire pin and compiler configuration,
 //! and are published only after the enclosing compile completes successfully.
 //!
+//! # Assembly and occurrence composition (CAD-396)
+//!
+//! Reusable Assembly compounds and placed Instance occurrences are not
+//! feature results, but a full compile still rebuilds their exact solids,
+//! topology, display payloads and canonical leaves from the member solids.
+//! When every input of such a node is the *same* immutable B-rep as in an
+//! earlier successful full compile ([`Solid::shares_geometry_with`], pointer
+//! identity, never geometric equality) and every other input recorded in its
+//! key (member list, component, producer, resolved pose bits, leaf metadata
+//! and compiler configuration) is equal, the node's earlier result is the
+//! same function of the same inputs and is reused, re-stamped with the
+//! current revision. Entries retain their input solids, so an input address
+//! cannot be reused by different geometry while its entry exists. Poses are
+//! still resolved and refined every compile; source-material checks and
+//! display budgets are still applied to reused nodes. Entries are staged and
+//! promoted only after the enclosing full compile succeeds.
+//!
 //! # Lifetime, memory and threads
 //!
 //! Entries are only stored for successfully evaluated features, so a
@@ -164,6 +181,10 @@ pub struct CompileStats {
     pub symbol_reused: BTreeSet<EntityId>,
     /// Audited literal symbol nodes constructed this compile.
     pub symbol_evaluated: BTreeSet<EntityId>,
+    /// Assembly/Instance compositions restored from identical inputs (CAD-396).
+    pub composition_reused: BTreeSet<EntityId>,
+    /// Assembly/Instance compositions constructed this compile.
+    pub composition_evaluated: BTreeSet<EntityId>,
     /// Entries evicted after this compile.
     pub evicted: usize,
     /// Entries and their estimated size after eviction.
@@ -213,6 +234,27 @@ struct SymbolEntry {
     bytes: usize,
     used: u64,
 }
+/// A composed Assembly/Instance node and the exact solids it was built from.
+struct CompositionEntry {
+    inputs: Vec<Solid>,
+    node: SymbolNode,
+    bytes: usize,
+    used: u64,
+}
+impl CompositionEntry {
+    fn matches(&self, inputs: &[Solid]) -> bool {
+        self.inputs.len() == inputs.len()
+            && self
+                .inputs
+                .iter()
+                .zip(inputs)
+                .all(|(a, b)| a.shares_geometry_with(b))
+    }
+}
+/// Bounds on retained compositions (alternatives per key, entries). Their
+/// estimated size is bounded separately by the owner's `retained_bytes`.
+const COMPOSITION_ALTERNATIVES: usize = 4;
+const COMPOSITION_ENTRIES: usize = 4096;
 #[derive(Clone)]
 struct LiteralSymbol {
     entities: Vec<EntityId>,
@@ -337,6 +379,9 @@ pub struct EvaluationCache {
     symbol_native_checks: usize,
     symbol_nodes: BTreeMap<CacheKey, SymbolEntry>,
     pending_symbol_nodes: BTreeMap<CacheKey, SymbolEntry>,
+    compositions: BTreeMap<CacheKey, Vec<CompositionEntry>>,
+    composition_bytes: usize,
+    pending_compositions: Vec<(CacheKey, CompositionEntry)>,
     full_rust: Option<FullRustModel>,
     pub(crate) pipe_threads: multicad_kernel::PipeThreadFactory,
 }
@@ -364,6 +409,9 @@ impl EvaluationCache {
             symbol_native_checks: 0,
             symbol_nodes: BTreeMap::new(),
             pending_symbol_nodes: BTreeMap::new(),
+            compositions: BTreeMap::new(),
+            composition_bytes: 0,
+            pending_compositions: Vec::new(),
             full_rust: None,
             pipe_threads: multicad_kernel::PipeThreadFactory::new(retained_bytes, max_entries),
         }
@@ -407,6 +455,9 @@ impl EvaluationCache {
         self.pending_symbol_proofs.clear();
         self.symbol_nodes.clear();
         self.pending_symbol_nodes.clear();
+        self.compositions.clear();
+        self.composition_bytes = 0;
+        self.pending_compositions.clear();
         self.last = CompileStats::default();
     }
 
@@ -497,14 +548,25 @@ impl EvaluationCache {
     pub fn symbol_node_entries(&self) -> usize {
         self.symbol_nodes.len()
     }
+    /// Retained Assembly/Instance compositions (CAD-396).
+    pub fn composition_entries(&self) -> usize {
+        self.compositions.values().map(Vec::len).sum()
+    }
+    /// Estimated size of the retained compositions.
+    pub fn composition_bytes(&self) -> usize {
+        self.composition_bytes
+    }
     pub(crate) fn begin_symbol_proofs(&mut self) {
+        self.pending_compositions.clear();
         self.pending_symbol_nodes.clear();
         self.pending_symbol_proofs.clear();
     }
     pub(crate) fn finish_symbol_proofs(&mut self, success: bool) {
         let pending = std::mem::take(&mut self.pending_symbol_proofs);
         let nodes = std::mem::take(&mut self.pending_symbol_nodes);
+        let compositions = std::mem::take(&mut self.pending_compositions);
         if success {
+            self.promote_compositions(compositions);
             let limit = self.max_entries.min(768);
             let budget = self.retained_bytes.min(64 * 1024 * 1024);
             for (key, entry) in nodes {
@@ -538,6 +600,54 @@ impl EvaluationCache {
                 }
                 self.symbol_proofs.insert(key);
             }
+        }
+    }
+    fn promote_compositions(&mut self, staged: Vec<(CacheKey, CompositionEntry)>) {
+        let limit = self.max_entries.min(COMPOSITION_ENTRIES);
+        let budget = self.retained_bytes;
+        for (key, entry) in staged {
+            if limit == 0 || entry.bytes > budget {
+                continue;
+            }
+            let alternatives = self.compositions.entry(key).or_default();
+            let mut freed = 0;
+            alternatives.retain(|old| {
+                let keep = !old.matches(&entry.inputs);
+                if !keep {
+                    freed += old.bytes;
+                }
+                keep
+            });
+            if alternatives.len() >= COMPOSITION_ALTERNATIVES
+                && let Some(oldest) = (0..alternatives.len()).min_by_key(|&i| alternatives[i].used)
+            {
+                freed += alternatives.remove(oldest).bytes;
+            }
+            self.composition_bytes -= freed;
+            while self.composition_entries() >= limit
+                || self.composition_bytes > budget - entry.bytes
+            {
+                let Some((oldest, index)) = self
+                    .compositions
+                    .iter()
+                    .flat_map(|(key, list)| {
+                        list.iter()
+                            .enumerate()
+                            .map(move |(index, e)| (e.used, *key, index))
+                    })
+                    .min()
+                    .map(|(_, key, index)| (key, index))
+                else {
+                    break;
+                };
+                let list = self.compositions.get_mut(&oldest).expect("listed key");
+                self.composition_bytes -= list.remove(index).bytes;
+                if list.is_empty() {
+                    self.compositions.remove(&oldest);
+                }
+            }
+            self.composition_bytes += entry.bytes;
+            self.compositions.entry(key).or_default().push(entry);
         }
     }
     pub(crate) fn symbol_proof_hit(&mut self, key: ContentHash) -> bool {
@@ -613,6 +723,7 @@ pub(crate) struct Session<'a> {
     salt: Vec<u8>,
     hashes: BTreeMap<(EntityId, Visit), Option<[u8; 32]>>,
     edges: BTreeMap<EntityId, Option<Edges>>,
+    sources: BTreeMap<EntityId, Option<std::rc::Rc<Source>>>,
     volatile_sketches: BTreeSet<EntityId>,
     stats: CompileStats,
     literal_symbols: BTreeMap<EntityId, LiteralSymbol>,
@@ -649,6 +760,7 @@ impl<'a> Session<'a> {
             salt,
             hashes: BTreeMap::new(),
             edges: BTreeMap::new(),
+            sources: BTreeMap::new(),
             volatile_sketches,
             stats: CompileStats::default(),
             literal_symbols: literal_symbols(document),
@@ -665,6 +777,20 @@ impl<'a> Session<'a> {
         self.profile_poses.insert(id, found.clone());
         found
     }
+    /// The canonical serialization of an entity and the identities it
+    /// mentions, computed once per compile for both its hash and its edges.
+    fn source(&mut self, id: EntityId) -> Option<std::rc::Rc<Source>> {
+        if let Some(found) = self.sources.get(&id) {
+            return found.clone();
+        }
+        let computed = self
+            .document
+            .get(id)
+            .and_then(Source::of)
+            .map(std::rc::Rc::new);
+        self.sources.insert(id, computed.clone());
+        computed
+    }
     /// Evaluation-dependency and mention edges of an entity.
     fn edges(&mut self, id: EntityId) -> Option<Edges> {
         if let Some(found) = self.edges.get(&id) {
@@ -676,10 +802,9 @@ impl<'a> Session<'a> {
             } else {
                 None
             };
-            let entity = self.document.get(id)?;
+            self.document.get(id)?;
             let mut evaluation: BTreeSet<_> = self.document.evaluation_dependencies(id).ok()?;
-            let mut mentioned = BTreeSet::new();
-            mentions(&serde_json::to_value(entity).ok()?, &mut mentioned);
+            let mut mentioned = self.source(id)?.mentioned.clone();
             mentioned.remove(&id);
             if let Some(projection) = projection {
                 for id in &projection.omitted {
@@ -708,7 +833,7 @@ impl<'a> Session<'a> {
                 None
             };
             let entity = self.document.get(id)?;
-            let mut bytes = serde_json::to_vec(entity).ok()?;
+            let mut bytes = self.source(id)?.bytes.clone();
             if let Some(projection) = projection {
                 bytes.extend(b"|absolute-profile-poses|");
                 bytes.extend(projection.fingerprint.0);
@@ -865,6 +990,57 @@ impl<'a> Session<'a> {
             .pending_symbol_nodes
             .insert(key, SymbolEntry { node, bytes, used });
     }
+    /// The key of an Assembly/Instance composition. `content` must record
+    /// every non-solid input the node reads; solids are matched separately.
+    pub(crate) fn composition_key(&self, id: EntityId, content: &[u8]) -> CacheKey {
+        let mut bytes = self.salt.clone();
+        bytes.extend(b"composition/1|");
+        bytes.extend(id.to_string().bytes());
+        bytes.push(b'|');
+        bytes.extend(content);
+        CacheKey(ContentHash::of(&bytes).0)
+    }
+    /// An earlier composition built from exactly these input solids.
+    pub(crate) fn lookup_composition(
+        &mut self,
+        key: &CacheKey,
+        inputs: &[Solid],
+        id: EntityId,
+        revision: u64,
+    ) -> Option<SymbolNode> {
+        let entry = self
+            .cache
+            .compositions
+            .get_mut(key)?
+            .iter_mut()
+            .find(|entry| entry.matches(inputs))?;
+        let node = entry.node.shared(revision)?;
+        entry.used = self.cache.clock;
+        self.stats.composition_reused.insert(id);
+        Some(node)
+    }
+    pub(crate) fn evaluated_composition(&mut self, id: EntityId) {
+        self.stats.composition_evaluated.insert(id);
+    }
+    /// Stage a complete composition; it is promoted after a successful compile.
+    pub(crate) fn stage_composition(
+        &mut self,
+        key: CacheKey,
+        inputs: Vec<Solid>,
+        node: SymbolNode,
+    ) {
+        let bytes = node.bytes();
+        let used = self.cache.clock;
+        self.cache.pending_compositions.push((
+            key,
+            CompositionEntry {
+                inputs,
+                node,
+                bytes,
+                used,
+            },
+        ));
+    }
     /// Reuse an earlier exact result, re-stamped for this revision.
     pub(crate) fn lookup(
         &mut self,
@@ -960,6 +1136,115 @@ fn hidden_inputs(document: &Document, feature: EntityId, type_id: &str) -> Optio
     Some(inputs)
 }
 
+/// An entity's `serde_json::to_vec` bytes and every identity [`mentions`]
+/// finds in its `serde_json::to_value` form, from one serialization pass.
+struct Source {
+    bytes: Vec<u8>,
+    mentioned: BTreeSet<EntityId>,
+}
+impl Source {
+    fn of(entity: &multicad_core::document::Entity) -> Option<Self> {
+        use serde::Serialize as _;
+        let mut bytes = Vec::new();
+        let mut formatter = Scanning::default();
+        let serialized = entity
+            .serialize(&mut serde_json::Serializer::with_formatter(
+                &mut bytes,
+                &mut formatter,
+            ))
+            .is_ok();
+        if serialized && !formatter.unusual_key {
+            return Some(Self {
+                bytes,
+                mentioned: formatter.found,
+            });
+        }
+        // A non-string map key renders differently in a Value; keep the
+        // original two-pass derivation for that rare shape (and its errors).
+        let bytes = serde_json::to_vec(entity).ok()?;
+        let mut mentioned = BTreeSet::new();
+        mentions(&serde_json::to_value(entity).ok()?, &mut mentioned);
+        Some(Self { bytes, mentioned })
+    }
+}
+/// The default compact JSON output that also scans every string, object key
+/// included, exactly as decoded text, the way [`mentions`] scans a Value.
+#[derive(Default)]
+struct Scanning {
+    string: Option<String>,
+    found: BTreeSet<EntityId>,
+    /// A number or literal was written inside a string (a non-string key).
+    unusual_key: bool,
+}
+macro_rules! scanning_numbers {
+    ($($name:ident: $ty:ty),*) => {$(
+        fn $name<W: ?Sized + std::io::Write>(&mut self, writer: &mut W, value: $ty) -> std::io::Result<()> {
+            self.unusual_key |= self.string.is_some();
+            serde_json::ser::CompactFormatter.$name(writer, value)
+        }
+    )*};
+}
+impl serde_json::ser::Formatter for &mut Scanning {
+    scanning_numbers!(
+        write_bool: bool, write_i8: i8, write_i16: i16, write_i32: i32, write_i64: i64,
+        write_i128: i128, write_u8: u8, write_u16: u16, write_u32: u32, write_u64: u64,
+        write_u128: u128, write_f32: f32, write_f64: f64
+    );
+    fn write_null<W: ?Sized + std::io::Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
+        self.unusual_key |= self.string.is_some();
+        serde_json::ser::CompactFormatter.write_null(writer)
+    }
+    fn write_number_str<W: ?Sized + std::io::Write>(
+        &mut self,
+        writer: &mut W,
+        value: &str,
+    ) -> std::io::Result<()> {
+        self.unusual_key |= self.string.is_some();
+        serde_json::ser::CompactFormatter.write_number_str(writer, value)
+    }
+    fn begin_string<W: ?Sized + std::io::Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
+        self.string = Some(String::new());
+        serde_json::ser::CompactFormatter.begin_string(writer)
+    }
+    fn end_string<W: ?Sized + std::io::Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
+        if let Some(text) = self.string.take() {
+            scan(&text, &mut self.found);
+        }
+        serde_json::ser::CompactFormatter.end_string(writer)
+    }
+    fn write_string_fragment<W: ?Sized + std::io::Write>(
+        &mut self,
+        writer: &mut W,
+        fragment: &str,
+    ) -> std::io::Result<()> {
+        if let Some(text) = &mut self.string {
+            text.push_str(fragment);
+        }
+        serde_json::ser::CompactFormatter.write_string_fragment(writer, fragment)
+    }
+    fn write_char_escape<W: ?Sized + std::io::Write>(
+        &mut self,
+        writer: &mut W,
+        escape: serde_json::ser::CharEscape,
+    ) -> std::io::Result<()> {
+        use serde_json::ser::CharEscape;
+        if let Some(text) = &mut self.string {
+            text.push(match escape {
+                CharEscape::Quote => '"',
+                CharEscape::ReverseSolidus => '\\',
+                CharEscape::Solidus => '/',
+                CharEscape::Backspace => '\u{8}',
+                CharEscape::FormFeed => '\u{c}',
+                CharEscape::LineFeed => '\n',
+                CharEscape::CarriageReturn => '\r',
+                CharEscape::Tab => '\t',
+                CharEscape::AsciiControl(byte) => char::from(byte),
+            });
+        }
+        serde_json::ser::CompactFormatter.write_char_escape(writer, escape)
+    }
+}
+
 /// Every existing-format entity identity mentioned in a source value:
 /// identity strings, identities embedded in longer strings and map keys.
 fn mentions(value: &serde_json::Value, found: &mut BTreeSet<EntityId>) {
@@ -986,6 +1271,10 @@ fn scan(text: &str, found: &mut BTreeSet<EntityId>) {
     }
     for start in 0..=bytes.len() - 36 {
         let window = &bytes[start..start + 36];
+        // Reject on the four separator positions before the hex digits.
+        if [8, 13, 18, 23].into_iter().any(|i| window[i] != b'-') {
+            continue;
+        }
         let shaped = window.iter().enumerate().all(|(i, b)| match i {
             8 | 13 | 18 | 23 => *b == b'-',
             _ => b.is_ascii_hexdigit(),
@@ -1037,6 +1326,48 @@ mod tests {
         let mut found = BTreeSet::new();
         mentions(&value, &mut found);
         assert_eq!(found, BTreeSet::from([a, b, c, d]));
+    }
+
+    #[test]
+    fn one_pass_sources_equal_the_value_derivation() {
+        let check = |entity: &multicad_core::document::Entity| {
+            let source = Source::of(entity).unwrap();
+            assert_eq!(source.bytes, serde_json::to_vec(entity).unwrap());
+            let mut expected = BTreeSet::new();
+            mentions(&serde_json::to_value(entity).unwrap(), &mut expected);
+            assert_eq!(source.mentioned, expected);
+        };
+        let document = multicad_core::project_file::read(
+            &mut include_bytes!("../../../examples/toolcase.tcd").as_slice(),
+            Default::default(),
+            &multicad_core::project_file::supported_capabilities(),
+        )
+        .unwrap()
+        .project
+        .document;
+        let mut mentioning = 0;
+        for entity in document.entities() {
+            check(entity);
+            mentioning += usize::from(!Source::of(entity).unwrap().mentioned.is_empty());
+        }
+        assert!(mentioning > 100, "{mentioning}");
+        let [a, b, c] = std::array::from_fn(|_| EntityId::new());
+        for name in [
+            format!("{a}"),
+            format!("x\"{a}\"\n\t{b}\\/\u{1}{c}"),
+            a.to_string().replace('-', ""),
+            format!("\u{1}{a}")[..20].to_string() + &b.to_string(),
+            format!("{a}{b}"),
+        ] {
+            check(&multicad_core::document::Entity::new(
+                name,
+                EntityData::Material {
+                    density_kg_m3: Some(-0.),
+                    color_rgba: [1, 2, 3, 4],
+                    section_hatch: None,
+                },
+            ));
+        }
     }
 
     #[test]

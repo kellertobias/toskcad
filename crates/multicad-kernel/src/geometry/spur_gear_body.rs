@@ -389,7 +389,7 @@ impl SpurGearBody {
         TopologySnapshot {
             owner,
             revision,
-            elements: build.into_elements(),
+            elements: build.into_elements().into(),
         }
     }
 }

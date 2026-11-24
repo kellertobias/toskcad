@@ -1399,6 +1399,179 @@ impl Solid {
             retained_placement: self.retained_placement.clone(),
         })
     }
+    /// True when both handles own the same immutable Rust B-rep (one was
+    /// [`Self::share`]d from the other) with identical placement frames,
+    /// policy and identity metadata. Every derived topology, display and
+    /// composition result is then the same function of both. This is pointer
+    /// identity, not geometric equality: separately constructed equal solids
+    /// and native OpenCascade handles always compare false.
+    pub fn shares_geometry_with(&self, other: &Self) -> bool {
+        fn same_frame(a: PlaneFrame, b: PlaneFrame) -> bool {
+            let bits = |f: PlaneFrame| [f.origin, f.u, f.v].map(|v| v.map(f64::to_bits));
+            bits(a) == bits(b)
+        }
+        let body = match (&self.body, &other.body) {
+            (SolidBody::Prism(a, fa), SolidBody::Prism(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::PolygonPrism(a), SolidBody::PolygonPrism(b)) => Rc::ptr_eq(a, b),
+            (SolidBody::AxialCylinder(a, fa, sa), SolidBody::AxialCylinder(b, fb, sb)) => {
+                Rc::ptr_eq(a, b)
+                    && same_frame(*fa, *fb)
+                    && match (sa, sb) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+                        _ => false,
+                    }
+            }
+            (SolidBody::Annulus(a, fa), SolidBody::Annulus(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::CosmeticFastener(a, fa), SolidBody::CosmeticFastener(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::CosmeticProfiled(a, fa), SolidBody::CosmeticProfiled(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::CosmeticPhillips(a), SolidBody::CosmeticPhillips(b)) => Rc::ptr_eq(a, b),
+            (SolidBody::BoredThread(a), SolidBody::BoredThread(b)) => Rc::ptr_eq(a, b),
+            (SolidBody::ClippedNpt(a), SolidBody::ClippedNpt(b)) => Rc::ptr_eq(a, b),
+            (SolidBody::PipeHardware(a), SolidBody::PipeHardware(b)) => Rc::ptr_eq(a, b),
+            (SolidBody::LiteralNpt(a), SolidBody::LiteralNpt(b)) => Rc::ptr_eq(a, b),
+            (SolidBody::ActualClippedHead(a), SolidBody::ActualClippedHead(b)) => Rc::ptr_eq(a, b),
+            (SolidBody::ExternalNptStock(a), SolidBody::ExternalNptStock(b)) => Rc::ptr_eq(a, b),
+            (SolidBody::Line8Nut(a), SolidBody::Line8Nut(b)) => Rc::ptr_eq(a, b),
+            (SolidBody::Helical(a, fa), SolidBody::Helical(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::RoundedThread(a, fa), SolidBody::RoundedThread(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::EntryChamfer(a, fa), SolidBody::EntryChamfer(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::RoundedThreadBore(a, fa), SolidBody::RoundedThreadBore(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::RoundedHex(a, fa), SolidBody::RoundedHex(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::PipeSleeve(a, fa), SolidBody::PipeSleeve(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::RoundedBlindBore(a, fa), SolidBody::RoundedBlindBore(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (
+                SolidBody::InternalThreadTreatment(a, fa),
+                SolidBody::InternalThreadTreatment(b, fb),
+            ) => Rc::ptr_eq(a, b) && same_frame(*fa, *fb),
+            (SolidBody::RepairedPhillips(a, fa), SolidBody::RepairedPhillips(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::WoodInsert(a, fa), SolidBody::WoodInsert(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::Hanger(a, fa), SolidBody::Hanger(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::HelicalTubeCut(a, fa), SolidBody::HelicalTubeCut(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::Linear(a, fa), SolidBody::Linear(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::Revolved(a, fa), SolidBody::Revolved(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::RoundedSlot(a, fa), SolidBody::RoundedSlot(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::NormalSweep(a, fa), SolidBody::NormalSweep(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::NormalRelief(a, fa), SolidBody::NormalRelief(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::SplineCapRelief(a, fa), SolidBody::SplineCapRelief(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::RadialBoundary(a, fa), SolidBody::RadialBoundary(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::NonplanarLoft(a, fa), SolidBody::NonplanarLoft(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::SmoothLoft(a, fa), SolidBody::SmoothLoft(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::SplineSweep(a, fa), SolidBody::SplineSweep(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::SpurGear(a, fa), SolidBody::SpurGear(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::InternalRing(a, fa), SolidBody::InternalRing(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::Herringbone(a, fa), SolidBody::Herringbone(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::Bevel(a, fa), SolidBody::Bevel(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::Worm(a, fa), SolidBody::Worm(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::InterferenceVolume(a), SolidBody::InterferenceVolume(b)) => {
+                Rc::ptr_eq(a, b)
+            }
+            (SolidBody::HealedImport(a, fa), SolidBody::HealedImport(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::Sphere(a, fa), SolidBody::Sphere(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::Torus(a, fa), SolidBody::Torus(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::ObliqueBore(a, fa), SolidBody::ObliqueBore(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::CrossBore(a, fa), SolidBody::CrossBore(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::RoundedCylinder(a, fa), SolidBody::RoundedCylinder(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::AxialStack(a, fa), SolidBody::AxialStack(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::RustCompound(a), SolidBody::RustCompound(b)) => Rc::ptr_eq(a, b),
+            (SolidBody::Orthogonal(a, fa), SolidBody::Orthogonal(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::ImportedBrep(a), SolidBody::ImportedBrep(b)) => Rc::ptr_eq(a, b),
+            (SolidBody::OrthogonalSeats(a, fa), SolidBody::OrthogonalSeats(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::PlanarBoolean(a, fa), SolidBody::PlanarBoolean(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::WarpedUnion(a, fa), SolidBody::WarpedUnion(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            _ => false,
+        };
+        body && self.policy == other.policy
+            && self.rust_origins == other.rust_origins
+            && self.provenance == other.provenance
+            && match (&self.retained_placement, &other.retained_placement) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+                _ => false,
+            }
+    }
     pub(crate) fn adopt(
         handle: crate::OcctHandle,
         policy: GeometryPolicy,

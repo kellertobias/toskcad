@@ -624,7 +624,7 @@ mod tests {
         let mut snapshot = TopologySnapshot {
             owner: source.id,
             revision: 0,
-            elements: vec![face.clone()],
+            elements: vec![face.clone()].into(),
         };
         let mut intent = GeometryIntent::capture(&snapshot, face.key).unwrap();
         intent.attachment = Some(Attachment {
@@ -658,7 +658,7 @@ mod tests {
             source: cut.id,
             role: "right.wall".into(),
         }]);
-        snapshot.elements = vec![face, right];
+        snapshot.elements = vec![face, right].into();
         let evaluated = evaluation(&session, BTreeMap::from([(snapshot.owner, snapshot)]), 1);
         (session, evaluated, cut.id)
     }
@@ -776,7 +776,8 @@ mod tests {
                     origin: origin.clone(),
                     frame: frame(24.),
                 }],
-            }],
+            }]
+            .into(),
         };
         let evaluated = evaluation(&session, BTreeMap::from([(cut, snapshot)]), 2);
         assert_eq!(

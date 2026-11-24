@@ -238,7 +238,8 @@ mod tests {
                 boundary: Default::default(),
                 frames: vec![],
                 geometry: Some(AnalyticGeometry::Plane { frame: plane }),
-            }],
+            }]
+            .into(),
         )
         .unwrap();
         let rotated = RigidPose {

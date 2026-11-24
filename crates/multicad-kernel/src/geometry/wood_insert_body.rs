@@ -343,7 +343,7 @@ impl WoodInsertBody {
         let snapshot = TopologySnapshot {
             owner,
             revision,
-            elements,
+            elements: elements.into(),
         };
         snapshot.validate().map_err(refused)?;
         Ok(snapshot)

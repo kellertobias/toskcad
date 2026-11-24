@@ -273,7 +273,8 @@ mod tests {
             elements: vec![
                 frame(MemberEnd::Start, 0, [10., 20., 30.], [0., 0., -1.]),
                 frame(MemberEnd::End, 1, [110., 23., 48.], [0., 0., 1.]),
-            ],
+            ]
+            .into(),
         };
         assert_eq!(
             station(&snapshot, owner, [37., 14., 55.]).unwrap(),
@@ -281,7 +282,8 @@ mod tests {
         );
         assert!(station(&snapshot, owner, [111., 14., 55.]).is_err());
         assert!(station(&snapshot, EntityId::new(), [37., 14., 55.]).is_err());
-        snapshot.elements.push(snapshot.elements[0].clone());
+        let copy = snapshot.elements[0].clone();
+        snapshot.elements.push(copy);
         assert!(station(&snapshot, owner, [37., 14., 55.]).is_err());
     }
 

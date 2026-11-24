@@ -458,7 +458,7 @@ impl RoundedCylinderBody {
         TopologySnapshot {
             owner,
             revision,
-            elements,
+            elements: elements.into(),
         }
     }
     pub(crate) fn mesh(

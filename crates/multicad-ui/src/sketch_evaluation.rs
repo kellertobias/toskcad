@@ -1511,7 +1511,8 @@ mod tests {
                         v: [0., 1., 0.],
                     },
                 }],
-            }],
+            }]
+            .into(),
         };
         let new = sketch::prepare_new(
             &session,
