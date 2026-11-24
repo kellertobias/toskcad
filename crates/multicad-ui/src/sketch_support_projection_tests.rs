@@ -443,7 +443,7 @@ fn failed_native_check_unsupported_targets_and_stale_scenes_change_nothing() {
     assert_eq!(*f.session.document(), before);
 
     // Tools without corner placement and stale scenes offer no corners.
-    f.editor.tool = Some(DrawTool::Spline);
+    f.editor.tool = Some(DrawTool::Fillet);
     assert!(corners(&f).is_empty());
     f.editor.tool = Some(DrawTool::Rectangle);
     f.session

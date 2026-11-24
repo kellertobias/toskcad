@@ -73,6 +73,9 @@ mod support_projection;
 #[cfg(test)]
 #[path = "sketch_support_projection_tests.rs"]
 mod support_projection_tests;
+#[cfg(test)]
+#[path = "sketch_support_snap_tests.rs"]
+mod support_snap_tests;
 #[path = "sketch_surface_structure_host.rs"]
 mod surface_structure_host;
 #[path = "sketch_symbol_host.rs"]
@@ -171,9 +174,10 @@ pub struct SketchEditor {
     pub tool: Option<DrawTool>,
     first: Option<[f64; 2]>,
     first_anchor: Option<EntityId>,
-    /// The face corner under the first placement, captured on completion.
-    first_support: Option<multicad_core::references::TopologyKey>,
-    /// The face corner the current snap target sits on (CAD-383).
+    /// Face corners and edges the current gesture placed points on, with the
+    /// placed position; captured when the gesture commits (CAD-383).
+    support_used: Vec<(multicad_core::references::TopologyKey, [f64; 2])>,
+    /// The face corner or edge the current snap target sits on (CAD-383).
     support_snap: Option<multicad_core::references::TopologyKey>,
     /// A drawing onto face corners awaiting native validation.
     projection: Option<support_projection::Pending>,
@@ -293,7 +297,7 @@ impl Default for SketchEditor {
             tool: None,
             first: None,
             first_anchor: None,
-            first_support: None,
+            support_used: Vec::new(),
             support_snap: None,
             projection: None,
             arc_start: None,
@@ -480,7 +484,7 @@ impl SketchEditor {
         self.reset_profile_clicks();
         self.first = None;
         self.first_anchor = None;
-        self.first_support = None;
+        self.support_used.clear();
         self.support_snap = None;
         self.arc_start = None;
         self.polyline_start = None;
@@ -550,6 +554,11 @@ impl SketchEditor {
         }
         if self.has_pending_edits() {
             return Err("Apply or discard pending edits before drawing".into());
+        }
+        if self.support_requested(request) {
+            // Placements on the supporting face are projected first (CAD-383).
+            let used = self.support_used.clone();
+            return self.draw_on_support(session, request, &used, vec![], self.tool, channel);
         }
         let id = self.selected.ok_or("Select a sketch")?;
         let result = multicad_solver::draw::prepare_draw(
@@ -1991,6 +2000,8 @@ impl SketchEditor {
         self.clear_drawing_progress();
         self.snap_assist.clear();
         self.cancel_move();
+        // A queued or running face projection creates nothing (CAD-383).
+        self.cancel_projection();
     }
     fn cancel_move(&mut self) {
         self.preview = None;
@@ -5387,6 +5398,14 @@ impl SketchEditor {
             let support = self
                 .support_snap
                 .filter(|_| anchor.is_none() && p == snapped && support_projection::projects(tool));
+            // A click on a face corner or edge records it; the gesture's
+            // commit captures it with the drawing (CAD-383).
+            if clicked
+                && let Some(key) = support
+                && !self.support_used.contains(&(key, p))
+            {
+                self.support_used.push((key, p));
+            }
             let cursor = project(frame.point(p), &self.camera);
             painter.circle_stroke(
                 cursor,
@@ -5540,21 +5559,6 @@ impl SketchEditor {
                             if closing && segments < 2 {
                                 self.message =
                                     "A closed polyline needs at least three vertices".into();
-                            } else if (self.first_support.is_some() || support.is_some())
-                                && support_projection::projects(tool)
-                            {
-                                let radius = (p[0] - a[0]).portable_hypot(p[1] - a[1]);
-                                let first = (point(a, self.first_anchor), self.first_support);
-                                if let Err(error) = self.draw_on_corners(
-                                    session,
-                                    tool,
-                                    first,
-                                    (point(p, anchor), support),
-                                    radius,
-                                    Channel::Ui,
-                                ) {
-                                    self.message = error;
-                                }
                             } else if let Err(error) = self.draw_dimensioned(
                                 session,
                                 &DrawRequest {
@@ -5581,7 +5585,6 @@ impl SketchEditor {
                     } else {
                         self.first = Some(p);
                         self.first_anchor = anchor;
-                        self.first_support = support;
                         self.set_tool_status();
                     }
                 }

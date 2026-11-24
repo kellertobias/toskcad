@@ -81,7 +81,9 @@ impl TargetKey {
     /// within a class the nearest target (in screen pixels) wins.
     pub fn class(&self) -> u8 {
         match self {
-            Self::Point(_) | Self::Support(_) => 0,
+            Self::Point(_) => 0,
+            Self::Support(key) if key.kind == multicad_core::references::TopologyKind::Vertex => 0,
+            Self::Support(_) => 3,
             Self::LineMidpoint(_)
             | Self::ShapeCenter(_)
             | Self::Reference(_)
@@ -118,6 +120,8 @@ pub enum TargetKind {
     Endpoint,
     /// A corner of the supporting face (see [`TargetKey::Support`]).
     FaceCorner,
+    /// A point exactly on an edge of the supporting face.
+    FaceEdge,
     /// A circle or arc center point.
     Center,
     LineMidpoint,
@@ -136,6 +140,7 @@ impl TargetKind {
         match self {
             Self::Endpoint => "Endpoint",
             Self::FaceCorner => "Face corner",
+            Self::FaceEdge => "Face edge",
             Self::Center => "Center",
             Self::LineMidpoint => "Midpoint",
             Self::ShapeCenter(ShapeKind::Rectangle) => "Rectangle center",
@@ -180,7 +185,7 @@ impl TargetKind {
             Self::GuideIntersection | Self::GuideOnLine | Self::Perpendicular | Self::Tangent => {
                 Marker::Construction
             }
-            Self::OnCurve => Marker::Edge,
+            Self::OnCurve | Self::FaceEdge => Marker::Edge,
             Self::Guide(_) => Marker::Alignment,
         }
     }
@@ -236,6 +241,21 @@ pub struct SnapGeometry {
     arcs: Vec<Arc>,
     centers: Vec<(Vec<EntityId>, [f64; 2], ShapeKind)>,
     support: Vec<(TopologyKey, [f64; 2])>,
+    support_edges: Vec<(TopologyKey, SupportEdge)>,
+}
+
+/// Exact sketch-plane shape of a supporting-face edge (CAD-383).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SupportEdge {
+    Line([f64; 2], [f64; 2]),
+    /// Counter-clockwise start angle and positive sweep; a full circle has a
+    /// sweep of a full turn.
+    Arc {
+        center: [f64; 2],
+        radius: f64,
+        start: f64,
+        sweep: f64,
+    },
 }
 
 fn sub(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
@@ -339,6 +359,31 @@ impl SnapGeometry {
         self.support = corners
             .into_iter()
             .filter(|(_, at)| !self.points.iter().any(|p| len(sub(p.1, *at)) <= 1e-9))
+            .collect();
+        self
+    }
+    /// Adds the supporting face's edges, in sketch coordinates. An edge
+    /// that an existing sketch line, circle or arc already covers is left to
+    /// that curve, so a projected edge is not offered twice.
+    pub fn with_support_edges(mut self, edges: Vec<(TopologyKey, SupportEdge)>) -> Self {
+        let same = |a: [f64; 2], b: [f64; 2]| len(sub(a, b)) <= 1e-9 * (1. + len(a));
+        self.support_edges = edges
+            .into_iter()
+            .filter(|(_, edge)| match *edge {
+                SupportEdge::Line(a, b) => !self
+                    .lines
+                    .iter()
+                    .any(|l| same(l.1, a) && same(l.2, b) || same(l.1, b) && same(l.2, a)),
+                SupportEdge::Arc { center, radius, .. } => {
+                    !self
+                        .circles
+                        .iter()
+                        .any(|c| same(c.1, center) && (c.2 - radius).abs() <= 1e-9 * radius)
+                        && !self.arcs.iter().any(|a| {
+                            same(a.center, center) && (a.radius - radius).abs() <= 1e-9 * radius
+                        })
+                }
+            })
             .collect();
         self
     }
@@ -709,6 +754,33 @@ fn candidates(geometry: &SnapGeometry, references: &[Reference], q: &Query) -> V
             push(
                 TargetKey::OnCurve(arc.id),
                 TargetKind::OnCurve,
+                position,
+                None,
+                vec![],
+                CURVE_SNAP_PX,
+            );
+        }
+    }
+    for &(key, edge) in &geometry.support_edges {
+        let position = match edge {
+            SupportEdge::Line(a, b) => {
+                let ab = sub(b, a);
+                let t = (dot(sub(pointer, a), ab) / dot(ab, ab)).clamp(0., 1.);
+                Some([a[0] + t * ab[0], a[1] + t * ab[1]])
+            }
+            SupportEdge::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => radial(center, radius)
+                .filter(|(_, angle)| (angle - start).rem_euclid(TAU) <= sweep + 1e-12)
+                .map(|(p, _)| p),
+        };
+        if let Some(position) = position {
+            push(
+                TargetKey::Support(key),
+                TargetKind::FaceEdge,
                 position,
                 None,
                 vec![],
