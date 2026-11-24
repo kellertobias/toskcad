@@ -1221,6 +1221,12 @@ fn kicad_library_sweep() {
             ),
             Err(_) => ("fail", Some("panic".into())),
         };
+        // Exact enclosed volume of each passing import, so sweeps can compare
+        // integration changes file by file (JSON keeps the shortest exact f64).
+        let volume_mm3 = match &result {
+            Ok(Ok(solid)) => solid.volume_mm3().ok(),
+            _ => None,
+        };
         let producer = producer(&text);
         let tags = categories(&text);
         *by_producer.entry((producer.clone(), outcome)).or_default() += 1;
@@ -1235,6 +1241,7 @@ fn kicad_library_sweep() {
             "outcome": outcome,
             "message": message,
             "millis": millis,
+            "volume_mm3": volume_mm3,
         }));
     }
     let mut totals: BTreeMap<&str, usize> = BTreeMap::new();
