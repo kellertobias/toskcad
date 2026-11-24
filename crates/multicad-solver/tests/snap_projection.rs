@@ -188,9 +188,7 @@ fn rectangle_between_two_projected_face_corners_is_one_undoable_transaction() {
     };
     assert_eq!(at(a), [0., 0.]);
     assert_eq!(at(b), [30., 20.]);
-    f.session
-        .commit(drawn.edit.preview.unwrap())
-        .unwrap();
+    f.session.commit(drawn.edit.preview.unwrap()).unwrap();
     let references: BTreeSet<_> = sketch_external::bindings(f.session.document(), f.sketch)
         .unwrap()
         .into_iter()
