@@ -107,7 +107,8 @@ test('native regression suites are read-only and gate publication on every platf
   const packaging=readFileSync(new URL('./package-release.mjs',import.meta.url),'utf8');
   assert.match(release,/uses: \.\/\.github\/workflows\/native-regression\.yml\n {4}with:\n {6}packaging_runs_full_workspace: true/);
   assert.match(regression,/packaging_runs_full_workspace:[\s\S]*?type: boolean\n {8}default: false/);
-  assert.match(regression,/name: Complete workspace tests\n {8}if: \$\{\{ !inputs\.packaging_runs_full_workspace \}\}/);
+  assert.match(regression,/name: Complete workspace tests\n {8}if: \$\{\{ matrix\.group == 'files' && \(!inputs\.packaging_runs_full_workspace\) \}\}/);
+  for(const os of ['ubuntu-24\\.04','macos-15','windows-2025'])for(const group of ['kernel','files','interface'])assert.match(regression,new RegExp(`- os: ${os}\\n.*\\n {12}group: ${group}\\n`),`${os} ${group}`);
   assert.match(packaging,/const testArgs=packageTestArguments\(process\.env\.MULTICAD_NATIVE_TEST_SHARD\?\?'full'\)/);
   assert.match(packaging,/run\('cargo',testArgs,\{env,stdio:'inherit'\}\);\n  run\('cargo',workspaceDocTestArguments\(\),\{env,stdio:'inherit'\}\)/);
   assert.deepEqual(workspaceDocTestArguments(),['test','--workspace','--doc','--profile','ci','--locked']);
