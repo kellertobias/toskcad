@@ -2193,6 +2193,14 @@ impl ModelToolController {
             }
         }
     }
+    /// Signed distance of the open Extrude form, for tests.
+    #[cfg(test)]
+    pub(crate) fn extrude_distance_for_tests(&self, document: &Document) -> Option<f64> {
+        match &self.form {
+            Some(ModelForm::Extrude(panel)) => panel.gizmo_distance(document)?.ok(),
+            _ => None,
+        }
+    }
     pub fn can_apply(&self, session: &Session, resources: &ProjectResources) -> bool {
         !self.preview_waits_for_input()
             && !self.transform_dragging()
