@@ -26,7 +26,7 @@ mod placement;
 mod query;
 mod source;
 mod step;
-pub use step::PipeHardwareStepVerification;
+pub use step::{PipeHardwareStepMethod, PipeHardwareStepVerification};
 #[cfg(test)]
 mod tests;
 mod topology;

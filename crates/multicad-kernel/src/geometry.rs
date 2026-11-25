@@ -30,7 +30,7 @@ mod pipe_hardware_body;
 pub use multicad_rust_kernel::axial_pipe_thread::authored::hardware::Kind as PipeHardwareKind;
 use pipe_hardware_body::PipeHardwareBody;
 pub use pipe_hardware_body::{
-    PipeHardwareStepVerification, PipeThreadFactory, PipeThreadFactoryStats,
+    PipeHardwareStepMethod, PipeHardwareStepVerification, PipeThreadFactory, PipeThreadFactoryStats,
 };
 mod actual_clipped_head_body;
 use actual_clipped_head_body::ActualClippedHeadBody;

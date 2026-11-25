@@ -302,6 +302,10 @@ impl Placement {
             })
             .collect()
     }
+    /// Enclosures of the exact composed linear columns and origin image.
+    pub(super) fn composed(&self) -> ([B; 3], B) {
+        (self.linear_columns, self.composed_origin)
+    }
     pub(super) fn is_identity(&self) -> bool {
         self.factors.is_empty()
     }
