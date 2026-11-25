@@ -268,6 +268,8 @@ impl Solid {
         })())
     }
 }
+mod degree11;
+pub use degree11::DecodedDegree11PhillipsStepVerification;
 mod members;
 #[cfg(test)]
 pub(in crate::geometry) mod tests;

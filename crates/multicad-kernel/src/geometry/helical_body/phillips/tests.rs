@@ -359,6 +359,57 @@ fn actual_native_meshes_keep_source_volume_and_literal_placement_receipts_and_qu
         let (decoded, occurrence) = imported.rust_degree11_repaired_phillips_source().unwrap();
         assert_eq!(occurrence, PlaneFrame::default());
         assert_eq!(decoded.world_volume_mm3(), proof.decoded_volume_bounds_mm3);
+        // Re-export of the imported material: the actual written bytes are
+        // independently decoded and matched to the retained material again.
+        assert!(imported.has_degree11_phillips_step_source());
+        assert!(imported.supports_step_export());
+        let again = dir.path().join("reexported.step");
+        std::fs::write(&again, b"existing output").unwrap();
+        imported.write_step(&again).unwrap();
+        let reexported = std::fs::read_to_string(&again).unwrap();
+        assert_eq!(reexported, actual);
+        let receipt = imported
+            .verify_degree11_phillips_step_source(&reexported, 1e-7, None)
+            .unwrap()
+            .unwrap();
+        assert!(receipt.maximum_world_position_error_mm <= 1e-7);
+        assert!(receipt.maximum_world_chart_derivative_error_mm <= 1e-7);
+        assert!(receipt.independent_volume_discrepancy_mm3 <= 1e-5);
+        assert_eq!(
+            receipt.decoded_volume_bounds_mm3,
+            decoded.world_volume_mm3()
+        );
+        // A bad tolerance, a cancelled write and a moved occurrence are
+        // refused; the destination is never replaced.
+        assert!(
+            imported
+                .verify_degree11_phillips_step_source(&reexported, 0., None)
+                .unwrap()
+                .is_err()
+        );
+        std::fs::write(&again, b"existing output").unwrap();
+        assert!(
+            imported
+                .write_degree11_phillips_step_with_verification(&again, 1e-7, Some(&|| true))
+                .unwrap()
+                .is_err()
+        );
+        let shifted = imported
+            .transformed(crate::RigidTransform {
+                translation_mm: [0., 0., 1e-3],
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!shifted.has_degree11_phillips_step_source());
+        assert!(!shifted.supports_step_export());
+        assert!(shifted.write_step(&again).is_err());
+        assert!(
+            shifted
+                .verify_degree11_phillips_step_source(&reexported, 1e-7, None)
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&again).unwrap(), b"existing output");
         let moved = s
             .transformed(crate::RigidTransform {
                 translation_mm: [0., 0., 1e-3],
