@@ -6,6 +6,7 @@ use multicad_rust_kernel::{
 };
 #[cfg(test)]
 mod tests;
+mod transport;
 #[derive(Clone, Debug, PartialEq)]
 pub struct HealedSupportStepVerification {
     pub healed_volume_bounds_mm3: [f64; 2],
@@ -57,6 +58,7 @@ fn placement(frame: PlaneFrame) -> writer::QualifiedPlacement {
     }
 }
 impl HangerBody {
+    #[cfg(test)]
     fn qualified_step(
         &self,
         frame: PlaneFrame,
@@ -139,13 +141,15 @@ impl HangerBody {
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<HealedHangerStepVerification, GeometryError> {
-        if member.mapping_link().is_some() {
+        // A placed source is written through exactly one mapped item; an
+        // unplaced source never is. Either mismatch is a different file.
+        if member.mapping_link().is_some() != (frame != PlaneFrame::default()) {
             return Err(failure(
-                GeometryErrorKind::Unsupported,
-                "Mapped hanger STEP needs a separate placement proof",
+                GeometryErrorKind::InvalidResult,
+                "Actual member mapping does not match the occurrence placement",
             ));
         }
-        let qualified = self.qualified_step(frame, policy, interrupt)?;
+        let qualified = self.local_qualified_step(policy, interrupt)?;
         // The independently decoded candidate already earned finite lifts,
         // healing and volume. Exact local graph binding transfers those proofs
         // to the actual written member, preserving every literal leaf/owner.
@@ -206,8 +210,7 @@ impl HangerBody {
         )?;
         let bounds = self.source.bounds_mm();
         let residual = qualified.source_to_healed_position_error_mm();
-        checkpoint(interrupt)?;
-        Ok(HealedHangerStepVerification {
+        let mut proof = HealedHangerStepVerification {
             healed_volume_bounds_mm3: qualified.healed_volume_bounds_mm3(),
             source_volume_bounds_mm3: source_volume,
             correspondence_enclosure_mm: [
@@ -222,6 +225,11 @@ impl HangerBody {
             verified_tolerance_mm: policy.linear_tolerance_mm,
             matched_entities: matched.matched_entities(),
             literal_binding_work: matched.work_used(),
-        })
+        };
+        if member.mapping_link().is_some() {
+            proof = transport::placed(&qualified, actual, member, frame, policy, proof, interrupt)?;
+        }
+        checkpoint(interrupt)?;
+        Ok(proof)
     }
 }

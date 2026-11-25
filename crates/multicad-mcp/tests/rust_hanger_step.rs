@@ -258,3 +258,45 @@ fn actual_mcp_hanger_export_reports_healed_mass_and_preserves_source_and_existin
         );
     }
 }
+#[test]
+fn placed_mcp_hanger_exports_one_mapped_member_and_reads_it_back() {
+    let directory = tempfile::tempdir().unwrap();
+    let host = Headless::with_geometry_backend(
+        Workspace::new(Document::new("Placed hanger").unwrap()).unwrap(),
+        Some(directory.path().into()),
+        false,
+        GeometryBackend::Rust,
+    );
+    let profiles = run(&host, "mechanical_part_profiles", json!({}));
+    assert_eq!(
+        profiles["active_geometry_support"]["hanger_bolt"]["placed_step"],
+        true
+    );
+    let mm = |v: f64| json!({"value":v,"unit":"mm"});
+    let created = run(
+        &host,
+        "set_mechanical_part",
+        json!({"expected_revision":0,"name":"Placed hanger","recipe":{
+            "kind":"hanger_bolt","origin":[mm(10.),mm(20.),mm(30.)],"plane":"yz"}}),
+    );
+    let before = host.document();
+    let args = json!({"part":created["part"],"file_name":"placed.step"});
+    assert!(dispatch(&host, &call(true), "export_step", args.clone()).is_err());
+    assert!(!directory.path().join("placed.step").exists());
+    let result = run(&host, "export_step", args);
+    let text = std::fs::read_to_string(directory.path().join("placed.step")).unwrap();
+    assert_eq!(text.matches("MAPPED_ITEM(").count(), 1);
+    let proof = &result["step_verification"];
+    assert_eq!(proof["method"], "decoded_support_healing");
+    let healed = proof["healed_members"].as_array().unwrap();
+    assert_eq!(healed.len(), 1);
+    let volume = healed[0]["healed_volume_bounds_mm3"].as_array().unwrap();
+    assert!(volume[0].as_f64().unwrap() > 0.);
+    assert!(
+        healed[0]["source_to_healed_position_error_mm"]
+            .as_f64()
+            .unwrap()
+            <= 1e-7
+    );
+    assert_eq!(host.document(), before);
+}

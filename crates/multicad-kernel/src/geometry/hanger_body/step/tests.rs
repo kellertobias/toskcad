@@ -171,7 +171,7 @@ fn actual_mixed_hanger_exports_keep_member_categories_and_reject_wrong_source() 
     assert_eq!(std::fs::read_to_string(file.path()).unwrap(), text);
 }
 #[test]
-fn placed_hanger_step_holds_the_local_qualified_records_through_one_map() {
+fn placed_hanger_step_holds_the_local_qualified_records_through_one_map_and_reads_back() {
     let local = solid(false, false);
     let frame = PlaneFrame {
         origin: [20., -7., 9.],
@@ -211,12 +211,69 @@ fn placed_hanger_step_holds_the_local_qualified_records_through_one_map() {
         panic!("one placed member")
     };
     assert!(member.mapping_link().is_some());
-    // Source/healing verification of a mapped member stays a typed refusal.
+    // The mapped member reads back through its decoded operator.
     let (body, frame) = placed.hanger_body().unwrap();
-    let refusal = body
+    let proof = body
         .verify_step_member(&document, *member, frame, placed.policy, None)
+        .unwrap();
+    let (local_body, local_frame) = local.hanger_body().unwrap();
+    let local_document =
+        read::CompoundDocument::parse(&local_text, Default::default(), None).unwrap();
+    let local_proof = local_body
+        .verify_step_member(
+            &local_document,
+            local_document.represented_members()[0],
+            local_frame,
+            local.policy,
+            None,
+        )
+        .unwrap();
+    assert!(proof.source_to_healed_position_error_mm <= placed.policy.linear_tolerance_mm);
+    assert!(
+        proof.source_to_healed_position_error_mm >= local_proof.source_to_healed_position_error_mm
+    );
+    for k in 0..2 {
+        assert!(
+            proof.source_support_derivative_error_mm[k]
+                >= local_proof.source_support_derivative_error_mm[k]
+        );
+        assert!(proof.source_support_derivative_error_mm[k] <= 1e-6);
+    }
+    // A rigid operator keeps the healed volume to rounding.
+    let [lo, hi] = proof.healed_volume_bounds_mm3;
+    let [llo, lhi] = local_proof.healed_volume_bounds_mm3;
+    assert!(lo <= lhi && hi >= llo && hi - lo <= (lhi - llo) + 1e-9);
+    // The world enclosure contains the placed source box.
+    let world = placed.bounds().unwrap();
+    for k in 0..3 {
+        assert!(proof.correspondence_enclosure_mm[0][k] <= world.min[k] + 1e-9);
+        assert!(proof.correspondence_enclosure_mm[1][k] >= world.max[k] - 1e-9);
+    }
+    // One micrometre of occurrence shift is refused, and so are the local
+    // file for the placed source and the placed file for the local source.
+    let moved = PlaneFrame {
+        origin: [frame.origin[0] + 1e-3, frame.origin[1], frame.origin[2]],
+        ..frame
+    };
+    let refusal = body
+        .verify_step_member(&document, *member, moved, placed.policy, None)
         .unwrap_err();
-    assert_eq!(refusal.kind, GeometryErrorKind::Unsupported);
+    assert_eq!(refusal.kind, GeometryErrorKind::InvalidResult);
+    assert!(refusal.message.contains("placement"));
+    let refusal = body
+        .verify_step_member(
+            &local_document,
+            local_document.represented_members()[0],
+            frame,
+            placed.policy,
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(refusal.kind, GeometryErrorKind::InvalidResult);
+    let refusal = local_body
+        .verify_step_member(&document, *member, local_frame, local.policy, None)
+        .unwrap_err();
+    assert_eq!(refusal.kind, GeometryErrorKind::InvalidResult);
 }
 #[test]
 fn written_local_and_placed_hangers_read_back_with_their_healed_volume() {
