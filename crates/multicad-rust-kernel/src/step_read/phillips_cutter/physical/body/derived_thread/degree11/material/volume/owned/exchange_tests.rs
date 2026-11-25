@@ -376,6 +376,35 @@ fn retained_d11_moved_occurrence_replays_literal_local_records_through_one_mappe
             Some(Error::Invalid)
         );
     }
+    // Option edges: a zero correspondence tolerance is invalid, a looser
+    // one than the contract is invalid, and a too-small output quota is a
+    // limit; none publishes a file.
+    let mut zero = Options::default();
+    zero.correspondence.maximum_distance_mm = 0.;
+    let mut loose = Options::default();
+    loose.correspondence.maximum_derivative_mm = 2e-7;
+    for bad in [zero, loose] {
+        assert_eq!(
+            exchange::export_retained_placed(&source, occurrence, bad, None).err(),
+            Some(Error::Invalid)
+        );
+        assert_eq!(
+            exchange::qualify_placed_actual_file(&source, placed.as_str(), occurrence, bad, None)
+                .err(),
+            Some(Error::Invalid)
+        );
+    }
+    let quota = Options {
+        maximum_output_bytes: placed.as_str().len() - 1,
+        ..Options::default()
+    };
+    assert!(limited(exchange::qualify_placed_actual_file(
+        &source,
+        placed.as_str(),
+        occurrence,
+        quota,
+        None
+    )));
     let other = read(&actual_m3(true, true));
     assert!(
         exchange::qualify_placed_actual_file(
