@@ -113,7 +113,16 @@ pub(crate) fn parse(
     if text.is_empty() {
         return Ok(None);
     }
-    let dimension = match text.parse::<f64>() {
+    // A plain number with a decimal comma ("12,5") is the same size as
+    // "12.5". Inside an expression a comma separates function arguments.
+    let decimal = text.replace(',', ".");
+    let plain = text.matches(',').count() == 1
+        && text
+            .trim_start_matches('-')
+            .split(',')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()));
+    let number = if plain { decimal.as_str() } else { text };
+    let dimension = match number.parse::<f64>() {
         Ok(value) => Dimension::Literal {
             value,
             unit: "mm".into(),
@@ -609,5 +618,23 @@ mod tests {
             fields(DrawTool::Rectangle, true),
             &[Field::Width, Field::Height]
         );
+    }
+    #[test]
+    fn a_decimal_comma_is_a_plain_number_and_invalid_entries_are_refused() {
+        let session = Session::new(Document::new("Inline entry").unwrap()).unwrap();
+        let value = |field, text| parse(&session, field, text).map(|v| v.map(|(mm, _)| mm));
+        assert_eq!(value(Field::Width, "12,5"), Ok(Some(12.5)));
+        assert_eq!(value(Field::Width, " 12.5 "), Ok(Some(12.5)));
+        assert_eq!(value(Field::X, "-3,25"), Ok(Some(-3.25)));
+        assert_eq!(value(Field::Width, ""), Ok(None));
+        // A size must be positive; a coordinate may be negative or zero.
+        assert!(value(Field::Width, "-2").is_err());
+        assert!(value(Field::Diameter, "0,0").is_err());
+        assert_eq!(value(Field::Y, "0"), Ok(Some(0.)));
+        // Not a plain decimal comma: left to the expression parser, which
+        // refuses these rather than guessing a value.
+        for text in ["1,2,3", ",5", "5,", "1,5mm,", "inf", "NaN"] {
+            assert!(value(Field::Length, text).is_err(), "{text}");
+        }
     }
 }
