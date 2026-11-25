@@ -6,7 +6,12 @@ use super::*;
 use crate::step_read::owned_insert::DocumentOptions;
 use crate::step_read::radial_boundary::pipe_hardware::budget as cold;
 use std::ops::Range;
+mod authored;
 mod auxiliary;
+pub use authored::{
+    AuthoredHeadExport, AuthoredHeadReceipt, OccurrenceFactor, export_authored_hex_head,
+    qualify_authored_hex_head_file,
+};
 mod graph;
 pub mod measure;
 pub mod mesh;
