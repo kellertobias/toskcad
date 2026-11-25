@@ -296,7 +296,7 @@ fn typed_source_properties_and_original_geometry_survive_native_cardinal_and_pro
     }
 }
 #[test]
-fn actual_native_meshes_keep_source_volume_and_literal_placement_receipts_without_step_admission() {
+fn actual_native_meshes_keep_source_volume_and_literal_placement_receipts_and_qualified_step() {
     for frame in [
         PlaneFrame::default(),
         PlaneFrame {
@@ -328,11 +328,40 @@ fn actual_native_meshes_keep_source_volume_and_literal_placement_receipts_withou
                     - original.volume_mm3()[0]
         );
         assert!(pair.literal_vertex_transfer_bound_mm3 >= 0.);
+        // STEP is earned from the actual written bytes in this frame only.
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("not-qualified.step");
-        std::fs::write(&path, b"keep destination").unwrap();
-        assert!(s.write_step(&path).is_err());
-        assert_eq!(std::fs::read(path).unwrap(), b"keep destination");
+        let path = dir.path().join("qualified.step");
+        assert!(s.supports_step_export());
+        s.write_step(&path).unwrap();
+        let actual = std::fs::read_to_string(&path).unwrap();
+        let proof = s
+            .verify_authored_phillips_step_source(&actual, 1e-7, None)
+            .unwrap()
+            .unwrap();
+        assert!(proof.maximum_world_position_error_mm <= 1e-7);
+        assert!(proof.maximum_world_chart_derivative_error_mm <= 1e-7);
+        assert!(
+            proof.source_volume_bounds_mm3[0] - proof.decoded_volume_bounds_mm3[1] <= 1e-5
+                && proof.decoded_volume_bounds_mm3[0] - proof.source_volume_bounds_mm3[1] <= 1e-5
+        );
+        // The independent importer reads the same bytes back as decoded
+        // degree-11 repaired material with the verified volume.
+        let imported = Solid::import_rust_step(&actual, feature(), Default::default()).unwrap();
+        let (decoded, occurrence) = imported.rust_degree11_repaired_phillips_source().unwrap();
+        assert_eq!(occurrence, PlaneFrame::default());
+        assert_eq!(decoded.world_volume_mm3(), proof.decoded_volume_bounds_mm3);
+        let moved = s
+            .transformed(crate::RigidTransform {
+                translation_mm: [0., 0., 1e-3],
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(
+            moved
+                .verify_authored_phillips_step_source(&actual, 1e-7, None)
+                .unwrap()
+                .is_err()
+        );
     }
 }
 

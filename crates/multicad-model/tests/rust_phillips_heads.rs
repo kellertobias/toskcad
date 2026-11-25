@@ -246,6 +246,16 @@ fn actual_metric_fits_and_hands_create_manufacture_and_reopen_without_occ_or_dum
                 .rust_periodic_repaired_phillips_source()
                 .is_some()
             );
+        } else if solid.rust_authored_phillips_step_source().is_some() {
+            assert!(solid.supports_step_export());
+            solid.write_step(&path).unwrap();
+            let actual = std::fs::read_to_string(&path).unwrap();
+            let proof = solid
+                .verify_authored_phillips_step_source(&actual, 1e-7, None)
+                .unwrap()
+                .unwrap();
+            assert!(proof.maximum_world_position_error_mm <= 1e-7);
+            assert!(proof.maximum_world_chart_derivative_error_mm <= 1e-7);
         } else {
             assert!(!solid.supports_step_export());
             assert!(solid.write_step(&path).is_err());

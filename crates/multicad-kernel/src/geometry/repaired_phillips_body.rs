@@ -51,6 +51,17 @@ fn periodic_enclosure_bounds(s: &OwnedPeriodicMaterial) -> [[f64; 2]; 3] {
     ];
     bounds
 }
+/// World enclosure of an independently decoded degree-11 material in its
+/// own decoded chart (identity occurrence).
+pub(in crate::geometry) fn degree11_world_bounds(
+    s: &OwnedDegree11Material,
+) -> Result<Bounds, GeometryError> {
+    let b = s.local_enclosure_bounds_mm();
+    Placement::new(s.chart(), PlaneFrame::default())?.bounds(Bounds {
+        min: b.map(|x| x[0]),
+        max: b.map(|x| x[1]),
+    })
+}
 #[cfg(test)]
 mod tests;
 

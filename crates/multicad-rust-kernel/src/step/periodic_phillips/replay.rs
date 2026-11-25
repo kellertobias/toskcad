@@ -36,6 +36,17 @@ pub struct AppendReceipt {
     pub candidate: Verification,
     pub proposal_work: usize,
 }
+/// Append-only resources of one exact singleton replay.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ReplayCore {
+    pub(crate) matched_entities: usize,
+    pub(crate) document_work: usize,
+    pub(crate) selection_work: usize,
+    pub(crate) encoding_work: usize,
+    pub(crate) binding_work: usize,
+    pub(crate) work_used: usize,
+    pub(crate) accounted_peak_bytes: usize,
+}
 struct Ledger<'a> {
     used: usize,
     maximum: usize,
@@ -161,6 +172,38 @@ impl step::Writer {
         options: AppendOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<AppendReceipt, Error> {
+        let candidate_bytes = candidate.text.capacity()
+            + candidate.qualification.material.retained_budget_bytes()
+            + std::mem::size_of::<QualifiedStep>();
+        let core = self.append_qualified_singleton(
+            candidate.as_str(),
+            candidate_bytes,
+            options,
+            interrupt,
+        )?;
+        Ok(AppendReceipt {
+            matched_entities: core.matched_entities,
+            document_work: core.document_work,
+            selection_work: core.selection_work,
+            encoding_work: core.encoding_work,
+            binding_work: core.binding_work,
+            work_used: core.work_used,
+            accounted_peak_bytes: core.accounted_peak_bytes,
+            candidate: candidate.qualification.verification(),
+            proposal_work: candidate.proposal_work_used(),
+        })
+    }
+    /// Shared exact rebased replay of one sealed, already independently
+    /// qualified singleton text. `candidate_bytes` is the caller's complete
+    /// resident candidate (text, owned material and wrapper). This core adds
+    /// no material authority: callers must have qualified `text` itself.
+    pub(crate) fn append_qualified_singleton(
+        &mut self,
+        text: &str,
+        candidate_bytes: usize,
+        options: AppendOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<ReplayCore, Error> {
         checkpoint(interrupt)?;
         if options.maximum_work == 0
             || options.maximum_work > 128_000_000
@@ -178,17 +221,13 @@ impl step::Writer {
             bytes: options.maximum_bytes,
             interrupt,
         };
-        let candidate_bytes = candidate.text.capacity()
-            + candidate.qualification.material.retained_budget_bytes()
-            + std::mem::size_of::<QualifiedStep>();
-        let base = candidate_bytes + FIXED;
+        let base = candidate_bytes.checked_add(FIXED).ok_or(Error::Limit)?;
         work.observe(base)?;
-        let source_document = parse(candidate.as_str(), base, &mut work)?;
-        assert_eq!(
-            source_document.represented_members().len(),
-            1,
-            "sealed independently qualified singleton"
-        );
+        let source_document = parse(text, base, &mut work)?;
+        // Callers pass sealed qualified singletons; refuse anything else.
+        if source_document.represented_members().len() != 1 {
+            return Err(Error::Invalid);
+        }
         let root = source_document.represented_members()[0].item_entity();
         let source_document_work = source_document.work_used();
         let source = select(
@@ -278,7 +317,7 @@ impl step::Writer {
             .map_err(binding_error)?;
             work.step(bound.work_used())?;
             work.observe(bind_resident + bound.query_peak_bytes())?;
-            receipt = Some(AppendReceipt {
+            receipt = Some(ReplayCore {
                 matched_entities: bound.matched_entities(),
                 document_work: source_document_work + actual_document_work,
                 selection_work: source_selection_work + actual_selection_work,
@@ -286,8 +325,6 @@ impl step::Writer {
                 binding_work: bound.work_used(),
                 work_used: work.used,
                 accounted_peak_bytes: work.peak,
-                candidate: candidate.qualification.verification(),
-                proposal_work: candidate.proposal_work_used(),
             });
             Ok::<_, Error>(step::Entity(trace.member as usize))
         })?;

@@ -153,3 +153,143 @@ fn retained_d11_proposal_limits_actual_stale_file_and_late_cancel_never_publish(
     assert_eq!(retry.as_str(), candidate.as_str());
     assert_eq!(source.original_input(), text);
 }
+fn authored_ok(p: exchange::AuthoredVerification) {
+    assert!(p.maximum_world_distance_mm <= 1e-7);
+    assert!(p.maximum_world_chart_derivative_mm <= 1e-7);
+    assert!(
+        p.independent_volume_difference_mm3
+            .into_iter()
+            .all(|v| v.is_finite() && v.abs() <= 1e-5)
+    );
+    assert!(p.decoded_repaired_volume_bounds_mm3[0] > 0.);
+    assert!(p.decoded_repaired_volume_bounds_mm3[1] >= p.decoded_repaired_volume_bounds_mm3[0]);
+    assert!(
+        p.aggregate_reserved_work <= exchange::AuthoredOptions::default().maximum_aggregate_work
+    );
+    assert!(p.fresh_correspondence_work > 0);
+}
+#[test]
+fn authored_fitted_export_qualifies_its_own_bytes_against_the_author_both_hands() {
+    use crate::step_read::phillips_cutter::physical::body::derived_thread::actual_m3_parts;
+    for left in [false, true] {
+        let (author, frame) = actual_m3_parts(true, left);
+        let candidate =
+            exchange::export_authored(&author, frame, 1e-7, Default::default(), None).unwrap();
+        // The proposal is exactly the deterministic authored writer output.
+        let [origin, u, v] = frame;
+        assert_eq!(
+            candidate.as_str(),
+            crate::step::write_phillips_screw(&author, origin, u, v, 1e-7).unwrap()
+        );
+        let p = candidate.qualification().verification();
+        authored_ok(p);
+        assert!(p.proposal_work >= 2 * candidate.as_str().len());
+        // Author volume and decoded repaired volume agree within the bound.
+        let author_volume = author.source_volume_bounds().unwrap().volume_mm3();
+        let decoded = p.decoded_repaired_volume_bounds_mm3;
+        assert!(author_volume[0] - decoded[1] <= 1e-5 && decoded[0] - author_volume[1] <= 1e-5);
+        // Fresh qualification of the same actual bytes repeats the proof.
+        let again = exchange::qualify_authored_file(
+            &author,
+            frame,
+            candidate.as_str(),
+            Default::default(),
+            None,
+        )
+        .unwrap();
+        authored_ok(again.verification());
+        assert_eq!(again.verification().proposal_work, 0);
+    }
+}
+#[test]
+fn authored_qualification_refuses_other_hands_moved_frames_and_bad_options() {
+    use crate::step_read::phillips_cutter::physical::body::derived_thread::actual_m3_parts;
+    let (author, frame) = actual_m3_parts(true, false);
+    let text = actual_m3(true, false);
+    // A valid fitted file of the other hand is different geometry.
+    let (other, _) = actual_m3_parts(true, true);
+    assert!(
+        exchange::qualify_authored_file(&other, frame, &text, Default::default(), None).is_err()
+    );
+    // The nominal (flat-root) author is not this fitted file either.
+    let (flat, _) = actual_m3_parts(false, false);
+    assert!(
+        exchange::qualify_authored_file(&flat, frame, &text, Default::default(), None).is_err()
+    );
+    // One micrometre of occurrence shift exceeds the 1e-7 mm correspondence.
+    let mut moved = frame;
+    moved[0][0] += 1e-3;
+    assert!(
+        exchange::qualify_authored_file(&author, moved, &text, Default::default(), None).is_err()
+    );
+    // Non-orthonormal frames, invalid tolerances and oversized budgets refuse
+    // before any read.
+    let mut skew = frame;
+    skew[1] = [1., 1e-3, 0.];
+    assert!(matches!(
+        exchange::qualify_authored_file(&author, skew, &text, Default::default(), None),
+        Err(Error::Invalid)
+    ));
+    assert!(matches!(
+        exchange::export_authored(&author, frame, 1e-6, Default::default(), None),
+        Err(Error::Invalid)
+    ));
+    let over = exchange::AuthoredOptions {
+        maximum_aggregate_work: exchange::AuthoredOptions::default().maximum_aggregate_work + 1,
+        ..Default::default()
+    };
+    assert!(matches!(
+        exchange::qualify_authored_file(&author, frame, &text, over, None),
+        Err(Error::Invalid)
+    ));
+    let tight = exchange::AuthoredOptions {
+        maximum_aggregate_work: 1_000_000,
+        ..Default::default()
+    };
+    assert!(limited(exchange::qualify_authored_file(
+        &author, frame, &text, tight, None
+    )));
+    let tiny = exchange::AuthoredOptions {
+        maximum_output_bytes: text.len() - 1,
+        ..Default::default()
+    };
+    assert!(limited(exchange::export_authored(
+        &author, frame, 1e-7, tiny, None
+    )));
+    assert!(matches!(
+        exchange::qualify_authored_file(&author, frame, &text, Default::default(), Some(&|| true)),
+        Err(Error::Cancelled)
+    ));
+}
+#[test]
+fn authored_candidate_replays_into_a_writer_whose_actual_bytes_requalify() {
+    use crate::step_read::phillips_cutter::physical::body::derived_thread::actual_m3_parts;
+    let (author, frame) = actual_m3_parts(true, true);
+    let candidate =
+        exchange::export_authored(&author, frame, 1e-7, Default::default(), None).unwrap();
+    let mut writer = crate::step::Writer::new();
+    let receipt = writer
+        .append_qualified_authored_degree11_phillips(&candidate, Default::default(), None)
+        .unwrap();
+    assert!(receipt.matched_entities > 0);
+    assert_eq!(receipt.candidate, candidate.qualification().verification());
+    let text = writer.finish().unwrap();
+    let replayed =
+        exchange::qualify_authored_file(&author, frame, &text, Default::default(), None).unwrap();
+    authored_ok(replayed.verification());
+    // A cancelled append leaves the writer unchanged.
+    let mut cancelled = crate::step::Writer::new();
+    assert!(matches!(
+        cancelled.append_qualified_authored_degree11_phillips(
+            &candidate,
+            Default::default(),
+            Some(&|| true)
+        ),
+        Err(Error::Cancelled)
+    ));
+    // Same writer, appended afterwards: byte-identical to the clean append.
+    cancelled
+        .append_qualified_authored_degree11_phillips(&candidate, Default::default(), None)
+        .unwrap();
+    assert_eq!(cancelled.finish().unwrap(), text);
+}

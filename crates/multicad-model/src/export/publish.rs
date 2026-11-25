@@ -23,6 +23,8 @@ pub enum StepVerificationMethod {
     MixedMemberBoundary,
     DecodedSupportHealing,
     DecodedPeriodicRepair,
+    /// Independently decoded degree-11 repair matched to its authored source.
+    DecodedAuthoredRepair,
     ActualMappedHeadReference,
     RegeneratedRoundedBlindCanonical,
 }
@@ -73,6 +75,47 @@ fn periodic_member_receipt(
         binding_work: proof.binding_work,
         binding_query_peak_bytes: proof.binding_query_peak_bytes,
         matched_entities: proof.matched_entities,
+    }
+}
+
+/// Independently decoded degree-11 repaired material matched back to its
+/// authored Phillips source. Volume belongs to that decoded material, not to
+/// exact occupied raw STEP surfaces; derivatives are normalized chart terms.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepAuthoredPhillipsMemberReceipt {
+    pub member_index: u32,
+    pub decoded_volume_bounds_mm3: [f64; 2],
+    pub source_volume_bounds_mm3: [f64; 2],
+    pub maximum_world_position_error_mm: f64,
+    pub maximum_world_chart_derivative_error_mm: f64,
+    /// Author minus decoded repaired material.
+    pub independent_volume_difference_mm3: [f64; 2],
+    pub verified_tolerance_mm: f64,
+    pub reader_reserved_work: usize,
+    pub decoded_material_proof_work: usize,
+    pub correspondence_work: usize,
+    pub correspondence_cavity_cells: usize,
+    pub document_work: usize,
+    pub selection_work: usize,
+}
+fn authored_phillips_member_receipt(
+    member_index: u32,
+    p: multicad_kernel::DecodedAuthoredPhillipsStepVerification,
+) -> StepAuthoredPhillipsMemberReceipt {
+    StepAuthoredPhillipsMemberReceipt {
+        member_index,
+        decoded_volume_bounds_mm3: p.decoded_volume_bounds_mm3,
+        source_volume_bounds_mm3: p.source_volume_bounds_mm3,
+        maximum_world_position_error_mm: p.maximum_world_position_error_mm,
+        maximum_world_chart_derivative_error_mm: p.maximum_world_chart_derivative_error_mm,
+        independent_volume_difference_mm3: p.independent_volume_difference_mm3,
+        verified_tolerance_mm: p.verified_tolerance_mm,
+        reader_reserved_work: p.reader_reserved_work,
+        decoded_material_proof_work: p.decoded_material_proof_work,
+        correspondence_work: p.correspondence_work,
+        correspondence_cavity_cells: p.correspondence_cavity_cells,
+        document_work: p.document_work,
+        selection_work: p.selection_work,
     }
 }
 
@@ -173,6 +216,8 @@ pub struct StepVerificationReceipt {
     pub healed_members: Vec<StepHealedMemberReceipt>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub periodic_members: Vec<StepPeriodicMemberReceipt>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authored_phillips_members: Vec<StepAuthoredPhillipsMemberReceipt>,
     pub source_volume_bounds_mm3: Option<[f64; 2]>,
     /// Actual full-checker parameter, not a measured combined boundary error.
     pub verified_tolerance_mm: Option<f64>,
@@ -195,6 +240,7 @@ impl StepVerificationReceipt {
             source_known_members: vec![],
             healed_members: vec![],
             periodic_members: vec![],
+            authored_phillips_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: None,
             maximum_polynomial_trim_error_mm: None,
@@ -641,6 +687,7 @@ fn verify_actual_head_step(
             source_known_members: vec![],
             healed_members: vec![],
             periodic_members: vec![],
+            authored_phillips_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: None,
             maximum_polynomial_trim_error_mm: None,
@@ -716,15 +763,21 @@ fn verify_partitioned_step(
                 work_used: proof.document_ownership_work,
                 query_peak_bytes: proof.document_ownership_query_peak_bytes,
             }),
-            method: if !proof.periodic_members.is_empty() {
-                if proof.healed_members.is_empty()
+            method: if !proof.periodic_members.is_empty()
+                || !proof.authored_phillips_members.is_empty()
+            {
+                let only_repairs = proof.healed_members.is_empty()
                     && proof.source_known_members.is_empty()
                     && proof.members.retained_members.is_empty()
-                    && proof.members.decoded_scalar_members.is_empty()
-                {
-                    StepVerificationMethod::DecodedPeriodicRepair
-                } else {
-                    StepVerificationMethod::MixedMemberBoundary
+                    && proof.members.decoded_scalar_members.is_empty();
+                match (
+                    only_repairs,
+                    proof.periodic_members.is_empty(),
+                    proof.authored_phillips_members.is_empty(),
+                ) {
+                    (true, false, true) => StepVerificationMethod::DecodedPeriodicRepair,
+                    (true, true, false) => StepVerificationMethod::DecodedAuthoredRepair,
+                    _ => StepVerificationMethod::MixedMemberBoundary,
                 }
             } else if !proof.healed_members.is_empty() {
                 if proof.source_known_members.is_empty()
@@ -777,6 +830,11 @@ fn verify_partitioned_step(
                 .periodic_members
                 .into_iter()
                 .map(|(index, proof)| periodic_member_receipt(index, proof))
+                .collect(),
+            authored_phillips_members: proof
+                .authored_phillips_members
+                .into_iter()
+                .map(|(index, proof)| authored_phillips_member_receipt(index, proof))
                 .collect(),
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: Some(tolerance),
@@ -869,6 +927,7 @@ fn verify_periodic_step(
             source_known_members: vec![],
             healed_members: vec![],
             periodic_members: vec![periodic_member_receipt(0, proof)],
+            authored_phillips_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: Some(verified_tolerance),
             maximum_polynomial_trim_error_mm: None,
@@ -966,6 +1025,7 @@ fn verify_retained_step(
             source_known_members: vec![],
             healed_members: vec![],
             periodic_members: vec![],
+            authored_phillips_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: Some(tolerance),
             maximum_polynomial_trim_error_mm: None,
@@ -1044,6 +1104,7 @@ fn verify_source_known_step(
             source_known_members: vec![],
             healed_members: vec![],
             periodic_members: vec![],
+            authored_phillips_members: vec![],
             source_volume_bounds_mm3: Some(proof.source_volume_bounds_mm3),
             verified_tolerance_mm: Some(proof.verified_tolerance_mm),
             maximum_polynomial_trim_error_mm: Some(proof.maximum_polynomial_trim_error_mm),
@@ -1122,6 +1183,7 @@ fn verify_rounded_blind_canonical_step(
             source_known_members: vec![],
             healed_members: vec![],
             periodic_members: vec![],
+            authored_phillips_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: Some(verified),
             maximum_polynomial_trim_error_mm: None,

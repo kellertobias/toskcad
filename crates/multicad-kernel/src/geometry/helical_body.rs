@@ -30,8 +30,8 @@ use external::ExternalStock;
 pub use internal_data::InternalThreadData;
 mod boundary;
 mod nut;
-pub(super) mod phillips;
-pub use phillips::PhillipsMeshVolumePair;
+pub(in crate::geometry) mod phillips;
+pub use phillips::{DecodedAuthoredPhillipsStepVerification, PhillipsMeshVolumePair};
 pub(super) mod profiled_screw;
 mod screw;
 pub(super) mod stock_frame;
@@ -1093,6 +1093,9 @@ impl HelicalBody {
             })
     }
     pub(super) fn supports_step(&self, frame: PlaneFrame, policy: GeometryPolicy) -> bool {
+        if let HelicalForm::PhillipsScrew(body) = &self.form {
+            return frame.checked(policy).is_ok() && body.supports_step();
+        }
         if let HelicalForm::ProfiledScrew(screw) = &self.form {
             return multicad_rust_kernel::step::supports_profiled_screw_in_frame(
                 screw,
@@ -1157,6 +1160,17 @@ impl HelicalBody {
         frame: PlaneFrame,
         policy: GeometryPolicy,
     ) -> Result<(), multicad_rust_kernel::step::StepError> {
+        if let HelicalForm::PhillipsScrew(body) = &self.form {
+            use multicad_rust_kernel::step::StepError;
+            return body
+                .append_step(writer, frame, policy, None)
+                .map(|_| ())
+                .map_err(|e| match e.kind {
+                    GeometryErrorKind::Limit => StepError::Limit,
+                    GeometryErrorKind::Unsupported => StepError::Unsupported,
+                    _ => StepError::InvalidGeometry,
+                });
+        }
         if let HelicalForm::ProfiledScrew(screw) = &self.form {
             return writer.append_profiled_screw(
                 screw,

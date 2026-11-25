@@ -1,10 +1,12 @@
 //! Typed retained Phillips source with bounded native material receipts.
-//! Physical STEP exchange is not admitted by this source constructor.
+//! Physical STEP is earned separately in `step` from the actual written bytes.
 use super::*;
 use multicad_rust_kernel::phillips_drive::{self as source, PhillipsScrew, ScrewFace};
 pub(super) mod display;
 mod properties;
 pub(super) mod queries;
+pub(in crate::geometry) mod step;
+pub use step::DecodedAuthoredPhillipsStepVerification;
 pub(super) mod topology;
 pub(super) use properties::plane;
 
@@ -19,7 +21,7 @@ pub struct PhillipsMeshVolumePair {
     pub source_to_literal_bound_mm3: f64,
     pub literal_vertex_transfer_bound_mm3: f64,
 }
-pub(super) struct Body {
+pub(in crate::geometry) struct Body {
     source: PhillipsScrew,
     policy: GeometryPolicy,
     properties: Vec<source::ScrewFaceProperties>,
@@ -216,7 +218,8 @@ impl Solid {
         Some((source.source(), frame))
     }
     /// Retain the exact supplied thread, head meridian and finite cavity in
-    /// their original thread frame. Physical STEP remains unsupported.
+    /// their original thread frame. Physical STEP is admitted only through
+    /// the independently decoded author match in `step`.
     pub fn rust_phillips_screw_from_source(
         source: PhillipsScrew,
         feature: EntityId,

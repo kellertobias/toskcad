@@ -1,5 +1,5 @@
 //! Actual Core-fit/Model authors versus independent raw-cell and closed-source
-//! contracts. These receipts do not enable the still-unqualified native export.
+//! contracts, and the native export that qualifies its own written bytes.
 use multicad_core::{
     commands::{Actor, Channel, Session},
     document::Document,
@@ -627,12 +627,58 @@ fn verify(nominal: f64, pitch: f64, left: bool) {
         .unwrap(),
         raw
     );
-    // This bridge must not silently broaden the normal Native STEP gate.
-    assert!(!solid.supports_step_export());
-    let sentinel = folder.join("normal-export-unqualified.step");
-    std::fs::write(&sentinel, b"existing accepted file").unwrap();
-    assert!(solid.write_step(&sentinel).is_err());
-    assert_eq!(std::fs::read(sentinel).unwrap(), b"existing accepted file");
+    // The normal Native STEP gate now admits this author only through the
+    // independently decoded degree-11 match of the actual written bytes.
+    assert!(solid.supports_step_export());
+    assert!(solid.rust_authored_phillips_step_source().is_some());
+    let exported = folder.join("normal-export.step");
+    solid.write_step(&exported).unwrap();
+    let actual = std::fs::read_to_string(&exported).unwrap();
+    let proof = solid
+        .verify_partitioned_step_source(&actual, 1e-7, None)
+        .expect("authored Phillips is a partitioned source")
+        .expect("actual written bytes qualify against the author");
+    assert_eq!(proof.authored_phillips_members.len(), 1);
+    assert!(proof.periodic_members.is_empty());
+    let (index, member) = &proof.authored_phillips_members[0];
+    assert_eq!((*index, member.member_index), (0, 0));
+    assert!(member.maximum_world_position_error_mm <= 1e-7);
+    assert!(member.maximum_world_chart_derivative_error_mm <= 1e-7);
+    assert!(
+        member
+            .independent_volume_difference_mm3
+            .into_iter()
+            .all(|v| v.abs() <= 1e-5)
+    );
+    let [d, s] = [
+        member.decoded_volume_bounds_mm3,
+        member.source_volume_bounds_mm3,
+    ];
+    assert!(s[0] - d[1] <= 1e-5 && d[0] - s[1] <= 1e-5);
+    // The decoded enclosure is an interval hull: it encloses the source box
+    // and stays within one millimetre of it.
+    let world = solid.bounds().unwrap();
+    for axis in 0..3 {
+        let [lo, hi] = [
+            member.decoded_bounds_mm[0][axis],
+            member.decoded_bounds_mm[1][axis],
+        ];
+        assert!(lo <= world.min[axis] + 1e-6 && hi >= world.max[axis] - 1e-6);
+        assert!(world.min[axis] - lo <= 1. && hi - world.max[axis] <= 1.);
+    }
+    // One micrometre of occurrence shift is a different source.
+    let moved = solid
+        .transformed(RigidTransform {
+            translation_mm: [1e-3, 0., 0.],
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(
+        moved
+            .verify_partitioned_step_source(&actual, 1e-7, None)
+            .unwrap()
+            .is_err()
+    );
 }
 #[test]
 fn core_m3_right_actual_supplied_source_bridge() {
