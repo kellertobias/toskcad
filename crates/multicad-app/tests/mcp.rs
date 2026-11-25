@@ -5119,12 +5119,32 @@ fn default_stdio_phillips_metric_screws_keep_actual_geometry_history_and_atomic_
                 "--export-dir",
                 directory.path().to_str().unwrap(),
             ]);
-            independent.ok(
+            let imported = independent.ok(
                 "import_step",
                 json!({"expected_revision":0,"file_name":"phillips.step"}),
             );
             let imported_volume = independent.part_volume();
             assert!(lo <= imported_volume && imported_volume <= hi);
+            // The imported degree-11 material re-exports: the actual bytes
+            // are decoded again and matched to the retained material.
+            let reexported = independent.ok(
+                "export_step",
+                json!({"part":imported["parts"][0],"file_name":"phillips-again.step"}),
+            );
+            let receipt = &reexported["step_verification"];
+            assert_eq!(receipt["method"], "decoded_degree11_repair");
+            let members = receipt["authored_phillips_members"].as_array().unwrap();
+            assert_eq!(members.len(), 1);
+            for field in [
+                "maximum_world_position_error_mm",
+                "maximum_world_chart_derivative_error_mm",
+            ] {
+                assert!(members[0][field].as_f64().unwrap() <= 1e-7, "{field}");
+            }
+            assert_eq!(
+                std::fs::read(directory.path().join("phillips-again.step")).unwrap(),
+                std::fs::read(&output).unwrap()
+            );
         }
         client.ok("save_project", json!({"expected_revision":4}));
         drop(client);

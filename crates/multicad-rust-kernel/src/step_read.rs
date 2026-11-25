@@ -102,6 +102,9 @@ pub use rounded_cylinder::{
 pub use spline::SplineEdge;
 pub use tapered_thread::verify_tapered_thread;
 mod radial_boundary;
+pub use radial_boundary::hex_stock::{
+    HexStock, HexStockKind, ImportedPipeHexHardware, read_pipe_hex_hardware,
+};
 pub use radial_boundary::pipe_hardware;
 pub use radial_boundary::read_radial_boundary;
 pub use radial_boundary::sleeve::{ImportedPipeSleeve, SleeveStock, read_pipe_sleeve};

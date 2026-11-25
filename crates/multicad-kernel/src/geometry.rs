@@ -30,7 +30,7 @@ mod pipe_hardware_body;
 pub use multicad_rust_kernel::axial_pipe_thread::authored::hardware::Kind as PipeHardwareKind;
 use pipe_hardware_body::PipeHardwareBody;
 pub use pipe_hardware_body::{
-    PipeHardwareStepVerification, PipeThreadFactory, PipeThreadFactoryStats,
+    PipeHardwareStepMethod, PipeHardwareStepVerification, PipeThreadFactory, PipeThreadFactoryStats,
 };
 mod actual_clipped_head_body;
 use actual_clipped_head_body::ActualClippedHeadBody;
@@ -91,11 +91,11 @@ mod repaired_phillips_body;
 mod smooth_loft_body;
 use repaired_phillips_body::RepairedPhillipsBody;
 pub use repaired_phillips_body::{
-    DecodedPeriodicPhillipsStepVerification, Degree11RepairedPhillipsMeshReceipt,
-    Degree11RepairedPhillipsQuery, Degree11RepairedPhillipsQueryOptions,
-    PeriodicPhillipsStepCandidateResources, PeriodicRepairedPhillipsMeshReceipt,
-    PeriodicRepairedPhillipsQuery, RepairedPhillipsMeshBudget, RepairedPhillipsMeshReceipt,
-    RepairedPhillipsQuery, RepairedPhillipsQueryOptions,
+    DecodedDegree11PhillipsStepVerification, DecodedPeriodicPhillipsStepVerification,
+    Degree11RepairedPhillipsMeshReceipt, Degree11RepairedPhillipsQuery,
+    Degree11RepairedPhillipsQueryOptions, PeriodicPhillipsStepCandidateResources,
+    PeriodicRepairedPhillipsMeshReceipt, PeriodicRepairedPhillipsQuery, RepairedPhillipsMeshBudget,
+    RepairedPhillipsMeshReceipt, RepairedPhillipsQuery, RepairedPhillipsQueryOptions,
 };
 mod enclosed_clearance;
 mod healed_import_body;
@@ -3715,6 +3715,7 @@ impl Solid {
             SolidBody::ActualClippedHead(_) => standalone,
             SolidBody::RepairedPhillips(..) => {
                 self.rust_periodic_repaired_phillips_source().is_some()
+                    || (standalone && self.has_degree11_phillips_step_source())
             }
             // Written only as a whole standalone mapped file (no replay).
             SolidBody::PipeHardware(body) => standalone && body.supports_step(),
@@ -3774,6 +3775,13 @@ impl Solid {
             return result.map(|_| ());
         }
         if let Some(result) = self.write_periodic_phillips_step_with_verification(
+            path,
+            self.policy.linear_tolerance_mm,
+            None,
+        ) {
+            return result.map(|_| ());
+        }
+        if let Some(result) = self.write_degree11_phillips_step_with_verification(
             path,
             self.policy.linear_tolerance_mm,
             None,

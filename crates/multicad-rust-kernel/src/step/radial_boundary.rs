@@ -2,6 +2,8 @@
 use super::*;
 use crate::radial_tensor::{Axis, BoundaryInput, Curve, RadialBoundary, Surface};
 use crate::step_read::SleeveStock;
+mod hex_stock;
+pub use hex_stock::{verify_pipe_hex_hardware, write_pipe_hex_hardware};
 #[cfg(test)]
 pub(crate) mod tests;
 

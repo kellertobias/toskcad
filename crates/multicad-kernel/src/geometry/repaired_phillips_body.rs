@@ -12,7 +12,10 @@ mod affine;
 mod degree11;
 pub use degree11::{Degree11RepairedPhillipsQuery, Degree11RepairedPhillipsQueryOptions};
 pub(in crate::geometry) mod step;
-pub use step::{DecodedPeriodicPhillipsStepVerification, PeriodicPhillipsStepCandidateResources};
+pub use step::{
+    DecodedDegree11PhillipsStepVerification, DecodedPeriodicPhillipsStepVerification,
+    PeriodicPhillipsStepCandidateResources,
+};
 mod periodic;
 pub use periodic::PeriodicRepairedPhillipsQuery;
 mod mesh;
