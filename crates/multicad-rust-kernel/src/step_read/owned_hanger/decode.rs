@@ -572,6 +572,43 @@ fn edge(arena: &Arena<'_>, id: u32, b: &mut Budget<'_>) -> Result<Edge, Error> {
         same_sense: boolean(&e.args[4])?,
     })
 }
+/// Decode only the stated `MAPPED_ITEM` of an actual document: its identity
+/// source axis, millimetre local context, unit scale and rigid operator, by
+/// the same rules as a placed singleton. Local geometry records are not read
+/// here; callers bind them separately.
+pub(super) fn mapped_item(
+    input: &str,
+    item: u32,
+    options: ReadOptions,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<(u32, Placement), Error> {
+    if options.maximum_work == 0
+        || options.maximum_work > 256_000_000
+        || options.retained_budget_bytes == 0
+        || options.retained_budget_bytes > 64 * 1024 * 1024
+    {
+        return Err(Error::Invalid);
+    }
+    let mut b = Budget {
+        work: 0,
+        remaining: options.maximum_work,
+        bytes: 0,
+        limit: options.retained_budget_bytes,
+        interrupt,
+    };
+    b.charge(input.len())?;
+    b.retain(input.len())?;
+    let arena = part21::parse(input).map_err(|e| match e {
+        super::super::ReadError::Invalid => Error::Invalid,
+        super::super::ReadError::Limit => Error::Limit,
+        _ => Error::Unsupported,
+    })?;
+    for entities in arena.values() {
+        b.charge(entities.len())?;
+        b.retain(96 + entities.capacity() * size_of::<Entity<'_>>())?;
+    }
+    mapped(&arena, item, &mut b)
+}
 pub(super) fn read<'i>(
     input: &'i str,
     options: ReadOptions,

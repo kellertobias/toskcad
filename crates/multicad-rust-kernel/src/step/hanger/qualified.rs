@@ -67,6 +67,18 @@ impl QualifiedHangerStep {
         self.original_derivative
     }
     /// Composed C0 envelope, not a healed-cap derivative certificate.
+    /// Chart-derivative magnitude bounds over this candidate's own decoded
+    /// supports (see docs/architecture/hanger-placed-step-transport.md).
+    pub fn derivative_hull(
+        &self,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<read::DerivativeHull, Error> {
+        let decoded =
+            read::decode(self.as_str(), Default::default(), interrupt).map_err(read_error)?;
+        decoded
+            .derivative_hull(16_000_000, interrupt)
+            .map_err(read_error)
+    }
     pub fn source_to_healed_position_error_mm(&self) -> f64 {
         (I::point(self.source_position) + I::point(self.sewing)).hi
     }
@@ -402,6 +414,34 @@ pub fn export_qualified_hanger(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn derivative_hull_bounds_every_decoded_support_and_refuses_cancellation() {
+        let source = Hanger::new(
+            crate::authored_hanger_bolt::tests::fixture(false, false),
+            None,
+        )
+        .unwrap();
+        let file = export_qualified_hanger(&source, Default::default(), None).unwrap();
+        let hull = file.derivative_hull(None).unwrap();
+        for v in [hull.tensor_u_mm, hull.tensor_v_mm, hull.curve_mm] {
+            assert!(v.is_finite() && v > 0.);
+        }
+        assert_eq!(hull.plane_mm, 1.);
+        assert!(hull.work_used > 0);
+        // A chart derivative is never shorter than the support's own extent
+        // across its unit U span; the hull must bound the actual radius.
+        let extent = source.bounds_mm().map(|b| b[1].abs().max(b[0].abs()));
+        assert!(hull.tensor_u_mm.max(hull.tensor_v_mm) >= 1e-3 * extent[0]);
+        assert!(matches!(
+            file.derivative_hull(Some(&|| true)),
+            Err(Error::Cancelled)
+        ));
+        let decoded = read::decode(file.as_str(), Default::default(), None).unwrap();
+        assert!(matches!(
+            decoded.derivative_hull(1, None),
+            Err(read::Error::Limit)
+        ));
+    }
     #[test]
     fn actual_authored_hangers_export_only_after_independent_healed_qualification() {
         for (left, nb) in [(false, false), (true, true)] {

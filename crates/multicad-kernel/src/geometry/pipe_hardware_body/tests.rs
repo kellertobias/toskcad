@@ -177,7 +177,55 @@ fn run(rounded: bool, external: bool, quarter: bool, posed: bool, options: MeshO
     let failed = shape.rust_pipe_hardware_mesh_build_count().unwrap();
     assert_eq!(shape.mesh(options).unwrap().vertices, first.vertices);
     assert_eq!(shape.rust_pipe_hardware_mesh_build_count(), Some(failed));
-    assert!(!shape.supports_step_export());
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("hardware.step");
+    std::fs::write(&path, b"existing output").unwrap();
+    if !rounded && external {
+        // Clipped NPT hex head: one mapped item requalified from its bytes.
+        assert!(shape.supports_step_export());
+        let written = shape
+            .write_pipe_hardware_step_with_verification(&path, 1e-7, None)
+            .unwrap()
+            .unwrap();
+        let actual = std::fs::read_to_string(&path).unwrap();
+        assert!(actual.contains("MAPPED_ITEM"));
+        let fresh = shape
+            .verify_pipe_hardware_step_source(&actual, 1e-7, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fresh.world_sewn_volume_mm3, written.world_sewn_volume_mm3);
+        assert!(fresh.world_sewn_reference_position_error_mm <= 1e-7);
+        let [lo, hi] = fresh.world_sewn_volume_mm3;
+        assert!(0. < lo && lo <= hi);
+        // One micrometre of extra occurrence is a different source, and a
+        // failed write keeps the existing destination.
+        let moved = shape
+            .transformed(crate::RigidTransform {
+                translation_mm: [1e-3, 0., 0.],
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(
+            moved
+                .verify_pipe_hardware_step_source(&actual, 1e-7, None)
+                .unwrap()
+                .is_err()
+        );
+        let kept = dir.path().join("kept.step");
+        std::fs::write(&kept, b"existing output").unwrap();
+        assert!(
+            shape
+                .write_pipe_hardware_step_with_verification(&kept, 1e-7, Some(&|| true))
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&kept).unwrap(), b"existing output");
+    } else {
+        // Nuts and BSPT remain outside the exchange family.
+        assert!(!shape.supports_step_export());
+        assert!(shape.write_step(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing output");
+    }
 }
 #[test]
 fn actual_eighth_npt_head_has_coupled_neck_and_closed_native_manufacturing() {

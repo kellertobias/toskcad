@@ -9,6 +9,8 @@ use std::{
 mod bernstein;
 mod decode;
 mod grid;
+mod hull;
+pub use hull::DerivativeHull;
 mod occupied;
 mod polar;
 pub use occupied::{
@@ -414,6 +416,16 @@ pub fn decode<'i>(
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<Decoded<'i>, Error> {
     decode::read(input, options, interrupt)
+}
+/// The rigid placement of one stated mapped item in an actual document,
+/// with its local solid entity. See `decode::mapped_item`.
+pub fn decode_mapped_item(
+    input: &str,
+    item: u32,
+    options: ReadOptions,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<(u32, Placement), Error> {
+    decode::mapped_item(input, item, options, interrupt)
 }
 #[cfg(test)]
 mod malformed_tests;

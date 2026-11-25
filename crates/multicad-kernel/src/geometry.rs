@@ -29,7 +29,9 @@ mod clipped_npt_body;
 mod pipe_hardware_body;
 pub use multicad_rust_kernel::axial_pipe_thread::authored::hardware::Kind as PipeHardwareKind;
 use pipe_hardware_body::PipeHardwareBody;
-pub use pipe_hardware_body::{PipeThreadFactory, PipeThreadFactoryStats};
+pub use pipe_hardware_body::{
+    PipeHardwareStepVerification, PipeThreadFactory, PipeThreadFactoryStats,
+};
 mod actual_clipped_head_body;
 use actual_clipped_head_body::ActualClippedHeadBody;
 pub use actual_clipped_head_body::{ActualClippedHeadRuntimeEvidence, ActualHeadStepVerification};
@@ -3714,8 +3716,9 @@ impl Solid {
             SolidBody::RepairedPhillips(..) => {
                 self.rust_periodic_repaired_phillips_source().is_some()
             }
-            SolidBody::PipeHardware(..)
-            | SolidBody::Line8Nut(..)
+            // Written only as a whole standalone mapped file (no replay).
+            SolidBody::PipeHardware(body) => standalone && body.supports_step(),
+            SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
@@ -3761,6 +3764,13 @@ impl Solid {
         if let Some(result) =
             self.write_actual_clipped_head_step_with_verification(path, Default::default(), None)
         {
+            return result.map(|_| ());
+        }
+        if let Some(result) = self.write_pipe_hardware_step_with_verification(
+            path,
+            self.policy.linear_tolerance_mm,
+            None,
+        ) {
             return result.map(|_| ());
         }
         if let Some(result) = self.write_periodic_phillips_step_with_verification(

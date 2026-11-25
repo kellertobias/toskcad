@@ -271,7 +271,7 @@ pub(in crate::step_read::phillips_cutter::physical::body) fn actual_m3_parts(
 ) -> (crate::phillips_drive::PhillipsScrew, [Point; 3]) {
     m3_parts(fitted, left, 1.5, 1., false)
 }
-fn m3_parts(
+pub(in crate::step_read::phillips_cutter::physical::body) fn m3_parts(
     fitted: bool,
     left: bool,
     shank: f64,

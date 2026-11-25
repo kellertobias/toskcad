@@ -56,6 +56,15 @@ fn named_phillips_face_frames_follow_rigid_occurrences_without_axis_flips() {
     }
 }
 pub(in crate::geometry) fn fixture(index: usize, plain: f64, left: bool) -> PhillipsScrew {
+    fixture_with(index, plain, left, false)
+}
+/// `nominal` keeps the thread crest on the shank radius (shoulder join).
+pub(in crate::geometry) fn fixture_with(
+    index: usize,
+    plain: f64,
+    left: bool,
+    nominal: bool,
+) -> PhillipsScrew {
     let (m, r, b, g, inner, beta, rs, pitch, head) = match index {
         0 => (
             1.9,
@@ -203,7 +212,7 @@ pub(in crate::geometry) fn fixture(index: usize, plain: f64, left: bool) -> Phil
     )
     .unwrap();
     let thread = Thread::new(helical_thread::Spec {
-        major_radius_mm: rs - 0.03,
+        major_radius_mm: if nominal { rs } else { rs - 0.03 },
         pitch_mm: pitch,
         length_mm: 8.,
         depth_mm: 0.6 * pitch,
@@ -799,4 +808,264 @@ fn public_source_constructor_and_interrupt_wrapper_keep_the_actual_source() {
         )
         .is_ok()
     );
+}
+
+/// The ten nominal metric shoulder cases (five Crowned heads, both hands, the
+/// left hand posed) through the production route: periodic family routing,
+/// direct authored material, then native mass, manufacturing, occupancy,
+/// verified STEP and independent import.
+#[test]
+fn nominal_metric_shoulder_matrix_admits_mass_manufacturing_occupancy_and_step() {
+    use multicad_rust_kernel::phillips_drive::Classification;
+    use multicad_rust_kernel::step_read::PhillipsOwnedPeriodicMaterial as Owned;
+    for index in [0, 1, 3, 4, 5] {
+        for left in [false, true] {
+            let source = fixture_with(index, 0., left, true);
+            assert!(Owned::supports_authored_parts(
+                source.thread(),
+                source.profile(),
+                source.cavity().source(),
+                source.spec(),
+            ));
+            let owned = Owned::from_authored_parts(
+                source.thread(),
+                source.profile(),
+                source.cavity().source(),
+                source.spec(),
+                Default::default(),
+                None,
+            )
+            .unwrap();
+            // Source mass: decoded-free authored material against the
+            // independent author oracle.
+            let oracle = source.source_volume_bounds().unwrap().volume_mm3();
+            let local = owned.world_volume_mm3();
+            assert!(local[0] <= oracle[1] && local[1] >= oracle[0]);
+            assert!(local[1] - local[0] <= 1e-6);
+            let frame = if left {
+                PlaneFrame {
+                    origin: [105., -20., 60.],
+                    u: [0.8, 0.6, 0.],
+                    v: [0.36, -0.48, -0.8],
+                }
+            } else {
+                PlaneFrame::default()
+            };
+            let solid = Solid::rust_periodic_repaired_phillips_material(
+                Rc::new(owned),
+                feature(),
+                frame,
+                GeometryPolicy::default(),
+                None,
+            )
+            .unwrap();
+            let label = format!("index{index} left{left}");
+            let volume = solid.volume_mm3().unwrap();
+            assert!(
+                volume >= local[0] - 1e-9 && volume <= local[1] + 1e-9,
+                "{label}"
+            );
+            // Manufacturing: closed certified mesh.
+            let receipt = solid
+                .manufacturing_mesh_with_receipt(Default::default())
+                .unwrap();
+            assert!(!receipt.mesh.indices.is_empty(), "{label}");
+            assert_eq!(receipt.edge_pairs as usize * 2, receipt.mesh.indices.len());
+            // Occupied space: thread core inside; above the head and inside
+            // the recess mouth outside.
+            let world = |p: [f64; 3]| -> [f64; 3] {
+                std::array::from_fn(|i| {
+                    frame.origin[i]
+                        + frame.u[i] * p[0]
+                        + frame.v[i] * p[1]
+                        + frame.normal()[i] * p[2]
+                })
+            };
+            let top = source.head_top_z();
+            let thread = source.thread().spec();
+            let core = thread.major_radius_mm - thread.depth_mm - 0.05;
+            let classify = |p: [f64; 3]| {
+                solid
+                    .rust_periodic_repaired_phillips_classify_world_box(
+                        world(p).map(|x| [x, x]),
+                        Default::default(),
+                        None,
+                    )
+                    .unwrap()
+                    .location()
+            };
+            assert!(matches!(
+                classify([core / 2., 0., thread.length_mm / 2.]),
+                Classification::Inside
+            ));
+            assert!(matches!(
+                classify([0., 0., top + 0.1]),
+                Classification::Outside
+            ));
+            assert!(matches!(
+                classify([0., 0., top - 0.05]),
+                Classification::Outside
+            ));
+            // STEP: written, freshly verified from actual bytes, and
+            // independently imported with the verified volume.
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("shoulder.step");
+            assert!(solid.supports_step_export());
+            let proof = solid
+                .write_periodic_phillips_step_with_verification(&path, 1e-7, None)
+                .unwrap()
+                .unwrap();
+            assert!(proof.maximum_world_position_error_mm <= 1e-7, "{label}");
+            assert!(
+                proof.maximum_world_chart_derivative_error_mm <= 1e-7,
+                "{label}"
+            );
+            let text = std::fs::read_to_string(&path).unwrap();
+            let imported = Solid::import_rust_step(&text, feature(), Default::default()).unwrap();
+            let (decoded, _) = imported.rust_periodic_repaired_phillips_source().unwrap();
+            assert_eq!(decoded.world_volume_mm3(), proof.decoded_volume_bounds_mm3);
+            assert!(
+                proof.decoded_volume_bounds_mm3[0] <= volume + 1e-5
+                    && proof.decoded_volume_bounds_mm3[1] >= volume - 1e-5,
+                "{label}"
+            );
+            // A different hand is refused for these actual bytes.
+            let other = Solid::rust_periodic_repaired_phillips_material(
+                Rc::new(
+                    Owned::from_authored(
+                        &fixture_with(index, 0., !left, true),
+                        Default::default(),
+                        None,
+                    )
+                    .unwrap(),
+                ),
+                feature(),
+                frame,
+                GeometryPolicy::default(),
+                None,
+            )
+            .unwrap();
+            assert!(
+                other
+                    .verify_periodic_phillips_step_source(&text, 1e-7, None)
+                    .unwrap()
+                    .is_err(),
+                "{label}"
+            );
+        }
+    }
+}
+#[test]
+fn authored_phillips_member_proof_refuses_mapped_and_foreign_members() {
+    let s = Solid::rust_phillips_source_for_test(
+        fixture(1, 0., false),
+        feature(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+        &|| false,
+    )
+    .unwrap();
+    let (body, frame) = s.authored_phillips_body().unwrap();
+    // A placed Hanger file carries one mapped member.
+    let placed = Solid::rust_hanger(
+        crate::geometry::hanger_material::source_tests::source(false, false),
+        EntityId::new(),
+        PlaneFrame {
+            origin: [20., -7., 9.],
+            u: [0., 1., 0.],
+            v: [0., 0., 1.],
+        },
+        GeometryPolicy::default(),
+        None,
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mapped.step");
+    placed.write_step(&path).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    use multicad_rust_kernel::step_read::owned_insert as read;
+    let mapped = read::CompoundDocument::parse(&text, Default::default(), None).unwrap();
+    let member = mapped.represented_members()[0];
+    assert!(member.mapping_link().is_some());
+    let refusal = body
+        .verify_step_member(&mapped, member, frame, GeometryPolicy::default(), None)
+        .unwrap_err();
+    assert_eq!(refusal.kind, GeometryErrorKind::InvalidResult);
+    // A member absent from the document is an input error.
+    let path = dir.path().join("own.step");
+    s.write_step(&path).unwrap();
+    let own_text = std::fs::read_to_string(&path).unwrap();
+    let own = read::CompoundDocument::parse(&own_text, Default::default(), None).unwrap();
+    let foreign = own.represented_members()[0];
+    if foreign.item_entity() != member.item_entity() {
+        let refusal = body
+            .verify_step_member(&mapped, foreign, frame, GeometryPolicy::default(), None)
+            .unwrap_err();
+        assert_eq!(refusal.kind, GeometryErrorKind::Input);
+    }
+    // The own file proves itself through the member path as well.
+    let proof = body
+        .verify_step_member(&own, foreign, frame, GeometryPolicy::default(), None)
+        .unwrap();
+    assert_eq!((proof.member_index, proof.represented_member_count), (0, 1));
+    assert!(proof.maximum_world_position_error_mm <= 1e-7);
+}
+#[test]
+fn authored_phillips_append_and_singleton_proof_refuse_bad_tolerance_cancellation_and_pairs() {
+    let s = Solid::rust_phillips_source_for_test(
+        fixture(1, 0., false),
+        feature(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+        &|| false,
+    )
+    .unwrap();
+    assert!(s.rust_authored_phillips_step_source().is_some());
+    // Two qualified appends replay into one writer as two members.
+    let mut writer = multicad_rust_kernel::step::Writer::new();
+    for _ in 0..2 {
+        let receipt = s
+            .append_authored_phillips_step(&mut writer, None)
+            .unwrap()
+            .unwrap();
+        assert!(receipt.matched_entities > 0);
+    }
+    let pair = writer.finish().unwrap();
+    let refusal = s
+        .verify_authored_phillips_step_source(&pair, 1e-7, None)
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refusal.kind, GeometryErrorKind::InvalidResult);
+    let mut single = multicad_rust_kernel::step::Writer::new();
+    s.append_authored_phillips_step(&mut single, None)
+        .unwrap()
+        .unwrap();
+    let text = single.finish().unwrap();
+    for bad in [0., f64::NAN] {
+        assert_eq!(
+            s.verify_authored_phillips_step_source(&text, bad, None)
+                .unwrap()
+                .unwrap_err()
+                .kind,
+            GeometryErrorKind::Input
+        );
+    }
+    assert_eq!(
+        s.verify_authored_phillips_step_source(&text, 1e-7, Some(&|| true))
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Cancelled
+    );
+    let mut cancelled = multicad_rust_kernel::step::Writer::new();
+    assert_eq!(
+        s.append_authored_phillips_step(&mut cancelled, Some(&|| true))
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Cancelled
+    );
+    s.verify_authored_phillips_step_source(&text, 1e-7, None)
+        .unwrap()
+        .unwrap();
 }
