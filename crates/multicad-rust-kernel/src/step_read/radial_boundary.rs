@@ -365,6 +365,7 @@ impl Decoder {
         Ok(())
     }
 }
+pub mod hex_stock;
 pub mod sleeve;
 
 #[cfg(test)]
