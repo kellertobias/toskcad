@@ -28,6 +28,9 @@ pub enum StepVerificationMethod {
     ActualMappedHeadReference,
     /// Authored clipped hex head in one mapped item, requalified from bytes.
     AuthoredMappedHeadReference,
+    /// Authored pipe head or nut: retained thread tables decoded bit-identical
+    /// beside exact hex stock, placed by the bounded composed occurrence.
+    AuthoredRetainedHexStock,
     RegeneratedRoundedBlindCanonical,
 }
 /// Independently decoded periodic material after the bounded source repair.
@@ -121,7 +124,8 @@ fn authored_phillips_member_receipt(
     }
 }
 
-/// Authored clipped-NPT hex-head screw requalified from the actual mapped
+/// Authored pipe hardware requalified from the actual bytes. For a clipped-NPT
+/// hex head (AuthoredMappedHeadReference) this is the actual mapped
 /// bytes against its source, head intent and occurrence chain. Volume is the
 /// sewn reference of that file, not raw occupied STEP mass.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -645,7 +649,14 @@ fn verify_pipe_hardware_step(
             )
         })?;
         let mut receipt = StepVerificationReceipt::decoded(0.);
-        receipt.method = StepVerificationMethod::AuthoredMappedHeadReference;
+        receipt.method = match proof.method {
+            multicad_kernel::PipeHardwareStepMethod::MappedClippedHead => {
+                StepVerificationMethod::AuthoredMappedHeadReference
+            }
+            multicad_kernel::PipeHardwareStepMethod::RetainedHexStock => {
+                StepVerificationMethod::AuthoredRetainedHexStock
+            }
+        };
         receipt.decoded_volume_mm3 = None;
         receipt.verified_tolerance_mm = Some(tolerance);
         receipt.authored_head = Some(StepAuthoredHeadReceipt {

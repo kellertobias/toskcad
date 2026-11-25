@@ -135,7 +135,12 @@ fn original_pipe_hardware_commands_edit_undo_reopen_and_export_supported_npt_hea
             );
             assert_eq!(
                 support["active_geometry_support"]["pipe_hardware"]["step_supported"],
-                json!([{"thread_family":"npt","kind":"machine_screw"}])
+                json!([
+                    {"thread_family":"npt","kind":"machine_screw"},
+                    {"thread_family":"npt","kind":"hex_nut"},
+                    {"thread_family":"bspt","kind":"machine_screw"},
+                    {"thread_family":"bspt","kind":"hex_nut"}
+                ])
             );
             let pipe_support = &support["active_geometry_support"]["pipe_hardware"];
             assert_eq!(pipe_support["hand"], "right");
@@ -225,30 +230,36 @@ fn original_pipe_hardware_commands_edit_undo_reopen_and_export_supported_npt_hea
             // A superseded export never replaces the existing file.
             assert!(dispatch(&host, &call(true), "export_step", arguments.clone()).is_err());
             assert_eq!(std::fs::read(&output).unwrap(), b"existing output");
-            if npt && head {
-                let exported = run(&host, "export_step", arguments);
-                let receipt = &exported["step_verification"];
-                assert_eq!(receipt["method"], "authored_mapped_head_reference");
-                let head = &receipt["authored_head"];
-                let volume = head["world_sewn_volume_bounds_mm3"].as_array().unwrap();
-                let [lo, hi] = [0, 1].map(|i| volume[i].as_f64().unwrap());
-                assert!(0. < lo && lo <= hi);
-                assert!(
-                    head["world_sewn_reference_position_error_mm"]
-                        .as_f64()
-                        .unwrap()
-                        <= 1e-7
-                );
-                assert!(
-                    std::fs::read_to_string(&output)
-                        .unwrap()
-                        .contains("MAPPED_ITEM")
-                );
-            } else {
-                // Hex nuts and BSPT remain outside the exchange family.
-                assert!(dispatch(&host, &call(false), "export_step", arguments).is_err());
-                assert_eq!(std::fs::read(&output).unwrap(), b"existing output");
+            // Clipped NPT heads write one mapped item; BSPT heads and all nuts
+            // keep their retained thread tables beside exact hex stock.
+            let exported = run(&host, "export_step", arguments);
+            let receipt = &exported["step_verification"];
+            let mapped = npt && head;
+            assert_eq!(
+                receipt["method"],
+                if mapped {
+                    "authored_mapped_head_reference"
+                } else {
+                    "authored_retained_hex_stock"
+                }
+            );
+            let proof = &receipt["authored_head"];
+            let volume = proof["world_sewn_volume_bounds_mm3"].as_array().unwrap();
+            let [lo, hi] = [0, 1].map(|i| volume[i].as_f64().unwrap());
+            assert!(0. < lo && lo <= hi);
+            for field in [
+                "world_sewn_reference_position_error_mm",
+                "head_author_corner_error_mm",
+                "factor_chain_discrepancy_mm",
+            ] {
+                assert!(proof[field].as_f64().unwrap() <= 1e-7, "{field}");
             }
+            assert_eq!(
+                std::fs::read_to_string(&output)
+                    .unwrap()
+                    .contains("MAPPED_ITEM"),
+                mapped
+            );
             assert_eq!(host.document(), saved);
             run(&host, "save_project", json!({"expected_revision":4}));
             drop(host);
