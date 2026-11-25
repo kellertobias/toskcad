@@ -341,7 +341,7 @@ tools! {
         "Solve a sketch and report its state, degrees of freedom, conflicts, solved points, curves, constraints, text elements (with their derived glyph contour curve IDs) and the exact closed regions (with index and area in mm²) usable by extrude.",
         inspect_sketch;
     "extrude" => Extrude, "Extrude regions", false,
-        "Extrude regions of a sketch (indices from inspect_sketch at the same revision), or planar model faces (source feature and face ordinal from reference_candidates at the same revision; exact outer boundary and holes, persistent face reference), by a signed nonzero distance. Give either sketch with regions or faces. A negative distance extrudes the same magnitude opposite to the profile normal (for faces: into the body) without changing the operation. operation new_body creates parts; join, cut and intersect modify target_part. Curved, missing or ambiguous faces are refused and nothing changes. The candidate is evaluated natively before it commits.",
+        "Extrude regions of a sketch (indices from inspect_sketch at the same revision), or planar model faces (source feature and face ordinal from reference_candidates at the same revision; exact outer boundary and holes, persistent face reference), by a signed nonzero distance. Give either sketch with regions or faces. A negative distance extrudes the same magnitude opposite to the profile normal (for faces: into the body) without changing the operation. operation new_body creates parts; join, cut and intersect modify target_part. Without target_part, join targets the one body the extrusion touches face-to-face or overlaps (including the body whose face the sketch lies on; several such bodies are listed back for you to choose) and cut targets every body it enters. Curved, missing or ambiguous faces are refused and nothing changes. The candidate is evaluated natively before it commits.",
         extrude;
     "set_helical_tube_cut" => HelicalTubeCutArgs, "Create or edit helical tube cut", false,
         "Cut an exact cylinder with a right-handed circular tube centered on its outside radius. Use target_part to create or feature to edit; provide the complete typed recipe each time. Heights and start_angle are in the cylinder's local frame, with zero height at its bottom and phase zero at its authored seam. The tube must start between the caps, clear adjacent turns and exit completely through the top cap. Requires the Rust backend. A failed or cancelled candidate changes nothing.",
@@ -928,7 +928,8 @@ pub struct Extrude {
     pub faces: Vec<ExtrudeFace>,
     pub distance: Quantity,
     pub operation: ExtrudeOperation,
-    /// Required for join, cut and intersect: the part to modify.
+    /// The part to modify. Required for intersect; join and cut discover
+    /// their affected bodies when it is omitted.
     #[serde(default)]
     pub target_part: Option<String>,
     /// Extrude against the sketch normal.
@@ -1892,8 +1893,73 @@ fn extrude(host: &dyn Host, call: &Request, args: Extrude) -> ToolResult {
         Some(sketch) => ExtrudeRequest::new(sketch, intents, parameters),
         None => ExtrudeRequest::from_faces(faces, parameters),
     };
-    let call_owned = call.clone();
     let operation = args.operation;
+    // Join and Cut without target_part discover their bodies exactly, on the
+    // tools-only candidate: Join needs the one body the extrusion touches or
+    // overlaps (several are listed back, never guessed), Cut every body it
+    // enters.
+    let targets = match (target_part, operation) {
+        (Some(part), _) => Some(vec![part]),
+        (None, ExtrudeOperation::Join | ExtrudeOperation::Cut) => {
+            let tools = request.clone();
+            let call_owned = call.clone();
+            let document = with(host, move |target| {
+                revision_guard(target, revision)?;
+                let session = target.session();
+                let prepared =
+                    model::prepare_extrude(session, revision, call_owned.actor.clone(), &tools)?;
+                Ok::<_, ToolError>(prepared.prepared.document().clone())
+            })??;
+            let join = operation == ExtrudeOperation::Join;
+            let query = model::CutTargetQuery {
+                tools: request.outputs.iter().map(|o| o.feature).collect(),
+                component: None,
+                include: vec![],
+                exclude: vec![],
+                contact: join,
+            };
+            let interrupt = || call.cancelled();
+            let selection = compile(&document, revision + 1, call)?.cut_targets(
+                &document,
+                revision + 1,
+                &query,
+                Some(&interrupt),
+            )?;
+            let names = |targets: &[BodyInput]| {
+                targets
+                    .iter()
+                    .map(|t| {
+                        let name = document.get(t.body).map_or("", |e| e.name.as_str());
+                        format!("{name} ({})", t.body)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let none = || {
+                ToolError::invalid(
+                    "No affected bodies: the extrusion neither touches nor enters a body; change the extent or give target_part",
+                )
+            };
+            Some(if join {
+                match selection.single_target() {
+                    Ok(target) => vec![target.body],
+                    Err(model::AutomaticTargetError::None) => return Err(none()),
+                    Err(model::AutomaticTargetError::Several(several)) => {
+                        return Err(ToolError::invalid(format!(
+                            "Several bodies touch or overlap the extrusion: {}; give target_part to choose one",
+                            names(&several)
+                        )));
+                    }
+                }
+            } else if selection.targets.is_empty() {
+                return Err(none());
+            } else {
+                selection.targets.iter().map(|t| t.body).collect()
+            })
+        }
+        (None, _) => None,
+    };
+    let call_owned = call.clone();
     let (prepared, created, results) = with(host, move |target| {
         revision_guard(target, revision)?;
         let session = target.session();
@@ -1912,34 +1978,41 @@ fn extrude(host: &dyn Host, call: &Request, args: Extrude) -> ToolResult {
                 .collect();
             Ok::<_, ToolError>((prepared.prepared, created, results))
         } else {
-            let part = target_part
-                .ok_or_else(|| ToolError::invalid("join, cut and intersect require target_part"))?;
-            let producer = current_producer(session.document(), part)?;
+            let parts =
+                targets.ok_or_else(|| ToolError::invalid("intersect requires target_part"))?;
+            let inputs = parts
+                .iter()
+                .map(|part| {
+                    Ok(BodyInput {
+                        body: *part,
+                        producer: current_producer(session.document(), *part)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, ToolError>>()?;
             let op = match operation {
                 ExtrudeOperation::Join => Operation::Join,
                 ExtrudeOperation::Cut => Operation::Cut,
                 _ => Operation::Intersect,
             };
-            let boolean = ExtrudeBooleanRequest::new(
-                request,
-                op,
-                vec![BodyInput {
-                    body: part,
-                    producer,
-                }],
-                false,
-            );
+            let boolean = ExtrudeBooleanRequest::new(request, op, inputs, false);
             let prepared = model::prepare_extrude_boolean(
                 session,
                 revision,
                 call_owned.actor.clone(),
                 &boolean,
             )?;
-            let feature = boolean.booleans[0].feature;
+            let results: Vec<_> = boolean
+                .booleans
+                .iter()
+                .map(|b| (b.target.body, b.feature))
+                .collect();
             Ok((
                 prepared.prepared,
-                vec![json!({ "part": part, "feature": feature })],
-                vec![(part, feature)],
+                results
+                    .iter()
+                    .map(|(part, feature)| json!({ "part": part, "feature": feature }))
+                    .collect(),
+                results,
             ))
         }
     })??;
