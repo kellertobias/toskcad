@@ -1030,3 +1030,99 @@ fn spline_poles_on_face_corners_reuse_the_projected_points_in_one_transaction() 
         "one Undo removes the references and the spline"
     );
 }
+
+#[test]
+fn a_refused_polyline_segment_hands_the_chain_back_and_input_meanwhile_says_why() {
+    let mut session = Session::new(Document::new("Refused polyline").unwrap()).unwrap();
+    let stock = Stock::new(&mut session);
+    let (sketch, frame) = top_face_sketch(&mut session, &stock);
+    let mut host = Host::new(session, sketch);
+    host.editor.set_tool(DrawTool::Polyline).unwrap();
+    let revision = host.session.revision();
+    let (a, b, c) = (
+        stock.corner(0., 0.),
+        stock.corner(SIZE[0], 0.),
+        stock.corner(SIZE[0], SIZE[1]),
+    );
+    host.hover_support(a, TargetKind::FaceCorner);
+    host.click(a);
+    host.hover_support(b, TargetKind::FaceCorner);
+    host.click(b);
+    host.settle_support();
+    assert_eq!(
+        host.session.revision(),
+        revision + 1,
+        "{}",
+        host.editor.message
+    );
+    let chain_start = host.editor.polyline_start;
+    assert!(chain_start.is_some());
+    host.hover_support(c, TargetKind::FaceCorner);
+    host.click(c);
+    assert!(host.editor.projection_pending(), "{}", host.editor.message);
+    // While the check runs, a tool change is refused with the real reason.
+    let error = host.editor.set_tool(DrawTool::Line).unwrap_err();
+    assert!(
+        error.starts_with("Still checking the face reference"),
+        "{error}"
+    );
+    assert_eq!(host.editor.tool, Some(DrawTool::Polyline));
+    // The native check refuses the segment: nothing changes and the chain
+    // continues from the same vertex, still able to close on its start.
+    let before = host.session.document().clone();
+    host.editor
+        .refuse_projection("Candidate rejected by the native check");
+    assert!(host.editor.finish_projection(&mut host.session));
+    assert_eq!(host.session.document(), &before);
+    assert!(
+        host.editor.message.contains("place the point again"),
+        "{}",
+        host.editor.message
+    );
+    assert_eq!(host.editor.polyline_start, chain_start);
+    assert_eq!(host.editor.polyline_segments, 1);
+    let next = host
+        .editor
+        .pending_first()
+        .expect("the chain is handed back");
+    assert!(close(next, frame.coordinates(b)), "{next:?}");
+    // Placing the point again commits the segment from the same vertex.
+    host.hover_support(c, TargetKind::FaceCorner);
+    host.click(c);
+    host.settle_support();
+    assert_eq!(
+        host.session.revision(),
+        revision + 2,
+        "{}",
+        host.editor.message
+    );
+    let lines = drawn_lines(host.session.document(), sketch);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(corner_outputs(host.session.document(), sketch).len(), 3);
+}
+
+#[test]
+fn a_refusal_after_the_tool_changed_does_not_restore_a_stale_gesture() {
+    let mut session = Session::new(Document::new("Stale refusal").unwrap()).unwrap();
+    let stock = Stock::new(&mut session);
+    let (sketch, _) = top_face_sketch(&mut session, &stock);
+    let mut host = Host::new(session, sketch);
+    host.editor.set_tool(DrawTool::Line).unwrap();
+    let (a, c) = (stock.corner(0., 0.), stock.corner(SIZE[0], SIZE[1]));
+    host.hover_support(a, TargetKind::FaceCorner);
+    host.click(a);
+    host.hover_support(c, TargetKind::FaceCorner);
+    host.click(c);
+    assert!(host.editor.projection_pending(), "{}", host.editor.message);
+    // With the tool changed underneath, the gesture is not handed back.
+    host.editor.tool = Some(DrawTool::Rectangle);
+    host.editor
+        .refuse_projection("Candidate rejected by the native check");
+    assert!(host.editor.finish_projection(&mut host.session));
+    assert!(host.editor.pending_first().is_none());
+    assert!(
+        host.editor.message.ends_with("nothing was placed"),
+        "{}",
+        host.editor.message
+    );
+}

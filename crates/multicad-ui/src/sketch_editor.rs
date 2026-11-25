@@ -480,6 +480,39 @@ impl SketchEditor {
         }
         self.cancel_profile_clicks();
     }
+    /// Why drawing is refused while edits are pending. A face reference
+    /// check has nothing to apply, so it says to wait or cancel instead.
+    fn pending_edits_refusal(&self) -> String {
+        if self.projection_pending() {
+            "Still checking the face reference against the model · wait for it or press Escape"
+                .into()
+        } else {
+            "Apply or discard pending edits before drawing".into()
+        }
+    }
+    /// The placements of the gesture in progress, kept while a face
+    /// reference is checked so a refusal can hand the gesture back.
+    fn drawing_progress(&self) -> support_projection::DrawProgress {
+        support_projection::DrawProgress {
+            first: self.first,
+            first_anchor: self.first_anchor,
+            support_used: self.support_used.clone(),
+            arc_start: self.arc_start,
+            polyline_start: self.polyline_start,
+            polyline_segments: self.polyline_segments,
+            spline_poles: self.spline_poles.clone(),
+        }
+    }
+    fn restore_drawing_progress(&mut self, progress: support_projection::DrawProgress) {
+        self.first = progress.first;
+        self.first_anchor = progress.first_anchor;
+        self.support_used = progress.support_used;
+        self.support_snap = None;
+        self.arc_start = progress.arc_start;
+        self.polyline_start = progress.polyline_start;
+        self.polyline_segments = progress.polyline_segments;
+        self.spline_poles = progress.spline_poles;
+    }
     fn clear_drawing_progress(&mut self) {
         self.reset_profile_clicks();
         self.first = None;
@@ -553,7 +586,7 @@ impl SketchEditor {
             return Err("Create or open a sketch first".into());
         }
         if self.has_pending_edits() {
-            return Err("Apply or discard pending edits before drawing".into());
+            return Err(self.pending_edits_refusal());
         }
         if self.support_requested(request) {
             // Placements on the supporting face are projected first (CAD-383).
@@ -2793,7 +2826,7 @@ impl SketchEditor {
     }
     pub fn set_tool(&mut self, tool: DrawTool) -> Result<(), String> {
         if self.has_pending_edits() {
-            return Err("Apply or discard pending edits before drawing".into());
+            return Err(self.pending_edits_refusal());
         }
         if !self.editing {
             return Err("Create or open a sketch first".into());
@@ -3019,7 +3052,7 @@ impl SketchEditor {
             return Err("Create or open a sketch first".into());
         }
         if self.has_pending_edits() {
-            return Err("Apply or discard pending edits before drawing".into());
+            return Err(self.pending_edits_refusal());
         }
         use multicad_core::sketch_draw::{DrawInput, DrawRequest, PointInput};
         let point = PointInput::Position;
@@ -5335,6 +5368,16 @@ impl SketchEditor {
         let hovered = response.hover_pos();
         if let Some(pointer) = hovered {
             self.inline.last_pointer = Some(pointer);
+        }
+        // A placement during the face reference check is not taken; say so
+        // instead of dropping the click silently.
+        if sketch_mode
+            && self.editing
+            && self.tool.is_some()
+            && self.projection_pending()
+            && (response.clicked() || inline_commit)
+        {
+            self.message = self.pending_edits_refusal();
         }
         if sketch_mode
             && self.editing

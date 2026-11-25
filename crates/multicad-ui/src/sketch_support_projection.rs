@@ -32,6 +32,17 @@ pub(super) fn projects(tool: DrawTool) -> bool {
 /// A polyline's first vertex (position, point) and its committed segments.
 type PolylineChain = (Option<([f64; 2], EntityId)>, usize);
 
+/// The placements of a gesture in progress (see `drawing_progress`).
+pub(super) struct DrawProgress {
+    pub(super) first: Option<[f64; 2]>,
+    pub(super) first_anchor: Option<EntityId>,
+    pub(super) support_used: Vec<(TopologyKey, [f64; 2])>,
+    pub(super) arc_start: Option<([f64; 2], Option<EntityId>)>,
+    pub(super) polyline_start: Option<([f64; 2], EntityId)>,
+    pub(super) polyline_segments: usize,
+    pub(super) spline_poles: Vec<([f64; 2], Option<EntityId>)>,
+}
+
 /// A drawing onto face references, waiting for its native check.
 pub(super) struct Pending {
     prepared: Prepared,
@@ -42,6 +53,11 @@ pub(super) struct Pending {
     solved: Option<multicad_core::constraint_sketch::Sketch>,
     /// A polyline's first vertex and segment count, to continue the chain.
     polyline: Option<PolylineChain>,
+    /// The tool and the gesture before the final placement: a refusal
+    /// hands the gesture back so the user can place that point again.
+    tool: Option<DrawTool>,
+    progress: DrawProgress,
+    revision: u64,
 }
 
 /// The point inputs of a draw request a placement may sit on.
@@ -138,8 +154,9 @@ impl SketchEditor {
                     let off: f64 = (0..3)
                         .map(|i| (position_mm[i] - frame.origin[i]) * frame.n[i])
                         .sum();
-                    (off.abs() <= 1e-6 && GeometryIntent::capture(&snapshot, element.key).is_ok())
-                        .then(|| (element.key, frame.coordinates(position_mm)))
+                    (off.abs() <= sketch_external::PLANE_TOLERANCE_MM
+                        && GeometryIntent::capture(&snapshot, element.key).is_ok())
+                    .then(|| (element.key, frame.coordinates(position_mm)))
                 }
                 _ => None,
             })
@@ -165,7 +182,8 @@ impl SketchEditor {
         };
         let dot = |a: [f64; 3], b: [f64; 3]| (0..3).map(|i| a[i] * b[i]).sum::<f64>();
         let on = |p: [f64; 3]| {
-            dot(std::array::from_fn(|i| p[i] - frame.origin[i]), frame.n).abs() <= 1e-6
+            dot(std::array::from_fn(|i| p[i] - frame.origin[i]), frame.n).abs()
+                <= sketch_external::PLANE_TOLERANCE_MM
         };
         snapshot
             .elements
@@ -173,9 +191,12 @@ impl SketchEditor {
             .filter(|element| element.key.kind == TopologyKind::Edge)
             .filter_map(|element| {
                 let edge = match *element.geometry.as_ref()? {
-                    AnalyticGeometry::Line { a_mm, b_mm } => (on(a_mm) && on(b_mm)).then(|| {
-                        SupportEdge::Line(frame.coordinates(a_mm), frame.coordinates(b_mm))
-                    })?,
+                    AnalyticGeometry::Line { a_mm, b_mm } => {
+                        let (a, b) = (frame.coordinates(a_mm), frame.coordinates(b_mm));
+                        // A zero-length edge has no direction to snap along.
+                        let long = (a[0] - b[0]).portable_hypot(a[1] - b[1]) > 1e-9;
+                        (on(a_mm) && on(b_mm) && long).then_some(SupportEdge::Line(a, b))?
+                    }
                     AnalyticGeometry::CircularArc {
                         frame: arc,
                         radius_mm,
@@ -188,7 +209,13 @@ impl SketchEditor {
                             arc.u[0] * arc.v[1] - arc.u[1] * arc.v[0],
                         ];
                         let along = dot(normal, frame.n);
-                        if !on(arc.origin_mm) || along.abs() < 1. - 1e-9 || radius_mm <= 1e-9 {
+                        if !on(arc.origin_mm)
+                            || along.abs() < 1. - 1e-9
+                            || !(radius_mm > 1e-9 && radius_mm.is_finite())
+                            || !start_rad.is_finite()
+                            || !sweep_rad.is_finite()
+                            || sweep_rad.abs() <= 1e-12
+                        {
                             return None;
                         }
                         let center = frame.coordinates(arc.origin_mm);
@@ -349,7 +376,7 @@ impl SketchEditor {
             return Err("Create or open a sketch first".into());
         }
         if self.has_pending_edits() {
-            return Err("Apply or discard pending edits before drawing".into());
+            return Err(self.pending_edits_refusal());
         }
         let sketch = self.selected.ok_or("Select a sketch")?;
         let mut request = request.clone();
@@ -390,6 +417,7 @@ impl SketchEditor {
         })?;
         let polyline = (tool == Some(DrawTool::Polyline))
             .then_some((self.polyline_start, self.polyline_segments));
+        let progress = self.drawing_progress();
         self.projection = Some(Pending {
             prepared,
             requested: false,
@@ -397,6 +425,9 @@ impl SketchEditor {
             created: drawn.created_curves,
             solved: drawn.edit.evaluation.candidate,
             polyline,
+            tool,
+            progress,
+            revision: session.revision(),
         });
         self.last_draw_line = None;
         self.clear_drawing_progress();
@@ -438,6 +469,14 @@ impl SketchEditor {
             construction: self.construction,
         };
         self.draw_on_support(session, &request, &used, vec![], Some(tool), channel)
+    }
+    /// Stands in for a native check that refused the candidate.
+    #[cfg(test)]
+    pub(super) fn refuse_projection(&mut self, error: &str) {
+        if let Some(pending) = &mut self.projection {
+            pending.requested = true;
+            pending.validated = Some(Err(error.into()));
+        }
     }
     pub fn projection_pending(&self) -> bool {
         self.projection.is_some()
@@ -494,6 +533,9 @@ impl SketchEditor {
             created,
             solved,
             polyline,
+            tool,
+            progress,
+            revision,
             ..
         } = pending;
         match result.and_then(|()| {
@@ -540,7 +582,16 @@ impl SketchEditor {
                 }
             }
             Err(error) => {
-                self.message = format!("{error}; nothing was placed");
+                // The document is unchanged, so the gesture is still valid:
+                // hand it back to place the refused point again.
+                if tool.is_some() && self.tool == tool && session.revision() == revision {
+                    self.restore_drawing_progress(progress);
+                    self.message = format!(
+                        "{error}; nothing was placed · place the point again or press Escape"
+                    );
+                } else {
+                    self.message = format!("{error}; nothing was placed");
+                }
             }
         }
         true

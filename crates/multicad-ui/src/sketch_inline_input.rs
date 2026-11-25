@@ -360,7 +360,7 @@ impl SketchEditor {
             return Err("Create or open a sketch first".into());
         }
         if self.has_pending_edits() {
-            return Err("Apply or discard pending edits before drawing".into());
+            return Err(self.pending_edits_refusal());
         }
         let id = self.selected.ok_or("Select a sketch")?;
         let drawn = multicad_solver::draw::prepare_draw(
