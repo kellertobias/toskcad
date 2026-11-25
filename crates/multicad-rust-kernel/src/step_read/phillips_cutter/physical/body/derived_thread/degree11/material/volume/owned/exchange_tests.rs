@@ -312,3 +312,84 @@ fn authored_routing_admits_contained_countersunk_recesses_and_their_export_quali
     let (pan, _) = m3_parts(true, false, 1.5, 1., false);
     assert!(exchange::supports_author(&pan));
 }
+#[test]
+fn retained_d11_moved_occurrence_replays_literal_local_records_through_one_mapped_item() {
+    let original = actual_m3(true, false);
+    let source = read(&original);
+    // A proper rigid occurrence with irrational axes.
+    let (s, c) = (0.6_f64, 0.8_f64);
+    let occurrence = [[10., -20., 30.], [c, s, 0.], [-s, c, 0.], [0., 0., 1.]];
+    let placed =
+        exchange::export_retained_placed(&source, occurrence, Options::default(), None).unwrap();
+    assert_eq!(placed.as_str().matches("MAPPED_ITEM(").count(), 1);
+    let p = placed.qualification().verification();
+    assert!(p.maximum_world_distance_mm <= 1e-7 && p.maximum_world_chart_derivative_mm <= 1e-7);
+    assert!(p.independent_repaired_volume_discrepancy_mm3 <= 1e-5);
+    let fresh = exchange::qualify_placed_actual_file(
+        &source,
+        placed.as_str(),
+        occurrence,
+        Options::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        fresh.material().world_volume_mm3(),
+        placed.qualification().material().world_volume_mm3()
+    );
+    // The identity export is the original flat file; the mapped and flat
+    // contracts do not accept each other's bytes.
+    assert!(
+        exchange::qualify_actual_file(&source, placed.as_str(), Options::default(), None).is_err()
+    );
+    let identity = [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
+    assert_eq!(
+        exchange::qualify_placed_actual_file(
+            &source,
+            &original,
+            identity,
+            Options::default(),
+            None
+        )
+        .err(),
+        Some(Error::Unsupported)
+    );
+    // A one-micrometre different occurrence, a mirrored or skewed occurrence,
+    // another source and cancellation are refused.
+    let mut moved = occurrence;
+    moved[0][0] += 1e-3;
+    assert!(
+        exchange::qualify_placed_actual_file(
+            &source,
+            placed.as_str(),
+            moved,
+            Options::default(),
+            None
+        )
+        .is_err()
+    );
+    let mirrored = [occurrence[0], occurrence[1], occurrence[2], [0., 0., -1.]];
+    let skewed = [occurrence[0], [1., 0., 0.], [0.5, 1., 0.], [0., 0., 1.]];
+    for bad in [mirrored, skewed] {
+        assert_eq!(
+            exchange::export_retained_placed(&source, bad, Options::default(), None).err(),
+            Some(Error::Invalid)
+        );
+    }
+    let other = read(&actual_m3(true, true));
+    assert!(
+        exchange::qualify_placed_actual_file(
+            &other,
+            placed.as_str(),
+            occurrence,
+            Options::default(),
+            None
+        )
+        .is_err()
+    );
+    assert_eq!(
+        exchange::export_retained_placed(&source, occurrence, Options::default(), Some(&|| true))
+            .err(),
+        Some(Error::Cancelled)
+    );
+}

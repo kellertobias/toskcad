@@ -111,6 +111,23 @@ impl OwnedDegree11Material {
         options: Degree11ReplayMatchOptions,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> std::result::Result<Degree11ReplayMatch<'s, 't>, PhillipsReadError> {
+        let identity =
+            [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]].map(|p| p.map(|v| [v, v]));
+        self.match_replayed_material_through(target, occurrence, identity, options, interrupt)
+    }
+    /// The same contract for a target decoded from a mapped item's LOCAL
+    /// records: `target_operator` encloses that item's exact file map
+    /// (origin, then the images of the local axes). Local coefficients must
+    /// still be unchanged; every world bound transports through the map.
+    pub fn match_replayed_material_through<'s, 't>(
+        &'s self,
+        target: &'t Self,
+        occurrence: [[f64; 3]; 4],
+        target_operator: [[[f64; 2]; 3]; 4],
+        options: Degree11ReplayMatchOptions,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> std::result::Result<Degree11ReplayMatch<'s, 't>, PhillipsReadError> {
+        let target_operator = target_operator.map(|p| p.map(|[lo, hi]| I::new(lo, hi)));
         if [options.maximum_distance_mm, options.maximum_derivative_mm]
             .into_iter()
             .any(|x| !x.is_finite() || x <= 0. || x > 1e-7)
@@ -148,7 +165,7 @@ impl OwnedDegree11Material {
             .filter(|x| *x <= options.maximum_bytes)
             .ok_or(PhillipsReadError::Limit)?;
         charge(&mut work, 8192)?;
-        let world = world::compare(self.chart, target.chart, occurrence)?;
+        let world = world::compare_through(self.chart, target.chart, occurrence, target_operator)?;
         compatible(
             self.inventory.len() == target.inventory.len()
                 && self.thread.len() == target.thread.len()
@@ -307,8 +324,8 @@ impl OwnedDegree11Material {
         let derivative = world.linear * source_speed + world.target_norm * local_derivative;
         let mass = I::point(
             (interval(self.world_volume_mm3()) * world.occurrence_determinant
-                - interval(target.world_volume_mm3()))
-            .magnitude(),
+                - interval(target.world_volume_mm3()) * world.target_determinant)
+                .magnitude(),
         );
         compatible(
             [distance, derivative, mass]

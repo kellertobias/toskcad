@@ -241,27 +241,7 @@ impl Writer {
             let item = match (placement, normal) {
                 (Some(p), Some(n)) => {
                     l.charge(4096)?;
-                    let local_origin = file.point([0.; 3]);
-                    let source_axis = file.axis(local_origin, [0., 0., 1.], [1., 0., 0.]);
-                    let length = file.entity(format_args!(
-                        "(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.))"
-                    ));
-                    let angle = file.entity(format_args!(
-                        "(NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.))"
-                    ));
-                    let solid_angle = file.entity(format_args!(
-                        "(NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT())"
-                    ));
-                    let context = file.entity(format_args!("(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT(({length},{angle},{solid_angle})) REPRESENTATION_CONTEXT('',''))"));
-                    let body = Entity(maximum);
-                    let local = file.entity(format_args!(
-                        "SHAPE_REPRESENTATION('',({body},{source_axis}),{context})"
-                    ));
-                    let map = file.entity(format_args!("REPRESENTATION_MAP({source_axis},{local})"));
-                    let target_origin = file.point(p.origin);
-                    let [axis1, axis2, axis3] = [p.u, p.v, n].map(|d| file.direction(d));
-                    let target = file.entity(format_args!("(CARTESIAN_TRANSFORMATION_OPERATOR({axis1},{axis2},{target_origin},1.)CARTESIAN_TRANSFORMATION_OPERATOR_3D({axis3})FUNCTIONALLY_DEFINED_TRANSFORMATION('','')GEOMETRIC_REPRESENTATION_ITEM()REPRESENTATION_ITEM(''))"));
-                    file.entity(format_args!("MAPPED_ITEM('',{map},{target})"))
+                    file.mapped_singleton(Entity(maximum), [p.origin, p.u, p.v, n])
                 }
                 _ => Entity(maximum),
             };

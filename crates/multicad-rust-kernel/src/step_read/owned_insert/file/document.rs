@@ -17,6 +17,16 @@ impl Default for DocumentOptions {
         }
     }
 }
+/// Enclosure of one mapped member's exact operator: origin, then the
+/// normalized images of the local x, y and z axes, and the uniform scale.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MemberOperator {
+    pub origin_mm: [[f64; 2]; 3],
+    pub axes: [[[f64; 2]; 3]; 3],
+    pub scale: [f64; 2],
+    pub handedness: i8,
+    pub work_used: usize,
+}
 /// One validated representation arena. No solid, source recipe, or mass claim.
 pub struct CompoundDocument<'input> {
     source: File<'input>,
@@ -116,6 +126,36 @@ impl<'input> CompoundDocument<'input> {
     }
     pub fn retained_budget_bytes(&self) -> usize {
         self.source.bytes
+    }
+    /// Enclosure of a represented mapped member's exact EXPRESS operator
+    /// (base_axis projections over decimal enclosures). This proves the map
+    /// stated for THIS member's mapping link; no geometry is transported.
+    pub fn member_operator(
+        &self,
+        item: u32,
+        options: Options,
+        interrupt: Option<&dyn Fn() -> bool>,
+    ) -> Result<MemberOperator> {
+        let member = self
+            .represented_members()
+            .iter()
+            .find(|m| m.item_entity() == item)
+            .copied()
+            .ok_or(Error::Unsupported)?;
+        let link = member.mapping_link().ok_or(Error::Unsupported)?;
+        let evaluated = super::super::mapping::evaluate_neutral_operator(
+            self.records(),
+            link.operator_entity(),
+            options,
+            interrupt,
+        )?;
+        Ok(MemberOperator {
+            origin_mm: evaluated.origin,
+            axes: evaluated.axes,
+            scale: evaluated.scale,
+            handedness: evaluated.handedness,
+            work_used: evaluated.work,
+        })
     }
     /// Local ordinary-member graph view. Its query ledger starts at zero;
     /// global document work/storage is separately reported by this document.

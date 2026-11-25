@@ -7,6 +7,8 @@ pub(super) struct WorldDifference {
     pub linear: I,
     pub target_norm: I,
     pub occurrence_determinant: I,
+    /// Determinant of the target's own file operator (one at identity).
+    pub target_determinant: I,
 }
 fn dot(a: [I; 3], b: [I; 3]) -> I {
     (0..3).fold(I::point(0.), |s, i| s + a[i] * b[i])
@@ -42,37 +44,56 @@ pub(super) fn compare(
     target: CommonMouthChart,
     occurrence: [[f64; 3]; 4],
 ) -> std::result::Result<WorldDifference, PhillipsReadError> {
-    if occurrence
-        .into_iter()
-        .flatten()
-        .any(|v| !v.is_finite() || v.abs() > 1e7)
-    {
-        return Err(PhillipsReadError::Invalid);
-    }
-    let occurrence = occurrence.map(|p| p.map(I::point));
+    let identity =
+        [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]].map(|p| p.map(I::point));
+    compare_through(source, target, occurrence, identity)
+}
+fn proper(frame: [[I; 3]; 4]) -> std::result::Result<I, PhillipsReadError> {
     for i in 0..3 {
         for j in 0..3 {
-            let error =
-                dot(occurrence[i + 1], occurrence[j + 1]) - I::point(if i == j { 1. } else { 0. });
-            if error.magnitude() > 1e-6 {
+            let error = dot(frame[i + 1], frame[j + 1]) - I::point(if i == j { 1. } else { 0. });
+            if !error.valid() || error.magnitude() > 1e-6 {
                 return Err(PhillipsReadError::Invalid);
             }
         }
     }
-    let determinant = dot(occurrence[1], cross(occurrence[2], occurrence[3]));
+    let determinant = dot(frame[1], cross(frame[2], frame[3]));
     if !determinant.valid() || determinant.lo <= 0. {
         return Err(PhillipsReadError::Invalid);
     }
-    let identity =
-        [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]].map(|p| p.map(I::point));
+    Ok(determinant)
+}
+/// As [compare], with the target's own decoded file operator (an enclosure
+/// of a mapped item's exact map) applied to its chart instead of identity.
+pub(super) fn compare_through(
+    source: CommonMouthChart,
+    target: CommonMouthChart,
+    occurrence: [[f64; 3]; 4],
+    target_operator: [[I; 3]; 4],
+) -> std::result::Result<WorldDifference, PhillipsReadError> {
+    if occurrence
+        .into_iter()
+        .flatten()
+        .any(|v| !v.is_finite() || v.abs() > 1e7)
+        || target_operator
+            .into_iter()
+            .flatten()
+            .any(|v| !v.valid() || v.magnitude() > 1e7)
+    {
+        return Err(PhillipsReadError::Invalid);
+    }
+    let occurrence = occurrence.map(|p| p.map(I::point));
+    let determinant = proper(occurrence)?;
+    let target_determinant = proper(target_operator)?;
     let a = columns(source, occurrence);
-    let b = columns(target, identity);
+    let b = columns(target, target_operator);
     let delta: [[I; 3]; 4] = std::array::from_fn(|j| std::array::from_fn(|i| a[j][i] - b[j][i]));
     let out = WorldDifference {
         translation: upper_norm(delta[0]),
         linear: upper_norm(delta[1..].iter().flatten().copied()),
         target_norm: upper_norm(b[1..].iter().flatten().copied()),
         occurrence_determinant: determinant,
+        target_determinant,
     };
     if ![out.translation, out.linear, out.target_norm]
         .into_iter()

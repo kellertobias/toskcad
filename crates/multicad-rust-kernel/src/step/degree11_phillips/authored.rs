@@ -260,7 +260,7 @@ impl step::Writer {
             + candidate.qualification.material.retained_budget_bytes()
             + std::mem::size_of::<QualifiedAuthoredStep>();
         let core = self
-            .append_qualified_singleton(candidate.as_str(), bytes, options, interrupt)
+            .append_qualified_singleton(candidate.as_str(), bytes, options, None, interrupt)
             .map_err(|e| match e {
                 periodic_phillips::Error::Limit => Error::Limit,
                 periodic_phillips::Error::Cancelled => Error::Cancelled,
