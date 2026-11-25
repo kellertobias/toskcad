@@ -25,6 +25,9 @@ pub enum StepVerificationMethod {
     DecodedPeriodicRepair,
     /// Independently decoded degree-11 repair matched to its authored source.
     DecodedAuthoredRepair,
+    /// Re-exported imported degree-11 material, independently decoded and
+    /// matched to the retained imported material.
+    DecodedDegree11Repair,
     ActualMappedHeadReference,
     /// Authored clipped hex head in one mapped item, requalified from bytes.
     AuthoredMappedHeadReference,
@@ -84,7 +87,8 @@ fn periodic_member_receipt(
 }
 
 /// Independently decoded degree-11 repaired material matched back to its
-/// authored Phillips source. Volume belongs to that decoded material, not to
+/// authored Phillips source, or to the retained imported material on a
+/// re-export (correspondence cells are then not reported and are zero). Volume belongs to that decoded material, not to
 /// exact occupied raw STEP surfaces; derivatives are normalized chart terms.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StepAuthoredPhillipsMemberReceipt {
@@ -368,6 +372,19 @@ fn verify(
         ) {
             return proof.map(|_| ());
         }
+        if let Some(proof) = verify_degree11_step(
+            path,
+            solid,
+            (
+                artifact.solid_count,
+                artifact.volume_mm3,
+                artifact.bounds_mm,
+            ),
+            artifact.producer,
+            tolerance,
+        ) {
+            return proof.map(|_| ());
+        }
         if let Some(proof) = verify_periodic_step(
             path,
             solid,
@@ -483,6 +500,7 @@ pub fn verify_rust_step_shape(
         || solid.has_partitioned_step_source()
         || solid.has_literal_npt_source()
         || solid.rust_periodic_repaired_phillips_source().is_some()
+        || solid.has_degree11_phillips_step_source()
     {
         return Err(failure(
             ErrorKind::Unsupported,
@@ -545,6 +563,19 @@ pub fn verify_rust_step_shape_receipt(
         return proof;
     }
     if let Some(proof) = verify_pipe_hardware_step(
+        path,
+        solid,
+        (
+            shape.solid_count,
+            shape.volume_mm3,
+            [shape.bounds.min, shape.bounds.max],
+        ),
+        shape.producer,
+        tolerance,
+    ) {
+        return proof;
+    }
+    if let Some(proof) = verify_degree11_step(
         path,
         solid,
         (
@@ -1027,6 +1058,86 @@ fn verify_periodic_step(
             authored_phillips_members: vec![],
             source_volume_bounds_mm3: None,
             verified_tolerance_mm: Some(verified_tolerance),
+            maximum_polynomial_trim_error_mm: None,
+            analytic_closure_tolerance_mm: None,
+        })
+    })())
+}
+fn verify_degree11_step(
+    path: &Path,
+    solid: &Solid,
+    expected: StepMetrics,
+    producer: EntityId,
+    tolerance: f64,
+) -> Option<Result<StepVerificationReceipt, ExportError>> {
+    if !solid.has_degree11_phillips_step_source() {
+        return None;
+    }
+    Some((|| {
+        if !tolerance.is_finite() || tolerance <= 0. {
+            return Err(failure(
+                ErrorKind::Invalid,
+                Some(producer),
+                "Degree-11 STEP verification needs a finite positive tolerance",
+            ));
+        }
+        let bounds = solid.bounds().map_err(io)?;
+        verify_step_dimensions(
+            producer,
+            expected,
+            (
+                solid.solid_count().map_err(io)?,
+                solid.volume_mm3().map_err(io)?,
+                [bounds.min, bounds.max],
+            ),
+            tolerance,
+        )?;
+        let input = read_step_source(path, producer)?;
+        let p = solid
+            .verify_degree11_phillips_step_source(&input, tolerance, None)
+            .expect("typed degree-11 Phillips source")
+            .map_err(|e| {
+                failure(
+                    if e.kind == multicad_kernel::GeometryErrorKind::Limit {
+                        ErrorKind::Budget
+                    } else {
+                        ErrorKind::Invalid
+                    },
+                    Some(producer),
+                    format!("Actual degree-11 material proof failed:{e}"),
+                )
+            })?;
+        let d = p.independent_volume_discrepancy_mm3;
+        Ok(StepVerificationReceipt {
+            actual_head: None,
+            authored_head: None,
+            rounded_blind_repair: None,
+            document_ownership: None,
+            method: StepVerificationMethod::DecodedDegree11Repair,
+            decoded_volume_mm3: None,
+            retained_members: vec![],
+            decoded_scalar_members: vec![],
+            source_correspondence: vec![],
+            source_known_members: vec![],
+            healed_members: vec![],
+            periodic_members: vec![],
+            authored_phillips_members: vec![StepAuthoredPhillipsMemberReceipt {
+                member_index: 0,
+                decoded_volume_bounds_mm3: p.decoded_volume_bounds_mm3,
+                source_volume_bounds_mm3: p.source_volume_bounds_mm3,
+                maximum_world_position_error_mm: p.maximum_world_position_error_mm,
+                maximum_world_chart_derivative_error_mm: p.maximum_world_chart_derivative_error_mm,
+                independent_volume_difference_mm3: [-d, d],
+                verified_tolerance_mm: p.verified_tolerance_mm,
+                reader_reserved_work: p.reader_reserved_work,
+                decoded_material_proof_work: p.decoded_material_proof_work,
+                correspondence_work: p.correspondence_work,
+                correspondence_cavity_cells: 0,
+                document_work: 0,
+                selection_work: 0,
+            }],
+            source_volume_bounds_mm3: None,
+            verified_tolerance_mm: Some(p.verified_tolerance_mm),
             maximum_polynomial_trim_error_mm: None,
             analytic_closure_tolerance_mm: None,
         })
