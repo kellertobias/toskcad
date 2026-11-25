@@ -87,7 +87,7 @@ fn fitted_and_nominal_metric_phillips_mcp_are_transactional_and_reopen_actual_so
                 );
                 assert_eq!(
                     profiles["active_geometry_support"]["phillips_h"]["step_fits"],
-                    json!(["nominal_basic"])
+                    json!(["nominal_basic", "metric_6g_external"])
                 );
                 let mut args = json!({"expected_revision":0,"name":"M3 Phillips","recipe":{
                     "kind":"machine_screw","underhead_length":mm(9.),"shank_diameter":mm(3.),
@@ -169,13 +169,46 @@ fn fitted_and_nominal_metric_phillips_mcp_are_transactional_and_reopen_actual_so
                     assert!(interval[0].as_f64() <= interval[1].as_f64());
                     assert!(export.exists());
                 } else {
+                    // A superseded export is refused and leaves no file.
                     assert!(
-                        dispatch(&host, &call(false), "export_step", arguments.clone()).is_err()
+                        dispatch(&host, &call(true), "export_step", arguments.clone()).is_err()
                     );
                     assert!(!export.exists());
-                    std::fs::write(&export, b"accepted output").unwrap();
-                    assert!(dispatch(&host, &call(false), "export_step", arguments).is_err());
-                    assert_eq!(std::fs::read(export).unwrap(), b"accepted output");
+                    let exported = run(&host, "export_step", arguments);
+                    assert!(exported["readback_volume_mm3"].is_null());
+                    assert_eq!(
+                        exported["step_verification"]["method"],
+                        "decoded_authored_repair"
+                    );
+                    assert!(exported["step_verification"]["periodic_members"].is_null());
+                    let members = exported["step_verification"]["authored_phillips_members"]
+                        .as_array()
+                        .unwrap();
+                    assert_eq!(members.len(), 1);
+                    let m = &members[0];
+                    assert_eq!(m["member_index"], 0);
+                    let decoded = m["decoded_volume_bounds_mm3"].as_array().unwrap();
+                    let source = m["source_volume_bounds_mm3"].as_array().unwrap();
+                    let [d0, d1, s0, s1] = [&decoded[0], &decoded[1], &source[0], &source[1]]
+                        .map(|v| v.as_f64().unwrap());
+                    assert!(0. < d0 && d0 <= d1 && 0. < s0 && s0 <= s1);
+                    // Decoded repaired material and author agree within 1e-5 mm3.
+                    assert!(s0 - d1 <= 1e-5 && d0 - s1 <= 1e-5);
+                    assert!(m["maximum_world_position_error_mm"].as_f64().unwrap() <= 1e-7);
+                    assert!(
+                        m["maximum_world_chart_derivative_error_mm"]
+                            .as_f64()
+                            .unwrap()
+                            <= 1e-7
+                    );
+                    assert!(
+                        m["independent_volume_difference_mm3"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .all(|v| v.as_f64().unwrap().abs() <= 1e-5)
+                    );
+                    assert!(export.exists());
                 }
                 assert_eq!(host.document(), document);
                 run(&host, "save_project", json!({"expected_revision":4}));

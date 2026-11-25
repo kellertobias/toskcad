@@ -129,11 +129,11 @@ use entry_chamfer_body::EntryChamferBody;
 pub use entry_chamfer_body::LiteralMeshEmbedding;
 pub use entry_chamfer_body::{EntryChamferBoundaryProof, EntryChamferData, EntryChamferEdge};
 use helical_body::HelicalBody;
-pub use helical_body::PhillipsMeshVolumePair;
 pub use helical_body::{
     BlindThreadCut, BlindThreadMating, BlindThreadSeat, InternalThreadData,
     ReceivingThreadIntervals,
 };
+pub use helical_body::{DecodedAuthoredPhillipsStepVerification, PhillipsMeshVolumePair};
 pub use helical_tube_body::HelicalTube;
 use helical_tube_body::HelicalTubeBody;
 use herringbone_body::HerringboneBody;

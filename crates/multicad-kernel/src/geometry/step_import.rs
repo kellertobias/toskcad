@@ -198,29 +198,41 @@ impl Solid {
         // back to a reconstructed legacy screw after material proof fails.
         let periodic_candidate = step_read::read_phillips_body(input, tolerance, 1_000_000).is_ok();
         if periodic_candidate {
-            let decoded =
-                step_read::read_periodic_phillips_material(input, Default::default(), None)
-                    .map_err(|cause| {
-                        error(
-                            IMPORT,
-                            match cause.cause {
-                                step_read::PhillipsReadError::Limit => GeometryErrorKind::Limit,
-                                step_read::PhillipsReadError::Cancelled => {
-                                    GeometryErrorKind::Cancelled
-                                }
-                                step_read::PhillipsReadError::Unsupported => {
-                                    GeometryErrorKind::Unsupported
-                                }
-                                step_read::PhillipsReadError::Invalid => {
-                                    GeometryErrorKind::InvalidResult
-                                }
-                            },
-                            format!(
-                                "Independent periodic material import failed at {:?}: {:?}",
-                                cause.stage, cause.cause
-                            ),
-                        )
-                    })?;
+            let periodic =
+                step_read::read_periodic_phillips_material(input, Default::default(), None);
+            // A non-periodic (for example fitted rounded-root) Phillips body is
+            // read by the independent degree-11 reader. The periodic refusal
+            // stands unless that distinct reader earns the whole material.
+            if let Err(step_read::PhillipsPeriodicReadError {
+                cause: step_read::PhillipsReadError::Unsupported,
+                ..
+            }) = &periodic
+                && let Ok(decoded) =
+                    step_read::read_degree11_phillips_material(input, Default::default(), None)
+            {
+                return Self::rust_degree11_repaired_phillips_material(
+                    std::rc::Rc::new(decoded.into_material()),
+                    feature,
+                    PlaneFrame::default(),
+                    policy,
+                    None,
+                );
+            }
+            let decoded = periodic.map_err(|cause| {
+                error(
+                    IMPORT,
+                    match cause.cause {
+                        step_read::PhillipsReadError::Limit => GeometryErrorKind::Limit,
+                        step_read::PhillipsReadError::Cancelled => GeometryErrorKind::Cancelled,
+                        step_read::PhillipsReadError::Unsupported => GeometryErrorKind::Unsupported,
+                        step_read::PhillipsReadError::Invalid => GeometryErrorKind::InvalidResult,
+                    },
+                    format!(
+                        "Independent periodic material import failed at {:?}: {:?}",
+                        cause.stage, cause.cause
+                    ),
+                )
+            })?;
             return Self::rust_periodic_repaired_phillips_material(
                 std::rc::Rc::new(decoded.into_material()),
                 feature,

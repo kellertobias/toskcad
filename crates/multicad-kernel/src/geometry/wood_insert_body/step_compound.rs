@@ -18,6 +18,9 @@ pub struct PartitionedStepVerification {
     pub healed_members: Vec<(u32, HealedSupportStepVerification)>,
     /// Independently decoded periodic repairs, never raw occupied STEP mass.
     pub periodic_members: Vec<(u32, DecodedPeriodicPhillipsStepVerification)>,
+    /// Independently decoded degree-11 repairs matched to their authored
+    /// Phillips source, never raw occupied STEP mass.
+    pub authored_phillips_members: Vec<(u32, DecodedAuthoredPhillipsStepVerification)>,
 }
 fn leaves<'a>(solid: &'a Solid, output: &mut Vec<&'a Solid>) {
     if let Some(compound) = solid.rust_compound() {
@@ -40,6 +43,7 @@ impl Solid {
     pub fn has_partitioned_step_source(&self) -> bool {
         self.has_wood_insert_step_source()
             || self.rust_periodic_repaired_phillips_source().is_some()
+            || self.authored_phillips_body().is_some()
             || self.clipped_npt_body().is_some()
             || self.hanger_body().is_some()
             || self.orthogonal_seat_body().is_some()
@@ -115,6 +119,7 @@ impl Solid {
                 source_known_members: vec![],
                 healed_members: vec![],
                 periodic_members: vec![],
+                authored_phillips_members: vec![],
             };
             let mut cursor = 0usize;
             for leaf in sources {
@@ -159,6 +164,35 @@ impl Solid {
                     }
                     include(&mut result.members.bounds_mm, proof.decoded_bounds_mm);
                     result.periodic_members.push((cursor as u32, proof));
+                } else if let Some((body, frame)) = leaf.authored_phillips_body() {
+                    if count != 1 {
+                        return Err(fail(
+                            GeometryErrorKind::InvalidResult,
+                            "Authored Phillips source requires one connected member",
+                        ));
+                    }
+                    let proof = body.verify_step_member(
+                        &file,
+                        actual[0],
+                        frame,
+                        GeometryPolicy {
+                            linear_tolerance_mm: leaf.policy.linear_tolerance_mm.min(tolerance),
+                            ..leaf.policy
+                        },
+                        interrupt,
+                    )?;
+                    if proof.member_index != cursor
+                        || proof.represented_member_count != file.represented_members().len()
+                    {
+                        return Err(fail(
+                            GeometryErrorKind::InvalidResult,
+                            "Authored Phillips STEP selection differs from the current member",
+                        ));
+                    }
+                    include(&mut result.members.bounds_mm, proof.decoded_bounds_mm);
+                    result
+                        .authored_phillips_members
+                        .push((cursor as u32, proof));
                 } else if let Some((body, frame)) = leaf.wood_insert_body() {
                     if count != 1
                         || (actual[0].mapping_link().is_none() && frame != PlaneFrame::default())

@@ -5084,17 +5084,47 @@ fn default_stdio_phillips_metric_screws_keep_actual_geometry_history_and_atomic_
             let mut independent_reopened = Client::start(&cold_arguments);
             close(independent_reopened.part_volume(), imported_volume);
         } else {
-            client.fail(
+            let exported = client.ok(
                 "export_step",
                 json!({"part":created["part"],"file_name":"phillips.step"}),
             );
-            assert!(!output.exists());
-            std::fs::write(&output, b"accepted file").unwrap();
-            client.fail(
-                "export_step",
-                json!({"part":created["part"],"file_name":"phillips.step"}),
+            assert!(exported["readback_volume_mm3"].is_null());
+            let receipt = &exported["step_verification"];
+            assert_eq!(receipt["method"], "decoded_authored_repair");
+            let members = receipt["authored_phillips_members"].as_array().unwrap();
+            assert_eq!(members.len(), 1);
+            assert_eq!(members[0]["member_index"], 0);
+            let interval = members[0]["decoded_volume_bounds_mm3"].as_array().unwrap();
+            let [lo, hi] = [0, 1].map(|i| interval[i].as_f64().unwrap());
+            assert!(0. < lo && lo <= hi);
+            close(exported["model_volume_mm3"].as_f64().unwrap(), lo);
+            assert!(
+                members[0]["maximum_world_position_error_mm"]
+                    .as_f64()
+                    .unwrap()
+                    <= 1e-7
             );
-            assert_eq!(std::fs::read(&output).unwrap(), b"accepted file");
+            assert!(
+                members[0]["maximum_world_chart_derivative_error_mm"]
+                    .as_f64()
+                    .unwrap()
+                    <= 1e-7
+            );
+            assert!(output.exists());
+            assert_eq!(client.revision(), 4);
+            let cold_project = directory.path().join("independent-fitted-phillips.tcd");
+            let mut independent = Client::start(&[
+                "--project",
+                cold_project.to_str().unwrap(),
+                "--export-dir",
+                directory.path().to_str().unwrap(),
+            ]);
+            independent.ok(
+                "import_step",
+                json!({"expected_revision":0,"file_name":"phillips.step"}),
+            );
+            let imported_volume = independent.part_volume();
+            assert!(lo <= imported_volume && imported_volume <= hi);
         }
         client.ok("save_project", json!({"expected_revision":4}));
         drop(client);
