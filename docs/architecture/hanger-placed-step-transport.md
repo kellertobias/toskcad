@@ -24,7 +24,7 @@ All quantities are outward-rounded intervals. Norms are upper bounds.
    For orthonormal-to-rounding axes this is `s²(1 + m)` with `m = max_i Σ_j |G_ij − s²δ_ij| / s²`.
    The implementation uses the first, unconditional form.
 
-2. **Frame difference.** `D = A − R` uses decoded intervals minus exact frame values. It is bounded by its Frobenius norm `‖D‖_F` (≥ ‖D‖₂).
+2. **Frame difference.** `D = A − R` uses decoded intervals minus exact frame values. It is bounded by its Frobenius norm `‖D‖_F` (≥ ‖D‖₂). The file's operator values are decimals. Each decoded component is widened to its neighbouring floats before use.
 
 3. **Position.** Let H be the healed local surface, S the local source, and B the local source box. For any local point x of H, with `|x − S(x)| ≤ e0`:
    `|A x + o − (R S(x) + t)| ≤ ‖A‖₂ e0 + |o − t + D c| + ‖D‖_F r`.
@@ -40,7 +40,7 @@ All quantities are outward-rounded intervals. Norms are upper bounds.
      - `|∂N|` from the hull of `p (w_{i+1}P_{i+1} − w_i P_i) / Δ`, and `|∂W|` from the hull of `p (w_{i+1} − w_i) / Δ`.
 
      This gives `sup|∂S| ≤ (sup|∂N| + max|P| sup|∂W|) / w_min`. A non-positive or non-finite weight refuses.
-   - **Plane.** The chart derivatives are the two placement axes. Their norms are bounded by evaluating the written directions with outward rounding, not by assuming 1.
+   - **Plane.** The chart derivatives are the two placement axes. ISO 10303-42 normalizes `AXIS2_PLACEMENT_3D` directions, so both axes are unit vectors whatever ratios are written.
    - **Coedge curves (3D B-splines).** These use the curve bound above. 2D pcurves are unaffected by the operator.
 
 5. **Volume.** Healed volume transports by `det A`. The bound is `det A = s³ det[a1 a2 a3]`, an interval product of the decoded axes, and must be positive. A reflection or singular map refuses. The source volume uses the authored frame, whose determinant is 1 for a proper frame.
