@@ -23,6 +23,8 @@ eframe = { version = "=0.36.2", default-features = false, features = ["wgpu", "d
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+# cargo-llvm-cov sets cfg(coverage) for instrumented builds.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
