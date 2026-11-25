@@ -289,6 +289,19 @@ impl Placement {
         ])?;
         Ok(result)
     }
+    /// Each factor as (row-major matrix, translation), in application order.
+    pub(super) fn factor_rows(&self) -> Vec<([[f64; 3]; 3], [f64; 3])> {
+        self.factors
+            .iter()
+            .map(|a| {
+                let c = a.columns;
+                (
+                    std::array::from_fn(|i| std::array::from_fn(|j| c[j + 1][i])),
+                    c[0],
+                )
+            })
+            .collect()
+    }
     pub(super) fn is_identity(&self) -> bool {
         self.factors.is_empty()
     }
