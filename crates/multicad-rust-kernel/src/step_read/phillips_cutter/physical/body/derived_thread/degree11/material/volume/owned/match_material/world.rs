@@ -39,15 +39,6 @@ fn columns(chart: CommonMouthChart, occurrence: [[I; 3]; 4]) -> [[I; 3]; 4] {
         linear(c[3]),
     ]
 }
-pub(super) fn compare(
-    source: CommonMouthChart,
-    target: CommonMouthChart,
-    occurrence: [[f64; 3]; 4],
-) -> std::result::Result<WorldDifference, PhillipsReadError> {
-    let identity =
-        [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]].map(|p| p.map(I::point));
-    compare_through(source, target, occurrence, identity)
-}
 fn proper(frame: [[I; 3]; 4]) -> std::result::Result<I, PhillipsReadError> {
     for i in 0..3 {
         for j in 0..3 {
@@ -63,8 +54,9 @@ fn proper(frame: [[I; 3]; 4]) -> std::result::Result<I, PhillipsReadError> {
     }
     Ok(determinant)
 }
-/// As [compare], with the target's own decoded file operator (an enclosure
-/// of a mapped item's exact map) applied to its chart instead of identity.
+/// Source chart at `occurrence` against the target chart under its own
+/// decoded file operator (identity for a flat file, or an enclosure of a
+/// mapped item's exact map).
 pub(super) fn compare_through(
     source: CommonMouthChart,
     target: CommonMouthChart,
