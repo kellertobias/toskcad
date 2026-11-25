@@ -1010,3 +1010,62 @@ fn authored_phillips_member_proof_refuses_mapped_and_foreign_members() {
     assert_eq!((proof.member_index, proof.represented_member_count), (0, 1));
     assert!(proof.maximum_world_position_error_mm <= 1e-7);
 }
+#[test]
+fn authored_phillips_append_and_singleton_proof_refuse_bad_tolerance_cancellation_and_pairs() {
+    let s = Solid::rust_phillips_source_for_test(
+        fixture(1, 0., false),
+        feature(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+        &|| false,
+    )
+    .unwrap();
+    assert!(s.rust_authored_phillips_step_source().is_some());
+    // Two qualified appends replay into one writer as two members.
+    let mut writer = multicad_rust_kernel::step::Writer::new();
+    for _ in 0..2 {
+        let receipt = s
+            .append_authored_phillips_step(&mut writer, None)
+            .unwrap()
+            .unwrap();
+        assert!(receipt.matched_entities > 0);
+    }
+    let pair = writer.finish().unwrap();
+    let refusal = s
+        .verify_authored_phillips_step_source(&pair, 1e-7, None)
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refusal.kind, GeometryErrorKind::InvalidResult);
+    let mut single = multicad_rust_kernel::step::Writer::new();
+    s.append_authored_phillips_step(&mut single, None)
+        .unwrap()
+        .unwrap();
+    let text = single.finish().unwrap();
+    for bad in [0., f64::NAN] {
+        assert_eq!(
+            s.verify_authored_phillips_step_source(&text, bad, None)
+                .unwrap()
+                .unwrap_err()
+                .kind,
+            GeometryErrorKind::Input
+        );
+    }
+    assert_eq!(
+        s.verify_authored_phillips_step_source(&text, 1e-7, Some(&|| true))
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Cancelled
+    );
+    let mut cancelled = multicad_rust_kernel::step::Writer::new();
+    assert_eq!(
+        s.append_authored_phillips_step(&mut cancelled, Some(&|| true))
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        GeometryErrorKind::Cancelled
+    );
+    s.verify_authored_phillips_step_source(&text, 1e-7, None)
+        .unwrap()
+        .unwrap();
+}
