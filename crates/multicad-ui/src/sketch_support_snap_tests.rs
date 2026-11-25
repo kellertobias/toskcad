@@ -232,8 +232,9 @@ impl Host {
         while !ready(self) {
             assert!(
                 Instant::now() < deadline,
-                "Timed out waiting for {what}: {}",
-                self.editor.message
+                "Timed out waiting for {what}: {} · {}",
+                self.editor.message,
+                self.diagnostics()
             );
             self.frame(vec![]);
             std::thread::sleep(Duration::from_millis(1));
@@ -246,10 +247,51 @@ impl Host {
             .project(world.map(|v| v as f32), self.editor.viewport_rect.unwrap());
         Pos2::new(p[0], p[1])
     }
-    /// Hovers `world` until the canvas shows a support snap there.
+    /// Readiness of the drawing canvas, reported when a wait times out.
+    fn diagnostics(&self) -> String {
+        let (document, revision) = (self.session.document(), self.session.revision());
+        format!(
+            "revision {revision}; scene {:?}; feed current {}; sketch {:?}; pose wait {}; \
+             {} corners, {} edges; shown {:?}; pending edits {}; tool {:?}; camera {:?}; \
+             viewport {:?}; last pointer {:?}",
+            self.editor
+                .display_scene
+                .as_ref()
+                .map(|scene| scene.stamp()),
+            self.feed.is_current(document.id(), revision),
+            self.editor
+                .read_sketch(document, self.sketch, revision)
+                .err()
+                .map(|e| e.to_string()),
+            self.editor.waiting_for_sketch_pose(self.sketch),
+            self.editor
+                .support_corners(&self.session, self.sketch)
+                .len(),
+            self.editor.support_edges(&self.session, self.sketch).len(),
+            self.editor
+                .snap_assist
+                .shown()
+                .map(|target| (target.kind, target.position)),
+            self.editor.has_pending_edits(),
+            self.editor.tool,
+            self.editor.camera,
+            self.editor.viewport_rect,
+            self.editor.inline.last_pointer,
+        )
+    }
+    /// Hovers `world` until the canvas shows a support snap there. It waits
+    /// for the canvas to draw (current solve, current scene, offered face
+    /// targets), then projects `world` with the camera of every frame: the
+    /// editor may still reframe the model once the scene and viewport exist.
     fn hover_support(&mut self, world: [f64; 3], kind: TargetKind) {
-        let at = self.screen(world);
+        self.wait("a drawable face sketch with face targets", |h| {
+            let (document, revision) = (h.session.document(), h.session.revision());
+            h.editor.read_sketch(document, h.sketch, revision).is_ok()
+                && !(h.editor.support_corners(&h.session, h.sketch).is_empty()
+                    && h.editor.support_edges(&h.session, h.sketch).is_empty())
+        });
         self.wait("the face snap target", |h| {
+            let at = h.screen(world);
             h.frame(vec![egui::Event::PointerMoved(at)]);
             h.editor
                 .snap_assist
