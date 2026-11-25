@@ -82,14 +82,17 @@ fn receipt(r: AuthoredHeadReceipt) -> PipeHardwareStepVerification {
         accounted_peak_bytes: r.source.accounted_peak_bytes,
     }
 }
+/// Retained local boundary and the hex stock it is joined to.
+#[derive(Clone, Copy)]
+struct RetainedSpec<'a> {
+    local: &'a RadialBoundary,
+    kind: HexStockKind,
+    across_flats_mm: f64,
+    span_mm: [f64; 2],
+}
 enum Exchange<'a> {
     Clipped(&'a StockClipPlan, HexHeadIntent),
-    Retained {
-        local: &'a RadialBoundary,
-        kind: HexStockKind,
-        across_flats_mm: f64,
-        span_mm: [f64; 2],
-    },
+    Retained(RetainedSpec<'a>),
 }
 /// The placed retained boundary, its stock and the earned transport bounds.
 struct Retained {
@@ -150,12 +153,12 @@ impl PipeHardwareBody {
                 (HexStockKind::Nut, across_flats_mm, [0., length])
             }
         };
-        Some(Exchange::Retained {
+        Some(Exchange::Retained(RetainedSpec {
             local,
             kind,
             across_flats_mm,
             span_mm,
-        })
+        }))
     }
     fn options(
         &self,
@@ -191,15 +194,18 @@ impl PipeHardwareBody {
     /// at most |t - o| + |A - M|_F R plus the f64 rounding of the transform.
     fn retained(
         &self,
-        local: &RadialBoundary,
-        kind: HexStockKind,
-        across_flats_mm: f64,
-        span_mm: [f64; 2],
+        spec: RetainedSpec<'_>,
         tolerance: f64,
         policy: GeometryPolicy,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<Retained, GeometryError> {
         checkpoint(interrupt)?;
+        let RetainedSpec {
+            local,
+            kind,
+            across_flats_mm,
+            span_mm,
+        } = spec;
         let tol = Self::tolerance(tolerance, policy)?;
         let (columns, translation) = self.placement.composed();
         let o = midpoint(translation);
@@ -347,21 +353,8 @@ impl Solid {
                 .map(receipt)
                 .map_err(head_error)
             }
-            Exchange::Retained {
-                local,
-                kind,
-                across_flats_mm,
-                span_mm,
-            } => {
-                let r = body.retained(
-                    local,
-                    kind,
-                    across_flats_mm,
-                    span_mm,
-                    tolerance,
-                    self.policy,
-                    interrupt,
-                )?;
+            Exchange::Retained(spec) => {
+                let r = body.retained(spec, tolerance, self.policy, interrupt)?;
                 let tol = PipeHardwareBody::tolerance(tolerance, self.policy)?;
                 multicad_rust_kernel::step::verify_pipe_hex_hardware(
                     text,
@@ -401,21 +394,8 @@ impl Solid {
                     .map_err(head_error)?
                     .into_string()
                 }
-                Exchange::Retained {
-                    local,
-                    kind,
-                    across_flats_mm,
-                    span_mm,
-                } => {
-                    let r = body.retained(
-                        local,
-                        *kind,
-                        *across_flats_mm,
-                        *span_mm,
-                        tolerance,
-                        self.policy,
-                        interrupt,
-                    )?;
+                Exchange::Retained(spec) => {
+                    let r = body.retained(*spec, tolerance, self.policy, interrupt)?;
                     let tol = PipeHardwareBody::tolerance(tolerance, self.policy)?;
                     multicad_rust_kernel::step::write_pipe_hex_hardware(&r.boundary, r.stock, tol)
                         .map_err(exchange_error)?

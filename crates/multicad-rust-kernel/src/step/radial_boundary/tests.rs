@@ -223,7 +223,8 @@ fn pipe_boundary(rounded: bool, external: bool) -> RadialBoundary {
 fn pipe_hex_hardware_keeps_exact_thread_tables_and_stock_for_nuts_and_heads() {
     use crate::step_read::{HexStock, HexStockKind, read_pipe_hex_hardware};
     let tilt = 0.3_f64;
-    let (s, c) = (tilt.sin(), tilt.cos());
+    use multicad_precision::PortableMath as _;
+    let (s, c) = (tilt.portable_sin(), tilt.portable_cos());
     for rounded in [false, true] {
         for kind in [HexStockKind::Nut, HexStockKind::Head] {
             let local = pipe_boundary(rounded, kind == HexStockKind::Head);
