@@ -56,6 +56,15 @@ fn named_phillips_face_frames_follow_rigid_occurrences_without_axis_flips() {
     }
 }
 pub(in crate::geometry) fn fixture(index: usize, plain: f64, left: bool) -> PhillipsScrew {
+    fixture_with(index, plain, left, false)
+}
+/// `nominal` keeps the thread crest on the shank radius (shoulder join).
+pub(in crate::geometry) fn fixture_with(
+    index: usize,
+    plain: f64,
+    left: bool,
+    nominal: bool,
+) -> PhillipsScrew {
     let (m, r, b, g, inner, beta, rs, pitch, head) = match index {
         0 => (
             1.9,
@@ -203,7 +212,7 @@ pub(in crate::geometry) fn fixture(index: usize, plain: f64, left: bool) -> Phil
     )
     .unwrap();
     let thread = Thread::new(helical_thread::Spec {
-        major_radius_mm: rs - 0.03,
+        major_radius_mm: if nominal { rs } else { rs - 0.03 },
         pitch_mm: pitch,
         length_mm: 8.,
         depth_mm: 0.6 * pitch,
@@ -799,4 +808,150 @@ fn public_source_constructor_and_interrupt_wrapper_keep_the_actual_source() {
         )
         .is_ok()
     );
+}
+
+/// The ten nominal metric shoulder cases (five Crowned heads, both hands, the
+/// left hand posed) through the production route: periodic family routing,
+/// direct authored material, then native mass, manufacturing, occupancy,
+/// verified STEP and independent import.
+#[test]
+fn nominal_metric_shoulder_matrix_admits_mass_manufacturing_occupancy_and_step() {
+    use multicad_rust_kernel::phillips_drive::Classification;
+    use multicad_rust_kernel::step_read::PhillipsOwnedPeriodicMaterial as Owned;
+    for index in [0, 1, 3, 4, 5] {
+        for left in [false, true] {
+            let source = fixture_with(index, 0., left, true);
+            assert!(Owned::supports_authored_parts(
+                source.thread(),
+                source.profile(),
+                source.cavity().source(),
+                source.spec(),
+            ));
+            let owned = Owned::from_authored_parts(
+                source.thread(),
+                source.profile(),
+                source.cavity().source(),
+                source.spec(),
+                Default::default(),
+                None,
+            )
+            .unwrap();
+            // Source mass: decoded-free authored material against the
+            // independent author oracle.
+            let oracle = source.source_volume_bounds().unwrap().volume_mm3();
+            let local = owned.world_volume_mm3();
+            assert!(local[0] <= oracle[1] && local[1] >= oracle[0]);
+            assert!(local[1] - local[0] <= 1e-6);
+            let frame = if left {
+                PlaneFrame {
+                    origin: [105., -20., 60.],
+                    u: [0.8, 0.6, 0.],
+                    v: [0.36, -0.48, -0.8],
+                }
+            } else {
+                PlaneFrame::default()
+            };
+            let solid = Solid::rust_periodic_repaired_phillips_material(
+                Rc::new(owned),
+                feature(),
+                frame,
+                GeometryPolicy::default(),
+                None,
+            )
+            .unwrap();
+            let label = format!("index{index} left{left}");
+            let volume = solid.volume_mm3().unwrap();
+            assert!(
+                volume >= local[0] - 1e-9 && volume <= local[1] + 1e-9,
+                "{label}"
+            );
+            // Manufacturing: closed certified mesh.
+            let receipt = solid
+                .manufacturing_mesh_with_receipt(Default::default())
+                .unwrap();
+            assert!(!receipt.mesh.indices.is_empty(), "{label}");
+            assert_eq!(receipt.edge_pairs as usize * 2, receipt.mesh.indices.len());
+            // Occupied space: thread core inside; above the head and inside
+            // the recess mouth outside.
+            let world = |p: [f64; 3]| -> [f64; 3] {
+                std::array::from_fn(|i| {
+                    frame.origin[i]
+                        + frame.u[i] * p[0]
+                        + frame.v[i] * p[1]
+                        + frame.normal()[i] * p[2]
+                })
+            };
+            let top = source.head_top_z();
+            let thread = source.thread().spec();
+            let core = thread.major_radius_mm - thread.depth_mm - 0.05;
+            let classify = |p: [f64; 3]| {
+                solid
+                    .rust_periodic_repaired_phillips_classify_world_box(
+                        world(p).map(|x| [x, x]),
+                        Default::default(),
+                        None,
+                    )
+                    .unwrap()
+                    .location()
+            };
+            assert!(matches!(
+                classify([core / 2., 0., thread.length_mm / 2.]),
+                Classification::Inside
+            ));
+            assert!(matches!(
+                classify([0., 0., top + 0.1]),
+                Classification::Outside
+            ));
+            assert!(matches!(
+                classify([0., 0., top - 0.05]),
+                Classification::Outside
+            ));
+            // STEP: written, freshly verified from actual bytes, and
+            // independently imported with the verified volume.
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("shoulder.step");
+            assert!(solid.supports_step_export());
+            let proof = solid
+                .write_periodic_phillips_step_with_verification(&path, 1e-7, None)
+                .unwrap()
+                .unwrap();
+            assert!(proof.maximum_world_position_error_mm <= 1e-7, "{label}");
+            assert!(
+                proof.maximum_world_chart_derivative_error_mm <= 1e-7,
+                "{label}"
+            );
+            let text = std::fs::read_to_string(&path).unwrap();
+            let imported = Solid::import_rust_step(&text, feature(), Default::default()).unwrap();
+            let (decoded, _) = imported.rust_periodic_repaired_phillips_source().unwrap();
+            assert_eq!(decoded.world_volume_mm3(), proof.decoded_volume_bounds_mm3);
+            assert!(
+                proof.decoded_volume_bounds_mm3[0] <= volume + 1e-5
+                    && proof.decoded_volume_bounds_mm3[1] >= volume - 1e-5,
+                "{label}"
+            );
+            // A different hand is refused for these actual bytes.
+            let other = Solid::rust_periodic_repaired_phillips_material(
+                Rc::new(
+                    Owned::from_authored(
+                        &fixture_with(index, 0., !left, true),
+                        Default::default(),
+                        None,
+                    )
+                    .unwrap(),
+                ),
+                feature(),
+                frame,
+                GeometryPolicy::default(),
+                None,
+            )
+            .unwrap();
+            assert!(
+                other
+                    .verify_periodic_phillips_step_source(&text, 1e-7, None)
+                    .unwrap()
+                    .is_err(),
+                "{label}"
+            );
+        }
+    }
 }
