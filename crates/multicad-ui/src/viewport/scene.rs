@@ -453,15 +453,42 @@ impl Geometry {
                 nodes: vec![],
                 order: (0..count).collect(),
             };
-            self.build(&mut picking, 0..count);
+            // Per-triangle bounds and axis centres are computed once. Node
+            // bounds are unions of exactly these min/max values and split keys
+            // use the same three-term sums, so the tree is the one a rescan
+            // of every vertex at every level would build.
+            let vertices = &self.vertices;
+            let indices = &self.indices;
+            let mut triangles = Vec::with_capacity(count);
+            let mut centers = Vec::with_capacity(count);
+            for t in 0..count {
+                let mut bounds = Bounds::empty();
+                for p in self.triangle(t) {
+                    bounds.include(p);
+                }
+                triangles.push(bounds);
+                centers.push(std::array::from_fn::<f64, 3, _>(|axis| {
+                    (0..3)
+                        .map(|i| vertices[indices[t * 3 + i] as usize][axis])
+                        .sum::<f64>()
+                }));
+            }
+            Self::build(&mut picking, &triangles, &centers, 0..count);
             picking
         })
     }
-    fn build(&self, picking: &mut PickingIndex, range: std::ops::Range<usize>) -> usize {
+    fn build(
+        picking: &mut PickingIndex,
+        triangles: &[Bounds],
+        centers: &[[f64; 3]],
+        range: std::ops::Range<usize>,
+    ) -> usize {
         let mut bounds = Bounds::empty();
-        for i in &picking.order[range.clone()] {
-            for p in self.triangle(*i) {
-                bounds.include(p)
+        for &i in &picking.order[range.clone()] {
+            let t = &triangles[i];
+            for k in 0..3 {
+                bounds.min[k] = bounds.min[k].min(t.min[k]);
+                bounds.max[k] = bounds.max[k].max(t.max[k]);
             }
         }
         let index = picking.nodes.len();
@@ -476,18 +503,12 @@ impl Geometry {
                 })
                 .expect("three axes");
             let middle = range.len() / 2;
-            let vertices = &self.vertices;
-            let indices = &self.indices;
-            let center = |t: usize| {
-                (0..3)
-                    .map(|i| vertices[indices[t * 3 + i] as usize][axis])
-                    .sum::<f64>()
-            };
-            picking.order[range.clone()]
-                .select_nth_unstable_by(middle, |a, b| center(*a).total_cmp(&center(*b)));
+            picking.order[range.clone()].select_nth_unstable_by(middle, |a, b| {
+                centers[*a][axis].total_cmp(&centers[*b][axis])
+            });
             let split = range.start + middle;
-            let a = self.build(picking, range.start..split);
-            let b = self.build(picking, split..range.end);
+            let a = Self::build(picking, triangles, centers, range.start..split);
+            let b = Self::build(picking, triangles, centers, split..range.end);
             picking.nodes[index].children = Children::Branch(a, b);
         }
         index

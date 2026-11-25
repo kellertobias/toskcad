@@ -295,3 +295,97 @@ fn only_instanced_geometry_builds_its_picking_index_until_isolated() {
     assert_eq!(hit.geometry, hidden);
     assert_eq!(hit.point_mm, [0.25, 0.25, 1.]);
 }
+/// The previous build rescanned every vertex at every level and recomputed
+/// split keys per comparison; the cached build must give the same tree.
+fn reference_build(
+    g: &Geometry,
+    picking: &mut PickingIndex,
+    range: std::ops::Range<usize>,
+) -> usize {
+    let mut bounds = Bounds::empty();
+    for i in &picking.order[range.clone()] {
+        for p in g.triangle(*i) {
+            bounds.include(p)
+        }
+    }
+    let index = picking.nodes.len();
+    picking.nodes.push(Node {
+        bounds,
+        children: Children::Leaf(range.clone()),
+    });
+    if range.len() > 8 {
+        let axis = (0..3)
+            .max_by(|a, b| {
+                (bounds.max[*a] - bounds.min[*a]).total_cmp(&(bounds.max[*b] - bounds.min[*b]))
+            })
+            .unwrap();
+        let middle = range.len() / 2;
+        let center = |t: usize| {
+            (0..3)
+                .map(|i| g.vertices[g.indices[t * 3 + i] as usize][axis])
+                .sum::<f64>()
+        };
+        picking.order[range.clone()]
+            .select_nth_unstable_by(middle, |a, b| center(*a).total_cmp(&center(*b)));
+        let split = range.start + middle;
+        let a = reference_build(g, picking, range.start..split);
+        let b = reference_build(g, picking, split..range.end);
+        picking.nodes[index].children = Children::Branch(a, b);
+    }
+    index
+}
+#[test]
+fn cached_picking_index_builds_the_same_tree_as_a_full_rescan() {
+    let id = EntityId::new();
+    let solid = Solid::rust_sphere_named(3., Default::default(), id, Default::default()).unwrap();
+    let mesh = solid
+        .mesh(MeshOptions {
+            linear_deflection_mm: 0.01,
+            ..Default::default()
+        })
+        .unwrap();
+    let mut vertices = mesh.vertices.as_chunks::<3>().0.to_vec();
+    // Signed zeros must keep their total order in the split keys.
+    for v in &mut vertices {
+        for c in v.iter_mut() {
+            if *c == 0. {
+                *c = -0.;
+            }
+        }
+    }
+    let geometry = Geometry::new(
+        id,
+        vertices,
+        mesh.indices,
+        mesh.face_indices,
+        solid.topology_snapshot(id, 0).unwrap().elements,
+    )
+    .unwrap();
+    let count = geometry.triangle_faces.len();
+    assert!(count > 1000, "{count}");
+    let mut reference = PickingIndex {
+        nodes: vec![],
+        order: (0..count).collect(),
+    };
+    reference_build(&geometry, &mut reference, 0..count);
+    let cached = geometry.picking_index();
+    assert_eq!(cached.order, reference.order);
+    assert_eq!(cached.nodes.len(), reference.nodes.len());
+    for (a, b) in cached.nodes.iter().zip(&reference.nodes) {
+        assert_eq!(
+            a.bounds.min.map(f64::to_bits),
+            b.bounds.min.map(f64::to_bits)
+        );
+        assert_eq!(
+            a.bounds.max.map(f64::to_bits),
+            b.bounds.max.map(f64::to_bits)
+        );
+        match (&a.children, &b.children) {
+            (Children::Leaf(x), Children::Leaf(y)) => assert_eq!(x, y),
+            (Children::Branch(x0, x1), Children::Branch(y0, y1)) => {
+                assert_eq!((x0, x1), (y0, y1))
+            }
+            _ => panic!("different node kinds"),
+        }
+    }
+}
