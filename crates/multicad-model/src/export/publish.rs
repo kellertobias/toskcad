@@ -619,9 +619,7 @@ fn verify_pipe_hardware_step(
     }
     Some((|| {
         let input = read_step_source(path, producer)?;
-        let proof = solid
-            .verify_pipe_hardware_step_source(&input, tolerance, None)
-            .expect("typed authored pipe hardware");
+        // The cheap dimension check runs before the file proof.
         let b = solid.bounds().map_err(io)?;
         verify_step_dimensions(
             producer,
@@ -633,6 +631,9 @@ fn verify_pipe_hardware_step(
             ),
             tolerance,
         )?;
+        let proof = solid
+            .verify_pipe_hardware_step_source(&input, tolerance, None)
+            .expect("typed authored pipe hardware");
         let proof = proof.map_err(|e| {
             failure(
                 if e.kind == multicad_kernel::GeometryErrorKind::Limit {
@@ -641,7 +642,7 @@ fn verify_pipe_hardware_step(
                     ErrorKind::Invalid
                 },
                 Some(producer),
-                format!("Authored pipe hardware file proof failed:{e}"),
+                format!("Authored pipe hardware file proof failed: {e}"),
             )
         })?;
         let mut receipt = StepVerificationReceipt::decoded(0.);
@@ -836,7 +837,7 @@ fn verify_partitioned_step(
                         ErrorKind::Invalid
                     },
                     Some(producer),
-                    format!("Actual insert file proof failed:{e}"),
+                    format!("Actual insert file proof failed: {e}"),
                 )
             })?;
         Ok(StepVerificationReceipt {
@@ -989,7 +990,7 @@ fn verify_periodic_step(
                         ErrorKind::Invalid
                     },
                     Some(producer),
-                    format!("Actual periodic material proof failed:{e}"),
+                    format!("Actual periodic material proof failed: {e}"),
                 )
             })?;
         if expected.0 != 1 || proof.represented_member_count != 1 || proof.member_index != 0 {
