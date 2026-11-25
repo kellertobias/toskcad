@@ -163,6 +163,7 @@ impl Fixture {
             component: Some(self.component),
             include: vec![],
             exclude: vec![],
+            contact: false,
         }
     }
 }
@@ -270,6 +271,7 @@ fn exact_intersection_rejects_overlapping_boxes_without_volume_and_contact_faces
         component: None,
         include: vec![target.body],
         exclude: vec![],
+        contact: false,
     };
     let r = model
         .cut_targets(s.document(), s.revision(), &query, None)
@@ -294,6 +296,7 @@ fn exact_intersection_rejects_overlapping_boxes_without_volume_and_contact_faces
             component: None,
             include: vec![target.body],
             exclude: vec![],
+            contact: false,
         };
         let r = m.cut_targets(s.document(), s.revision(), &q, None).unwrap();
         assert!(
@@ -495,6 +498,7 @@ fn query_input_pool_and_final_target_budgets_are_bounded_with_overrides_applied_
         component: None,
         include: vec![],
         exclude: vec![],
+        contact: false,
     };
     assert!(
         m.cut_targets(s.document(), s.revision(), &q, None)
@@ -538,6 +542,7 @@ fn query_input_pool_and_final_target_budgets_are_bounded_with_overrides_applied_
         component: None,
         include: vec![],
         exclude: vec![],
+        contact: false,
     };
     assert!(
         m.cut_targets(&doc, 0, &q, None)
@@ -630,6 +635,7 @@ fn tangent_native_cylinders_with_overlapping_bounds_are_zero_volume_contacts() {
         component: None,
         include: vec![a.body],
         exclude: vec![],
+        contact: false,
     };
     let result = model
         .cut_targets(s.document(), s.revision(), &query, None)
@@ -659,6 +665,7 @@ fn positive_native_intersections_below_absolute_volume_scales_remain_cut_targets
         component: None,
         include: vec![],
         exclude: vec![],
+        contact: false,
     };
     let selection = model
         .cut_targets(&source, session.revision(), &query, None)
@@ -726,6 +733,7 @@ fn occupied_cylinder_targets_distinguish_exact_contact_separation_and_positive_l
                     component: None,
                     include: vec![target.body],
                     exclude: vec![],
+                    contact: false,
                 },
                 None,
             )
@@ -781,6 +789,7 @@ fn literal_diagonal_cylinder_target_queries_preserve_tiny_lenses_and_exact_conta
                     component: None,
                     include: vec![a.body],
                     exclude: vec![],
+                    contact: false,
                 },
                 None,
             )

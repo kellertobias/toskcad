@@ -448,6 +448,7 @@ impl CutDiscovery {
                     component,
                     include,
                     exclude,
+                    contact: false,
                 },
             }],
             ..Default::default()

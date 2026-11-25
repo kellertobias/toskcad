@@ -181,6 +181,7 @@ fn main() -> Result<(), Error> {
         component: Some(active),
         include: vec![],
         exclude: vec![],
+        contact: false,
     };
     let names = |selection: model::CutTargetSelection| -> std::collections::BTreeSet<String> {
         selection
