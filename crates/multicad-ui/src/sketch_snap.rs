@@ -358,7 +358,12 @@ impl SnapGeometry {
     pub fn with_support(mut self, corners: Vec<(TopologyKey, [f64; 2])>) -> Self {
         self.support = corners
             .into_iter()
-            .filter(|(_, at)| !self.points.iter().any(|p| len(sub(p.1, *at)) <= 1e-9))
+            .filter(|(_, at)| {
+                !self
+                    .points
+                    .iter()
+                    .any(|p| len(sub(p.1, *at)) <= 1e-9 * (1. + len(*at)))
+            })
             .collect();
         self
     }
@@ -374,13 +379,31 @@ impl SnapGeometry {
                     .lines
                     .iter()
                     .any(|l| same(l.1, a) && same(l.2, b) || same(l.1, b) && same(l.2, a)),
-                SupportEdge::Arc { center, radius, .. } => {
+                SupportEdge::Arc {
+                    center,
+                    radius,
+                    start,
+                    sweep,
+                } => {
+                    // A sketch circle covers every arc on it; a sketch arc
+                    // covers only the same span, so a short concentric arc
+                    // does not hide the rest of a face circle or arc.
+                    let tau = std::f64::consts::TAU;
+                    let span = |s: f64, w: f64| {
+                        (w - sweep).abs() <= 1e-9 * tau
+                            && (sweep >= tau - 1e-9 || {
+                                let d = (s - start).rem_euclid(tau);
+                                d.min(tau - d) <= 1e-9 * tau
+                            })
+                    };
                     !self
                         .circles
                         .iter()
                         .any(|c| same(c.1, center) && (c.2 - radius).abs() <= 1e-9 * radius)
                         && !self.arcs.iter().any(|a| {
-                            same(a.center, center) && (a.radius - radius).abs() <= 1e-9 * radius
+                            same(a.center, center)
+                                && (a.radius - radius).abs() <= 1e-9 * radius
+                                && span(a.start, a.sweep)
                         })
                 }
             })

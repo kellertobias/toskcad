@@ -600,3 +600,76 @@ fn support_face_corners_and_edges_snap_exactly_and_existing_sketch_geometry_wins
     assert!(!TargetKey::Support(corner).acquirable());
     assert!(!TargetKey::Support(edge).acquirable());
 }
+
+#[test]
+fn a_short_concentric_sketch_arc_does_not_hide_the_rest_of_a_face_circle() {
+    use std::f64::consts::{FRAC_PI_2, TAU};
+    // A quarter arc of radius 10 about the origin, counter-clockwise from +x.
+    let mut b = Builder::default();
+    let center = b.point([0., 0.]);
+    let start = b.point([10., 0.]);
+    let end = b.point([0., 10.]);
+    b.curve(CurveKind::Arc {
+        center,
+        start,
+        end,
+        clockwise: false,
+    });
+    let hole = support_key(TopologyKind::Edge, 7);
+    let same_span = support_key(TopologyKind::Edge, 8);
+    let face_circle = SupportEdge::Arc {
+        center: [0., 0.],
+        radius: 10.,
+        start: 0.,
+        sweep: TAU,
+    };
+    let quarter = SupportEdge::Arc {
+        center: [0., 0.],
+        radius: 10.,
+        start: 0.,
+        sweep: FRAC_PI_2,
+    };
+    let geometry = b
+        .geometry()
+        .with_support_edges(vec![(hole, face_circle), (same_span, quarter)]);
+    // Opposite the sketch arc, the face circle is still a snap target.
+    let target = resolve(&geometry, &[], &query([-10.4, 0.]), None).unwrap();
+    assert_eq!(target.key, TargetKey::Support(hole), "{target:?}");
+    assert_eq!(target.kind, TargetKind::FaceEdge);
+    assert!((target.position[0] + 10.).abs() < 1e-12);
+    // The face arc spanning exactly the sketch arc is left to the sketch arc.
+    let s = std::f64::consts::FRAC_1_SQRT_2 * 10.;
+    let target = resolve(&geometry, &[], &query([s + 0.3, s + 0.3]), None).unwrap();
+    assert_eq!(target.kind, TargetKind::OnCurve, "{target:?}");
+    // A sketch circle covers every face arc on it.
+    let mut b = Builder::default();
+    let center = b.point([0., 0.]);
+    b.curve(CurveKind::Circle {
+        center,
+        radius_mm: 10.,
+    });
+    let covered = b.geometry().with_support_edges(vec![(hole, face_circle)]);
+    let target = resolve(&covered, &[], &query([-10.4, 0.]), None).unwrap();
+    assert_eq!(target.kind, TargetKind::OnCurve, "{target:?}");
+}
+
+#[test]
+fn a_face_corner_offered_beside_a_far_sketch_point_uses_a_relative_tolerance() {
+    // Far from the origin an existing point within rounding of the corner
+    // keeps it, so the corner is reused rather than projected twice.
+    let mut b = Builder::default();
+    let far = 5.0e4;
+    let existing = b.point([far + 1e-6, far]);
+    let geometry = b
+        .geometry()
+        .with_support(vec![(support_key(TopologyKind::Vertex, 0), [far, far])]);
+    let target = resolve(&geometry, &[], &query([far, far]), None).unwrap();
+    assert_eq!(target.anchor, Some(existing), "{target:?}");
+    // A clearly separate corner is still offered.
+    let geometry = b.geometry().with_support(vec![(
+        support_key(TopologyKind::Vertex, 0),
+        [far + 0.5, far],
+    )]);
+    let target = resolve(&geometry, &[], &query([far + 0.5, far]), None).unwrap();
+    assert_eq!(target.kind, TargetKind::FaceCorner, "{target:?}");
+}
