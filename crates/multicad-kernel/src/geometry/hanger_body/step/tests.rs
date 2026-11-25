@@ -274,6 +274,37 @@ fn placed_hanger_step_holds_the_local_qualified_records_through_one_map_and_read
         .verify_step_member(&document, *member, local_frame, local.policy, None)
         .unwrap_err();
     assert_eq!(refusal.kind, GeometryErrorKind::InvalidResult);
+    // A reflected operator (negated third axis) is refused, not transported.
+    let operator3 = placed_text
+        .split("CARTESIAN_TRANSFORMATION_OPERATOR_3D(#")
+        .nth(1)
+        .and_then(|t| t.split(')').next())
+        .unwrap();
+    let marker = format!("#{operator3}=DIRECTION('',(");
+    let start = placed_text.find(&marker).unwrap() + marker.len();
+    let end = start + placed_text[start..].find("))").unwrap();
+    let negated = placed_text[start..end]
+        .split(',')
+        .map(|v| {
+            let v = v.trim();
+            v.strip_prefix('-')
+                .map_or_else(|| format!("-{v}"), str::to_owned)
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let reflected = format!("{}{negated}{}", &placed_text[..start], &placed_text[end..]);
+    let reflected_document =
+        read::CompoundDocument::parse(&reflected, Default::default(), None).unwrap();
+    assert!(
+        body.verify_step_member(
+            &reflected_document,
+            reflected_document.represented_members()[0],
+            frame,
+            placed.policy,
+            None,
+        )
+        .is_err()
+    );
 }
 #[test]
 fn written_local_and_placed_hangers_read_back_with_their_healed_volume() {

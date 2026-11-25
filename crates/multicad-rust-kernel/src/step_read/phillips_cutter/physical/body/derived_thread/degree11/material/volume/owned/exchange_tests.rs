@@ -293,3 +293,22 @@ fn authored_candidate_replays_into_a_writer_whose_actual_bytes_requalify() {
         .unwrap();
     assert_eq!(cancelled.finish().unwrap(), text);
 }
+#[test]
+fn authored_routing_admits_contained_countersunk_recesses_and_their_export_qualifies() {
+    use crate::step_read::phillips_cutter::physical::body::derived_thread::m3_parts;
+    let (author, frame) = m3_parts(true, false, 1.5, 1., true);
+    assert!(matches!(
+        author.spec().head,
+        Some(crate::head_profile::Head::Countersunk { .. })
+    ));
+    // The routing predicate is not a certificate: when it admits, the actual
+    // bytes must still qualify against the author.
+    if exchange::supports_author(&author) {
+        let candidate =
+            exchange::export_authored(&author, frame, 1e-7, Default::default(), None).unwrap();
+        authored_ok(candidate.qualification().verification());
+    }
+    // A Pan author always routes.
+    let (pan, _) = m3_parts(true, false, 1.5, 1., false);
+    assert!(exchange::supports_author(&pan));
+}

@@ -11,7 +11,7 @@ mod chart;
 mod degree11;
 #[cfg(test)]
 pub(in crate::step_read::phillips_cutter::physical::body) use degree11::tests::{
-    actual_m3, actual_m3_parts,
+    actual_m3, actual_m3_parts, m3_parts,
 };
 mod graph;
 mod join;

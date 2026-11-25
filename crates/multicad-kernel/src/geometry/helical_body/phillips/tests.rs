@@ -955,3 +955,58 @@ fn nominal_metric_shoulder_matrix_admits_mass_manufacturing_occupancy_and_step()
         }
     }
 }
+#[test]
+fn authored_phillips_member_proof_refuses_mapped_and_foreign_members() {
+    let s = Solid::rust_phillips_source_for_test(
+        fixture(1, 0., false),
+        feature(),
+        PlaneFrame::default(),
+        GeometryPolicy::default(),
+        &|| false,
+    )
+    .unwrap();
+    let (body, frame) = s.authored_phillips_body().unwrap();
+    // A placed Hanger file carries one mapped member.
+    let placed = Solid::rust_hanger(
+        crate::geometry::hanger_material::source_tests::source(false, false),
+        EntityId::new(),
+        PlaneFrame {
+            origin: [20., -7., 9.],
+            u: [0., 1., 0.],
+            v: [0., 0., 1.],
+        },
+        GeometryPolicy::default(),
+        None,
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mapped.step");
+    placed.write_step(&path).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    use multicad_rust_kernel::step_read::owned_insert as read;
+    let mapped = read::CompoundDocument::parse(&text, Default::default(), None).unwrap();
+    let member = mapped.represented_members()[0];
+    assert!(member.mapping_link().is_some());
+    let refusal = body
+        .verify_step_member(&mapped, member, frame, GeometryPolicy::default(), None)
+        .unwrap_err();
+    assert_eq!(refusal.kind, GeometryErrorKind::InvalidResult);
+    // A member absent from the document is an input error.
+    let path = dir.path().join("own.step");
+    s.write_step(&path).unwrap();
+    let own_text = std::fs::read_to_string(&path).unwrap();
+    let own = read::CompoundDocument::parse(&own_text, Default::default(), None).unwrap();
+    let foreign = own.represented_members()[0];
+    if foreign.item_entity() != member.item_entity() {
+        let refusal = body
+            .verify_step_member(&mapped, foreign, frame, GeometryPolicy::default(), None)
+            .unwrap_err();
+        assert_eq!(refusal.kind, GeometryErrorKind::Input);
+    }
+    // The own file proves itself through the member path as well.
+    let proof = body
+        .verify_step_member(&own, foreign, frame, GeometryPolicy::default(), None)
+        .unwrap();
+    assert_eq!((proof.member_index, proof.represented_member_count), (0, 1));
+    assert!(proof.maximum_world_position_error_mm <= 1e-7);
+}
