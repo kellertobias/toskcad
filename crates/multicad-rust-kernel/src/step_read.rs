@@ -1222,9 +1222,10 @@ pub use phillips_cutter::{
 };
 
 pub use phillips_cutter::{
+    Degree11AuthorMatchReceipt as PhillipsDegree11AuthorMatchReceipt,
     Degree11MaterialRead as PhillipsDegree11MaterialRead,
     Degree11ReadError as PhillipsDegree11ReadError,
     Degree11ReadOptions as PhillipsDegree11ReadOptions,
     Degree11ReadStage as PhillipsDegree11ReadStage, read_degree11_phillips_material,
-    read_degree11_phillips_material_with_progress,
+    read_degree11_phillips_material_for_author, read_degree11_phillips_material_with_progress,
 };

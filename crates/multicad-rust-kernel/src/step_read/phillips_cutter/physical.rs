@@ -378,6 +378,7 @@ pub use body::{
 };
 
 pub use body::{
-    Degree11MaterialRead, Degree11ReadError, Degree11ReadOptions, Degree11ReadStage,
-    read_degree11_phillips_material, read_degree11_phillips_material_with_progress,
+    Degree11AuthorMatchReceipt, Degree11MaterialRead, Degree11ReadError, Degree11ReadOptions,
+    Degree11ReadStage, read_degree11_phillips_material, read_degree11_phillips_material_for_author,
+    read_degree11_phillips_material_with_progress,
 };

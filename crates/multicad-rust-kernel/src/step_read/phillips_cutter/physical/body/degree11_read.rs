@@ -46,6 +46,9 @@ pub enum Degree11ReadStage {
     Material,
     Volume,
     Owned,
+    /// Fresh supplied-author correspondence of the same decoded volume. Only
+    /// the author-matching entry point starts it; its work is reported apart.
+    AuthorMatch,
 }
 #[derive(Clone, Copy)]
 pub struct Degree11ReadOptions {
@@ -137,6 +140,56 @@ pub fn read_degree11_phillips_material_with_progress(
     interrupt: Option<&dyn Fn() -> bool>,
     progress: Option<&dyn Fn(Degree11ReadStage)>,
 ) -> std::result::Result<Degree11MaterialRead, Degree11ReadError> {
+    read_with(input, options, interrupt, progress, |_, _| Ok(())).map(|(read, ())| read)
+}
+/// Complete supplied-author/decoded-material correspondence of these bytes.
+/// The match is earned on the SAME decoded volume the owned snapshot copies,
+/// before that snapshot exists. Its fresh work is NOT inside the reader
+/// reservation; callers reserve it separately through `matching.maximum_work`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Degree11AuthorMatchReceipt {
+    pub maximum_world_distance_mm: f64,
+    pub maximum_world_chart_derivative_mm: f64,
+    /// Author minus independently decoded material.
+    pub independent_volume_difference_mm3: [f64; 2],
+    pub fresh_work: usize,
+    pub total_work: usize,
+    pub accounted_peak_bytes: usize,
+    pub cavity_cells: usize,
+}
+pub fn read_degree11_phillips_material_for_author(
+    input: &str,
+    options: Degree11ReadOptions,
+    author: &crate::phillips_drive::PhillipsScrew,
+    frame: [Point; 3],
+    matching: SuppliedDegree11MaterialOptions,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> std::result::Result<(Degree11MaterialRead, Degree11AuthorMatchReceipt), Degree11ReadError> {
+    read_with(input, options, interrupt, None, |volume, context| {
+        context.stage(Degree11ReadStage::AuthorMatch, || {
+            let matched = volume.match_supplied_author(author, frame, matching, interrupt)?;
+            Ok(Degree11AuthorMatchReceipt {
+                maximum_world_distance_mm: matched.maximum_world_distance_mm(),
+                maximum_world_chart_derivative_mm: matched.maximum_world_chart_derivative_mm(),
+                independent_volume_difference_mm3: matched.independent_volume_difference_mm3(),
+                fresh_work: matched.new_work_used(),
+                total_work: matched.total_work_used(),
+                accounted_peak_bytes: matched.accounted_peak_bytes(),
+                cavity_cells: matched.cavity_cells_used(),
+            })
+        })
+    })
+}
+fn read_with<R>(
+    input: &str,
+    options: Degree11ReadOptions,
+    interrupt: Option<&dyn Fn() -> bool>,
+    progress: Option<&dyn Fn(Degree11ReadStage)>,
+    check: impl FnOnce(
+        &Degree11MaterialVolume<'_, '_, '_, '_>,
+        &Context<'_>,
+    ) -> std::result::Result<R, Degree11ReadError>,
+) -> std::result::Result<(Degree11MaterialRead, R), Degree11ReadError> {
     if interrupt.is_some_and(|f| f()) {
         return Err(fail(PhillipsReadError::Cancelled));
     }
@@ -311,6 +364,7 @@ pub fn read_degree11_phillips_material_with_progress(
             interrupt,
         )
     })?;
+    let checked = check(&volume, &context)?;
     let owned = context.stage(Degree11ReadStage::Owned, || {
         volume.owned_snapshot(
             Degree11OwnedMaterialOptions {
@@ -326,10 +380,13 @@ pub fn read_degree11_phillips_material_with_progress(
             cause: PhillipsReadError::Cancelled,
         });
     }
-    Ok(Degree11MaterialRead {
-        material: owned,
-        reserved,
-    })
+    Ok((
+        Degree11MaterialRead {
+            material: owned,
+            reserved,
+        },
+        checked,
+    ))
 }
 
 #[cfg(test)]

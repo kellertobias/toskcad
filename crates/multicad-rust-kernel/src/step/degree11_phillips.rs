@@ -311,3 +311,8 @@ pub fn export_retained(
         qualification,
     })
 }
+mod authored;
+pub use authored::{
+    AuthoredAppendReceipt, AuthoredOptions, AuthoredVerification, QualifiedAuthoredMaterial,
+    QualifiedAuthoredStep, export_authored, qualify_authored_file, supports_author,
+};

@@ -6,8 +6,9 @@ use crate::step_read::helical_import::{law::Law, seed::TensorHeader};
 mod degree11_read;
 mod outer;
 pub use degree11_read::{
-    Degree11MaterialRead, Degree11ReadError, Degree11ReadOptions, Degree11ReadStage,
-    read_degree11_phillips_material, read_degree11_phillips_material_with_progress,
+    Degree11AuthorMatchReceipt, Degree11MaterialRead, Degree11ReadError, Degree11ReadOptions,
+    Degree11ReadStage, read_degree11_phillips_material, read_degree11_phillips_material_for_author,
+    read_degree11_phillips_material_with_progress,
 };
 mod periodic_read;
 pub use periodic_read::{
