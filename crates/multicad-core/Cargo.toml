@@ -13,6 +13,8 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 uuid = { version = "=1.29.0", features = ["v4", "serde"] }
 sha2 = "=0.10.9"
+# Lossless deflate for compact stored STEP sources (pure Rust).
+miniz_oxide = "=0.9.1"
 quick-xml = "=0.41.0"
 # Sketch text: glyph outlines from the font bundled in the binary.
 skrifa = { version = "=0.44.0", default-features = false, features = ["std"] }
