@@ -102,6 +102,7 @@ mod healed_import_body;
 mod interference_volume_body;
 mod law_print;
 mod pipe_sleeve_body;
+mod profile_stack_boolean;
 mod revolution_body;
 mod rounded_blind_bore_body;
 mod rounded_cylinder_body;
@@ -1749,6 +1750,12 @@ impl Solid {
                         .subtract_machining_tool(other, operation, policy)
                         .or_else(|| self.coaxial_counterbore_cut(other, operation, policy))
                         .unwrap_or(Err(error)),
+                    // A pocket entering flush with a stock face is no
+                    // drilled pocket, but it is a parallel profile cut.
+                    Err(error) if error.operation == "blind circular cut" => self
+                        .profile_stack_boolean(other, operation, policy)
+                        .filter(Result::is_ok)
+                        .unwrap_or(Err(error)),
                     result => result.map(Some),
                 };
             }
@@ -1844,6 +1851,7 @@ impl Solid {
                     .or_else(|| self.parallel_disk_union(other, operation, policy))
                     .or_else(|| self.compound_intersection(other, operation, policy))
                     .or_else(|| self.cope_contact_intersection(other, operation, policy))
+                    .or_else(|| self.profile_stack_boolean(other, operation, policy))
                     .unwrap_or_else(|| {
                         Err(cross_refusal
                             .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))

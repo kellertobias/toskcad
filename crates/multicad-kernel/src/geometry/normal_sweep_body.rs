@@ -298,6 +298,12 @@ impl NormalSweepBody {
         })
     }
 
+    /// The authored identity of each profile side, in the order of the
+    /// concatenated rings of [`Self::prism_profile`].
+    pub(super) fn side_origins(&self) -> impl Iterator<Item = &Origin> {
+        self.sides.iter().map(|side| &side.origin)
+    }
+
     pub(super) fn unpierced_profile(&self) -> Option<(&[Vec<Edge>], f64)> {
         self.openings.is_none().then(|| {
             let height = self.sweep.height_mm();

@@ -117,7 +117,7 @@ impl Solid {
             ));
         }
         if self.has_common_placed_planar_query_chart(other)? {
-            return self.rust_planar_intersection_volume(other, policy);
+            return self.planar_or_profile_overlap(other, policy);
         }
         if let Some(result) = self.rust_parallel_cylinder_pair(other) {
             return result.map(|(_, volume)| volume);
@@ -147,7 +147,7 @@ impl Solid {
         {
             Ok(()) => {}
             Err(cause) if cause.kind == GeometryErrorKind::Unsupported => {
-                return self.rust_planar_intersection_volume(other, policy);
+                return self.planar_or_profile_overlap(other, policy);
             }
             Err(cause) => return Err(cause),
         }
@@ -161,6 +161,23 @@ impl Solid {
                 "Rust interference could not verify occupied volume",
             ),
         })
+    }
+}
+
+impl Solid {
+    /// The planar common volume, or for a curved profile prism the planar
+    /// provider refuses, the exact common volume of the parallel profiles.
+    fn planar_or_profile_overlap(
+        &self,
+        other: &Self,
+        policy: GeometryPolicy,
+    ) -> Result<f64, GeometryError> {
+        match self.rust_planar_intersection_volume(other, policy) {
+            Err(cause) if cause.kind == GeometryErrorKind::Unsupported => self
+                .rust_profile_stack_overlap_volume(other, policy)
+                .unwrap_or(Err(cause)),
+            result => result,
+        }
     }
 }
 
