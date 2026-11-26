@@ -38,6 +38,8 @@ pub(super) struct PrimitivePanel {
     pose: pose::PoseGizmo,
     corner_inputs: corner_inputs::CornerInputs,
     last_shape: Option<ResolvedPrimitive>,
+    /// Displayed grid spacing for corner and move drags (CAD-402).
+    snap: super::drag_snap::DragSnap,
 }
 impl PrimitivePanel {
     pub fn new(request: PrimitiveRequest) -> Result<Self, String> {
@@ -94,6 +96,7 @@ impl PrimitivePanel {
             pose: Default::default(),
             corner_inputs: Default::default(),
             last_shape: None,
+            snap: Default::default(),
         })
     }
     pub fn existing(request: PrimitiveRequest) -> Result<Self, String> {
@@ -189,6 +192,15 @@ impl PrimitivePanel {
             field.remember(value);
         }
     }
+    /// Snap new and running drags to the grid spacing the viewport shows.
+    pub(super) fn set_drag_snap(&mut self, snap: super::drag_snap::DragSnap) {
+        self.snap = snap;
+        self.resize.set_snap(snap);
+    }
+    /// Size readout and active snap spacing shown with the corner handles.
+    pub(super) fn drag_feedback(&self) -> Option<&str> {
+        self.resize.feedback()
+    }
     pub(super) fn dragging(&self) -> bool {
         self.resize.active() || self.pose.active()
     }
@@ -235,6 +247,7 @@ impl PrimitivePanel {
             self.last_shape = current.clone();
         } else {
             self.resize = Default::default();
+            self.resize.set_snap(self.snap);
             self.pose = Default::default();
         }
         let Some(shape) = current.or_else(|| self.last_shape.clone()) else {
@@ -273,7 +286,10 @@ impl PrimitivePanel {
                 rect,
                 basis: Default::default(),
                 start_allowed: start_allowed && !resize.input_owned,
-                snap: super::TransformSnap::OFF,
+                snap: match self.snap.grid_mm() {
+                    Some(step) => super::TransformSnap::grid(step),
+                    None => super::TransformSnap::OFF,
+                },
             };
             match self.frame(document).and_then(|frame| {
                 self.pose
@@ -415,6 +431,7 @@ impl PrimitivePanel {
         controls::inspector_layout(ui);
         ui.strong(self.label());
         ui.small(if self.editing {"Edit this existing producer and rebuild its downstream features. Click a corner to enter dimensions."}else{"Click a corner to enter dimensions or drag it to resize. Use the origin gizmo to move and rotate."});
+        ui.small(snap_hint(self.snap));
         ui.label("Body name");
         let mut changed = ui
             .add_enabled(
@@ -539,6 +556,17 @@ impl PrimitivePanel {
             }
             _ => None,
         }
+    }
+}
+
+/// Inspector note naming the active drag spacing (CAD-402).
+pub(super) fn snap_hint(snap: super::drag_snap::DragSnap) -> String {
+    match snap.grid_mm() {
+        Some(step) => format!(
+            "Drags snap to the {} grid shown in the viewport; hold Shift for free sizes. Typed values are kept exactly.",
+            crate::preferences::format_mm(step)
+        ),
+        None => "Drags move in 0.001 mm steps. Typed values are kept exactly.".into(),
     }
 }
 

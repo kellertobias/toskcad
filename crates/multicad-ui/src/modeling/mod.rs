@@ -12,6 +12,7 @@ mod compound_cutout;
 mod controller;
 pub(crate) mod diagram;
 pub(crate) mod dimension;
+pub(crate) mod drag_snap;
 mod edge_treatment;
 mod equipment;
 mod extrude;

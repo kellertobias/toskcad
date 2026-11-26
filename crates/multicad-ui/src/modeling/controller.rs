@@ -133,6 +133,9 @@ pub struct ModelToolController {
     handoff: Option<Handoff>,
     generation: u64,
     error: Option<String>,
+    /// Floor-grid spacing the viewport displays at the current zoom; the
+    /// shared drag-snap step for dimension handles (CAD-402, CAD-403).
+    drag_grid_mm: Option<f64>,
     context_valid: bool,
     context_attempt: Option<SceneStamp>,
     context_notice: Option<String>,
@@ -2610,6 +2613,26 @@ impl ModelToolController {
         }
     }
 
+    /// The host reports the grid spacing it displays before each viewport
+    /// frame; `None` leaves dimension drags at the free resolution.
+    pub fn set_drag_grid(&mut self, spacing_mm: Option<f64>) {
+        self.drag_grid_mm = spacing_mm;
+    }
+    /// Snap state of the shared dimension-drag policy for this frame.
+    pub(crate) fn drag_snap(&self, ui: &egui::Ui) -> super::drag_snap::DragSnap {
+        super::drag_snap::DragSnap::new(
+            self.drag_grid_mm,
+            ui.input(|input| super::drag_snap::DragSnap::free_modifier(input.modifiers)),
+        )
+    }
+    /// Feedback shown with the primitive corner handles, for tests and hosts.
+    pub(crate) fn primitive_drag_feedback(&self) -> Option<&str> {
+        match &self.form {
+            Some(ModelForm::Primitive(panel)) => panel.drag_feedback(),
+            _ => None,
+        }
+    }
+
     pub fn primitive_viewport(
         &mut self,
         ui: &mut egui::Ui,
@@ -2628,11 +2651,15 @@ impl ModelToolController {
         }
         let guide = !self.preview_visible(session, resources);
         let start_allowed = start_allowed && ui.is_enabled() && !self.panel_point_picking();
+        // The grid comes from the host; Shift is read live by each gizmo.
+        let snap = super::drag_snap::DragSnap::new(self.drag_grid_mm, false);
         let result = match &mut self.form {
             Some(ModelForm::Primitive(panel)) => {
+                panel.set_drag_snap(snap);
                 panel.viewport(ui, session, camera, rect, start_allowed, guide)
             }
             Some(ModelForm::Cabinet(form)) => {
+                form.set_drag_snap(snap);
                 form.viewport(ui, session, camera, rect, start_allowed, guide)
             }
             _ => unreachable!(),
@@ -2903,6 +2930,8 @@ mod panel_points_tests;
 #[cfg(test)]
 mod placement_tests;
 
+#[cfg(test)]
+mod drag_snap_tests;
 #[cfg(test)]
 mod face_entry_tests;
 #[cfg(test)]
