@@ -267,6 +267,7 @@ fn a_face_clipped_circle_cut_discovers_the_box_previews_and_commits() {
                 component: None,
                 include: vec![],
                 exclude,
+                contact: false,
             };
             let selection = candidate
                 .cut_targets(document, revision, &query(vec![]), None)
