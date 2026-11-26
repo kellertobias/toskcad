@@ -150,6 +150,14 @@ impl EdgeTreatmentPanel {
     pub fn label(&self) -> &'static str {
         "Fillet / Chamfer"
     }
+    /// The neutral instruction shown before the first edge is picked.
+    pub fn pick_hint(&self) -> &'static str {
+        if self.profile == EdgeTreatmentProfile::Chamfer {
+            "Pick edges to chamfer"
+        } else {
+            "Pick edges to fillet"
+        }
+    }
     pub fn stamp(&self) -> FormStamp {
         self.stamp
     }
@@ -190,6 +198,50 @@ impl EdgeTreatmentPanel {
     pub fn stop_picking(&mut self) {
         self.picking = false;
         self.face_for = None;
+    }
+    /// CAD-409: until the first edge is picked, an edge or face picked on
+    /// another displayed body moves a new treatment to that body; size,
+    /// profile and chamfer mode are kept. Afterwards the body is fixed.
+    pub fn retarget(
+        &mut self,
+        document: &Document,
+        revision: u64,
+        scene: &Scene,
+        body: EntityId,
+        edges: &[GeometryIntent],
+    ) -> Result<(), String> {
+        if self.editing {
+            return Err(format!(
+                "This Fillet / Chamfer edits {}; pick one of its edges, or Cancel to treat another body",
+                self.name
+            ));
+        }
+        if !self.edges.is_empty() {
+            return Err(self.locked_hint());
+        }
+        let choice = super::body_choices::choices(document, revision, scene)?
+            .into_iter()
+            .find(|c| c.input.body == body)
+            .ok_or("Fillet / Chamfer treats Part bodies; pick an edge of a Part")?;
+        validate_captures(scene, &choice.input, edges, TopologyKind::Edge)?;
+        self.input = choice.input;
+        self.name = choice.label;
+        self.edges = edges.to_vec();
+        self.sides.clear();
+        self.side_faces.clear();
+        self.face_for = None;
+        self.stamp.changed();
+        Ok(())
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    /// Why a pick on another body is ignored once edges are picked.
+    pub fn locked_hint(&self) -> String {
+        format!(
+            "Fillet / Chamfer edits {}; clear its picked edges to switch body",
+            self.name
+        )
     }
     pub fn set_edges(&mut self, scene: &Scene, edges: &[GeometryIntent]) -> Result<bool, String> {
         if edges.len() > model::MAX_TREATMENT_EDGES {
@@ -374,7 +426,10 @@ impl EdgeTreatmentPanel {
         }
         changed |= self.show_edge_sides(ui);
         let validation = self.request(document, enabled);
-        if let Err(error) = &validation {
+        if enabled && self.edges.is_empty() {
+            // CAD-409: nothing picked yet is the starting state, not an error.
+            ui.label(self.pick_hint());
+        } else if let Err(error) = &validation {
             ui.colored_label(egui::Color32::LIGHT_RED, error);
         }
         form::preview_status(ui, self.stamp, preview);

@@ -65,7 +65,9 @@ impl SketchEditor {
         {
             return Err("Edge selection requires the complete source-bound native model".into());
         }
-        scene.isolated_source(input.producer)
+        // CAD-409: every displayed body stays drawn and pickable; only the
+        // edited body is shown from its frozen upstream producer.
+        scene.source_in_context(input.body, input.producer)
     }
     pub(super) fn edge_viewport(
         &mut self,
@@ -106,9 +108,33 @@ impl SketchEditor {
                 },
             )
         });
+        // CAD-409: before the first edge, a pick on another body (edge or
+        // face) switches the edited body; afterwards those picks are ignored.
+        let other_body = response.clicked().then(|| {
+            hovered.clone().or_else(|| {
+                let pointer = response.interact_pointer_pos()?;
+                scene.pick_screen_with(
+                    self.camera,
+                    rect,
+                    pointer,
+                    PickOptions {
+                        filter: PickFilter::Faces,
+                        include_hidden: false,
+                        section: self.solid.section.plane(),
+                    },
+                )
+            })
+        });
+        if let Some(Some(hit)) = other_body.filter(|hit| {
+            hit.as_ref()
+                .is_some_and(|hit| hit.instance != input.producer)
+        }) {
+            self.retarget_edge_treatment(session, resources, feed, &hit, kind);
+            return;
+        }
         if response.clicked() {
             if let Some(hit) = &hovered {
-                if let Some(capture) = &hit.intent {
+                if let Some(capture) = &producer_capture(&scene, &input, hit) {
                     let current = self
                         .model
                         .edge_treatment_pick_captures()
@@ -145,7 +171,7 @@ impl SketchEditor {
                 self.message = if kind == TopologyKind::Face {
                     "Choose the adjacent side face for this chamfer edge"
                 } else {
-                    "Choose a visible edge of the upstream Part shown here"
+                    "Pick an edge of a body"
                 }
                 .into();
             }
@@ -191,6 +217,58 @@ impl SketchEditor {
         .paint(&scene, &input, &selected, hover);
     }
 }
+impl SketchEditor {
+    /// An edge or face picked on another displayed body (CAD-409): before
+    /// the first edge a new treatment moves there; a side-face pick must
+    /// stay on the edited body.
+    fn retarget_edge_treatment(
+        &mut self,
+        session: &Session,
+        resources: &ProjectResources,
+        feed: &SceneFeed,
+        hit: &crate::viewport::Hit,
+        kind: TopologyKind,
+    ) {
+        if kind == TopologyKind::Face {
+            self.message = "Choose a side face of the body whose edge you picked".into();
+            return;
+        }
+        let Some(scene) = feed.visible() else {
+            return;
+        };
+        let edges = if hit.key.kind == TopologyKind::Edge {
+            let Some(capture) = scene
+                .geometry_snapshot(hit.geometry)
+                .and_then(|snapshot| references::GeometryIntent::capture(&snapshot, hit.key).ok())
+            else {
+                self.message =
+                    "This edge has no persistent geometry name; pick another edge".into();
+                return;
+            };
+            vec![capture]
+        } else {
+            vec![]
+        };
+        self.message =
+            match self
+                .model
+                .retarget_edge_treatment(session, resources, scene, hit.instance, edges)
+            {
+                Ok(name) => format!("Fillet / Chamfer · {name}"),
+                Err(error) => error,
+            };
+    }
+}
+/// A pick on the edited body, named against its frozen upstream producer.
+fn producer_capture(
+    scene: &Scene,
+    input: &BodyInput,
+    hit: &crate::viewport::Hit,
+) -> Option<references::GeometryIntent> {
+    let mut snapshot = scene.geometry_snapshot(hit.geometry)?;
+    snapshot.owner = input.producer;
+    references::GeometryIntent::capture(&snapshot, hit.key).ok()
+}
 struct EdgeView<'a> {
     camera: Camera,
     rect: Rect,
@@ -208,6 +286,12 @@ impl EdgeView<'_> {
         let Some(geometry) = scene.geometries().get(&input.producer) else {
             return;
         };
+        let transform = scene
+            .instances()
+            .iter()
+            .find(|instance| instance.id == input.producer)
+            .map(|instance| instance.transform)
+            .unwrap_or_default();
         for edge in geometry
             .edges()
             .iter()
@@ -219,6 +303,7 @@ impl EdgeView<'_> {
                 Color32::YELLOW
             };
             for pair in edge.points_mm.windows(2) {
+                let pair = [transform.point(pair[0]), transform.point(pair[1])];
                 let segment = if let Some(plane) = self.section {
                     plane.clip_segment(pair[0], pair[1])
                 } else {

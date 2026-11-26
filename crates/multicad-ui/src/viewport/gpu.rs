@@ -630,6 +630,16 @@ fn valid_view(rect: egui::Rect, camera: Camera) -> bool {
             .all(|v| v.is_finite())
 }
 
+#[cfg(test)]
+const PAINTED_SCENE: &str = "multicad.test.painted-scene";
+/// Test-only: the scene the 3D viewport painted in the latest pass.
+#[cfg(test)]
+pub(crate) fn painted_scene(ctx: &egui::Context) -> Option<Arc<Scene>> {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data(|d| d.get_temp::<(Arc<Scene>, u64)>(egui::Id::new(PAINTED_SCENE)))
+        .filter(|(_, drawn)| pass.saturating_sub(*drawn) <= 1)
+        .map(|(scene, _)| scene)
+}
 pub(super) fn paint_scene_view(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -640,6 +650,13 @@ pub(super) fn paint_scene_view(
         return;
     }
     crate::preview_capture::record_viewport(painter.ctx(), rect);
+    #[cfg(test)]
+    {
+        let pass = painter.ctx().cumulative_pass_nr();
+        painter.ctx().data_mut(|d| {
+            d.insert_temp(egui::Id::new(PAINTED_SCENE), (scene.clone(), pass));
+        });
+    }
     painter.add(egui_wgpu::Callback::new_paint_callback(
         rect,
         Callback { scene, view },

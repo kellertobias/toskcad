@@ -224,3 +224,143 @@ impl SceneBackend for NativeBackend {
         })
     }
 }
+
+/// CAD-405/409/411: a 20 × 20 × 10 box with a face sketch circle around its
+/// corner, the clipped segment extruded `height` as a second, new body.
+/// Returns the session, the box and the segment body.
+pub(crate) fn corner_segment_session(
+    height: f64,
+) -> (
+    multicad_core::commands::Session,
+    multicad_core::model::BodyInput,
+    multicad_core::model::BodyInput,
+) {
+    use multicad_core::{
+        commands::{Actor, Channel, Request, Session},
+        constraint_sketch::{Curve, CurveKind, source::Source},
+        document::EntityId,
+        model,
+        references::AnalyticGeometry,
+        references::TopologyKind,
+        sketch::{self, CreationPlane, PlaneOptions},
+    };
+    let actor = || Actor::local(Channel::Ui);
+    let compile = |s: &Session| {
+        Compiler::default()
+            .compile(s.document(), s.revision())
+            .unwrap()
+    };
+    let mut session = Session::new(Document::new("Corner segment").unwrap()).unwrap();
+    let stock = model::PrimitiveRequest::new(
+        "Box",
+        model::PrimitiveParameters::Box {
+            size: [model::length(20.), model::length(20.), model::length(10.)],
+            frame: Default::default(),
+        },
+    );
+    session
+        .commit(
+            model::prepare_primitive(&session, session.revision(), actor(), &stock)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let compiled = compile(&session);
+    let topology = &compiled.snapshot().shapes[&stock.feature].topology;
+    let top = topology
+        .elements
+        .iter()
+        .find(|e| {
+            e.key.kind == TopologyKind::Face
+                && matches!(e.geometry, Some(AnalyticGeometry::Plane { frame })
+                    if frame.normal()[2] > 0.9 && (frame.origin_mm[2] - 10.).abs() < 1e-9)
+        })
+        .unwrap();
+    let anchor = top.frames.first().unwrap().origin.clone();
+    let created = sketch::prepare_new(
+        &session,
+        session.revision(),
+        actor(),
+        "Corner circle",
+        CreationPlane::Face {
+            snapshot: topology,
+            key: top.key,
+            anchor: Some(&anchor),
+        },
+        PlaneOptions::default(),
+    )
+    .unwrap();
+    let (sketch, frame) = (created.sketch, created.frame);
+    session.commit(created.prepared).unwrap();
+    let report = compile(&session).snapshot().references.clone();
+    let mut source = Source::read_for_evaluation(
+        session.document(),
+        sketch,
+        session.revision(),
+        Some(&report),
+    )
+    .unwrap()
+    .0;
+    let center = source.add_point(frame.coordinates([2., 3., 10.]));
+    source.sketch.curves.push(Curve {
+        id: EntityId::new(),
+        construction: false,
+        kind: CurveKind::Circle {
+            center,
+            radius_mm: 8.,
+        },
+    });
+    session
+        .apply(Request {
+            expected_revision: session.revision(),
+            actor: actor(),
+            label: "Circle around the face corner".into(),
+            edits: source.replace(session.document(), sketch).unwrap(),
+        })
+        .unwrap();
+    let report = compile(&session).snapshot().references.clone();
+    let queries = multicad_kernel::NativeRegionQueries::analytic(Default::default()).unwrap();
+    let semantic = multicad_solver::evaluate_document_sketch(
+        session.document(),
+        session.revision(),
+        sketch,
+        Some(&report),
+    )
+    .unwrap();
+    let inside = semantic.frame.coordinates([1., 1., 10.]);
+    let region = semantic
+        .regions_with_queries(&queries)
+        .unwrap()
+        .regions
+        .into_iter()
+        .find(|r| r.contains_with_queries(inside, &queries).unwrap())
+        .unwrap();
+    let request = model::ExtrudeRequest::new(
+        sketch,
+        vec![region.intent()],
+        model::ExtrudeParameters {
+            extent: model::Extent::OneSided {
+                end: model::Termination::Distance {
+                    distance: model::length(height),
+                },
+            },
+            ..Default::default()
+        },
+    );
+    let body = model::BodyInput {
+        body: request.outputs[0].body,
+        producer: request.outputs[0].feature,
+    };
+    session
+        .commit(
+            model::prepare_extrude(&session, session.revision(), actor(), &request)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let stock = model::BodyInput {
+        body: stock.body,
+        producer: stock.feature,
+    };
+    (session, stock, body)
+}

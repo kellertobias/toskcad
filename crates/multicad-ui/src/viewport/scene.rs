@@ -578,6 +578,9 @@ impl Geometry {
             + self.points.len() * std::mem::size_of::<DisplayPoint>()
     }
 }
+/// Instance color alpha marking a faded context body. The renderer draws it
+/// opaque but washed out, so the edited body stands out (CAD-409).
+pub const CONTEXT_ALPHA: u8 = 96;
 #[derive(Clone)]
 pub struct Instance {
     pub id: EntityId,
@@ -1594,6 +1597,40 @@ impl Scene {
             SceneScope::Full => SceneScope::Sources(vec![source]),
             other => other.clone(),
         };
+        Ok(Arc::new(view))
+    }
+    /// Pick one body from a frozen upstream producer while every other
+    /// displayed body stays drawn, faded ([`CONTEXT_ALPHA`]), and pickable. The edited body comes first,
+    /// uses the producer geometry and keeps its displayed pose; it carries
+    /// `source` as its instance identity, as in [`Self::isolated_source`].
+    pub fn source_in_context(&self, body: EntityId, source: EntityId) -> Result<Arc<Self>, String> {
+        let isolated = self.isolated_source(source)?;
+        let mut edited = isolated.instances[0].clone();
+        if let Some(shown) = self.instances.iter().find(|i| i.id == body) {
+            edited.transform = shown.transform;
+        }
+        let mut instances = vec![edited];
+        instances.extend(
+            self.instances
+                .iter()
+                .filter(|i| i.id != body && i.id != source)
+                .map(|i| Instance {
+                    color: [i.color[0], i.color[1], i.color[2], CONTEXT_ALPHA],
+                    ..i.clone()
+                }),
+        );
+        let mut geometries = BTreeMap::new();
+        for instance in &instances {
+            let geometry = if instance.id == source {
+                isolated.geometries.get(&instance.geometry)
+            } else {
+                self.geometries.get(&instance.geometry)
+            }
+            .ok_or("A displayed body has no current geometry")?;
+            geometries.insert(instance.geometry, geometry.clone());
+        }
+        let mut view = Self::new(self.stamp, geometries.into_values().collect(), instances)?;
+        view.scope = isolated.scope.clone();
         Ok(Arc::new(view))
     }
     /// Inspect one explicitly selected physical leaf at its native world pose.

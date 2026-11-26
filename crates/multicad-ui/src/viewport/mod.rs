@@ -4,6 +4,8 @@ pub use scene::*;
 mod architecture_plan;
 pub use architecture_plan::ArchitecturePlan;
 mod gpu;
+#[cfg(test)]
+pub(crate) use gpu::painted_scene;
 pub(crate) use gpu::{ORIGIN_AXES, install, native_origin_axes_available, paint_frame_marker};
 mod picking;
 pub use gpu::{ReferenceSelection, Selection, install_renderer, paint_scene, paint_scene_section};
