@@ -308,8 +308,8 @@ impl SketchEditor {
         };
         Ok(())
     }
-    /// Acquisition click without a selected sketch: pick a planar face.
-    /// Shift, Command or Control adds or removes; a plain click replaces.
+    /// Acquisition click on a planar face. Shift, Command or Control adds or
+    /// removes; a plain click replaces. Returns whether a face was hit.
     pub(super) fn pick_profile_face(
         &mut self,
         session: &Session,
@@ -317,7 +317,7 @@ impl SketchEditor {
         rect: Rect,
         pointer: Pos2,
         toggle: bool,
-    ) {
+    ) -> bool {
         let hit = scene.pick_screen_with(
             self.camera,
             rect,
@@ -332,13 +332,13 @@ impl SketchEditor {
             if !toggle {
                 self.profile_faces.clear();
             }
-            return;
+            return false;
         };
         let pick = match capture_hit(session.document(), session.revision(), scene, &hit) {
             Ok(pick) => pick,
             Err(error) => {
                 self.message = error;
-                return;
+                return true;
             }
         };
         let same = |p: &ProfileFacePick| {
@@ -356,9 +356,10 @@ impl SketchEditor {
             self.profile_faces = vec![pick];
         }
         self.message = format!(
-            "{} planar face(s) selected · Shift, Command or Control adds or removes · Use selected targets opens the operation",
+            "{} planar face(s) selected · Shift, Command or Control adds or removes",
             self.profile_faces.len()
         );
+        true
     }
 }
 
@@ -652,8 +653,9 @@ mod tests {
             egui::Modifiers::COMMAND,
         );
         activate(&mut editor, &session, &feed, ModelingTool::Extrude);
-        assert!(!editor.model_active());
-        assert!(editor.awaiting_model_targets(), "{}", editor.message);
+        // CAD-400: the form opens at once, but without usable profiles.
+        assert!(editor.model_active(), "{}", editor.message);
+        assert!(editor.model_request_for_tests(&session).is_none());
         assert!(
             editor.message.contains("not coplanar"),
             "{}",
@@ -662,19 +664,35 @@ mod tests {
         assert!(editor.message.contains("6.000 mm"), "{}", editor.message);
         // Nothing is dropped: both faces stay listed for correction.
         assert_eq!(editor.profile_faces.len(), 2);
-        // "Use selected targets" repeats the explanation and does not open.
-        editor.advance_model_targets(&session, &Default::default(), &feed, true);
-        assert!(!editor.model_active());
+        // Apply and Enter repeat the explanation and neither open an
+        // operation on these faces nor commit.
+        let refused = editor
+            .apply_model(&mut session, &Default::default())
+            .unwrap_err();
+        assert!(!editor.arm_model_confirmation(&session, &Default::default()));
+        assert!(
+            !editor
+                .finish_model_confirmation(&mut session, &Default::default())
+                .unwrap()
+        );
+        assert!(editor.model_request_for_tests(&session).is_none());
+        let explanation = editor.model_request_error_for_tests(&session).unwrap();
+        assert!(
+            explanation.contains("not coplanar"),
+            "{explanation} / {refused}"
+        );
         assert!(
             editor.message.contains("not coplanar"),
             "{}",
             editor.message
         );
-        // Control-click removes the off-plane face; then editing opens.
+        assert_eq!(session.revision(), revision);
+        // Control-click removes the off-plane face; the form takes the rest.
         acquire_click(&mut editor, &session, &feed, [80., 15., 16.], true);
         assert_eq!(editor.profile_faces.len(), 1, "{}", editor.message);
-        editor.advance_model_targets(&session, &Default::default(), &feed, true);
+        editor.advance_model_targets(&session, &Default::default(), &feed, false);
         assert!(editor.model_active(), "{}", editor.message);
+        assert!(editor.model_request_for_tests(&session).is_some());
         editor.cancel_model();
         assert_eq!(session.document(), &before);
         assert_eq!(session.revision(), revision);
@@ -741,12 +759,14 @@ mod tests {
     }
 
     #[test]
-    fn acquisition_control_click_accumulates_faces_and_apply_opens_editing_then_commits() {
+    fn acquisition_control_click_accumulates_faces_live_in_the_open_form_then_commits() {
         let (mut session, feed, mut editor) = fixture();
         let before = session.document().clone();
         let revision = session.revision();
         activate(&mut editor, &session, &feed, ModelingTool::Extrude);
-        assert!(editor.awaiting_model_targets(), "{}", editor.message);
+        // CAD-400: the form opens at once, before any face is picked.
+        assert!(editor.model_active(), "{}", editor.message);
+        assert!(!editor.awaiting_model_targets());
         // Plain click picks one top face, Control-click adds the other.
         acquire_click(&mut editor, &session, &feed, [15., 15., 10.], false);
         acquire_click(&mut editor, &session, &feed, [80., 15., 10.], true);
@@ -756,10 +776,9 @@ mod tests {
         assert_eq!(editor.profile_faces.len(), 1, "{}", editor.message);
         acquire_click(&mut editor, &session, &feed, [80., 15., 10.], true);
         assert_eq!(editor.profile_faces.len(), 2, "{}", editor.message);
-        // Viewer selection alone never opens the operation.
-        assert!(editor.awaiting_model_targets(), "{}", editor.message);
-        // Apply confirms the input set only: editing opens, no feature yet.
-        editor.advance_model_targets(&session, &Default::default(), &feed, true);
+        // The per-frame update hands the faces to the open form; picking
+        // alone creates no feature.
+        editor.advance_model_targets(&session, &Default::default(), &feed, false);
         assert!(editor.model_active(), "{}", editor.message);
         assert_eq!(session.revision(), revision);
         assert_eq!(session.document(), &before);

@@ -2478,7 +2478,8 @@ impl ModelToolController {
     }
 
     fn preview_waits_for_input(&self) -> bool {
-        self.stock_editor.is_some()
+        self.profiles_missing()
+            || self.stock_editor.is_some()
             || matches!(&self.form, Some(ModelForm::Sheet(panel)) if panel.waiting_for_edge())
             || self.scale_origin_picking()
             || self.edge_treatment_picking()
@@ -2866,6 +2867,8 @@ impl ModelToolController {
 mod context;
 mod edge_treatment;
 mod face_inputs;
+mod profile_targets;
+pub use profile_targets::ProfileTarget;
 mod fdm;
 mod groups;
 mod legacy;

@@ -112,6 +112,13 @@ impl ModelToolController {
         }
     }
     #[cfg(test)]
+    pub(crate) fn request_error_for_tests(&self, session: &Session) -> Option<String> {
+        self.form
+            .as_ref()?
+            .request(session.document(), self.capabilities())
+            .err()
+    }
+    #[cfg(test)]
     pub(crate) fn request_for_tests(&self, session: &Session) -> Option<ModelRequest> {
         self.form
             .as_ref()?

@@ -91,15 +91,18 @@ fn incompatible_preselection_is_reported_not_silently_dropped() {
 }
 
 #[test]
-fn nothing_selected_acquires_with_control_click_and_apply_opens_editing_without_a_feature() {
+fn nothing_selected_opens_the_form_and_control_click_accumulates_live_without_a_feature() {
     let mut h = ProfileHarness::new();
     native(&mut h);
     let before = h.session.document().clone();
     let revision = h.session.revision();
     let feed = crate::viewport::SceneFeed::default();
     // The open sketch is not a whole-sketch preselection: acquire its areas.
+    // CAD-400: the form opens at once, still without profiles.
     activate(&mut h, crate::modeling::ModelingTool::Extrude);
-    assert!(h.editor.awaiting_model_targets());
+    assert!(h.editor.model_active(), "{}", h.editor.message);
+    assert!(!h.editor.awaiting_model_targets());
+    assert!(h.editor.model_request_for_tests(&h.session).is_none());
     let rect = h.editor.viewport_rect.unwrap();
     let frame = h
         .editor
@@ -107,7 +110,10 @@ fn nothing_selected_acquires_with_control_click_and_apply_opens_editing_without_
         .unwrap()
         .1;
     // Plain click picks the first area, Control-click accumulates the second.
-    for (point, ctrl) in [([15., 15.], false), ([65., 15.], true)] {
+    for (picked, (point, ctrl)) in [([15., 15.], false), ([65., 15.], true)]
+        .into_iter()
+        .enumerate()
+    {
         let p = h
             .editor
             .camera
@@ -145,8 +151,16 @@ fn nothing_selected_acquires_with_control_click_and_apply_opens_editing_without_
                 .drop_without_applying_deltas();
         }
         h.drain();
-        // Viewport selection alone never opens the operation.
-        assert!(h.editor.awaiting_model_targets());
+        // The per-frame update hands every pick to the open form at once.
+        h.editor
+            .advance_model_targets(&h.session, &Default::default(), &feed, false);
+        assert!(h.editor.model_active());
+        match h.editor.model_request_for_tests(&h.session) {
+            Some(crate::modeling::ModelRequest::Extrude(request)) => {
+                assert_eq!(request.outputs.len(), picked + 1)
+            }
+            other => panic!("{other:?}"),
+        }
     }
     assert_eq!(
         h.editor
@@ -156,9 +170,7 @@ fn nothing_selected_acquires_with_control_click_and_apply_opens_editing_without_
             .len(),
         2
     );
-    // Apply confirms the input set only: editing opens, no feature exists.
-    h.editor
-        .advance_model_targets(&h.session, &Default::default(), &feed, true);
+    // Picking never commits: editing stays open, no feature exists.
     assert!(h.editor.model_active());
     assert_eq!(h.session.revision(), revision);
     assert_eq!(h.session.document(), &before);

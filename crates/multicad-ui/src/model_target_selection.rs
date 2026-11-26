@@ -15,6 +15,8 @@ pub(super) struct Acquisition {
     started: bool,
     split_generation: Option<u64>,
     split_scene: Option<crate::viewport::SceneStamp>,
+    /// Extrude / Revolve: the profiles last handed to the open form.
+    profile_target: Option<crate::modeling::ProfileTarget>,
 }
 impl Acquisition {
     fn profiles(&self) -> bool {
@@ -68,6 +70,8 @@ impl Acquisition {
             && session.validate_preview(&self.session_guard).is_ok()
     }
 }
+/// Status of a tool-first Extrude / Revolve form before any profile.
+const PICK_PROFILES: &str = "Pick one or more closed sketch areas or planar model faces in the viewer; Shift, Command or Control adds or removes. The preview follows each pick; Apply or Enter commits";
 impl SketchEditor {
     /// Display guide for the Extrude arrow / Revolve handle and the straight
     /// sketch lines offered as explicit revolution axes. Display-only.
@@ -124,6 +128,10 @@ impl SketchEditor {
             anchor,
             lines,
         })
+    }
+    #[cfg(test)]
+    pub(super) fn model_request_error_for_tests(&self, session: &Session) -> Option<String> {
+        self.model.request_error_for_tests(session)
     }
     #[cfg(test)]
     pub(super) fn model_request_for_tests(
@@ -484,6 +492,7 @@ impl SketchEditor {
             started: false,
             split_generation: None,
             split_scene: None,
+            profile_target: None,
         };
         let before = self.tree_selection.len();
         // The Part owning a preselected planar face is that face's context,
@@ -611,6 +620,10 @@ impl SketchEditor {
             self.message = "The source changed · select current targets again".into();
             return;
         }
+        if a.profiles() {
+            self.advance_profile_form(session, resources, a);
+            return;
+        }
         if a.started && a.tool == ModelingTool::Split {
             if confirm && let Err(error) = self.model.confirm_split(session.document()) {
                 self.message = error;
@@ -720,47 +733,18 @@ impl SketchEditor {
         }
         let enough =
             self.tree_selection.len() >= a.minimum() && self.tree_selection.len() <= a.maximum();
-        let profiles_ready = a.profiles()
-            && (self
-                .profile_inputs(session.document(), session.revision())
-                .is_ok()
-                || self.profile_face_inputs(session.revision()).is_ok());
-        if a.profiles()
-            && confirm
-            && !profiles_ready
-            && !self.profile_faces.is_empty()
-            && let Err(error) = self.profile_face_inputs(session.revision())
-        {
-            // CAD-152: explain a refused face set (e.g. not coplanar).
-            self.message = format!("{} · {error}", a.tool.label());
-        }
-        if a.profiles()
-            && confirm
-            && !profiles_ready
-            && self.profile_faces.is_empty()
-            && let Some(refusal) = self
-                .selected
-                .and_then(|id| self.closed_area_refusal(session, id))
-        {
-            // CAD-400: an open or self-intersecting sketch says why.
-            self.message = format!("{} · {refusal}", a.tool.label());
-        }
-        let ready = if a.profiles() {
-            confirm && profiles_ready
-        } else {
-            enough
-                && (confirm
-                    || matches!(
-                        a.tool,
-                        ModelingTool::Move
-                            | ModelingTool::Split
-                            | ModelingTool::Copy
-                            | ModelingTool::Align
-                            | ModelingTool::Scale
-                            | ModelingTool::EdgeTreatment
-                            | ModelingTool::Advanced(_)
-                    ))
-        };
+        let ready = enough
+            && (confirm
+                || matches!(
+                    a.tool,
+                    ModelingTool::Move
+                        | ModelingTool::Split
+                        | ModelingTool::Copy
+                        | ModelingTool::Align
+                        | ModelingTool::Scale
+                        | ModelingTool::EdgeTreatment
+                        | ModelingTool::Advanced(_)
+                ));
         if !ready {
             self.acquisition = Some(a);
             return;
@@ -785,8 +769,6 @@ impl SketchEditor {
                 a.channel,
             ),
             ModelingTool::Align => self.begin_alignment(session, resources, feed, a.channel),
-            ModelingTool::Extrude => self.begin_extrude(session, resources, a.channel),
-            ModelingTool::Revolve => self.begin_revolve(session, resources, a.channel),
             ModelingTool::Boolean => self.begin_boolean(session, resources, feed, a.channel),
             ModelingTool::Split => self.begin_split(session, resources, feed, a.channel),
             _ => unreachable!("primitives have no target acquisition"),
@@ -810,6 +792,182 @@ impl SketchEditor {
                 self.acquisition = Some(a);
             }
         }
+    }
+    /// Extrude / Revolve (CAD-400): the form opens at once, also before any
+    /// profile is picked, and every later pick or selection change replaces
+    /// its profiles live. Apply or Enter in the form commits.
+    fn advance_profile_form(
+        &mut self,
+        session: &Session,
+        resources: &ProjectResources,
+        mut a: Acquisition,
+    ) {
+        if a.started && !self.model.active() {
+            // The form was closed by its own Cancel or a commit elsewhere.
+            return;
+        }
+        let document = session.document();
+        let revision = session.revision();
+        let waiting = self.pending_profile_pick.is_some()
+            || !self.queued_profile_clicks.is_empty()
+            || self.profile_faces.is_empty()
+                && self.selected.is_some_and(|id| {
+                    self.sketch_evaluation
+                        .current(id)
+                        .is_none_or(|p| !p.evaluated.is_current(document, revision))
+                });
+        if waiting && a.started {
+            self.acquisition = Some(a);
+            return;
+        }
+        let (target, missing) = if waiting {
+            (None, "Waiting for the current sketch profiles…".to_string())
+        } else {
+            self.profile_target(session, a.tool)
+        };
+        let label = a.tool.label();
+        if !a.started {
+            let opened = match &target {
+                Some(_) => self.begin_profile_model(session, resources, a.tool, a.channel),
+                None => Err(missing.clone()),
+            };
+            if let Err(reason) = opened {
+                let pending = self.finish().and_then(|()| {
+                    self.model.begin_pending_profiles(
+                        session,
+                        resources,
+                        a.tool,
+                        reason.clone(),
+                        a.channel,
+                    )
+                });
+                if let Err(error) = pending {
+                    self.message = error;
+                    self.acquisition = Some(a);
+                    return;
+                }
+                if a.tool == ModelingTool::Extrude
+                    && let Some(scene) = self.display_scene.as_deref()
+                {
+                    let _ = self.model.set_extrusion_context(session, resources, scene);
+                }
+                self.message = format!("{label} · {reason}");
+            }
+            a.started = true;
+            a.profile_target = target;
+            self.acquisition = Some(a);
+            return;
+        }
+        if target != a.profile_target {
+            a.profile_target = target.clone();
+            if let Err(error) =
+                self.model
+                    .retarget_profiles(session, target.clone(), missing.clone())
+            {
+                let _ = self.model.retarget_profiles(session, None, error.clone());
+                self.message = format!("{label} · {error}");
+            } else {
+                self.profile_form_feedback(session, resources, a.tool, target.as_ref(), &missing);
+            }
+        }
+        self.acquisition = Some(a);
+    }
+    /// The profiles the current selection describes, or why there are none.
+    fn profile_target(
+        &self,
+        session: &Session,
+        tool: ModelingTool,
+    ) -> (Option<crate::modeling::ProfileTarget>, String) {
+        use crate::modeling::ProfileTarget;
+        let document = session.document();
+        let revision = session.revision();
+        if !self.profile_faces.is_empty() {
+            if self.profile_inputs(document, revision).is_ok() {
+                return (
+                    None,
+                    "Use either closed areas of one sketch or planar model faces in one operation; clear one of the selections".into(),
+                );
+            }
+            return match self.profile_face_inputs(revision) {
+                Ok(faces) => (Some(ProfileTarget::Faces(faces)), String::new()),
+                Err(error) => (None, error),
+            };
+        }
+        match self.profile_inputs(document, revision) {
+            Ok((sketch, _))
+                if tool == ModelingTool::Revolve
+                    && super::developed_sheet::chart(document, sketch).is_some() =>
+            {
+                (
+                    None,
+                    "Developed sketches support Extrude Cut through sheet".into(),
+                )
+            }
+            Ok((sketch, regions)) => (
+                Some(ProfileTarget::Sketch { sketch, regions }),
+                String::new(),
+            ),
+            Err(error) => {
+                let unspecific = matches!(
+                    error.as_str(),
+                    "Select a sketch profile" | "Select one or more closed profile areas"
+                );
+                let reason = self
+                    .selected
+                    .and_then(|id| self.closed_area_refusal(session, id))
+                    .or((!unspecific).then_some(error))
+                    .unwrap_or_else(|| PICK_PROFILES.into());
+                (None, reason)
+            }
+        }
+    }
+    /// Display guide and status line after the form's profiles changed.
+    fn profile_form_feedback(
+        &mut self,
+        session: &Session,
+        resources: &ProjectResources,
+        tool: ModelingTool,
+        target: Option<&crate::modeling::ProfileTarget>,
+        missing: &str,
+    ) {
+        use crate::modeling::ProfileTarget;
+        let label = tool.label();
+        let (guide, what) = match target {
+            None => {
+                self.message = format!("{label} · {missing}");
+                return;
+            }
+            Some(ProfileTarget::Sketch { sketch, regions }) => (
+                (super::developed_sheet::chart(session.document(), *sketch).is_none())
+                    .then(|| {
+                        self.profile_guide(session.document(), session.revision(), *sketch, regions)
+                            .ok()
+                    })
+                    .flatten(),
+                format!("{} closed area(s)", regions.len()),
+            ),
+            Some(ProfileTarget::Faces(faces)) => (
+                self.profile_face_guide(),
+                format!("{} planar face(s)", faces.len()),
+            ),
+        };
+        if tool == ModelingTool::Extrude
+            && let Some(scene) = self.display_scene.as_deref()
+        {
+            let _ = self.model.set_extrusion_context(session, resources, scene);
+        }
+        if let Some(guide) = guide {
+            self.model.set_profile_guide(guide);
+        }
+        self.message = if tool == ModelingTool::Revolve {
+            format!(
+                "{label} · {what} · Shift, Command or Control adds or removes · choose the axis, set the angle, then Apply or press Enter"
+            )
+        } else {
+            format!(
+                "{label} · {what} · Shift, Command or Control adds or removes · drag the arrow or type a signed distance, then Apply or press Enter"
+            )
+        };
     }
     pub(super) fn placement_basis(
         &self,
@@ -852,7 +1010,7 @@ impl SketchEditor {
         let Some(a) = &self.acquisition else {
             return false;
         };
-        if a.started && a.tool == ModelingTool::Split {
+        if a.started && (a.tool == ModelingTool::Split || a.profiles()) {
             return false;
         }
         if a.started {
@@ -938,18 +1096,22 @@ impl SketchEditor {
             return;
         };
         let modifiers = crate::selection_input::click_modifiers(ui, response);
-        if a.profiles() && self.selected.is_none() {
+        if a.profiles() {
             let label = a.tool.label();
             let toggle = modifiers.shift || modifiers.command || modifiers.ctrl;
             let current = feed
                 .visible()
                 .filter(|_| feed.is_current(session.document().id(), session.revision()))
-                .map(|scene| scene.as_ref());
+                .cloned();
             if let Some((id, point)) =
-                self.sketch_area_under_pointer(session, current, rect, pointer)
+                self.sketch_area_under_pointer(session, current.as_deref(), rect, pointer)
             {
                 // A finished sketch's closed area: choose that sketch and area.
-                self.selected = Some(id);
+                if self.selected != Some(id) {
+                    self.selected = Some(id);
+                    self.whole_sketch = None;
+                    self.profiles.clear();
+                }
                 self.tree_selection = BTreeSet::from([id]);
                 self.profile_faces.clear();
                 if let Err(error) = self.enqueue_profile_click(
@@ -963,36 +1125,44 @@ impl SketchEditor {
                 }
                 return;
             }
-            if let Some(scene) = feed
-                .visible()
-                .filter(|_| feed.is_current(session.document().id(), session.revision()))
-                .cloned()
+            let selected_plane = self.selected.and_then(|id| {
+                let (_, frame, _) = self
+                    .read_sketch(session.document(), id, session.revision())
+                    .ok()?;
+                Some((id, self.camera.on_plane(pointer, rect, frame)?))
+            });
+            // Outside every visible area, a planar model face is the next
+            // profile, unless a developed sheet is shown flat.
+            if self.developed_viewport.is_none()
+                && let Some(scene) = &current
+                && self.pick_profile_face(session, scene, rect, pointer, toggle)
             {
-                self.pick_profile_face(session, &scene, rect, pointer, toggle);
-                if self.profile_faces.is_empty()
-                    && let Some(refusal) = self.refusal_under_pointer(session, rect, pointer)
-                {
-                    self.message = format!("{label} · {refusal}");
+                if !self.profile_faces.is_empty() && self.selected.is_some() {
+                    self.selected = None;
+                    self.whole_sketch = None;
+                    self.profiles.clear();
+                    self.tree_selection.clear();
                 }
-            } else {
-                self.message = "Wait for current native geometry before selecting faces".into();
+                return;
             }
-            return;
-        }
-        if a.profiles() {
-            if let Some(id) = self.selected
-                && let Ok((_, frame, _)) =
-                    self.read_sketch(session.document(), id, session.revision())
-                && let Some(point) = self.camera.on_plane(pointer, rect, frame)
-                && let Err(error) = self.enqueue_profile_click(
+            if let Some((id, point)) = selected_plane {
+                if let Err(error) = self.enqueue_profile_click(
                     session.document(),
                     session.revision(),
                     id,
                     point,
-                    modifiers.shift || modifiers.command || modifiers.ctrl,
-                )
+                    toggle,
+                ) {
+                    self.message = error;
+                }
+                return;
+            }
+            if current.is_none() {
+                self.message = "Wait for current native geometry before selecting faces".into();
+            } else if self.profile_faces.is_empty()
+                && let Some(refusal) = self.refusal_under_pointer(session, rect, pointer)
             {
-                self.message = error;
+                self.message = format!("{label} · {refusal}");
             }
             return;
         }
@@ -1462,6 +1632,11 @@ mod tests {
                     editor.model.split_selection().unwrap().1,
                     crate::modeling::SplitInputField::Targets
                 );
+            } else if matches!(tool, ModelingTool::Extrude | ModelingTool::Revolve) {
+                // CAD-400: the profile form opens at once, still empty.
+                assert!(!editor.awaiting_model_targets(), "{tool:?}");
+                assert!(editor.model.active(), "{tool:?}: {}", editor.message);
+                assert!(editor.model_request_for_tests(&session).is_none());
             } else {
                 assert!(editor.awaiting_model_targets(), "{tool:?}");
             }
