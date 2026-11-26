@@ -40,7 +40,6 @@ impl EdgeTreatmentPanel {
         }
         // Per-edge selection is complete; another edge needs another explicit choice.
         self.face_for = None;
-        self.picking = false;
         self.prune_sides();
         if self.sides == before {
             return Ok(false);
@@ -66,7 +65,7 @@ impl EdgeTreatmentPanel {
                     if sided{
                         let bound=self.sides.iter().any(|s|s.edge==edge.id);
                         let label=if self.face_for==Some(edge.id){format!("Choosing face for edge {}…",index+1)}else if bound{format!("Change side face for edge {}",index+1)}else{format!("Choose side face for edge {}",index+1)};
-                        if ui.add_enabled(self.picking_available,egui::Button::new(label)).on_hover_text("Explicitly pick this edge's adjacent native face on the frozen upstream Part").clicked(){self.face_for=Some(edge.id);self.picking=false;}
+                        if ui.add_enabled(self.picking_available,egui::Button::new(label)).on_hover_text("Explicitly pick this edge's adjacent native face on the frozen upstream Part").clicked(){self.face_for=Some(edge.id);}
                     }
                     if ui.small_button("Remove").on_hover_text("Remove this edge and its local side-face binding").clicked(){remove=Some(index);}
                 });

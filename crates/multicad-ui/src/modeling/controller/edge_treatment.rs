@@ -205,7 +205,8 @@ mod tests {
             controller.edge_treatment_edges(),
             Some(std::slice::from_ref(&capture))
         );
-        assert!(!controller.edge_treatment_picking());
+        // CAD-410: picking stays on, so other edges can repair the failure.
+        assert!(controller.edge_treatment_picking());
 
         // Exercise the production Inspector, including its visible native error,
         // enabled repair controls, and disabled pinned Apply action.
@@ -251,7 +252,12 @@ mod tests {
             };
             assert!(!find("Fillet").is_disabled());
             assert!(!find("Chamfer").is_disabled());
-            assert!(!find("Select / reselect edges").is_disabled());
+            for label in ["Select / reselect edges", "Finish picking edges"] {
+                assert!(
+                    nodes.iter().all(|(_, n)| n.label() != Some(label)),
+                    "CAD-410: no separate picking control ({label})"
+                );
+            }
             assert!(find("Apply").is_disabled());
             let error_visible = output.shapes.iter().any(|shape| match &shape.shape {
                 egui::Shape::Text(text) if text.galley.text().contains(&native_error) => shape

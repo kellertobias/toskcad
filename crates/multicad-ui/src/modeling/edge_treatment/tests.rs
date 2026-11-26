@@ -248,7 +248,7 @@ fn saved_edit_retains_frozen_input_feature_and_capture_ids() {
     assert_eq!(definition.parameters.profile, EdgeTreatmentProfile::Chamfer);
 }
 #[test]
-fn controller_capture_updates_are_source_bound_and_toolbar_preview_stops_picking() {
+fn controller_capture_updates_are_source_bound_and_preview_keeps_picking() {
     let (s, scene, body, edges, _) = fixture();
     let before = s.document().clone();
     let mut c = ModelToolController::default();
@@ -257,7 +257,7 @@ fn controller_capture_updates_are_source_bound_and_toolbar_preview_stops_picking
         .unwrap();
     assert!(c.edge_treatment_active() && c.edge_treatment_picking());
     assert!(c.preview(&s, &Default::default(), Channel::Ui).is_err());
-    assert!(!c.edge_treatment_picking());
+    assert!(c.edge_treatment_picking());
     let foreign = Session::new(s.document().clone()).unwrap();
     assert!(
         c.set_edge_treatment_edges(&foreign, &Default::default(), &scene, edges.clone())

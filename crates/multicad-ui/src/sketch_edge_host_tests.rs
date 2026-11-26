@@ -80,9 +80,6 @@ fn sided_chamfer_face_click_does_not_replace_the_edge_selection() {
     h.click(point, false);
     assert_eq!(h.editor.model.edge_treatment_edges().unwrap(), selected);
     assert_eq!(h.session.document(), &original);
-    if h.editor.model.edge_treatment_picking() {
-        h.click_label("Finish picking edges");
-    }
     h.ready();
     h.click_label("Apply");
     let native = multicad_model::Compiler::default()
@@ -133,7 +130,7 @@ fn shell_tool_first_face_selection_shift_toggle_and_native_apply_are_source_boun
     h.click(point, true);
     assert!(h.editor.model.advanced_captures().unwrap().is_empty());
     h.click(point, false);
-    h.click_label("Finish picking faces");
+    assert!(h.editor.model.advanced_picking());
     h.ready();
     assert_eq!(h.session.document(), &original);
     h.click_label("Apply");
@@ -436,8 +433,8 @@ fn actual_inspector_native_fillet_then_saved_chamfer_apply_and_cancel_use_the_fr
     h.frame(vec![]);
     let point = h.edges()[0].0;
     h.click(point, false);
-    h.click_label("Finish picking edges");
-    assert!(!h.editor.model.edge_treatment_picking());
+    // CAD-410: picking stays on; the auto-preview follows the pick.
+    assert!(h.editor.model.edge_treatment_picking());
     h.ready();
     assert_eq!(h.session.document(), &original);
     h.click_label("Apply");
@@ -481,8 +478,7 @@ fn actual_inspector_native_fillet_then_saved_chamfer_apply_and_cancel_use_the_fr
         )
         .unwrap();
     h.frame(vec![]);
-    assert!(!h.editor.model.edge_treatment_picking());
-    h.click_label("Select / reselect edges");
+    // CAD-410: a reopened treatment picks at once, with no reselect button.
     assert!(h.editor.model.edge_treatment_picking());
     assert_eq!(
         h.editor
@@ -776,9 +772,9 @@ fn fillet_keeps_both_bodies_drawn_and_pickable_and_starts_with_a_neutral_hint() 
         h.editor.message
     );
     assert_eq!(h.drawn_bodies(&[&stock, &segment]), both);
-    // The native preview of the segment fillet still draws the box.
-    h.click_label("Finish picking edges");
+    // Picking drives the native preview; the segment fillet still draws the box.
     h.ready();
+    assert!(h.editor.model.edge_treatment_picking());
     assert_eq!(h.drawn_bodies(&[&stock, &segment]), both);
     h.editor.cancel_model();
 }

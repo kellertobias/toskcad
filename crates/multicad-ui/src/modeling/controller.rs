@@ -1794,8 +1794,6 @@ impl ModelToolController {
             return Err("Save or cancel the stock definition first".into());
         }
         self.stop_edge_treatment_picking();
-        self.stop_advanced_picking();
-        self.stop_surface_structure_picking();
         self.invalidate();
         self.observed_preview_form = self.stamp();
         let result: Result<(), String> = (|| {
@@ -1822,8 +1820,6 @@ impl ModelToolController {
     ) -> Result<(), String> {
         self.observed_preview_form = Some(form);
         self.stop_edge_treatment_picking();
-        self.stop_advanced_picking();
-        self.stop_surface_structure_picking();
         if matches!(
             self.scope.as_ref().map(|scope| scope.execution),
             Some(Execution::Create)
@@ -2497,9 +2493,9 @@ impl ModelToolController {
             || self.stock_editor.is_some()
             || matches!(&self.form, Some(ModelForm::Sheet(panel)) if panel.waiting_for_edge())
             || self.scale_origin_picking()
-            || self.edge_treatment_picking()
-            || self.advanced_picking()
-            || self.surface_structure_picking()
+            || matches!(&self.form, Some(ModelForm::EdgeTreatment(panel)) if panel.awaiting_pick())
+            || matches!(&self.form, Some(ModelForm::Advanced(panel)) if panel.picking() && panel.captures().is_empty())
+            || matches!(&self.form, Some(ModelForm::SurfaceStructure(panel)) if panel.picking() && panel.faces().is_empty())
             || self.termination_picking()
             || self.alignment_picking()
             || self.fdm_aid_picking()
@@ -2899,7 +2895,28 @@ impl ModelToolController {
         if let Err(error) = &result {
             self.error = Some(error.clone());
         }
+        if matches!(result, Ok(None)) && super::dimension::take_field_enter(ui.ctx()) {
+            self.confirm_from_field(session, resources);
+        }
         result
+    }
+    /// CAD-410: Enter in a numeric field applies the tool exactly like Apply
+    /// once the field's value previews. An invalid value shows its error and
+    /// nothing is applied.
+    fn confirm_from_field(&mut self, session: &Session, resources: &ProjectResources) {
+        let capabilities = self.capabilities();
+        let Some(form) = self.form.as_ref() else {
+            return;
+        };
+        match form.request(session.document(), capabilities) {
+            Err(error) => {
+                self.keyboard_confirm = None;
+                self.error = Some(error);
+            }
+            Ok(_) => {
+                self.arm_confirmation(session, resources);
+            }
+        }
     }
 }
 

@@ -1168,6 +1168,21 @@ impl SketchEditor {
         self.message = message.into();
         Some(message)
     }
+    #[cfg(test)]
+    pub(crate) fn model_for_tests(&self) -> &crate::modeling::ModelToolController {
+        &self.model
+    }
+    #[cfg(test)]
+    pub(crate) fn model_for_tests_mut(&mut self) -> &mut crate::modeling::ModelToolController {
+        &mut self.model
+    }
+    #[cfg(test)]
+    pub(crate) fn set_tree_selection_for_tests(
+        &mut self,
+        selection: std::collections::BTreeSet<EntityId>,
+    ) {
+        self.tree_selection = selection;
+    }
     pub(crate) fn operation_handles_enter(&self) -> bool {
         self.model.operation_entry_active()
     }
@@ -3904,6 +3919,7 @@ impl SketchEditor {
         let mut current = feed.is_current(session.document().id(), session.revision());
         let mut repair_view = false;
         let mut model_view = false;
+        let mut model_preview = false;
         let mut assembly_view = false;
         let mut symbol_view = false;
         let mut exploded_view = false;
@@ -3958,9 +3974,6 @@ impl SketchEditor {
             && !self.model.scale_origin_picking()
             && !self.model.termination_picking()
             && !self.model.alignment_picking()
-            && !self.model.edge_treatment_picking()
-            && !self.model.advanced_picking()
-            && !self.model.surface_structure_picking()
             && self.model.screw_connection_picker().is_none()
             && self.model.profile_connection_picker().is_none()
             && !assembly_view
@@ -3969,6 +3982,7 @@ impl SketchEditor {
             scene = Some(candidate);
             current = false;
             model_view = true;
+            model_preview = true;
         }
         match self.connection_pick_scene(session, feed) {
             Ok(Some(view)) => {
@@ -3994,7 +4008,9 @@ impl SketchEditor {
                 Err(error) => self.message = error,
             }
         }
-        if !self.measurement.active() && self.model.edge_treatment_picking() {
+        // CAD-410: picking continues over the native preview; the faded
+        // pick scene is shown only while no preview is available.
+        if !self.measurement.active() && self.model.edge_treatment_picking() && !model_preview {
             match self.edge_source_scene(session, feed) {
                 Ok(source) => {
                     scene = Some(source);
@@ -4003,7 +4019,7 @@ impl SketchEditor {
                 Err(error) => self.message = error,
             }
         }
-        if !self.measurement.active() && self.model.surface_structure_picking() {
+        if !self.measurement.active() && self.model.surface_structure_picking() && !model_preview {
             match self.surface_structure_pick_scene(session, resources, feed) {
                 Ok(Some(source)) => {
                     scene = Some(source);
@@ -4015,7 +4031,7 @@ impl SketchEditor {
                 Err(error) => self.message = error,
             }
         }
-        if !self.measurement.active() && self.model.advanced_picking() {
+        if !self.measurement.active() && self.model.advanced_picking() && !model_preview {
             match self.advanced_source_scene(session, feed) {
                 Ok(source) => {
                     scene = Some(source);

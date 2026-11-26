@@ -206,12 +206,6 @@ impl ModelToolController {
         Ok(())
     }
 
-    pub(super) fn stop_surface_structure_picking(&mut self) {
-        if let Some(ModelForm::SurfaceStructure(panel)) = &mut self.form {
-            panel.stop_picking();
-        }
-    }
-
     pub(crate) fn take_surface_height_map_request(&mut self) -> Option<FormStamp> {
         let Some(ModelForm::SurfaceStructure(panel)) = &mut self.form else {
             return None;
@@ -390,14 +384,6 @@ mod tests {
             .begin_existing(&session, &resources, request.feature, Channel::Ui)
             .unwrap();
         controller.source_only_context("The saved face needs repair");
-        let ctx = egui::Context::default();
-        ctx.enable_accesskit();
-        super::super::chamfer_tests::click(
-            &ctx,
-            &mut controller,
-            &mut session,
-            "Pick or repair faces",
-        );
         assert!(controller.surface_structure_picking());
         assert!(
             controller

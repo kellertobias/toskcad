@@ -51,7 +51,7 @@ impl ModelToolController {
         if let Some(ModelForm::SurfaceStructure(panel)) = &mut self.form {
             panel.set_picking_available(panel.input().is_some());
             self.context_notice = Some(format!(
-                "{reason}. Use Pick or repair faces to inspect the retained upstream Part."
+                "{reason}. Pick a face in the viewer to inspect the retained upstream Part."
             ));
         }
         if let Some(ModelForm::EdgeTreatment(panel)) = &mut self.form {
