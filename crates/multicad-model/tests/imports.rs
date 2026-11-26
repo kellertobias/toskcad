@@ -581,3 +581,127 @@ fn board_mounting_holes_transfer_into_a_mounting_panel(backend: GeometryBackend)
         120. * 80. * 3. - removed - 6. * 4. * 3.,
     );
 }
+
+/// A Rust STEP file over the 8 MiB stored-source budget (and within the 64 MiB
+/// read cap) is kept in the versioned compact form; approved 2026-11-26.
+#[test]
+fn compact_rust_step_source_saves_reopens_migrates_and_keeps_the_stored_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large.step");
+    let padded = |x: i64| {
+        let text = rust_box_step(x);
+        let at = text.find("ENDSEC;\nEND-ISO").unwrap();
+        let mut large = text.clone();
+        large.insert_str(at, &format!("/* {} */\n", "x".repeat(9 * 1024 * 1024)));
+        large
+    };
+    let original = padded(10);
+    assert!(original.len() > MAX_STEP_BREP_BYTES);
+    std::fs::write(&path, &original).unwrap();
+    let file = read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap();
+    assert_eq!(file.encoding, StepEncoding::RustStepCompact);
+    assert!(file.solids[0].1.len() <= MAX_STEP_BREP_BYTES);
+    assert_eq!(
+        compact::expand_step_text(&file.solids[0].1).unwrap(),
+        original
+    );
+    let mut session = Session::new(Document::new("Compact STEP").unwrap()).unwrap();
+    let prepared = prepare_step_import(&session, 0, actor(), &file).unwrap();
+    let source = prepared.source;
+    let part = prepared.model.outputs[0].body;
+    session.commit(prepared.model.prepared).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let save = |session: &Session| {
+        let mut bytes = Vec::new();
+        project_file::write(
+            &ProjectFile::new(session.document().clone()).unwrap(),
+            &mut bytes,
+            Default::default(),
+        )
+        .unwrap();
+        bytes
+    };
+    let bytes = save(&session);
+    // Older readers refuse the new versioned source schema.
+    let mut supported = project_file::supported_capabilities();
+    assert!(supported.remove(RUST_STEP_COMPACT_SOURCE_CAPABILITY));
+    assert!(
+        project_file::read(&mut bytes.as_slice(), Default::default(), &supported)
+            .expect_err("older readers must reject the compact source schema")
+            .contains(RUST_STEP_COMPACT_SOURCE_CAPABILITY)
+    );
+    let opened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project;
+    assert_eq!(&opened.document, session.document());
+    assert!(
+        opened
+            .capabilities()
+            .contains(RUST_STEP_COMPACT_SOURCE_CAPABILITY)
+    );
+    let saved = read_step_source(&opened.document, source).unwrap();
+    assert_eq!(saved.encoding, StepEncoding::RustStepCompact);
+    assert_eq!(
+        compact::expand_step_text(&saved.solids[0].brep).unwrap(),
+        original
+    );
+    let rebuild = |document: &Document| {
+        let model = Compiler::default()
+            .compile_with_backend(document, 0, GeometryBackend::Rust, None)
+            .unwrap();
+        solid(&model, part).volume_mm3().unwrap()
+    };
+    near(rebuild(&opened.document), 6000.);
+    // Migration both ways: a plain reimport replaces the compact text, and a
+    // large reimport compacts a plain source; the Part is kept each time.
+    let mut session = Session::new(opened.document.clone()).unwrap();
+    let plain = rust_box_step(15);
+    std::fs::write(&path, &plain).unwrap();
+    let file = read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap();
+    assert_eq!(file.encoding, StepEncoding::RustStep);
+    let (plan, prepared) =
+        prepare_step_update(&session, session.revision(), actor(), source, &file).unwrap();
+    assert_eq!(plan.matched, vec![("solid-1".into(), 0, true)]);
+    session.commit(prepared.model.prepared).unwrap();
+    let saved = read_step_source(session.document(), source).unwrap();
+    assert_eq!(saved.encoding, StepEncoding::RustStep);
+    assert_eq!(saved.solids[0].brep, plain);
+    near(rebuild(session.document()), 9000.);
+    let large = padded(15);
+    std::fs::write(&path, &large).unwrap();
+    let file = read_step_file_with_backend(&path, GeometryBackend::Rust).unwrap();
+    let (plan, prepared) =
+        prepare_step_update(&session, session.revision(), actor(), source, &file).unwrap();
+    assert_eq!(plan.matched, vec![("solid-1".into(), 0, true)]);
+    session.commit(prepared.model.prepared).unwrap();
+    let saved = read_step_source(session.document(), source).unwrap();
+    assert_eq!(saved.encoding, StepEncoding::RustStepCompact);
+    assert_eq!(
+        compact::expand_step_text(&saved.solids[0].brep).unwrap(),
+        large
+    );
+    let reopened = project_file::read(
+        &mut save(&session).as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap()
+    .project;
+    near(rebuild(&reopened.document), 9000.);
+    // The stored budget still refuses an oversize compact source, and the
+    // compact encoding needs its versioned form.
+    let mut oversize = saved.clone();
+    oversize.solids[0].brep = format!(
+        "{}{}",
+        compact::COMPACT_STEP_PREFIX,
+        "A".repeat(MAX_STEP_BREP_BYTES)
+    );
+    assert!(oversize.validate().is_err());
+    let mut unversioned = saved.clone();
+    unversioned.solids[0].brep = large.clone();
+    assert!(unversioned.validate().is_err());
+}
