@@ -55,6 +55,18 @@ schema. The [native container](../../crates/multicad-core/src/project_file/model
 declares the required capability and includes sketch semantics in its cache
 interpretation fingerprint.
 
+Drawn shapes (CAD-398) are an optional `shapes` list in any schema. Each entry
+records one draw request: a UUID, a kind (line, rectangle, circle, arc, polyline
+or spline), a stable readable name such as "Rectangle 2", and that request's
+curves in drawing order. Shape identity therefore never depends on geometry, and
+shapes that share points keep disjoint curves. Writing a source prunes curves that
+later edits removed, and drops shapes left empty. A project that records any shape
+declares `core.constrained_sketch.shapes`. Older sources have no list and read
+unchanged; their curves are listed one by one. Shape sizes are ordinary driving
+dimensions on the shape's own curves, and a shape position is a Fix of its
+anchor point
+([`shape_edit`](../../crates/multicad-core/src/constraint_sketch/shape_edit.rs)).
+
 Return [`EvaluatedSketch`](../../crates/multicad-solver/src/evaluated.rs) with
 canonical source, solved geometry and resolved dimensional values kept separately.
 Semantic edit preparation commits the requested source and dependency links.

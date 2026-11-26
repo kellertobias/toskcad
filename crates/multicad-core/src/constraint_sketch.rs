@@ -4,6 +4,7 @@ use crate::document::EntityId;
 use serde::{Deserialize, Serialize};
 
 pub mod binding;
+pub mod shape_edit;
 pub mod source;
 mod spline;
 pub mod text;
@@ -19,6 +20,82 @@ pub struct Sketch {
     /// derived during evaluation and are not solver points or curves.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub texts: Vec<text::SketchText>,
+    /// Drawn shapes as recorded by the draw request (CAD-398): which curves
+    /// one Rectangle, Circle, … gesture created. Identity is canonical, never
+    /// guessed from geometry. Sources saved before shapes were recorded have
+    /// none; their curves are listed individually. Curves removed by later
+    /// edits are pruned from their shape when the source is written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shapes: Vec<Shape>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Shape {
+    pub id: EntityId,
+    pub kind: ShapeKind,
+    /// Readable, stable name such as "Rectangle 1".
+    pub name: String,
+    /// Curves in authored drawing order; a rectangle's first curve is its
+    /// width edge and its second the height edge.
+    pub curves: Vec<EntityId>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShapeKind {
+    Line,
+    Rectangle,
+    Circle,
+    Arc,
+    Polyline,
+    Spline,
+}
+impl ShapeKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Line => "Line",
+            Self::Rectangle => "Rectangle",
+            Self::Circle => "Circle",
+            Self::Arc => "Arc",
+            Self::Polyline => "Polyline",
+            Self::Spline => "Spline",
+        }
+    }
+}
+/// Longest accepted shape name.
+pub const MAX_SHAPE_NAME: usize = 128;
+impl Sketch {
+    /// Record `curves` as one drawn shape named "<Kind> N", where N is one
+    /// past the highest number already used by that kind. Returns its id.
+    pub fn record_shape(&mut self, kind: ShapeKind, curves: Vec<EntityId>) -> EntityId {
+        let prefix = format!("{} ", kind.label());
+        let next = self
+            .shapes
+            .iter()
+            .filter_map(|s| s.name.strip_prefix(&prefix)?.parse::<u32>().ok())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let id = EntityId::new();
+        self.shapes.push(Shape {
+            id,
+            kind,
+            name: format!("{prefix}{next}"),
+            curves,
+        });
+        id
+    }
+    /// The recorded shape that owns `curve`, if any.
+    pub fn shape_of(&self, curve: EntityId) -> Option<&Shape> {
+        self.shapes.iter().find(|s| s.curves.contains(&curve))
+    }
+    /// Drop curve references that no longer exist and shapes left empty.
+    pub fn prune_shapes(&mut self) {
+        let curves: std::collections::BTreeSet<_> = self.curves.iter().map(|c| c.id).collect();
+        for shape in &mut self.shapes {
+            shape.curves.retain(|id| curves.contains(id));
+        }
+        self.shapes.retain(|s| !s.curves.is_empty());
+    }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

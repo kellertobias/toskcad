@@ -183,6 +183,15 @@ fn prepare_draw_after(
                 .filter(|c| !source.sketch.constraints.iter().any(|old| old.id == c.id))
                 .cloned(),
         );
+        canonical.sketch.shapes.extend(
+            draft
+                .source
+                .sketch
+                .shapes
+                .iter()
+                .filter(|s| !source.sketch.shapes.iter().any(|old| old.id == s.id))
+                .cloned(),
+        );
         finish(&mut canonical, &draft.created_curves).map_err(finished)?;
         let edit = crate::transaction::prepare_edit_after(
             session,

@@ -893,6 +893,7 @@ pub fn extract_evaluated_with_queries_and_interrupt(
                 curves: curves.to_vec(),
                 constraints: vec![],
                 texts: texts.to_vec(),
+                shapes: vec![],
             },
         },
         queries.tolerance_mm(),

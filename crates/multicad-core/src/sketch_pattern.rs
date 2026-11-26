@@ -399,6 +399,7 @@ pub fn draft(
                 .cloned()
                 .collect(),
             texts: vec![],
+            shapes: vec![],
         },
     };
     let selected: BTreeSet<_> = report.points.union(&report.curves).copied().collect();
