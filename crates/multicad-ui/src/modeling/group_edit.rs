@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 
 struct TargetRow {
     body: EntityId,
+    name: String,
     label: String,
     predecessor: String,
     input: BodyInput,
@@ -71,6 +72,7 @@ impl GroupEditPanel {
                     .ok_or("An operation's saved predecessor is missing")?;
                 Ok(TargetRow {
                     body: entity.id,
+                    name: entity.name.clone(),
                     label: format!("{} · {path}", entity.name),
                     predecessor: input_label(document, &request.target),
                     input: request.target.clone(),
@@ -137,6 +139,9 @@ impl GroupEditPanel {
                 }
                 self.rows.push(TargetRow {
                     body: choice.input.body,
+                    name: document
+                        .get(choice.input.body)
+                        .map_or_else(|| choice.label.clone(), |entity| entity.name.clone()),
                     label: choice.label,
                     predecessor: input_label(document, &choice.input),
                     input: choice.input.clone(),
@@ -180,6 +185,26 @@ impl GroupEditPanel {
         }
         Ok(edit)
     }
+    /// Saved feedback for an operation chosen automatically at creation, kept
+    /// while the author leaves that operation unchanged (CAD-404).
+    pub fn automatic_note(&self) -> Option<String> {
+        let saved = self.state.operation().ok()?;
+        (self.state.definition.automatic && !self.legacy && saved == self.edit.operation).then(
+            || {
+                let bodies: Vec<_> = self
+                    .rows
+                    .iter()
+                    .filter(|row| row.saved)
+                    .map(|row| row.name.as_str())
+                    .collect();
+                match saved {
+                    Operation::Join => format!("Automatic · Join · touches {}", bodies.join(", ")),
+                    Operation::Cut => format!("Automatic · Cut · enters {}", bodies.join(", ")),
+                    _ => "Automatic · New body · touched no body".into(),
+                }
+            },
+        )
+    }
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -213,6 +238,9 @@ impl GroupEditPanel {
                         .changed();
                 }
             });
+        if let Some(note) = self.automatic_note() {
+            ui.strong(note);
+        }
         if self.edit.operation != Operation::NewBody {
             ui.small("The checked bodies are an explicit captured target set. Changing dimensions does not rediscover targets. Saved predecessor versions stay fixed.");
             changed|=ui.checkbox(&mut self.edit.keep_tools,"Keep extrusion tool bodies").on_hover_text("Change retention of the group's saved extrusion producer versions without replacing their identities").changed();

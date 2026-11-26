@@ -57,6 +57,7 @@ pub fn inspect_ungrouped_extrude(
         tools: vec![source.clone()],
         results: vec![],
         captured_scope: group.captured_scope.clone(),
+        automatic: false,
     };
     prepare::new_group_entity(document, group, &definition, EXTRUDE_GROUP_V2_SCHEMA)
         .map_err(|e| invalid(e.message))?;

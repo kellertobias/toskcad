@@ -17,7 +17,7 @@ pub(super) fn encode(
         ));
     }
     let data = match schema {
-        EXTRUDE_GROUP_SCHEMA if source.kind == ExtrudeGroupKind::Boolean => {
+        EXTRUDE_GROUP_SCHEMA if source.kind == ExtrudeGroupKind::Boolean && !source.automatic => {
             serde_json::to_value(BooleanV1 {
                 tools: source.tools.clone(),
                 results: source.results.clone(),
@@ -52,6 +52,7 @@ pub(super) fn decode(definition: &Definition) -> Result<ExtrudeGroupDefinition, 
                 tools: old.tools,
                 results: old.results,
                 captured_scope: old.captured_scope,
+                automatic: false,
             }
         }
         EXTRUDE_GROUP_V2_SCHEMA => {

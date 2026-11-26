@@ -52,6 +52,58 @@ impl CutTargetSelection {
         }
     }
 }
+/// The default extrusion operation chosen from the extrusion's relationship to
+/// existing bodies (CAD-404). It is a suggestion for an author who has not
+/// picked an operation; an explicit choice never passes through this.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AutomaticOperation {
+    /// The extrusion touches no body in scope.
+    NewBody,
+    /// The extrusion grows out of or touches this one body without entering it.
+    Join(BodyInput),
+    /// The extrusion goes into this one body and removes material from it.
+    Cut(BodyInput),
+    /// Several bodies touch or overlap the extrusion. They are listed for the
+    /// author to choose from; the operation stays New body until then.
+    Several(Vec<BodyInput>),
+}
+impl AutomaticOperation {
+    /// Decide from two discoveries over the same tools and scope: `contact`
+    /// with [`CutTargetQuery::contact`] set (touching or overlapping bodies)
+    /// and `volume` without it (bodies the extrusion enters). For a sketch on
+    /// a body face, that body is the one the face relation reports.
+    pub fn decide(contact: &CutTargetSelection, volume: &CutTargetSelection) -> Self {
+        let mut affected: Vec<BodyInput> = vec![];
+        for target in contact.targets.iter().chain(&volume.targets) {
+            if !affected.iter().any(|known| known.body == target.body) {
+                affected.push(target.clone());
+            }
+        }
+        match affected.as_slice() {
+            [] => Self::NewBody,
+            [target] if volume.targets.iter().any(|hit| hit.body == target.body) => {
+                Self::Cut(target.clone())
+            }
+            [target] => Self::Join(target.clone()),
+            _ => Self::Several(affected),
+        }
+    }
+    /// The operation to apply: New body until the author resolves `Several`.
+    pub fn operation(&self) -> super::Operation {
+        match self {
+            Self::NewBody | Self::Several(_) => super::Operation::NewBody,
+            Self::Join(_) => super::Operation::Join,
+            Self::Cut(_) => super::Operation::Cut,
+        }
+    }
+    /// The one affected body the operation applies to, if any.
+    pub fn target(&self) -> Option<&BodyInput> {
+        match self {
+            Self::Join(target) | Self::Cut(target) => Some(target),
+            Self::NewBody | Self::Several(_) => None,
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CutTargetProbe {

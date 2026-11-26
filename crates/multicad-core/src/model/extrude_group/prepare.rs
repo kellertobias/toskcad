@@ -38,8 +38,14 @@ pub(in crate::model) fn creation_entity(
             })
             .collect(),
         captured_scope: draft.captured_scope.clone(),
+        automatic: draft.automatic,
     };
-    new_group_entity(document, draft, &source, EXTRUDE_GROUP_SCHEMA)
+    let schema = if draft.automatic {
+        EXTRUDE_GROUP_V2_SCHEMA
+    } else {
+        EXTRUDE_GROUP_SCHEMA
+    };
+    new_group_entity(document, draft, &source, schema)
 }
 pub(super) fn new_group_entity(
     document: &Document,
@@ -141,6 +147,9 @@ pub(super) fn apply_state(
             "Extrusion operation supports New body, Join, Cut or Intersect",
         ));
     }
+    // An automatic choice stays automatic only while its operation is kept;
+    // an edit that picks another operation is the author's explicit choice.
+    let automatic = state.definition.automatic && state.operation()? == edit.operation;
     let kind = if edit.operation == Operation::NewBody {
         if !edit.targets.is_empty() || edit.keep_tools {
             return Err(error(
@@ -307,18 +316,21 @@ pub(super) fn apply_state(
             })
             .collect();
     }
-    let schema =
-        if kind == ExtrudeGroupKind::NewBody || state.schema_version == EXTRUDE_GROUP_V2_SCHEMA {
-            EXTRUDE_GROUP_V2_SCHEMA
-        } else {
-            EXTRUDE_GROUP_SCHEMA
-        };
+    let schema = if kind == ExtrudeGroupKind::NewBody
+        || automatic
+        || state.schema_version == EXTRUDE_GROUP_V2_SCHEMA
+    {
+        EXTRUDE_GROUP_V2_SCHEMA
+    } else {
+        EXTRUDE_GROUP_SCHEMA
+    };
     let source = ExtrudeGroupDefinition {
         source_schema: None,
         kind,
         tools,
         results,
         captured_scope: state.definition.captured_scope,
+        automatic,
     };
     if let Some(draft) = draft {
         if draft.id != edit.group {

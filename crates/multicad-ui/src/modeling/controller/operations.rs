@@ -1,7 +1,8 @@
 //! The cut discovery reply cannot authorize Apply. It only selects targets for
 //! a second, complete transaction evaluated on the original source Session.
 use super::*;
-use multicad_core::model::Operation;
+use crate::modeling::extrude_operation::DiscoveryMode;
+use multicad_core::model::{AutomaticOperation, Operation};
 
 impl ModelToolController {
     pub(super) fn operation_changed(&mut self) {
@@ -53,14 +54,37 @@ impl ModelToolController {
             .operations
             .as_ref()
             .ok_or("Start a new extrusion first")?;
+        if controls.automatic() {
+            if !controls.needs_discovery() {
+                // Nothing to touch: New body without a native round trip.
+                self.operations
+                    .as_mut()
+                    .expect("checked operation controls")
+                    .decide(
+                        AutomaticOperation::NewBody,
+                        model::CutTargetSelection {
+                            defaults: vec![],
+                            targets: vec![],
+                            not_intersecting: vec![],
+                        },
+                    );
+                let request = self.new_body_request(extrusion, true);
+                return self.submit_final(session, resources, channel, form, &request);
+            }
+            // Each preview decides again from the current distance and
+            // direction until the author picks an operation (CAD-404).
+            return self.start_discovery(
+                session,
+                resources,
+                channel,
+                form,
+                extrusion,
+                DiscoveryMode::Automatic,
+            );
+        }
         match controls.operation {
             Operation::NewBody => {
-                let request = ModelRequest::GroupedExtrude(Box::new(
-                    multicad_core::model::GroupedExtrudeRequest {
-                        extrusion: extrusion.clone(),
-                        group: self.identities.group_draft(),
-                    },
-                ));
+                let request = self.new_body_request(extrusion, false);
                 self.submit_final(session, resources, channel, form, &request)
             }
             Operation::Cut if controls.through_sheet() => {
@@ -86,13 +110,24 @@ impl ModelToolController {
                 };
                 self.submit_final(session, resources, channel, form, &request)
             }
-            Operation::Cut => {
-                self.start_discovery(session, resources, channel, form, extrusion, false)
-            }
+            Operation::Cut => self.start_discovery(
+                session,
+                resources,
+                channel,
+                form,
+                extrusion,
+                DiscoveryMode::Cut,
+            ),
             Operation::Join | Operation::Intersect => {
                 if controls.automatic_join() {
-                    return self
-                        .start_discovery(session, resources, channel, form, extrusion, true);
+                    return self.start_discovery(
+                        session,
+                        resources,
+                        channel,
+                        form,
+                        extrusion,
+                        DiscoveryMode::Join,
+                    );
                 }
                 let targets = controls.explicit_targets(session.document())?;
                 let request = self.identities.compose(
@@ -114,8 +149,17 @@ impl ModelToolController {
             }
         }
     }
-    /// Ask the native model which bodies the extrusion tools affect. Join
-    /// (`contact`) uses the active scope only; Cut adds its explicit overrides.
+    fn new_body_request(&mut self, extrusion: &ExtrudeRequest, automatic: bool) -> ModelRequest {
+        let mut group = self.identities.group_draft();
+        group.automatic = automatic;
+        ModelRequest::GroupedExtrude(Box::new(multicad_core::model::GroupedExtrudeRequest {
+            extrusion: extrusion.clone(),
+            group,
+        }))
+    }
+    /// Ask the native model which bodies the extrusion tools affect. Join and
+    /// the automatic default use the active scope only; Cut adds its explicit
+    /// overrides.
     fn start_discovery(
         &mut self,
         session: &Session,
@@ -123,13 +167,13 @@ impl ModelToolController {
         channel: Channel,
         form: FormStamp,
         extrusion: &ExtrudeRequest,
-        contact: bool,
+        mode: DiscoveryMode,
     ) -> Result<(), String> {
         let controls = self
             .operations
             .as_ref()
             .ok_or("Start a new extrusion first")?;
-        let (include, exclude) = if contact {
+        let (include, exclude) = if mode != DiscoveryMode::Cut {
             (vec![], vec![])
         } else {
             (
@@ -144,7 +188,7 @@ impl ModelToolController {
             controls.component,
             include,
             exclude,
-            contact,
+            mode,
         )?;
         self.generation = self
             .generation
@@ -186,15 +230,26 @@ impl ModelToolController {
             return Err("Extrusion controls changed; Preview the current cut".into());
         }
         let scene = reply.result?;
-        let selection = discovery
+        let selections: Vec<_> = discovery
             .cut
-            .selection(session, &scene, discovery.stamp)?
-            .clone();
+            .selections(session, &scene, discovery.stamp)?
+            .into_iter()
+            .cloned()
+            .collect();
+        if discovery.cut.mode() == DiscoveryMode::Automatic {
+            return self.receive_automatic(session, resources, discovery, selections);
+        }
+        let [selection] = <[_; 1]>::try_from(selections)
+            .map_err(|_| "Cut target results do not match the requested probe")?;
         let controls = self
             .operations
             .as_mut()
             .ok_or("The extrusion operation was cancelled")?;
-        let operation = discovery.cut.operation();
+        let operation = if discovery.cut.mode() == DiscoveryMode::Join {
+            Operation::Join
+        } else {
+            Operation::Cut
+        };
         if controls.operation != operation
             || (operation == Operation::Join && !controls.automatic_join())
         {
@@ -244,5 +299,103 @@ impl ModelToolController {
             discovery.form,
             &ModelRequest::ExtrudeBoolean(Box::new(request)),
         )
+    }
+    /// Turn the two automatic probes into the default operation and submit
+    /// it, unless the author has picked an operation meanwhile.
+    fn receive_automatic(
+        &mut self,
+        session: &Session,
+        resources: &ProjectResources,
+        discovery: Discovery,
+        selections: Vec<model::CutTargetSelection>,
+    ) -> Result<(), String> {
+        let [contact, volume] = <[_; 2]>::try_from(selections)
+            .map_err(|_| "Automatic operation results do not match the requested probes")?;
+        let decision = AutomaticOperation::decide(&contact, &volume);
+        let controls = self
+            .operations
+            .as_mut()
+            .ok_or("The extrusion operation was cancelled")?;
+        if !controls.decide(decision.clone(), contact) {
+            return Err("The extrusion operation changed; Preview again".into());
+        }
+        let keep_tools = controls.keep_tools;
+        let component = controls.component;
+        let extrusion = discovery.cut.extrusion().clone();
+        let request = match (decision.operation(), decision.target()) {
+            (operation @ (Operation::Join | Operation::Cut), Some(target)) => {
+                let mut request = self.identities.compose(
+                    extrusion.clone(),
+                    operation,
+                    vec![target.clone()],
+                    keep_tools,
+                )?;
+                let group = request.group.as_mut().expect("pinned operation record");
+                group.automatic = true;
+                if operation == Operation::Cut {
+                    group.captured_scope = Some(multicad_core::model::ExtrudeCapturedScope {
+                        component,
+                        include: vec![],
+                        exclude: vec![],
+                    });
+                }
+                ModelRequest::ExtrudeBoolean(Box::new(request))
+            }
+            _ => self.new_body_request(&extrusion, true),
+        };
+        let cut = decision.operation() == Operation::Cut;
+        self.submit_final(
+            session,
+            resources,
+            discovery.channel,
+            discovery.form,
+            &request,
+        )?;
+        if cut {
+            self.cut_fallback = Some(super::CutFallback {
+                form: discovery.form,
+                channel: discovery.channel,
+                extrusion,
+            });
+        }
+        Ok(())
+    }
+    /// An automatic Cut whose native result removes all material of its
+    /// target falls back to New body with a note. An explicit Cut keeps the
+    /// error, because the author asked for exactly that operation.
+    pub(super) fn automatic_cut_fallback(
+        &mut self,
+        session: &Session,
+        resources: &ProjectResources,
+        form: FormStamp,
+    ) {
+        if !self
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("removed all material"))
+        {
+            return;
+        }
+        let Some(fallback) = self.cut_fallback.take().filter(|f| f.form == form) else {
+            return;
+        };
+        if !self
+            .operations
+            .as_mut()
+            .is_some_and(OperationControls::cut_removes_all)
+        {
+            return;
+        }
+        self.error = None;
+        let request = self.new_body_request(&fallback.extrusion, true);
+        if let Err(error) = self.submit_final(
+            session,
+            resources,
+            fallback.channel,
+            fallback.form,
+            &request,
+        ) {
+            self.error = Some(error);
+        }
     }
 }
