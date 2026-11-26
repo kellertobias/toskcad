@@ -5231,6 +5231,9 @@ mod ribbon_layout_tests {
 }
 
 #[cfg(test)]
+#[path = "application/boolean_ux_tests.rs"]
+mod boolean_ux_tests;
+#[cfg(test)]
 #[path = "application/inspector_tests.rs"]
 mod inspector_tests;
 #[cfg(test)]
@@ -5242,6 +5245,9 @@ mod tool_enter_tests;
 #[cfg(test)]
 #[path = "application/tool_search_tests.rs"]
 mod tool_search_tests;
+#[cfg(test)]
+#[path = "application/ui_harness.rs"]
+mod ui_harness;
 #[cfg(test)]
 #[path = "application/workbench_tests.rs"]
 mod workbench_tests;

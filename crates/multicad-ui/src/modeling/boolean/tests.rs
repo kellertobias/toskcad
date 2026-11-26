@@ -155,7 +155,7 @@ fn explicit_multi_target_requests_keep_pinned_ids_and_do_not_change_ownership_or
         panel
             .request(session.document(), true)
             .unwrap_err()
-            .contains("tool bodies")
+            .contains("bodies to cut away")
     );
     panel.tools.insert(bodies[2].body);
     let first = panel.request(session.document(), true).unwrap();
@@ -170,23 +170,7 @@ fn explicit_multi_target_requests_keep_pinned_ids_and_do_not_change_ownership_or
         );
         assert!(!request.keep_tools);
     }
-    panel.targets.remove(&bodies[0].body);
-    panel.operation = Operation::Join;
-    panel.targets.insert(bodies[0].body);
-    panel.keep_tools = true;
-    let next = panel.request(session.document(), true).unwrap();
-    for request in next {
-        let prior = first
-            .iter()
-            .find(|before| before.target.body == request.target.body)
-            .unwrap();
-        assert_eq!(
-            (request.feature, request.name),
-            (prior.feature, prior.name.clone())
-        );
-        assert!(request.keep_tools);
-        assert_eq!(request.operation, Operation::Join);
-    }
+    // A body in both Cut roles is refused.
     panel.tools.insert(bodies[0].body);
     assert!(
         panel
@@ -195,6 +179,34 @@ fn explicit_multi_target_requests_keep_pinned_ids_and_do_not_change_ownership_or
             .contains("cannot also")
     );
     panel.tools.remove(&bodies[0].body);
+    panel.targets.remove(&bodies[0].body);
+    panel.operation = Operation::Join;
+    panel.targets.insert(bodies[0].body);
+    panel.keep_tools = true;
+    // CAD-408: Join is one request; the first body keeps the pinned
+    // identity of its earlier Cut request and the others merge into it.
+    let next = panel.request(session.document(), true).unwrap();
+    assert_eq!(next.len(), 1);
+    let request = &next[0];
+    let prior = first
+        .iter()
+        .find(|before| before.target.body == bodies[0].body)
+        .unwrap();
+    assert_eq!(request.target.body, bodies[0].body);
+    assert_eq!(
+        (request.feature, request.name.clone()),
+        (prior.feature, prior.name.clone())
+    );
+    assert_eq!(
+        request
+            .tools
+            .iter()
+            .map(|tool| tool.body)
+            .collect::<Vec<_>>(),
+        vec![bodies[1].body, bodies[2].body]
+    );
+    assert!(!request.keep_tools);
+    assert_eq!(request.operation, Operation::Join);
     panel.operation = Operation::Split;
     assert!(
         panel
@@ -324,7 +336,7 @@ fn ribbon_operation_presets_reach_requests_and_cancel_or_failed_preview_change_n
         .unwrap()
         .with_operation(operation);
         assert_eq!(panel.operation(), operation);
-        // Failed preview: no tool bodies chosen yet.
+        // Failed preview: the selection is incomplete.
         assert!(
             panel
                 .finish_frame(
@@ -336,7 +348,12 @@ fn ribbon_operation_presets_reach_requests_and_cancel_or_failed_preview_change_n
                 )
                 .is_none()
         );
-        assert!(panel.error.as_deref().unwrap().contains("tool bodies"));
+        let next_action = match operation {
+            Operation::Join => "Select at least one more body to join",
+            Operation::Intersect => "Select at least one more body to intersect",
+            _ => "Select one or more bodies to cut away",
+        };
+        assert_eq!(panel.error.as_deref(), Some(next_action));
         panel.tools.insert(bodies[2].body);
         let Some(ModelEvent::Preview {
             request: ModelRequest::Booleans(requests),
