@@ -198,8 +198,22 @@ fn face_extrusions(document: &Document) -> Vec<(EntityId, model::ExtrudeDefiniti
 
 #[test]
 fn face_arrow_drag_then_typed_value_and_enter_commit_one_exact_face_extrusion() {
-    for (typed, low, high) in [("25", 10., 35.), ("-25", -15., 10.)] {
+    // CAD-404: outward from the box face joins the box, a shallow inward
+    // value cuts it, and an explicit New body keeps a separate extrusion.
+    for (typed, explicit, operation, volume, low, high) in [
+        ("25", false, Operation::Join, 30. * 30. * 35., 0., 35.),
+        ("-5", false, Operation::Cut, 30. * 30. * 5., 0., 5.),
+        ("25", true, Operation::NewBody, 30. * 30. * 25., 10., 35.),
+    ] {
         let mut h = Harness::new(false);
+        if explicit {
+            h.controller
+                .operations
+                .as_mut()
+                .unwrap()
+                .choose(Operation::NewBody);
+            h.controller.operation_changed();
+        }
         let revision = h.session.revision();
         assert!(h.controller.operation_gizmo_active());
         // Default 10 mm: the arrow tip sits 10 mm above the face anchor.
@@ -219,7 +233,6 @@ fn face_arrow_drag_then_typed_value_and_enter_commit_one_exact_face_extrusion() 
         let stored = face_extrusions(h.session.document());
         assert_eq!(stored.len(), 1);
         let (feature, source) = &stored[0];
-        assert_eq!(source.operation, Operation::NewBody);
         assert_eq!(
             source.parameters.extent,
             Extent::OneSided {
@@ -230,11 +243,34 @@ fn face_arrow_drag_then_typed_value_and_enter_commit_one_exact_face_extrusion() 
         );
         let face = model::stored_profile_face(h.session.document(), *feature).unwrap();
         assert_eq!(face.source, h.feature);
+        let group = h
+            .session
+            .document()
+            .entities()
+            .find_map(|entity| model::inspect_extrude_group(h.session.document(), entity.id).ok())
+            .unwrap();
+        assert_eq!(group.operation().unwrap(), operation, "{typed}");
+        assert_eq!(group.definition.automatic, !explicit);
+        // The shape that results: the joined or cut box, or the new body.
+        let result = match operation {
+            Operation::NewBody => *feature,
+            _ => {
+                let [result] = group.definition.results.as_slice() else {
+                    panic!("one target")
+                };
+                assert!(matches!(
+                    &h.session.document().get(result.body).unwrap().data,
+                    multicad_core::document::EntityData::Part { features, .. }
+                        if features.contains(&h.feature)
+                ));
+                result.feature
+            }
+        };
         let compiled = Compiler::default()
             .compile(h.session.document(), h.session.revision())
             .unwrap();
-        let shape = &compiled.snapshot().shapes[feature];
-        assert!((shape.volume_mm3 - 30. * 30. * 25.).abs() < 1e-4);
+        let shape = &compiled.snapshot().shapes[&result];
+        assert!((shape.volume_mm3 - volume).abs() < 1e-4, "{typed}");
         assert!((shape.bounds.min[2] - low).abs() < 1e-6);
         assert!((shape.bounds.max[2] - high).abs() < 1e-6);
         // One undo removes the face extrusion entirely.
