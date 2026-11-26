@@ -286,10 +286,6 @@ impl Solid {
         if policy.boolean_fuzzy_mm != 0. || policy != self.policy || policy != other.policy {
             return None;
         }
-        // Pairs of placed cylinders stay with the cylinder providers.
-        if self.axial_cylinder_frame().is_some() && other.axial_cylinder_frame().is_some() {
-            return None;
-        }
         // The chart of the curved operand: a sweep's own frame, or a
         // cylinder's frame.
         let frame = [self, other].into_iter().find_map(|solid| {

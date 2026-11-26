@@ -159,12 +159,42 @@ fn subtracting_a_coaxial_cylinder_preserves_the_authored_cap_basis_and_both_sour
     assert!(face(2).origins.contains(&curve));
     assert!(face(3).origins.iter().any(|origin| origin.source == tool));
     assert!(subtract(&vertical([2, 5, 4], 6, 3)).unwrap().is_none());
-    for bad in [vertical([3, 5, 4], 2, 3), vertical([2, 5, 4], 2, 2)] {
-        assert_eq!(
-            subtract(&bad).err().unwrap().kind,
-            GeometryErrorKind::Unsupported
+    // An off-axis through bore and a coaxial blind pocket from the lower
+    // cap are exact parallel profile cuts (approved 2026-11-26, CAD-406):
+    // one closed solid with exact outer and bore cylinders whose volume is
+    // the closed-form disk areas times their heights, read back from STEP.
+    let pi = std::f64::consts::PI;
+    for (tool, expected) in [
+        (vertical([3, 5, 4], 2, 3), (25. - 4.) * 3. * pi),
+        (vertical([2, 5, 4], 2, 2), 25. * 3. * pi - 4. * 2. * pi),
+    ] {
+        let cut = subtract(&tool).unwrap().unwrap();
+        assert_eq!(cut.solid_count().unwrap(), 1);
+        let volume = cut.volume_mm3().unwrap();
+        assert!(
+            (volume - expected).abs() <= 1e-9 * expected,
+            "{volume} != {expected}"
         );
+        let curved = |solid: &Solid| {
+            solid
+                .faces()
+                .unwrap()
+                .iter()
+                .filter(|face| face.plane.is_none())
+                .count()
+        };
+        assert_eq!(curved(&cut), 2);
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("off-axis-cut.step");
+        cut.write_step(&path).unwrap();
+        let read = Solid::read_step(&path, policy).unwrap();
+        assert!((read.volume_mm3().unwrap() - volume).abs() <= 1e-9 * expected);
+        assert_eq!(read.faces().unwrap().len(), cut.faces().unwrap().len());
+        assert_eq!(curved(&read), 2);
     }
+    // A bore touching the outer wall from inside stays refused.
+    let tangent = subtract(&vertical([5, 5, 4], 2, 3)).err().unwrap();
+    assert_eq!(tangent.kind, GeometryErrorKind::Unsupported, "{tangent}");
     let plain = vertical([2, 5, 4], 5, 3);
     let concentric = Solid::from_axial_cylinder(
         axial(target, [2, 5, 4], 2, 3),
