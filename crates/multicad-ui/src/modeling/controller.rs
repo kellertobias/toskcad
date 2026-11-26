@@ -2926,4 +2926,6 @@ mod gear_tests;
 mod thread_tests;
 
 #[cfg(test)]
+mod automatic_operation_tests;
+#[cfg(test)]
 mod mechanical_part_tests;
