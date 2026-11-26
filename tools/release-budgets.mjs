@@ -5,10 +5,10 @@
 // (plain and cached/incremental compiles) plus peak resident memory from
 // /usr/bin/time.
 //
-//   node tools/release-budgets.mjs [--profile release|dev] [--repeat N] [--label NAME] [--large ROWSxCOLUMNS]
+//   node tools/release-budgets.mjs [--profile release|ci|dev] [--repeat N] [--label NAME] [--large ROWSxCOLUMNS]
 //
 // The large field defaults to 10x20 plates (600 features) for the release
-// profile and 4x5 for the slower dev profile.
+// profile and 4x5 for the slower ci and dev profiles.
 //
 // Output: artifacts/benchmarks/<label>/report.json (git-ignored). This is a
 // headless measurement; GUI frame times and idle CPU are not covered.
@@ -24,11 +24,11 @@ const options={profile:'release',repeat:3,label:new Date().toISOString().slice(0
 const argv=process.argv.slice(2);
 for(let i=0;i<argv.length;i+=2){
   const [flag,value]=[argv[i],argv[i+1]];
-  if(flag==='--profile'&&['release','dev'].includes(value))options.profile=value;
+  if(flag==='--profile'&&['release','ci','dev'].includes(value))options.profile=value;
   else if(flag==='--repeat'&&Number(value)>=1)options.repeat=Number(value);
   else if(flag==='--label'&&/^[\w.-]+$/.test(value??''))options.label=value;
   else if(flag==='--large'&&/^[1-9]\d*x[1-9]\d*$/.test(value??''))options.large=value;
-  else{console.error('Usage: release-budgets.mjs [--profile release|dev] [--repeat N] [--label NAME] [--large ROWSxCOLUMNS]');process.exit(2);}
+  else{console.error('Usage: release-budgets.mjs [--profile release|ci|dev] [--repeat N] [--label NAME] [--large ROWSxCOLUMNS]');process.exit(2);}
 }
 options.large??=options.profile==='release'?'10x20':'4x5';
 process.env.MULTICAD_LARGE_FIELD=options.large;
@@ -64,10 +64,10 @@ function timed(args){
   return rss;
 }
 
-const cargoProfile=options.profile==='release'?['--release']:[];
+const cargoProfile={release:['--release'],ci:['--profile','ci'],dev:[]}[options.profile];
 execFileSync('cargo',['build','-p','multicad-app','--example','release_budgets','--locked','--offline',...cargoProfile],{cwd:root,stdio:'inherit'});
 const metadata=JSON.parse(execFileSync('cargo',['metadata','--no-deps','--format-version','1','--locked','--offline'],{cwd:root,encoding:'utf8'}));
-const binary=join(metadata.target_directory,options.profile==='release'?'release':'debug','examples',process.platform==='win32'?'release_budgets.exe':'release_budgets');
+const binary=join(metadata.target_directory,{release:'release',ci:'ci',dev:'debug'}[options.profile],'examples',process.platform==='win32'?'release_budgets.exe':'release_budgets');
 const output=join(root,'artifacts/benchmarks',options.label);
 rmSync(output,{recursive:true,force:true});mkdirSync(output,{recursive:true});
 
