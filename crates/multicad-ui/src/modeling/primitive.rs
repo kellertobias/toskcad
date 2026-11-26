@@ -198,6 +198,7 @@ impl PrimitivePanel {
         self.resize.set_snap(snap);
     }
     /// Size readout and active snap spacing shown with the corner handles.
+    #[cfg(test)]
     pub(super) fn drag_feedback(&self) -> Option<&str> {
         self.resize.feedback()
     }

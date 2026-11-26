@@ -2625,7 +2625,8 @@ impl ModelToolController {
             ui.input(|input| super::drag_snap::DragSnap::free_modifier(input.modifiers)),
         )
     }
-    /// Feedback shown with the primitive corner handles, for tests and hosts.
+    /// Feedback shown with the primitive corner handles.
+    #[cfg(test)]
     pub(crate) fn primitive_drag_feedback(&self) -> Option<&str> {
         match &self.form {
             Some(ModelForm::Primitive(panel)) => panel.drag_feedback(),

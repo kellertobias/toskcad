@@ -389,3 +389,236 @@ fn shift_frees_the_grid_and_typed_dimensions_override_the_snap() {
     };
     assert_eq!(size_mm, [91.393_323, 60., 20.]);
 }
+
+struct ExtrudeHarness {
+    session: Session,
+    controller: ModelToolController,
+    ctx: egui::Context,
+    camera: Camera,
+    rect: Rect,
+    modifiers: egui::Modifiers,
+}
+
+impl ExtrudeHarness {
+    /// A 30 × 20 mm rectangle on XY, Extrude open with the default 10 mm,
+    /// seen obliquely at the given zoom.
+    fn new(scale: f32) -> Self {
+        use multicad_core::{constraint_sketch::source::Source, sketch::Datum, sketch_regions};
+        let (sketch, edits) = Source::create(Datum::Xy, "Snap profile").unwrap();
+        let document = Document::new("Extrude snap")
+            .unwrap()
+            .edited(&edits)
+            .unwrap();
+        let mut source = Source::read(&document, sketch).unwrap().0;
+        source.add_rectangle([0., 0.], [30., 20.]).unwrap();
+        let profiles = sketch_regions::extract(&source)
+            .regions
+            .iter()
+            .map(|region| region.intent())
+            .collect();
+        let document = document
+            .edited(&source.replace(&document, sketch).unwrap())
+            .unwrap();
+        let session = Session::new(document).unwrap();
+        let mut controller = ModelToolController::default();
+        controller.set_backend(Box::new(NativeBackend::new()));
+        controller
+            .begin(&session, &Default::default(), sketch, profiles, Channel::Ui)
+            .unwrap();
+        controller.set_profile_guide(crate::modeling::ProfileGuide {
+            sketch,
+            frame: multicad_core::sketch::Frame {
+                origin: [0., 0., 0.],
+                u: [1., 0., 0.],
+                v: [0., 1., 0.],
+                n: [0., 0., 1.],
+            },
+            anchor: [15., 10.],
+            lines: vec![],
+        });
+        Self {
+            session,
+            controller,
+            ctx: egui::Context::default(),
+            camera: Camera {
+                yaw: 0.6,
+                pitch: 0.5,
+                scale,
+                target: [15., 10., 10.],
+                perspective: false,
+            },
+            rect: Rect::from_min_size(Pos2::ZERO, SIZE),
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+    fn screen(&self, p: [f64; 3]) -> Pos2 {
+        let s = self.camera.project(p.map(|v| v as f32), self.rect);
+        Pos2::new(s[0], s[1])
+    }
+    /// One viewport frame with the host's grid report and modifier state.
+    fn frame(&mut self, mut events: Vec<Event>) -> PlacementViewportResult {
+        let (camera, rect) = (self.camera, self.rect);
+        events.insert(0, Event::ModifiersChanged(self.modifiers));
+        let mut result = None;
+        self.controller
+            .set_drag_grid(crate::viewport::grid_step(camera, rect, 10.));
+        self.ctx
+            .run_ui(
+                egui::RawInput {
+                    focused: true,
+                    screen_rect: Some(rect),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = ui.allocate_exact_size(SIZE, egui::Sense::click_and_drag());
+                    result = Some(
+                        self.controller
+                            .operation_viewport(
+                                ui,
+                                &mut self.session,
+                                &Default::default(),
+                                OperationViewport {
+                                    camera,
+                                    rect,
+                                    start_allowed: true,
+                                },
+                            )
+                            .unwrap(),
+                    );
+                },
+            )
+            .drop_without_applying_deltas();
+        result.unwrap()
+    }
+    fn button(&mut self, p: [f64; 3], pressed: bool) {
+        let pos = self.screen(p);
+        let modifiers = self.modifiers;
+        self.frame(vec![
+            Event::PointerMoved(pos),
+            Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers,
+            },
+        ]);
+    }
+    fn drag(&mut self, p: [f64; 3]) {
+        let pos = self.screen(p);
+        self.frame(vec![Event::PointerMoved(pos)]);
+    }
+    fn value(&self) -> f64 {
+        self.controller.operation.entry.as_ref().unwrap().value()
+    }
+    fn typed(&mut self, text: &str) {
+        self.frame(vec![
+            Event::Text(text.into()),
+            Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            },
+        ]);
+    }
+    fn settle(&mut self) -> Option<ModelToolOutcome> {
+        let until = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < until {
+            if let Some(outcome) = self.frame(vec![]).outcome {
+                return Some(outcome);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        panic!("native preview did not settle: {:?}", self.controller.error);
+    }
+    fn stored_distance(&self) -> f64 {
+        let document = self.session.document();
+        let extrusion = document
+            .entities()
+            .find_map(|entity| model::read_extrude(document, entity.id).ok())
+            .expect("one committed extrusion");
+        let model::Extent::OneSided {
+            end: model::Termination::Distance { distance },
+        } = extrusion.parameters.extent
+        else {
+            panic!("one-sided distance")
+        };
+        distance
+            .value_in(multicad_core::parameters::Unit::Millimeter, None)
+            .unwrap()
+    }
+}
+
+#[test]
+fn extrude_distance_drags_snap_bit_exactly_to_the_displayed_grid_at_two_zoom_levels() {
+    let mut h = ExtrudeHarness::new(3.713);
+    assert_eq!(crate::viewport::grid_step(h.camera, h.rect, 10.), Some(10.));
+    h.button([15., 10., 10.], true);
+    h.drag([15., 10., 31.37]);
+    assert_eq!(h.value(), 30.);
+    let label = h.controller.operation_snap_label().unwrap();
+    assert!(label.contains(&format!("grid {}", crate::preferences::format_mm(10.))));
+    assert!(label.contains("Shift for free"), "{label}");
+    // Reversed across the start plane snaps the same way and never to zero.
+    h.drag([15., 10., 2.9]);
+    assert_eq!(h.value(), 10.);
+    h.drag([15., 10., -2.9]);
+    assert_eq!(h.value(), -10.);
+    h.drag([15., 10., -26.2]);
+    assert_eq!(h.value(), -30.);
+    h.drag([15., 10., 48.6]);
+    assert_eq!(h.value(), 50.);
+    h.button([15., 10., 48.6], false);
+    let revision = h.session.revision();
+    h.typed("");
+    assert!(matches!(h.settle(), Some(ModelToolOutcome::Applied(_))));
+    assert_eq!(h.session.revision(), revision + 1);
+    assert_eq!(h.stored_distance(), 50.);
+
+    // Zoomed out the grid shows 100 mm and the distance follows it.
+    let mut h = ExtrudeHarness::new(0.5);
+    assert_eq!(
+        crate::viewport::grid_step(h.camera, h.rect, 10.),
+        Some(100.)
+    );
+    h.button([15., 10., 10.], true);
+    h.drag([15., 10., 263.7]);
+    assert_eq!(h.value(), 300.);
+    h.drag([15., 10., -137.]);
+    assert_eq!(h.value(), -100.);
+    let label = h.controller.operation_snap_label().unwrap();
+    assert!(label.contains(&format!("grid {}", crate::preferences::format_mm(100.))));
+    h.button([15., 10., -137.], false);
+    h.typed("");
+    assert!(matches!(h.settle(), Some(ModelToolOutcome::Applied(_))));
+    assert_eq!(h.stored_distance(), -100.);
+}
+
+#[test]
+fn shift_frees_the_extrude_distance_and_typed_values_override_the_snap() {
+    let mut h = ExtrudeHarness::new(3.713);
+    h.modifiers = egui::Modifiers::SHIFT;
+    h.button([15., 10., 10.], true);
+    h.drag([15., 10., 31.37]);
+    let free = h.value();
+    assert!((free - 31.37).abs() < 0.05, "{free}");
+    assert_ne!(free % 10., 0.);
+    assert_eq!((free * 1000.).round() / 1000., free);
+    assert!(
+        h.controller
+            .operation_snap_label()
+            .unwrap()
+            .starts_with("free (Shift)")
+    );
+    // Releasing Shift during the same drag snaps again.
+    h.modifiers = egui::Modifiers::NONE;
+    h.drag([15., 10., 31.4]);
+    assert_eq!(h.value(), 30.);
+    assert_on_grid(&[h.value()], 10.);
+    // Typing takes over exactly, even with the grid shown.
+    h.typed("31.37");
+    assert!(matches!(h.settle(), Some(ModelToolOutcome::Applied(_))));
+    assert_eq!(h.stored_distance(), 31.37);
+}

@@ -467,6 +467,7 @@ impl ResizeGizmo {
     }
 
     /// Size readout, active spacing and modifier shown with the handles.
+    #[cfg(test)]
     pub(in crate::modeling) fn feedback(&self) -> Option<&str> {
         self.feedback.as_deref()
     }

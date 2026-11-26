@@ -11,6 +11,9 @@
 //!   commit failed.
 //! - Zero, nonfinite, out-of-range or incomplete text is reported as
 //!   `Invalid` and never produces `Commit`.
+//! - With a drag snap (Extrude distance, CAD-403), dragged values follow the
+//!   shared dimension-drag policy: grid multiples, never zero. Typed text is
+//!   never snapped.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValueKind {
@@ -90,6 +93,7 @@ pub struct ValueEntry {
     text: Option<String>,
     replace_text: bool,
     committed: bool,
+    snap: Option<super::drag_snap::DragSnap>,
 }
 impl ValueEntry {
     pub fn new(kind: ValueKind, value: f64) -> Self {
@@ -101,7 +105,16 @@ impl ValueEntry {
             text: None,
             replace_text: false,
             committed: false,
+            snap: None,
         }
+    }
+    /// Snap state for drag motion in this frame; `None` follows the pointer
+    /// exactly.
+    pub fn set_drag_snap(&mut self, snap: Option<super::drag_snap::DragSnap>) {
+        self.snap = snap;
+    }
+    pub fn drag_snap(&self) -> Option<super::drag_snap::DragSnap> {
+        self.snap
     }
     pub fn kind(&self) -> ValueKind {
         self.kind
@@ -190,6 +203,13 @@ impl ValueEntry {
                     return EntryEffect::None;
                 }
                 let next = start + (pointer - origin);
+                let next = match self.snap {
+                    Some(snap) => match snap.signed(next, self.value) {
+                        Some(next) => next,
+                        None => return EntryEffect::None,
+                    },
+                    None => next,
+                };
                 if next == self.value {
                     return EntryEffect::None;
                 }

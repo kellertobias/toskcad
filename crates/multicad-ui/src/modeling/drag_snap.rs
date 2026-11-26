@@ -130,6 +130,7 @@ impl DragSnap {
         self.active().unwrap_or(Step::FREE)
     }
     /// Nearest snapped value of a dragged coordinate or signed distance.
+    #[cfg(test)]
     pub fn coordinate(self, value: f64) -> Option<f64> {
         let step = self.step();
         step.index(value).map(|index| step.value(index))
