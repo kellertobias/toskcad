@@ -349,6 +349,7 @@ fn suppressing_outputs_releases_consumption_but_suppressing_a_required_input_nev
         component: None,
         include: vec![],
         exclude: vec![],
+        contact: false,
     };
     assert!(
         previous

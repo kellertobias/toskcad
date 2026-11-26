@@ -278,6 +278,7 @@ fn evaluation_default_preserves_legacy_and_resource_requests_but_rejects_probes(
                 component: None,
                 include: vec![],
                 exclude: vec![],
+                contact: false,
             },
         }],
         ..Default::default()

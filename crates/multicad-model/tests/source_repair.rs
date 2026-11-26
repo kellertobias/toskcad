@@ -193,7 +193,8 @@ fn fresh_source_scope_repairs_a_consumed_sketch_then_full_model_rebuilds_atomica
                     tools: vec![replacement.feature],
                     component: None,
                     include: vec![],
-                    exclude: vec![]
+                    exclude: vec![],
+                    contact: false
                 },
                 None
             )

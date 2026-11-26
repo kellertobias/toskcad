@@ -358,6 +358,7 @@ fn rust_cuts_attached_triangles_through_both_model_commands() {
             component: None,
             include: Vec::new(),
             exclude: Vec::new(),
+            contact: false,
         };
         let discover = |backend| {
             Compiler::default()
@@ -538,6 +539,7 @@ fn rust_chained_triangle_cuts_keep_both_wall_origins_after_reopen_and_edit() {
                 component: None,
                 include: vec![],
                 exclude: vec![],
+                contact: false,
             },
             None,
         )

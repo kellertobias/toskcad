@@ -176,6 +176,13 @@ impl OperationControls {
         self.context_error = result.as_ref().err().cloned();
         result
     }
+    pub fn label(&self, id: EntityId) -> String {
+        choice_label(&self.choices, id)
+    }
+    /// Join uses automatic discovery until the author picks explicit targets.
+    pub fn automatic_join(&self) -> bool {
+        self.operation == Operation::Join && self.targets.is_empty()
+    }
     pub fn through_sheet(&self) -> bool {
         self.operation == Operation::Cut && self.sheet_sketch.is_some()
     }
@@ -369,6 +376,21 @@ impl OperationControls {
                 },
             );
         } else {
+            if self.operation == Operation::Join {
+                ui.small("With no explicit targets, Join finds the one body the extrusion touches face-to-face or overlaps, including the body the sketch face belongs to.");
+                if let Some(selection) = self.selection.as_ref().filter(|_| self.targets.is_empty())
+                {
+                    ui.strong(match (self.fresh, selection.targets.len()) {
+                        (false, _) => "Previous automatic set; Preview to update",
+                        (true, 1) => "Automatic target",
+                        (true, 0) => "No touching or overlapping bodies",
+                        (true, _) => "Several bodies touch the extrusion; choose explicit targets",
+                    });
+                    for target in &selection.targets {
+                        ui.label(choice_label(&self.choices, target.body));
+                    }
+                }
+            }
             ui.strong("Explicit target bodies");
             if let Some(error) = &self.context_error {
                 ui.small(error);
@@ -432,6 +454,7 @@ impl CutDiscovery {
         component: Option<EntityId>,
         include: Vec<EntityId>,
         exclude: Vec<EntityId>,
+        contact: bool,
     ) -> Result<Self, String> {
         let tools = model::prepare_extrude(session, session.revision(), actor, &extrusion)
             .map_err(|error| error.to_string())?;
@@ -448,6 +471,7 @@ impl CutDiscovery {
                     component,
                     include,
                     exclude,
+                    contact,
                 },
             }],
             ..Default::default()
@@ -541,6 +565,14 @@ impl CutDiscovery {
     }
     pub fn extrusion(&self) -> &ExtrudeRequest {
         &self.extrusion
+    }
+    /// Join discovery also counts face-to-face contact; Cut needs volume.
+    pub fn operation(&self) -> Operation {
+        if self.options.cut_targets[0].query.contact {
+            Operation::Join
+        } else {
+            Operation::Cut
+        }
     }
 }
 

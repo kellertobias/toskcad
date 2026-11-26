@@ -402,6 +402,7 @@ fn probe_fixture() -> (Session, Vec<BodyInput>, CutTargetQuery) {
         component: None,
         include: vec![],
         exclude: vec![],
+        contact: false,
     };
     (session, bodies, query)
 }

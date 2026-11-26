@@ -312,6 +312,88 @@ fn operation_and_override_changes_discard_old_queries_and_stable_target_producer
     );
     assert_eq!(session.revision(), 2);
 }
+/// CAD-405: Join with no explicit targets asks the native model which bodies
+/// the extrusion touches or overlaps; one is used, several are listed back.
+#[test]
+fn automatic_join_discovers_contact_targets_and_never_guesses_between_several() {
+    for found in [1, 0, 2] {
+        let (mut session, sketch, profiles, targets) = fixture_with_targets();
+        let before = session.document().clone();
+        let (mut controller, state) = operations(&session, sketch, profiles);
+        controller.operations.as_mut().unwrap().operation = Operation::Join;
+        controller.operation_changed();
+        controller
+            .preview(&session, &Default::default(), Channel::Ui)
+            .unwrap();
+        assert!(controller.pending());
+        assert!(controller.discovery.is_some());
+        {
+            let guard = state.lock().unwrap();
+            let query = &guard.evaluations[0].cut_targets[0].query;
+            assert!(query.contact);
+            assert!(query.include.is_empty() && query.exclude.is_empty());
+        }
+        enqueue(&state, query_reply(&state, 0, targets[..found].to_vec()));
+        controller.poll(&session, &Default::default());
+        if found != 1 {
+            assert!(!controller.pending());
+            assert!(!controller.can_apply(&session, &Default::default()));
+            assert_eq!(state.lock().unwrap().requests.len(), 1);
+            let error = controller.error().unwrap().to_string();
+            if found == 0 {
+                assert!(error.contains("No affected bodies"), "{error}");
+            } else {
+                assert!(error.contains("Several bodies touch"), "{error}");
+                for name in ["Cabinet left", "Cabinet right"] {
+                    assert!(error.contains(name), "{error}");
+                }
+            }
+            assert_eq!(session.document(), &before);
+            continue;
+        }
+        let guard = state.lock().unwrap();
+        assert_eq!(guard.requests.len(), 2);
+        assert!(guard.evaluations[1].cut_targets.is_empty());
+        let (candidate, _, stamp) = guard.requests[1].clone();
+        let tools: BTreeSet<_> = guard.requests[0]
+            .0
+            .entities()
+            .filter(|entity| {
+                before.get(entity.id).is_none() && matches!(entity.data, EntityData::Part { .. })
+            })
+            .map(|entity| entity.id)
+            .collect();
+        drop(guard);
+        enqueue(&state, scene(&candidate, stamp, tools, vec![]));
+        controller.poll(&session, &Default::default());
+        assert!(
+            controller.can_apply(&session, &Default::default()),
+            "{:?}",
+            controller.error()
+        );
+        let outputs = controller.apply(&mut session, &Default::default()).unwrap();
+        assert_eq!(
+            outputs.iter().map(|o| o.body).collect::<Vec<_>>(),
+            vec![targets[0].body]
+        );
+        assert_eq!(session.document(), &candidate);
+    }
+}
+#[test]
+fn cut_discovery_keeps_volumetric_semantics_without_contact() {
+    let (session, sketch, profiles, _) = fixture_with_targets();
+    let (mut controller, state) = operations(&session, sketch, profiles);
+    controller.operations.as_mut().unwrap().operation = Operation::Cut;
+    controller.operation_changed();
+    controller
+        .preview(&session, &Default::default(), Channel::Ui)
+        .unwrap();
+    assert!(
+        !state.lock().unwrap().evaluations[0].cut_targets[0]
+            .query
+            .contact
+    );
+}
 #[test]
 fn explicit_join_and_intersect_skip_discovery_and_need_current_native_targets() {
     for operation in [Operation::Join, Operation::Intersect] {
@@ -319,12 +401,27 @@ fn explicit_join_and_intersect_skip_discovery_and_need_current_native_targets() 
         let (mut controller, state) = operations(&session, sketch, profiles);
         controller.operations.as_mut().unwrap().operation = operation;
         controller.operation_changed();
-        assert!(
+        if operation == Operation::Join {
+            // CAD-405: with no explicit targets, Join starts a contact-aware
+            // discovery probe instead of failing.
             controller
                 .preview(&session, &Default::default(), Channel::Ui)
-                .is_err()
-        );
-        assert!(state.lock().unwrap().requests.is_empty());
+                .unwrap();
+            assert!(controller.discovery.is_some());
+            assert!(
+                state.lock().unwrap().evaluations[0].cut_targets[0]
+                    .query
+                    .contact
+            );
+        } else {
+            assert!(
+                controller
+                    .preview(&session, &Default::default(), Channel::Ui)
+                    .is_err()
+            );
+            assert!(state.lock().unwrap().requests.is_empty());
+        }
+        let explicit = state.lock().unwrap().evaluations.len();
         controller
             .operations
             .as_mut()
@@ -336,7 +433,11 @@ fn explicit_join_and_intersect_skip_discovery_and_need_current_native_targets() 
             .preview(&session, &Default::default(), Channel::Ui)
             .unwrap();
         assert!(controller.discovery.is_none());
-        assert!(state.lock().unwrap().evaluations[0].cut_targets.is_empty());
+        assert!(
+            state.lock().unwrap().evaluations[explicit]
+                .cut_targets
+                .is_empty()
+        );
         assert_eq!(controller.candidate.as_ref().unwrap().outputs.len(), 1);
         assert!(controller.candidate.as_ref().unwrap().requires_info);
     }

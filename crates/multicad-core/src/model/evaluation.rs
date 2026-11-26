@@ -19,6 +19,11 @@ pub struct CutTargetQuery {
     pub include: Vec<EntityId>,
     /// Explicit existing Part IDs only. Exclusion wins over inclusion.
     pub exclude: Vec<EntityId>,
+    /// Join discovery: also count bodies the tools touch face-to-face with
+    /// zero common volume. Cut and Intersect leave this false, because a
+    /// contact-only body has no material for them to remove or keep.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub contact: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,6 +33,24 @@ pub struct CutTargetSelection {
     /// Included Parts with no volumetric hit. An included component itself is
     /// returned only when its expansion has no eligible current body outputs.
     pub not_intersecting: Vec<EntityId>,
+}
+/// Why an automatic Join cannot pick its one target without guessing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AutomaticTargetError {
+    None,
+    /// Every plausible target, in discovery order, for the author to choose.
+    Several(Vec<BodyInput>),
+}
+impl CutTargetSelection {
+    /// The single affected body for an automatic Join. Several touching or
+    /// overlapping bodies are listed back instead of one being chosen.
+    pub fn single_target(&self) -> Result<&BodyInput, AutomaticTargetError> {
+        match self.targets.as_slice() {
+            [] => Err(AutomaticTargetError::None),
+            [target] => Ok(target),
+            several => Err(AutomaticTargetError::Several(several.to_vec())),
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

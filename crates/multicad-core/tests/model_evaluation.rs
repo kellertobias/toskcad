@@ -1,8 +1,9 @@
 use multicad_core::{
     document::{Document, EntityId},
     model::{
-        BodyInput, CutTargetProbe, CutTargetProbeResult, CutTargetQuery, CutTargetSelection,
-        EvaluationOptions, MAX_CUT_TARGET_PROBES, ModelEvaluationInfo, ModelQueryError,
+        AutomaticTargetError, BodyInput, CutTargetProbe, CutTargetProbeResult, CutTargetQuery,
+        CutTargetSelection, EvaluationOptions, MAX_CUT_TARGET_PROBES, ModelEvaluationInfo,
+        ModelQueryError,
     },
     project_file::ContentHash,
 };
@@ -13,6 +14,7 @@ fn query() -> CutTargetQuery {
         component: None,
         include: vec![],
         exclude: vec![],
+        contact: false,
     }
 }
 fn probe() -> CutTargetProbe {
@@ -243,4 +245,43 @@ fn failed_probe_receipt_can_report_the_nil_input_without_becoming_current_geomet
     let roundtrip: ModelEvaluationInfo =
         serde_json::from_slice(&serde_json::to_vec(&info).unwrap()).unwrap();
     assert!(roundtrip.cut_targets[0].result.is_err());
+}
+#[test]
+fn join_contact_flag_keeps_cut_wire_format_and_single_target_never_guesses() {
+    // Cut queries serialize exactly as before; Join contact round-trips.
+    let original = query();
+    let cut = serde_json::to_value(&original).unwrap();
+    assert!(cut.get("contact").is_none());
+    let legacy: CutTargetQuery = serde_json::from_value(cut).unwrap();
+    assert_eq!(legacy, original);
+    let join = CutTargetQuery {
+        contact: true,
+        ..original
+    };
+    let wire = serde_json::to_vec(&join).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<CutTargetQuery>(&wire).unwrap(),
+        join
+    );
+
+    let body = |_| BodyInput {
+        body: EntityId::new(),
+        producer: EntityId::new(),
+    };
+    let selection = |targets: Vec<BodyInput>| CutTargetSelection {
+        defaults: targets.clone(),
+        targets,
+        not_intersecting: vec![],
+    };
+    assert_eq!(
+        selection(vec![]).single_target(),
+        Err(AutomaticTargetError::None)
+    );
+    let one = selection(vec![body(0)]);
+    assert_eq!(one.single_target(), Ok(&one.targets[0]));
+    let two = selection((0..2).map(body).collect());
+    assert_eq!(
+        two.single_target(),
+        Err(AutomaticTargetError::Several(two.targets.clone()))
+    );
 }

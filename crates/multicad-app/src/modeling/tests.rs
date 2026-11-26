@@ -1076,6 +1076,7 @@ fn native_architecture_plan_exposes_real_opening_gaps_symbols_and_source_bound_p
                         component: None,
                         include: vec![],
                         exclude: vec![],
+                        contact: false,
                     },
                 }],
                 ..Default::default()
@@ -1336,6 +1337,7 @@ fn native_backend_receipts_bind_exact_queries_to_source_and_latest_options() {
                 component: None,
                 include: vec![],
                 exclude: vec![],
+                contact: false,
             },
         }],
         ..Default::default()
@@ -1424,6 +1426,7 @@ fn failed_native_probe_keeps_valid_scene_and_diagnostic_identity() {
                 component: None,
                 include: vec![],
                 exclude: vec![],
+                contact: false,
             },
         }],
         ..Default::default()

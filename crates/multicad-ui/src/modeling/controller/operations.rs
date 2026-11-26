@@ -87,38 +87,13 @@ impl ModelToolController {
                 self.submit_final(session, resources, channel, form, &request)
             }
             Operation::Cut => {
-                let cut = CutDiscovery::prepare(
-                    session,
-                    Actor::local(channel),
-                    extrusion.clone(),
-                    controls.component,
-                    controls.include.iter().copied().collect(),
-                    controls.exclude.iter().copied().collect(),
-                )?;
-                self.generation = self
-                    .generation
-                    .checked_add(1)
-                    .ok_or("Model preview generation limit reached")?;
-                let stamp = SceneStamp {
-                    document: session.document().id(),
-                    revision: session.revision(),
-                    generation: self.generation,
-                };
-                self.backend
-                    .as_mut()
-                    .ok_or("The native modeling preview provider is unavailable")?
-                    .request_evaluation(cut.prepared.document(), resources, stamp, &cut.options)?;
-                self.discovery = Some(Discovery {
-                    cut,
-                    form,
-                    stamp,
-                    channel,
-                });
-                self.candidate = None;
-                self.error = None;
-                Ok(())
+                self.start_discovery(session, resources, channel, form, extrusion, false)
             }
             Operation::Join | Operation::Intersect => {
+                if controls.automatic_join() {
+                    return self
+                        .start_discovery(session, resources, channel, form, extrusion, true);
+                }
                 let targets = controls.explicit_targets(session.document())?;
                 let request = self.identities.compose(
                     extrusion.clone(),
@@ -138,6 +113,61 @@ impl ModelToolController {
                 Err("Split extrusion outputs are not available in this form".into())
             }
         }
+    }
+    /// Ask the native model which bodies the extrusion tools affect. Join
+    /// (`contact`) uses the active scope only; Cut adds its explicit overrides.
+    fn start_discovery(
+        &mut self,
+        session: &Session,
+        resources: &ProjectResources,
+        channel: Channel,
+        form: FormStamp,
+        extrusion: &ExtrudeRequest,
+        contact: bool,
+    ) -> Result<(), String> {
+        let controls = self
+            .operations
+            .as_ref()
+            .ok_or("Start a new extrusion first")?;
+        let (include, exclude) = if contact {
+            (vec![], vec![])
+        } else {
+            (
+                controls.include.iter().copied().collect(),
+                controls.exclude.iter().copied().collect(),
+            )
+        };
+        let cut = CutDiscovery::prepare(
+            session,
+            Actor::local(channel),
+            extrusion.clone(),
+            controls.component,
+            include,
+            exclude,
+            contact,
+        )?;
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .ok_or("Model preview generation limit reached")?;
+        let stamp = SceneStamp {
+            document: session.document().id(),
+            revision: session.revision(),
+            generation: self.generation,
+        };
+        self.backend
+            .as_mut()
+            .ok_or("The native modeling preview provider is unavailable")?
+            .request_evaluation(cut.prepared.document(), resources, stamp, &cut.options)?;
+        self.discovery = Some(Discovery {
+            cut,
+            form,
+            stamp,
+            channel,
+        });
+        self.candidate = None;
+        self.error = None;
+        Ok(())
     }
     pub(super) fn receive_discovery(
         &mut self,
@@ -164,25 +194,49 @@ impl ModelToolController {
             .operations
             .as_mut()
             .ok_or("The extrusion operation was cancelled")?;
-        if controls.operation != Operation::Cut {
+        let operation = discovery.cut.operation();
+        if controls.operation != operation
+            || (operation == Operation::Join && !controls.automatic_join())
+        {
             return Err("The extrusion operation changed; Preview again".into());
         }
         controls.receive(selection.clone());
+        let targets = if operation == Operation::Join {
+            // Never pick one of several plausible bodies silently.
+            match selection.single_target() {
+                Ok(target) => vec![target.clone()],
+                Err(model::AutomaticTargetError::None) => vec![],
+                Err(model::AutomaticTargetError::Several(several)) => {
+                    return Err(format!(
+                        "Several bodies touch or overlap the extrusion: {}; choose explicit targets",
+                        several
+                            .iter()
+                            .map(|target| controls.label(target.body))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+            }
+        } else {
+            selection.targets
+        };
         let mut request = self.identities.compose(
             discovery.cut.extrusion().clone(),
-            Operation::Cut,
-            selection.targets,
+            operation,
+            targets,
             controls.keep_tools,
         )?;
-        request
-            .group
-            .as_mut()
-            .expect("pinned operation record")
-            .captured_scope = Some(multicad_core::model::ExtrudeCapturedScope {
-            component: controls.component,
-            include: controls.include.iter().copied().collect(),
-            exclude: controls.exclude.iter().copied().collect(),
-        });
+        if operation == Operation::Cut {
+            request
+                .group
+                .as_mut()
+                .expect("pinned operation record")
+                .captured_scope = Some(multicad_core::model::ExtrudeCapturedScope {
+                component: controls.component,
+                include: controls.include.iter().copied().collect(),
+                exclude: controls.exclude.iter().copied().collect(),
+            });
+        }
         self.submit_final(
             session,
             resources,
