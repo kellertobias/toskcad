@@ -123,6 +123,11 @@ struct Refiner<'a> {
     locals: Vec<Local>,
     cells: Vec<Cell>,
     fixed: BTreeSet<(u32, u32)>,
+    /// Free sides of triangles whose other two sides are consecutive pieces
+    /// of one boundary edge. The neighbouring face along that edge can hold
+    /// the same three samples as a triangle, which would fold the mesh, so
+    /// each such side is split once into the surface.
+    ears: BTreeSet<(u32, u32)>,
     /// Typical lengths of the parameter directions on this face.
     metric: [f64; 2],
     deflection: f64,
@@ -189,8 +194,9 @@ impl Refiner<'_> {
             }
             // A chord far below the deflection cannot stray by it.
             let resolved = distance(from.position, to.position) <= 1e-3 * self.deflection;
-            if !resolved
-                && (deviation > self.deflection || turn(from.normal, to.normal) > self.angle)
+            if self.ears.contains(&(a, b))
+                || !resolved
+                    && (deviation > self.deflection || turn(from.normal, to.normal) > self.angle)
             {
                 wanted.insert((a, b));
             } else {
@@ -381,12 +387,19 @@ impl Builder<'_> {
             found.map(|&(segment, _)| segment)
         };
         let mut fixed = BTreeSet::new();
+        let mut ears = BTreeSet::new();
         for cell in &cells {
-            for i in 0..3 {
+            let on_edge = [0, 1, 2].map(|i| {
                 let (a, b) = (cell.vertices[i], cell.vertices[(i + 1) % 3]);
                 let vertices = (locals[a as usize].vertex, locals[b as usize].vertex);
-                if piece(vertices, cell.uv[i], cell.uv[(i + 1) % 3]).is_some() {
-                    fixed.insert(pair(a, b));
+                let segment = piece(vertices, cell.uv[i], cell.uv[(i + 1) % 3])?;
+                fixed.insert(pair(a, b));
+                Some(segment.edge)
+            });
+            for i in 0..3 {
+                let [x, y] = [on_edge[(i + 1) % 3], on_edge[(i + 2) % 3]];
+                if on_edge[i].is_none() && x.is_some() && x == y {
+                    ears.insert(pair(cell.vertices[i], cell.vertices[(i + 1) % 3]));
                 }
             }
         }
@@ -398,6 +411,7 @@ impl Builder<'_> {
             locals,
             cells,
             fixed,
+            ears,
             deflection: options.deflection_mm,
             angle: options.angle_rad,
             deviation: 0.,
