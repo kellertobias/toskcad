@@ -51,7 +51,8 @@ fn mixed_reader_preserves_analytic_receipts_and_actual_finite_source_ownership()
             }
             SourceImport::ActualMappedHead(_)
             | SourceImport::LiteralNpt(_)
-            | SourceImport::PipeSleeve(_) => {
+            | SourceImport::PipeSleeve(_)
+            | SourceImport::PipeHex(_) => {
                 panic!("this actual fixture contains only radial and analytic members")
             }
             SourceImport::Radial(owned) => {

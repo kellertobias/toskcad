@@ -15,6 +15,8 @@ pub enum SourceImport {
     Radial(Box<crate::radial_tensor::BoundaryOwnership>),
     /// Cylindrical stock around one through radial cavity, both uncertified.
     PipeSleeve(Box<super::ImportedPipeSleeve>),
+    /// Hex prism stock joined to one radial thread or cavity, uncertified.
+    PipeHex(Box<super::ImportedPipeHexHardware>),
     LiteralNpt(Box<super::npt_stock::OwnedMaterial>),
     ActualMappedHead(std::sync::Arc<super::npt_stock::full_head::transport::MappedActualHead>),
 }
@@ -79,6 +81,9 @@ pub(super) fn ordinary_member(
                 // Degree-9 retained tensors only: a cylindrical stock with two
                 // annular caps is a pipe sleeve, never a helical receiver
                 // (those keep their degree-11 analytic routes below).
+                if let Some(hex) = radial_boundary::hex_stock::recognize(shell, id)? {
+                    return Ok(SourceImport::PipeHex(Box::new(hex)));
+                }
                 if let Some(sleeve) = radial_boundary::sleeve::recognize(shell, id)? {
                     return Ok(SourceImport::PipeSleeve(Box::new(sleeve)));
                 }
