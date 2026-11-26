@@ -184,6 +184,32 @@ impl PipeHardwareBody {
     pub(in crate::geometry) fn supports_step(&self) -> bool {
         self.exchange().is_some()
     }
+    /// Retained hex stock is one flat member and may join a compound; the
+    /// clipped mapped head is written only as a whole standalone file.
+    pub(in crate::geometry) fn supports_compound_step(&self) -> bool {
+        matches!(self.exchange(), Some(Exchange::Retained(_)))
+    }
+    /// Append this body as one compound member. The writer proves the
+    /// candidate member by exact readback before its transactional append.
+    pub(in crate::geometry) fn append_step(
+        &self,
+        writer: &mut multicad_rust_kernel::step::Writer,
+        policy: GeometryPolicy,
+    ) -> Result<(), multicad_rust_kernel::step::StepError> {
+        use multicad_rust_kernel::step::StepError;
+        let Some(Exchange::Retained(spec)) = self.exchange() else {
+            return Err(StepError::Unsupported);
+        };
+        let tolerance = policy.linear_tolerance_mm;
+        let r = self
+            .retained(spec, tolerance, policy, None)
+            .map_err(|e| match e.kind {
+                GeometryErrorKind::Limit => StepError::Limit,
+                _ => StepError::Unsupported,
+            })?;
+        let tol = Self::tolerance(tolerance, policy).map_err(|_| StepError::InvalidGeometry)?;
+        writer.append_pipe_hex_hardware(&r.boundary, r.stock, tol)
+    }
     fn factors(&self) -> Vec<OccurrenceFactor> {
         self.placement.factor_rows()
     }
@@ -325,6 +351,12 @@ impl PipeHardwareBody {
     }
 }
 impl Solid {
+    /// Whether this solid writes retained hex-stock pipe hardware, which can
+    /// also be one member of a compound.
+    pub fn has_retained_pipe_hardware_step_source(&self) -> bool {
+        self.pipe_hardware_body()
+            .is_some_and(PipeHardwareBody::supports_compound_step)
+    }
     /// Whether this standalone solid writes authored pipe hardware STEP.
     pub fn has_pipe_hardware_step_source(&self) -> bool {
         self.pipe_hardware_body()

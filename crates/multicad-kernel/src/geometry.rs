@@ -178,6 +178,8 @@ pub use internal_thread_treatment_body::{
     InternalThreadFaceProperties, InternalThreadTreatmentCut, InternalThreadTreatmentData,
 };
 use pipe_sleeve_body::PipeSleeveBody;
+mod pipe_hex_body;
+use pipe_hex_body::PipeHexBody;
 use rounded_blind_bore_body::RoundedBlindBoreBody;
 pub use rounded_blind_bore_body::{
     RoundedBlindBoreData, RoundedBlindMeshBudget, RoundedBlindMeshReceipt,
@@ -817,6 +819,7 @@ enum SolidBody {
     RoundedThreadBore(Rc<RoundedThreadBoreBody>, PlaneFrame),
     RoundedHex(Rc<RoundedHexBody>, PlaneFrame),
     PipeSleeve(Rc<PipeSleeveBody>, PlaneFrame),
+    PipeHex(Rc<PipeHexBody>, PlaneFrame),
     RoundedBlindBore(Rc<RoundedBlindBoreBody>, PlaneFrame),
     InternalThreadTreatment(Rc<InternalThreadTreatmentBody>, PlaneFrame),
     RepairedPhillips(Rc<RepairedPhillipsBody>, PlaneFrame),
@@ -1316,6 +1319,7 @@ impl Solid {
             SolidBody::Helical(body, frame) => SolidBody::Helical(Rc::clone(body), *frame),
             SolidBody::RoundedHex(body, frame) => SolidBody::RoundedHex(Rc::clone(body), *frame),
             SolidBody::PipeSleeve(body, frame) => SolidBody::PipeSleeve(Rc::clone(body), *frame),
+            SolidBody::PipeHex(body, frame) => SolidBody::PipeHex(Rc::clone(body), *frame),
             SolidBody::RoundedThreadBore(body, frame) => {
                 SolidBody::RoundedThreadBore(Rc::clone(body), *frame)
             }
@@ -1461,6 +1465,9 @@ impl Solid {
                 Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
             }
             (SolidBody::PipeSleeve(a, fa), SolidBody::PipeSleeve(b, fb)) => {
+                Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
+            }
+            (SolidBody::PipeHex(a, fa), SolidBody::PipeHex(b, fb)) => {
                 Rc::ptr_eq(a, b) && same_frame(*fa, *fb)
             }
             (SolidBody::RoundedBlindBore(a, fa), SolidBody::RoundedBlindBore(b, fb)) => {
@@ -2046,6 +2053,11 @@ impl Solid {
                     )?;
                     SolidBody::PipeSleeve(Rc::clone(body), frame)
                 }
+                SolidBody::PipeHex(body, frame) => {
+                    let frame = transform.frame(*frame);
+                    frame.checked_metric_extent(body.extent(), self.policy)?;
+                    SolidBody::PipeHex(Rc::clone(body), frame)
+                }
                 SolidBody::RoundedHex(body, frame) => SolidBody::RoundedHex(
                     Rc::clone(body),
                     body.transformed_frame(transform.frame(*frame), self.policy)?,
@@ -2421,6 +2433,9 @@ impl Solid {
         if let Some((body, _)) = self.pipe_sleeve_body() {
             return body.volume_mm3();
         }
+        if let Some((body, _)) = self.pipe_hex_body() {
+            return body.volume_mm3();
+        }
         if let Some((body, _)) = self.rounded_thread_body() {
             return Ok(body.geometry.volume_mm3());
         }
@@ -2615,6 +2630,9 @@ impl Solid {
         }
         if let Some((body, frame)) = self.pipe_sleeve_body() {
             return Ok(body.bounds(frame));
+        }
+        if let Some((body, frame)) = self.pipe_hex_body() {
+            return body.bounds(frame);
         }
         if let Some((body, frame)) = self.rounded_thread_body() {
             return body.bounds(frame);
@@ -2858,6 +2876,9 @@ impl Solid {
         if let Some((body, frame)) = self.pipe_sleeve_body() {
             return body.faces(frame);
         }
+        if let Some((body, frame)) = self.pipe_hex_body() {
+            return body.faces(frame);
+        }
         if let Some((body, frame)) = self.rounded_thread_body() {
             return body.faces(frame);
         }
@@ -2992,6 +3013,7 @@ impl Solid {
             SolidBody::RoundedThreadBore(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedHex(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::PipeSleeve(body, frame) => body.mesh(*frame, rust_options),
+            SolidBody::PipeHex(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedBlindBore(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::RoundedThread(body, frame) => body.mesh(*frame, rust_options),
             SolidBody::HelicalTubeCut(body, frame) => {
@@ -3386,6 +3408,8 @@ impl Solid {
                     body.display_edges(frame, deflection)?
                 } else if let Some((body, frame)) = self.pipe_sleeve_body() {
                     body.display_edges(frame, deflection)?
+                } else if let Some((body, frame)) = self.pipe_hex_body() {
+                    body.display_edges(frame, deflection)?
                 } else if let Some((body, frame)) = self.rounded_thread_body() {
                     body.display_edges(frame, deflection)?
                 } else if let Some((body, frame)) = self.entry_chamfer_body() {
@@ -3449,6 +3473,9 @@ impl Solid {
             return body.display_edges(frame, deflection_mm);
         }
         if let Some((body, frame)) = self.pipe_sleeve_body() {
+            return body.display_edges(frame, deflection_mm);
+        }
+        if let Some((body, frame)) = self.pipe_hex_body() {
             return body.display_edges(frame, deflection_mm);
         }
         if let Some((body, frame)) = self.rounded_thread_body() {
@@ -3617,6 +3644,7 @@ impl Solid {
             SolidBody::RoundedThreadBore(body, _) => body.feature,
             SolidBody::RoundedHex(body, _) => body.feature,
             SolidBody::PipeSleeve(body, _) => body.feature,
+            SolidBody::PipeHex(body, _) => body.feature,
             SolidBody::RoundedBlindBore(body, _) => body.feature,
             SolidBody::RoundedThread(body, _) => body.feature,
             SolidBody::HelicalTubeCut(body, _) => body.feature,
@@ -3709,6 +3737,10 @@ impl Solid {
             SolidBody::PipeSleeve(body, frame) => {
                 body.supports_step(*frame, self.policy.linear_tolerance_mm)
             }
+            // Imported hex-stock hardware is read back only as a single solid.
+            SolidBody::PipeHex(body, frame) => {
+                standalone && body.supports_step(*frame, self.policy.linear_tolerance_mm)
+            }
             SolidBody::HelicalTubeCut(body, frame) => {
                 multicad_rust_kernel::step::supports_helical_tube_cut(
                     body.cut,
@@ -3726,8 +3758,11 @@ impl Solid {
                 self.rust_periodic_repaired_phillips_source().is_some()
                     || (standalone && self.has_degree11_phillips_step_source())
             }
-            // Written only as a whole standalone mapped file (no replay).
-            SolidBody::PipeHardware(body) => standalone && body.supports_step(),
+            // A clipped head is a whole standalone mapped file; retained hex
+            // stock is one flat member and may join a compound.
+            SolidBody::PipeHardware(body) => {
+                body.supports_step() && (standalone || body.supports_compound_step())
+            }
             SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
@@ -3918,6 +3953,9 @@ impl Solid {
             SolidBody::PipeSleeve(body, frame) => {
                 body.append_step(writer, *frame, self.policy.linear_tolerance_mm)
             }
+            SolidBody::PipeHex(body, frame) => {
+                body.append_step(writer, *frame, self.policy.linear_tolerance_mm)
+            }
             SolidBody::SpurGear(body, frame) => writer.append_spur_gear(
                 &body.profile,
                 frame.origin,
@@ -4028,8 +4066,8 @@ impl Solid {
                     GeometryErrorKind::Unsupported => step::StepError::Unsupported,
                     _ => step::StepError::InvalidGeometry,
                 }),
-            SolidBody::PipeHardware(..)
-            | SolidBody::Line8Nut(..)
+            SolidBody::PipeHardware(body) => body.append_step(writer, self.policy),
+            SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
@@ -4179,6 +4217,7 @@ impl Solid {
             SolidBody::RoundedThreadBore(..) => "RoundedThreadBore",
             SolidBody::RoundedHex(..) => "RoundedHex",
             SolidBody::PipeSleeve(..) => "PipeSleeve",
+            SolidBody::PipeHex(..) => "PipeHex",
             SolidBody::RoundedBlindBore(..) => "RoundedBlindBore",
             SolidBody::InternalThreadTreatment(..) => "InternalThreadTreatment",
             SolidBody::RepairedPhillips(..) => "RepairedPhillips",

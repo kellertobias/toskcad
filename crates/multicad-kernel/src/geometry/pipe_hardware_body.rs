@@ -28,7 +28,7 @@ mod source;
 mod step;
 pub use step::{PipeHardwareStepMethod, PipeHardwareStepVerification};
 #[cfg(test)]
-mod tests;
+pub(in crate::geometry) mod tests;
 mod topology;
 use placement::Placement;
 #[derive(Clone)]

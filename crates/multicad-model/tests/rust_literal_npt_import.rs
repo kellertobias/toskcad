@@ -429,6 +429,7 @@ fn actual_literal_export_worker_keeps_decoded_mass_intervals_and_atomic_publicat
                 multicad_kernel::rust_kernel::step_read::SourceImport::PipeSleeve(_) => {
                     "pipe_sleeve"
                 }
+                multicad_kernel::rust_kernel::step_read::SourceImport::PipeHex(_) => "pipe_hex",
                 multicad_kernel::rust_kernel::step_read::SourceImport::PeriodicPhillips(_) => {
                     "periodic_phillips"
                 }

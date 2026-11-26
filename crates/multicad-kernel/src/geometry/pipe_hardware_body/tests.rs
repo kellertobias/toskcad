@@ -1,5 +1,5 @@
 use super::*;
-fn spec(rounded: bool, external: bool, quarter: bool) -> AuthoredSpec {
+pub(in crate::geometry) fn spec(rounded: bool, external: bool, quarter: bool) -> AuthoredSpec {
     let k = if external { 1. / 32. } else { -1. / 32. };
     if rounded {
         let p = 25.4 / 28.;
@@ -37,7 +37,7 @@ fn spec(rounded: bool, external: bool, quarter: bool) -> AuthoredSpec {
         }
     }
 }
-fn frame(posed: bool) -> PlaneFrame {
+pub(in crate::geometry) fn frame(posed: bool) -> PlaneFrame {
     if posed {
         PlaneFrame {
             origin: [10., 20., 30.],
@@ -242,6 +242,55 @@ fn run(rounded: bool, external: bool, quarter: bool, posed: bool, options: MeshO
             .is_err()
     );
     assert_eq!(std::fs::read(&kept).unwrap(), b"existing output");
+    // Retained hex stock joins a compound as one flat member and is verified
+    // per member by exact readback; a clipped mapped head stays standalone.
+    let ordinary = Solid::rust_box(
+        EntityId::new().uuid_bits(),
+        [1, 2, 3].map(|n| Rational::new(n, 1).unwrap()),
+        PlaneFrame {
+            origin: [60., 0., 0.],
+            ..Default::default()
+        },
+        policy,
+    )
+    .unwrap();
+    let mixed =
+        Solid::make_rust_compound(&[&ordinary, &shape], EntityId::new(), policy, None).unwrap();
+    assert_eq!(mixed.supports_step_export(), !mapped);
+    if !mapped {
+        let compound = dir.path().join("compound.step");
+        mixed.write_step(&compound).unwrap();
+        let text = std::fs::read_to_string(&compound).unwrap();
+        let proof = mixed
+            .verify_partitioned_step_source(&text, 1e-7, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(proof.members.solid_count, 2);
+        let [member] = proof.members.retained_members.as_slice() else {
+            panic!("one retained pipe member");
+        };
+        assert_eq!(member.member_index, 1);
+        assert_eq!(
+            member.source_volume_bounds_mm3,
+            written.world_sewn_volume_mm3
+        );
+        let wrong =
+            Solid::make_rust_compound(&[&ordinary, &moved], EntityId::new(), policy, None).unwrap();
+        assert!(
+            wrong
+                .verify_partitioned_step_source(&text, 1e-7, None)
+                .unwrap()
+                .is_err()
+        );
+        let swapped =
+            Solid::make_rust_compound(&[&shape, &ordinary], EntityId::new(), policy, None).unwrap();
+        assert!(
+            swapped
+                .verify_partitioned_step_source(&text, 1e-7, None)
+                .unwrap()
+                .is_err()
+        );
+    }
 }
 #[test]
 fn actual_eighth_npt_head_has_coupled_neck_and_closed_native_manufacturing() {

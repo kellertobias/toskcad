@@ -87,6 +87,13 @@ impl HexStock {
             .then_some(rings)
     }
 }
+/// One decoded hexagonal stock ring: an annulus (nut cap, head shoulder) or
+/// the head top, with its corners counterclockwise about its outward normal.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HexRing {
+    pub corners: [Point; 6],
+    pub annulus: bool,
+}
 /// Decoded candidate only: the radial ownership has no material certificate.
 #[derive(Clone)]
 pub struct ImportedPipeHexHardware {
@@ -94,6 +101,8 @@ pub struct ImportedPipeHexHardware {
     pub kind: HexStockKind,
     /// The twelve distinct stock corners, in first-use order.
     pub corners: Vec<Point>,
+    /// Both hexagonal rings, in file face order.
+    pub rings: [HexRing; 2],
 }
 /// Decode one candidate. This is not an occupied-solid admission.
 pub fn read_pipe_hex_hardware(input: &str, tolerance: f64) -> Result<ImportedPipeHexHardware> {
@@ -217,12 +226,14 @@ pub(in crate::step_read) fn recognize(
     let tolerance = shell.tolerance;
     let mut corners = Vec::<(u32, Point)>::new();
     let mut rings = Vec::new();
+    let mut hex_rings = Vec::with_capacity(2);
     let mut decoder = Decoder::default();
     for (surface, forward, role) in roles {
         let stock_ring = match &role {
             Role::Stock(v) | Role::Annulus(v, _) => Some(v.clone()),
             Role::Radial(_) => None,
         };
+        let annulus = matches!(role, Role::Annulus(..));
         if let Some(vertices) = stock_ring {
             let plane = planar(shell, surface, forward)?;
             let mut points = Vec::with_capacity(vertices.len());
@@ -245,6 +256,9 @@ pub(in crate::step_read) fn recognize(
                 }
             }
             check(dot(newell, plane.outward) > 0.)?;
+            if let Ok(corners) = <[Point; 6]>::try_from(points.as_slice()) {
+                hex_rings.push(HexRing { corners, annulus });
+            }
             rings.push(vertices);
         }
         match role {
@@ -282,11 +296,15 @@ pub(in crate::step_read) fn recognize(
         let on = |ring: &Vec<u32>| wall.iter().filter(|v| ring.contains(v)).count();
         check(on(&hexes[0]) == 2 && on(&hexes[1]) == 2)?;
     }
+    let [first, second] = hex_rings[..] else {
+        return Err(ReadError::Unsupported);
+    };
     let boundary =
         radial::BoundaryOwnership::new(decoder.input, tolerance, None).map_err(failure)?;
     Ok(Some(ImportedPipeHexHardware {
         boundary,
         kind,
         corners: corners.into_iter().map(|(_, p)| p).collect(),
+        rings: [first, second],
     }))
 }
