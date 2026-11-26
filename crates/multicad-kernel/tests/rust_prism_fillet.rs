@@ -18,8 +18,16 @@ use std::f64::consts::{FRAC_PI_2, PI};
 
 #[derive(Clone, Copy, Debug)]
 enum Seg {
-    Line { a: [f64; 2], b: [f64; 2] },
-    Arc { c: [f64; 2], a: [f64; 2], b: [f64; 2], cw: bool },
+    Line {
+        a: [f64; 2],
+        b: [f64; 2],
+    },
+    Arc {
+        c: [f64; 2],
+        a: [f64; 2],
+        b: [f64; 2],
+        cw: bool,
+    },
 }
 
 impl Seg {
@@ -240,7 +248,14 @@ enum Kind {
 }
 
 /// Oracle volume: `top[i]` / `bottom[i]` mark treated cap edges.
-fn oracle(profile: &[Seg], height: f64, size: f64, kind: Kind, top: &[bool], bottom: &[bool]) -> f64 {
+fn oracle(
+    profile: &[Seg],
+    height: f64,
+    size: f64,
+    kind: Kind,
+    top: &[bool],
+    bottom: &[bool],
+) -> f64 {
     let base = section_area(profile, &vec![0.; profile.len()]);
     let band = |mask: &[bool]| {
         if !mask.contains(&true) {
@@ -253,7 +268,10 @@ fn oracle(profile: &[Seg], height: f64, size: f64, kind: Kind, top: &[bool], bot
                 let (delta, weight) = match kind {
                     Kind::Fillet => {
                         let theta = FRAC_PI_2 * (x + 1.) / 2.;
-                        (size * (1. - theta.portable_cos()), size * theta.portable_cos() * FRAC_PI_2 / 2.)
+                        (
+                            size * (1. - theta.portable_cos()),
+                            size * theta.portable_cos() * FRAC_PI_2 / 2.,
+                        )
                     }
                     Kind::Chamfer => (size * (x + 1.) / 2., size / 2.),
                 };
@@ -328,7 +346,8 @@ fn midpoint(geometry: AnalyticGeometry) -> Option<[f64; 3]> {
         } => {
             let t = start_rad + sweep_rad / 2.;
             Some(std::array::from_fn(|i| {
-                frame.origin_mm[i] + radius_mm * (t.portable_cos() * frame.u[i] + t.portable_sin() * frame.v[i])
+                frame.origin_mm[i]
+                    + radius_mm * (t.portable_cos() * frame.u[i] + t.portable_sin() * frame.v[i])
             }))
         }
         _ => None,
@@ -362,7 +381,9 @@ fn select(
                         }),
                         (Pick::Side(k), AnalyticGeometry::Line { a_mm, b_mm }) => {
                             let v = profile[*k].start();
-                            [a_mm, b_mm].iter().all(|p| len(sub([p[0], p[1]], v)) < 1e-9)
+                            [a_mm, b_mm]
+                                .iter()
+                                .all(|p| len(sub([p[0], p[1]], v)) < 1e-9)
                                 && (a_mm[2] - b_mm[2]).abs() > 1e-6
                         }
                         _ => false,
@@ -429,8 +450,15 @@ fn reported_corner_segment_top_edges_fillet_is_exact_and_round_trips_step() {
     near(result.volume_mm3().unwrap(), expected);
     closed_mesh(&result);
     let (text, imported) = step_text(&result);
-    assert!(text.contains("TOROIDAL_SURFACE"), "arc edge blend is a torus");
-    assert_eq!(text.matches("CYLINDRICAL_SURFACE").count(), 3, "two line blends and the arc side");
+    assert!(
+        text.contains("TOROIDAL_SURFACE"),
+        "arc edge blend is a torus"
+    );
+    assert_eq!(
+        text.matches("CYLINDRICAL_SURFACE").count(),
+        3,
+        "two line blends and the arc side"
+    );
     assert_eq!(imported.solid_count().unwrap(), 1);
     near(imported.volume_mm3().unwrap(), expected);
 }
@@ -446,7 +474,10 @@ fn reported_corner_segment_top_edges_chamfer_is_exact_and_round_trips_step() {
     near(result.volume_mm3().unwrap(), expected);
     closed_mesh(&result);
     let (text, imported) = step_text(&result);
-    assert!(text.contains("CONICAL_SURFACE"), "arc edge chamfer is a cone");
+    assert!(
+        text.contains("CONICAL_SURFACE"),
+        "arc edge chamfer is a cone"
+    );
     near(imported.volume_mm3().unwrap(), expected);
 }
 
@@ -468,6 +499,7 @@ fn corner_segment_single_and_partial_cap_edges() {
                 .unwrap_or_else(|e| panic!("{edges:?}: {e}"));
             let expected = oracle(&profile, 5., size, kind, &mask, &[false; 3]);
             near(result.volume_mm3().unwrap(), expected);
+            closed_mesh(&result);
             let (_, imported) = step_text(&result);
             near(imported.volume_mm3().unwrap(), expected);
         }
@@ -490,7 +522,14 @@ fn corner_segment_both_caps_and_bottom_only() {
     let bottom = treat(&solid, owner, &profile, &[Pick::Cap(0., 1)], chamfer(0.5)).unwrap();
     near(
         bottom.volume_mm3().unwrap(),
-        oracle(&profile, 5., 0.5, Kind::Chamfer, &[false; 3], &[false, true, false]),
+        oracle(
+            &profile,
+            5.,
+            0.5,
+            Kind::Chamfer,
+            &[false; 3],
+            &[false, true, false],
+        ),
     );
 }
 
@@ -591,11 +630,20 @@ fn unsupported_selections_refuse_in_plain_language() {
     let (solid, owner) = prism(&profile, 5.);
     let all = [Pick::Cap(5., 0), Pick::Cap(5., 1), Pick::Cap(5., 2)];
     // Larger than the body is tall.
-    let error = treat(&solid, owner, &profile, &all, fillet(6.)).err().unwrap();
+    let error = treat(&solid, owner, &profile, &all, fillet(6.))
+        .err()
+        .unwrap();
     assert!(error.to_string().contains("too large"), "{error}");
     // An L-shaped profile has a concave corner between the two top edges.
     let l = {
-        let p = [[0., 0.], [20., 0.], [20., 8.], [8., 8.], [8., 20.], [0., 20.]];
+        let p = [
+            [0., 0.],
+            [20., 0.],
+            [20., 8.],
+            [8., 8.],
+            [8., 20.],
+            [0., 20.],
+        ];
         (0..6)
             .map(|i| Seg::Line {
                 a: p[i],
@@ -604,10 +652,62 @@ fn unsupported_selections_refuse_in_plain_language() {
             .collect::<Vec<_>>()
     };
     let (solid, owner) = prism(&l, 5.);
-    let error = treat(&solid, owner, &l, &[Pick::Cap(5., 2), Pick::Cap(5., 3)], fillet(1.))
-        .err()
-        .unwrap();
+    let error = treat(
+        &solid,
+        owner,
+        &l,
+        &[Pick::Cap(5., 2), Pick::Cap(5., 3)],
+        fillet(1.),
+    )
+    .err()
+    .unwrap();
     assert_eq!(error.kind, GeometryErrorKind::Unsupported);
     assert!(error.to_string().contains("concave"), "{error}");
     assert!(!error.to_string().contains("Rust"), "{error}");
+}
+
+/// A rectangle whose top side is a concave scallop: a clockwise arc about a
+/// center above the profile.
+fn scalloped() -> Vec<Seg> {
+    let c = [10., 20.];
+    vec![
+        Seg::Line {
+            a: [0., 0.],
+            b: [20., 0.],
+        },
+        Seg::Line {
+            a: [20., 0.],
+            b: [20., 10.],
+        },
+        Seg::Arc {
+            c,
+            a: [20., 10.],
+            b: [0., 10.],
+            cw: true,
+        },
+        Seg::Line {
+            a: [0., 10.],
+            b: [0., 0.],
+        },
+    ]
+}
+
+#[test]
+fn concave_arc_cap_edge_blends_outside_its_circle() {
+    let profile = scalloped();
+    let (solid, owner) = prism(&profile, 6.);
+    for picks in [vec![2], vec![1, 2, 3], vec![0, 1, 2, 3]] {
+        let mut mask = [false; 4];
+        picks.iter().for_each(|&i| mask[i] = true);
+        let selection: Vec<_> = picks.iter().map(|&i| Pick::Cap(6., i)).collect();
+        for (kind, treatment) in [(Kind::Fillet, fillet(1.5)), (Kind::Chamfer, chamfer(1.5))] {
+            let result = treat(&solid, owner, &profile, &selection, treatment)
+                .unwrap_or_else(|e| panic!("{picks:?}: {e}"));
+            let expected = oracle(&profile, 6., 1.5, kind, &mask, &[false; 4]);
+            near(result.volume_mm3().unwrap(), expected);
+            closed_mesh(&result);
+            let (_, imported) = step_text(&result);
+            near(imported.volume_mm3().unwrap(), expected);
+        }
+    }
 }
