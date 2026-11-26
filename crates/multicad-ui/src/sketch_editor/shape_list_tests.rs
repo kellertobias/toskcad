@@ -9,14 +9,14 @@ use multicad_core::constraint_sketch::{
 };
 use multicad_core::project_file::{self, ProjectFile};
 
-struct Host {
-    ctx: egui::Context,
-    editor: SketchEditor,
-    session: Session,
-    feed: crate::viewport::SceneFeed,
-    time: f64,
+pub(super) struct Host {
+    pub(super) ctx: egui::Context,
+    pub(super) editor: SketchEditor,
+    pub(super) session: Session,
+    pub(super) feed: crate::viewport::SceneFeed,
+    pub(super) time: f64,
 }
-fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+pub(super) fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
     egui::Event::Key {
         key,
         physical_key: None,
@@ -26,7 +26,7 @@ fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
     }
 }
 impl Host {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let mut session = Session::new(Document::new("Shape list").unwrap()).unwrap();
         let mut editor = SketchEditor::default();
         editor.create(&mut session, Datum::Xy, Channel::Ui).unwrap();
@@ -41,11 +41,11 @@ impl Host {
         host.frame(vec![]).drop_without_applying_deltas();
         host
     }
-    fn frame(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
+    pub(super) fn frame(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
         self.time += 0.02;
         self.frame_at(events, self.time)
     }
-    fn frame_at(&mut self, events: Vec<egui::Event>, time: f64) -> egui::FullOutput {
+    pub(super) fn frame_at(&mut self, events: Vec<egui::Event>, time: f64) -> egui::FullOutput {
         self.time = self.time.max(time);
         let events_empty = events.is_empty();
         let raw = egui::RawInput {
@@ -65,7 +65,7 @@ impl Host {
         output
     }
     /// Render until the sketch worker has published the current solution.
-    fn settle(&mut self) {
+    pub(super) fn settle(&mut self) {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             self.frame_at(vec![], self.time)
@@ -79,19 +79,19 @@ impl Host {
         self.frame_at(vec![], self.time)
             .drop_without_applying_deltas();
     }
-    fn screen(&self, p: [f64; 2]) -> Pos2 {
+    pub(super) fn screen(&self, p: [f64; 2]) -> Pos2 {
         let s = self.editor.camera.project(
             Datum::Xy.frame().point(p).map(|v| v as f32),
             self.editor.viewport_rect.unwrap(),
         );
         Pos2::new(s[0], s[1])
     }
-    fn hover(&mut self, p: [f64; 2], offset: Vec2, time: f64) {
+    pub(super) fn hover(&mut self, p: [f64; 2], offset: Vec2, time: f64) {
         let at = self.screen(p) + offset;
         self.frame_at(vec![egui::Event::PointerMoved(at)], time)
             .drop_without_applying_deltas();
     }
-    fn press(&mut self, at: Pos2) {
+    pub(super) fn press(&mut self, at: Pos2) {
         self.frame(vec![egui::Event::PointerMoved(at)])
             .drop_without_applying_deltas();
         for pressed in [true, false] {
@@ -107,12 +107,12 @@ impl Host {
             .drop_without_applying_deltas();
         }
     }
-    fn click(&mut self, p: [f64; 2], offset: Vec2) {
+    pub(super) fn click(&mut self, p: [f64; 2], offset: Vec2) {
         let at = self.screen(p) + offset;
         self.press(at);
     }
     /// Click a painted label (list entries).
-    fn click_label(&mut self, label: &str) {
+    pub(super) fn click_label(&mut self, label: &str) {
         let output = self.frame(vec![]);
         let at = output
             .shapes
@@ -127,7 +127,7 @@ impl Host {
         output.drop_without_applying_deltas();
         self.press(at);
     }
-    fn labels(&mut self) -> Vec<String> {
+    pub(super) fn labels(&mut self) -> Vec<String> {
         let output = self.frame(vec![]);
         let labels = output
             .shapes
@@ -141,7 +141,7 @@ impl Host {
         labels
     }
     /// Replace an Inspector field's text and press Enter.
-    fn enter(&mut self, field: ShapeField, text: &str) {
+    pub(super) fn enter(&mut self, field: ShapeField, text: &str) {
         self.frame(vec![]).drop_without_applying_deltas();
         let rect = self
             .ctx
@@ -158,13 +158,13 @@ impl Host {
         }
         self.frame(vec![]).drop_without_applying_deltas();
     }
-    fn sketch(&self) -> EntityId {
+    pub(super) fn sketch(&self) -> EntityId {
         self.editor.selected.unwrap()
     }
-    fn source(&self) -> Source {
+    pub(super) fn source(&self) -> Source {
         shape_list::canonical(self.session.document(), self.sketch()).unwrap()
     }
-    fn solved(&self) -> multicad_core::constraint_sketch::Sketch {
+    pub(super) fn solved(&self) -> multicad_core::constraint_sketch::Sketch {
         self.editor
             .sketch_evaluation
             .current(self.sketch())

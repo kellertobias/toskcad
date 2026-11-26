@@ -94,6 +94,9 @@ mod tool_guide;
 #[cfg(test)]
 #[path = "sketch_tool_guide_tests.rs"]
 mod tool_guide_tests;
+mod tool_inspector;
+#[cfg(test)]
+mod tool_inspector_tests;
 #[cfg(test)]
 #[path = "sketch_tool_target_tests.rs"]
 mod tool_target_tests;
@@ -3633,6 +3636,17 @@ impl SketchEditor {
                             if self.model.pending() {ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));}
                             return;
                         }
+                        // CAD-399: an active draw tool owns the Inspector. Its own
+                        // settings come first and nothing unrelated is shown.
+                        if self.editing && let Some(tool)=self.tool {
+                            if self.repair.has_pending() {self.tool=None;self.clear_drawing_progress();}
+                            else {
+                                self.tool_inspector(ui, session, tool);
+                                if let Some(id)=self.selected {self.constraints.follow_element(session,id,self.element);}
+                                if let Some(failure)=self.selected.and_then(|id|self.sketch_evaluation.errors().get(&id)) {ui.colored_label(Color32::LIGHT_RED,&failure.message);}
+                                return;
+                            }
+                        }
                         if let Some(error)=&self.visibility_error {ui.colored_label(Color32::LIGHT_YELLOW,error);}
                         let hierarchy_tool=self.tree.tool_active();
                         if self.tree.tool_active() || !self.editing {
@@ -3737,31 +3751,6 @@ impl SketchEditor {
                             if self.plane_picker.take_cancel_requested() { self.cancel(); }
                             if let Some(preview) = chosen && let Err(error) = self.create_on_plane(session,preview,Channel::Ui) {self.message=error;}
                         }
-                        if self.editing && let Some(tool)=self.tool {
-                            ui.strong(tool.label());
-                            self.tool_guide_ui(ui, tool);
-                            if ui.checkbox(&mut self.construction,"Construction geometry").on_hover_text("Construction curves constrain the sketch but are excluded from solid profiles").changed() {self.message=if self.construction {"Construction drawing on"}else{"Construction drawing off"}.into();}
-                            if tool==DrawTool::Arc {ui.checkbox(&mut self.arc_clockwise,"Clockwise arc").on_hover_text("Direction around the sketch's positive normal");}
-                            if tool.corner() {
-                                self.corner_size_ui(ui, tool);
-                            }
-                            if tool == DrawTool::Text {
-                                self.text_tool_ui(ui, session);
-                            }
-                            if tool==DrawTool::Spline {
-                                ui.small(format!("{} control poles",self.spline_poles.len()));
-                                if ui.add_enabled(!self.spline_poles.is_empty(),egui::Button::new("Remove last pole")).on_hover_text("Remove only the last uncommitted control pole").clicked() {self.spline_poles.pop();}
-                            }
-                            if tool==DrawTool::Spline {
-                                use crate::inspector_actions::{self,Button,Owner};
-                                let clicked=inspector_actions::row(ui,Owner::Drawing,None,
-                                    Button::new("Finish spline",self.can_finish_spline(),"Commit the pending open spline; needs at least four control poles"),
-                                    Button::new("Cancel drawing",true,"Discard the uncommitted control poles and end the tool; existing geometry stays"));
-                                if clicked.apply && let Err(error)=self.finish_spline(session,false,Channel::Ui){self.message=error;}
-                                if clicked.cancel{self.cancel();}
-                            }
-                            ui.separator();
-                        }
                         if self.editing && let Some(id) = self.selected {
                             self.shape_inspector(ui, session, id);
                         }
@@ -3779,7 +3768,8 @@ impl SketchEditor {
                                 Ok((source, frame, _)) => {
                                     if self.element.is_some_and(|id|!source.geometry.iter().any(|geometry|geometry.id()==id)) {self.element=None;self.constraints.clear_geometry_selection();}
                                     ui.strong(&session.document().get(id).expect("read").name);
-                                    ui.label(format!("{} elements · mm", source.geometry.len()));
+                                    // While editing, the left element list already counts them.
+                                    if !self.editing {ui.label(format!("{} elements · mm", source.geometry.len()));}
                                     ui.small(format!(
                                         "Origin {:.2}, {:.2}, {:.2}",
                                         frame.origin[0], frame.origin[1], frame.origin[2]
@@ -3832,6 +3822,7 @@ impl SketchEditor {
                                             self.cancel_profile_clicks();
                                     }
                                     if self.editing
+                                        && (self.element.is_some() || self.shape.is_some())
                                         && ui
                                             .add_enabled(
                                                 self.element.is_some_and(|element|!crate::external_references::Controller::protected(session.document(),id,element)) || (self.element.is_none() && matches!(self.shape,Some(shape_list::ElementKey::Shape(_)))),

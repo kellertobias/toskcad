@@ -287,7 +287,7 @@ impl SketchEditor {
         else {
             return;
         };
-        ui.strong(&element.label);
+        ui.strong(format!("Selected: {}", element.label));
         let ElementKey::Shape(shape_id) = key else {
             ui.small(match key {
                 ElementKey::Text(_) => "Edit text in the Text tool.",

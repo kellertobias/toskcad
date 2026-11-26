@@ -263,9 +263,9 @@ impl SketchEditor {
     pub(super) fn corner_size_ui(&mut self, ui: &mut egui::Ui, tool: DrawTool) {
         ui.horizontal(|ui| {
             ui.label(if tool == DrawTool::Fillet {
-                "Radius"
+                "Fillet radius"
             } else {
-                "Setback"
+                "Chamfer distance"
             });
             ui.add(
                 egui::DragValue::new(&mut self.corner_size_mm)
