@@ -260,6 +260,44 @@ fn original_pipe_hardware_commands_edit_undo_reopen_and_export_supported_npt_hea
                     .contains("MAPPED_ITEM"),
                 mapped
             );
+            // Retained hex-stock files import back as typed pipe hardware in
+            // a fresh project with the exported volume.
+            if !mapped {
+                let other = directory.path().join("imported-pipe-hardware.tcd");
+                Store
+                    .save(
+                        &other,
+                        &ProjectFile::new(Document::new("Imported pipe hardware").unwrap())
+                            .unwrap(),
+                    )
+                    .unwrap();
+                let importer = Headless::with_geometry_backend(
+                    Workspace::project(other, Box::new(Store)).unwrap(),
+                    Some(directory.path().into()),
+                    false,
+                    GeometryBackend::Rust,
+                );
+                let bytes = std::fs::metadata(&output).unwrap().len();
+                eprintln!("PIPE_HEX_STEP npt={npt} head={head} bytes={bytes}");
+                let request = json!({"expected_revision":0,"file_name":"unavailable.step"});
+                if bytes <= 8 * 1024 * 1024 {
+                    let imported = run(&importer, "import_step", request);
+                    assert_eq!(imported["parts"].as_array().unwrap().len(), 1);
+                    let model = run(&importer, "evaluate_model", json!({}));
+                    let volume = model["parts"][0]["volume_mm3"].as_f64().unwrap();
+                    let expected = exported["model_volume_mm3"].as_f64().unwrap();
+                    assert!(
+                        (volume - expected).abs() <= 1e-6 * expected,
+                        "{volume} {expected}"
+                    );
+                } else {
+                    // The document's stored-source budget refuses larger files.
+                    let error = dispatch(&importer, &call(false), "import_step", request)
+                        .err()
+                        .unwrap();
+                    assert!(format!("{error:?}").contains("8 MiB"), "{error:?}");
+                }
+            }
             assert_eq!(host.document(), saved);
             run(&host, "save_project", json!({"expected_revision":4}));
             drop(host);
