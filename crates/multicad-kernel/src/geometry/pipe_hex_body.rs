@@ -79,13 +79,25 @@ impl Solid {
         feature: EntityId,
         policy: GeometryPolicy,
     ) -> Result<Self, GeometryError> {
-        let tolerance = policy.linear_tolerance_mm;
         let world = Self::qualify_imported_radial(imported.boundary, policy)?;
+        Self::import_qualified_pipe_hex(world, imported.kind, imported.rings, feature, policy)
+    }
+    /// The same import from an already certified world boundary, as a
+    /// compound member is after its own qualification.
+    pub(super) fn import_qualified_pipe_hex(
+        world: multicad_rust_kernel::radial_tensor::RadialBoundary,
+        kind: HexStockKind,
+        rings: [multicad_rust_kernel::step_read::HexRing; 2],
+        feature: EntityId,
+        policy: GeometryPolicy,
+    ) -> Result<Self, GeometryError> {
+        let imported_kind = kind;
+        let tolerance = policy.linear_tolerance_mm;
         let axes = world.cap_axes();
         let o = axes[0].origin;
-        let [a, b] = imported.rings;
+        let [a, b] = rings;
         let nearer = |r: &[Point; 6]| length(sub(centroid(r), o));
-        let lower_first = match imported.kind {
+        let lower_first = match imported_kind {
             HexStockKind::Head => match (a.annulus, b.annulus) {
                 (true, false) => true,
                 (false, true) => false,
@@ -160,7 +172,7 @@ impl Solid {
         };
         frame.checked(policy)?;
         let stock = HexStock {
-            kind: imported.kind,
+            kind: imported_kind,
             origin: o,
             normal: n,
             reference,
@@ -200,7 +212,7 @@ impl Solid {
         };
         let mut caps = vec![
             usize::MAX;
-            if imported.kind == HexStockKind::Nut {
+            if imported_kind == HexStockKind::Nut {
                 2
             } else {
                 1
@@ -251,7 +263,7 @@ impl Solid {
         let body = PipeHexBody {
             feature,
             thread,
-            kind: imported.kind,
+            kind: imported_kind,
             across_flats_mm,
             span_mm,
             caps,
@@ -268,6 +280,44 @@ impl Solid {
             rust_origins: vec![],
             retained_placement: None,
         })
+    }
+    /// Fresh exact readback of ACTUAL bytes (a standalone file or one flat
+    /// member's local view) against this imported body's retained thread
+    /// tables and earned stock. Returns the body's volume and world bounds.
+    pub fn verify_pipe_hex_step_source(
+        &self,
+        text: &str,
+        tolerance: f64,
+    ) -> Option<Result<([f64; 2], Bounds), GeometryError>> {
+        let (body, frame) = self.pipe_hex_body()?;
+        Some((|| {
+            if !tolerance.is_finite() || tolerance <= 0. {
+                return Err(failure(
+                    GeometryErrorKind::Input,
+                    "Positive finite STEP tolerance required",
+                ));
+            }
+            let tol = tolerance.min(self.policy.linear_tolerance_mm);
+            let boundary = body.radial().placed_boundary(frame)?;
+            multicad_rust_kernel::step::verify_pipe_hex_hardware(
+                text,
+                &boundary,
+                body.stock(frame),
+                tol,
+            )
+            .map_err(|e| {
+                failure(
+                    if e == multicad_rust_kernel::step::StepError::Limit {
+                        GeometryErrorKind::Limit
+                    } else {
+                        GeometryErrorKind::InvalidResult
+                    },
+                    format!("Imported pipe hex STEP readback failed: {e:?}"),
+                )
+            })?;
+            let v = body.volume_interval()?;
+            Ok(([v.lo, v.hi], body.bounds(frame)?))
+        })())
     }
     pub(crate) fn pipe_hex_body(&self) -> Option<(&PipeHexBody, PlaneFrame)> {
         match &self.body {
@@ -462,7 +512,9 @@ impl PipeHexBody {
                 format!("{what}: {cause}"),
             )
         };
-        let boundary = self.radial().placed_boundary(PlaneFrame::default())?;
+        // The thread is traced at its world occurrence and joined to the
+        // stock in that chart, so every pose meshes the same retained source.
+        let boundary = self.radial().placed_boundary(frame)?;
         let trace = boundary
             .tessellate_with_cap_trace(options, Default::default(), None)
             .map_err(|e| mesh_failure("Thread trace", format!("{e:?}")))?;
@@ -475,9 +527,10 @@ impl PipeHexBody {
                 height_mm: self.span_mm[1] - self.span_mm[0],
             },
         };
-        let joined = joined::join(
+        let joined = joined::join_in_chart(
             ThreadBoundaryMesh::Retained(&trace),
             kind,
+            [frame.origin, frame.u, frame.v, frame.normal()],
             joined::MeshOptions {
                 tessellation: options,
                 maximum_work: 512_000_000,
@@ -504,7 +557,7 @@ impl PipeHexBody {
                 *face = upper;
             }
         }
-        crate::rust_display::placed_mesh(Ok(mesh), frame, false)
+        crate::rust_display::placed_mesh(Ok(mesh), PlaneFrame::default(), false)
     }
     pub(crate) fn topology(
         &self,

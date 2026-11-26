@@ -277,26 +277,35 @@ fn original_pipe_hardware_commands_edit_undo_reopen_and_export_supported_npt_hea
                     false,
                     GeometryBackend::Rust,
                 );
-                let bytes = std::fs::metadata(&output).unwrap().len();
-                eprintln!("PIPE_HEX_STEP npt={npt} head={head} bytes={bytes}");
-                let request = json!({"expected_revision":0,"file_name":"unavailable.step"});
-                if bytes <= 8 * 1024 * 1024 {
-                    let imported = run(&importer, "import_step", request);
-                    assert_eq!(imported["parts"].as_array().unwrap().len(), 1);
-                    let model = run(&importer, "evaluate_model", json!({}));
-                    let volume = model["parts"][0]["volume_mm3"].as_f64().unwrap();
-                    let expected = exported["model_volume_mm3"].as_f64().unwrap();
-                    assert!(
-                        (volume - expected).abs() <= 1e-6 * expected,
-                        "{volume} {expected}"
-                    );
-                } else {
-                    // The document's stored-source budget refuses larger files.
-                    let error = dispatch(&importer, &call(false), "import_step", request)
-                        .err()
+                let bytes = std::fs::metadata(&output).unwrap().len() as usize;
+                let imported = run(
+                    &importer,
+                    "import_step",
+                    json!({"expected_revision":0,"file_name":"unavailable.step"}),
+                );
+                assert_eq!(imported["parts"].as_array().unwrap().len(), 1);
+                // Files over the 8 MiB stored-source budget are kept in the
+                // exact compact form (approved 2026-11-26).
+                let source = EntityId::parse(imported["source"].as_str().unwrap()).unwrap();
+                let stored =
+                    multicad_core::model::imports::read_step_source(&importer.document(), source)
                         .unwrap();
-                    assert!(format!("{error:?}").contains("8 MiB"), "{error:?}");
-                }
+                assert_eq!(
+                    stored.encoding == multicad_core::model::imports::StepEncoding::RustStepCompact,
+                    bytes > multicad_core::model::imports::MAX_STEP_BREP_BYTES,
+                    "{bytes}"
+                );
+                assert!(
+                    stored.solids[0].brep.len()
+                        <= multicad_core::model::imports::MAX_STEP_BREP_BYTES
+                );
+                let model = run(&importer, "evaluate_model", json!({}));
+                let volume = model["parts"][0]["volume_mm3"].as_f64().unwrap();
+                let expected = exported["model_volume_mm3"].as_f64().unwrap();
+                assert!(
+                    (volume - expected).abs() <= 1e-6 * expected,
+                    "{volume} {expected}"
+                );
             }
             assert_eq!(host.document(), saved);
             run(&host, "save_project", json!({"expected_revision":4}));

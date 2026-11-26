@@ -3737,9 +3737,10 @@ impl Solid {
             SolidBody::PipeSleeve(body, frame) => {
                 body.supports_step(*frame, self.policy.linear_tolerance_mm)
             }
-            // Imported hex-stock hardware is read back only as a single solid.
+            // Imported hex-stock hardware is one flat member, standalone or
+            // inside a compound, read back by exact table equality.
             SolidBody::PipeHex(body, frame) => {
-                standalone && body.supports_step(*frame, self.policy.linear_tolerance_mm)
+                body.supports_step(*frame, self.policy.linear_tolerance_mm)
             }
             SolidBody::HelicalTubeCut(body, frame) => {
                 multicad_rust_kernel::step::supports_helical_tube_cut(

@@ -102,18 +102,21 @@ pub fn read_step_file_with_backend(
         return read_step_file_open_cascade(path);
     }
     let read_error = |cause| error(None, format!("Cannot read {}: {cause}", path.display()));
+    // Files up to the Rust readers' own cap are read; the document keeps at
+    // most the stored-source budget, compacting a larger file losslessly.
+    let read_limit = imports::compact::MAX_STEP_READ_BYTES;
     let mut bytes = Vec::new();
     std::fs::File::open(path)
         .map_err(read_error)?
-        .take(imports::MAX_STEP_BREP_BYTES as u64 + 1)
+        .take(read_limit as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(read_error)?;
-    if bytes.len() > imports::MAX_STEP_BREP_BYTES {
+    if bytes.len() > read_limit {
         return Err(error(
             None,
             format!(
-                "Rust STEP source exceeds the {} MiB import limit",
-                imports::MAX_STEP_BREP_BYTES / (1024 * 1024)
+                "Rust STEP source exceeds the {} MiB read limit",
+                read_limit / (1024 * 1024)
             ),
         ));
     }
@@ -132,12 +135,30 @@ pub fn read_step_file_with_backend(
     let signature = step_signature(&solid).map_err(|e| error(None, e))?;
     // A Rust STEP source becomes one Part. Its original text stores all
     // independently closed members and their relative placements together.
+    // Above the stored-source budget the exact text is kept compact; that
+    // compact form must itself fit the unchanged budget.
+    let (encoding, stored) = if source.len() > imports::MAX_STEP_BREP_BYTES {
+        let compact = imports::compact::compact_step_text(&source);
+        if compact.len() > imports::MAX_STEP_BREP_BYTES {
+            return Err(error(
+                None,
+                format!(
+                    "Rust STEP source is {:.1} MiB even when compacted; the document stores at most {} MiB per file",
+                    compact.len() as f64 / 1048576.,
+                    imports::MAX_STEP_BREP_BYTES / (1024 * 1024)
+                ),
+            ));
+        }
+        (StepEncoding::RustStepCompact, compact)
+    } else {
+        (StepEncoding::RustStep, source)
+    };
     Ok(StepFile {
         file_name: file_name(path),
         path: Some(path.display().to_string()),
         content,
-        encoding: StepEncoding::RustStep,
-        solids: vec![("Solid".into(), source, signature)],
+        encoding,
+        solids: vec![("Solid".into(), stored, signature)],
     })
 }
 
@@ -294,7 +315,15 @@ fn step_geometry(
     if encoding == StepEncoding::OpenCascadeBrep {
         return Solid::from_brep(&saved.brep, policy).map_err(model_error);
     }
-    let solid = Solid::import_rust_step(&saved.brep, id, policy).map_err(model_error)?;
+    let expanded;
+    let text = if encoding == StepEncoding::RustStepCompact {
+        expanded = imports::compact::expand_step_text(&saved.brep)
+            .map_err(|e| error(Some(id), e.to_string()))?;
+        expanded.as_str()
+    } else {
+        saved.brep.as_str()
+    };
+    let solid = Solid::import_rust_step(text, id, policy).map_err(model_error)?;
     let actual = step_signature(&solid).map_err(model_error)?;
     if (actual.volume_mm3 - saved.signature.volume_mm3).abs() > actual.volume_mm3.max(1.) * 1e-9
         || actual

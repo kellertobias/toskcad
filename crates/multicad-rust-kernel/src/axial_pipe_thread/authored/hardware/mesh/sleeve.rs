@@ -78,7 +78,7 @@ pub fn join_sleeve<'a, 's>(
     };
     work.storage(0)?;
     work.charge(1)?;
-    let rings = rims(source, &mut work)?;
+    let rings = rims(source, Chart::IDENTITY, &mut work)?;
     work.held = work
         .held
         .checked_add(
@@ -357,6 +357,7 @@ fn join_rims(
     let outer1 = ((base + n) as u32..(base + 2 * n) as u32).collect::<Vec<_>>();
     plane(
         &mut mesh,
+        Chart::IDENTITY,
         &outer0,
         &rings.vertices[0],
         false,
@@ -365,6 +366,7 @@ fn join_rims(
     )?;
     plane(
         &mut mesh,
+        Chart::IDENTITY,
         &outer1,
         &rings.vertices[1],
         true,

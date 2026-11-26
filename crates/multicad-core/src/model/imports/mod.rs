@@ -6,6 +6,7 @@
 //! when the model is missing. Imported features are marked as imports, not
 //! editable modeling history. Reimports match source identities and keep the
 //! Parts of everything that still matches.
+pub mod compact;
 pub mod kicad;
 
 use super::{
@@ -25,6 +26,8 @@ use std::collections::BTreeSet;
 pub const STEP_SOURCE_KIND: &str = "import.step_source";
 pub const STEP_SOURCE_CAPABILITY: &str = "import.step_source.1";
 pub const RUST_STEP_SOURCE_CAPABILITY: &str = "import.step_source.2";
+/// Rust STEP source stored in the versioned compact form (schema 3).
+pub const RUST_STEP_COMPACT_SOURCE_CAPABILITY: &str = "import.step_source.3";
 pub const STEP_BODY_TYPE: &str = "import.step_body";
 pub const STEP_BODY_CAPABILITY: &str = "import.step_body.1";
 pub const BOARD_TYPE: &str = "import.board";
@@ -42,6 +45,9 @@ pub enum StepEncoding {
     #[default]
     OpenCascadeBrep,
     RustStep,
+    /// Exact Rust STEP text in the versioned compact form of [`compact`],
+    /// used when the original file exceeds the stored-source budget.
+    RustStepCompact,
 }
 
 impl StepEncoding {
@@ -53,7 +59,12 @@ impl StepEncoding {
         match self {
             Self::OpenCascadeBrep => 1,
             Self::RustStep => 2,
+            Self::RustStepCompact => 3,
         }
+    }
+    /// Rust STEP geometry, stored as plain text or in the compact form.
+    pub fn is_rust(self) -> bool {
+        matches!(self, Self::RustStep | Self::RustStepCompact)
     }
 }
 
@@ -212,7 +223,17 @@ impl StepSource {
         {
             return Err(invalid("STEP solids need distinct identities"));
         }
-        if self.encoding == StepEncoding::RustStep
+        if self.encoding == StepEncoding::RustStepCompact
+            && self
+                .solids
+                .iter()
+                .any(|solid| !compact::is_compact_step_text(&solid.brep))
+        {
+            return Err(invalid(
+                "Compact Rust STEP solids need the versioned compact form",
+            ));
+        }
+        if self.encoding.is_rust()
             && self.solids.iter().any(|solid| {
                 let sig = solid.signature;
                 solid.brep.is_empty()
@@ -302,7 +323,7 @@ pub fn components(document: &Document) -> impl Iterator<Item = &Entity> {
 pub fn read_step_source(document: &Document, id: EntityId) -> Result<StepSource, DocumentError> {
     match document.get(id).map(|e| &e.data) {
         Some(EntityData::Extension { definition, .. }) => {
-            if definition.type_id != STEP_SOURCE_KIND || !matches!(definition.schema_version, 1 | 2)
+            if definition.type_id != STEP_SOURCE_KIND || !matches!(definition.schema_version, 1..=3)
             {
                 return Err(invalid("Expected a supported STEP source schema"));
             }
@@ -497,7 +518,8 @@ pub fn plan_step_update(source: &StepSource, file: &StepFile) -> StepUpdatePlan 
             used.insert(i);
             matched.insert(old.id.clone());
             // The volume and bounds can stay the same while a pocket moves.
-            let changed = source.encoding == StepEncoding::RustStep && old.brep != file.solids[i].1;
+            let changed = source.encoding.is_rust()
+                && (source.encoding != file.encoding || old.brep != file.solids[i].1);
             plan.matched.push((old.id.clone(), i, changed));
         }
     }
@@ -539,7 +561,9 @@ pub fn prepare_step_update(
     revision(session, expected_revision)?;
     let document = session.document();
     let old = read_step_source(document, source_id)?;
-    if old.encoding != file.encoding {
+    // Plain and compact Rust text are one geometry family: a reimport may
+    // cross the stored-source budget in either direction.
+    if old.encoding != file.encoding && !(old.encoding.is_rust() && file.encoding.is_rust()) {
         return Err(error(
             "Reimport requires the same STEP geometry encoding as the original source",
         ));

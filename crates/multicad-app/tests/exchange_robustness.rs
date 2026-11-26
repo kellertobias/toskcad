@@ -364,9 +364,65 @@ fn oversized_inputs_are_refused_at_the_byte_ceilings() {
     )
     .unwrap();
     assert_eq!(imported["parts"].as_array().unwrap().len(), 1);
+    // One byte over the stored-source budget, the exact text is kept in the
+    // versioned compact form (approved 2026-11-26) and survives save/reopen.
     let fixture = Fixture::new();
-    let message = fixture.refuse("document-over.step", &pad(DOCUMENT_MAX_BYTES + 1));
-    assert!(message.contains("8 MiB import limit"), "{message}");
+    let over = pad(DOCUMENT_MAX_BYTES + 1);
+    std::fs::write(fixture.directory.path().join("document-over.step"), &over).unwrap();
+    let imported = dispatch(
+        &fixture.host,
+        &call(false),
+        "import_step",
+        json!({"expected_revision": 1, "file_name": "document-over.step"}),
+    )
+    .unwrap();
+    let source = EntityId::parse(imported["source"].as_str().unwrap()).unwrap();
+    let stored =
+        multicad_core::model::imports::read_step_source(&fixture.host.document(), source).unwrap();
+    assert_eq!(
+        stored.encoding,
+        multicad_core::model::imports::StepEncoding::RustStepCompact
+    );
+    assert!(stored.solids[0].brep.len() <= DOCUMENT_MAX_BYTES);
+    assert_eq!(
+        multicad_core::model::imports::compact::expand_step_text(&stored.solids[0].brep)
+            .unwrap()
+            .as_bytes(),
+        over.as_slice()
+    );
+    // The read cap: exactly 64 MiB imports, one byte more is refused.
+    let fixture = Fixture::new();
+    std::fs::write(
+        fixture.directory.path().join("read-limit.step"),
+        pad(READER_MAX_BYTES),
+    )
+    .unwrap();
+    let imported = dispatch(
+        &fixture.host,
+        &call(false),
+        "import_step",
+        json!({"expected_revision": 1, "file_name": "read-limit.step"}),
+    )
+    .unwrap();
+    assert_eq!(imported["parts"].as_array().unwrap().len(), 1);
+    let fixture = Fixture::new();
+    let message = fixture.refuse("read-over.step", &pad(READER_MAX_BYTES + 1));
+    assert!(message.contains("64 MiB read limit"), "{message}");
+    // Incompressible text whose compact form still exceeds the unchanged
+    // stored-source budget is refused.
+    let fixture = Fixture::new();
+    let mut noise = String::with_capacity(20 * 1024 * 1024);
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    const PRINTABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    while noise.len() < 20 * 1024 * 1024 {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        noise.push(PRINTABLE[(state >> 33) as usize % PRINTABLE.len()] as char);
+    }
+    let dense = append_data(&format!("/* {noise} */"));
+    let message = fixture.refuse("compact-over.step", &dense);
+    assert!(message.contains("even when compacted"), "{message}");
     // Reader ceiling through the kernel import.
     assert_eq!(kind(&pad(READER_MAX_BYTES)), "pass");
     let over = pad(READER_MAX_BYTES + 1);
