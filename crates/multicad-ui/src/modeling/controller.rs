@@ -1680,6 +1680,32 @@ impl ModelToolController {
             _ => None,
         }
     }
+    /// The Boolean form's chosen bodies and the generation of its last
+    /// list edit, so the viewer selection can follow the Inspector.
+    pub(crate) fn boolean_selection(&self) -> Option<(u64, std::collections::BTreeSet<EntityId>)> {
+        match &self.form {
+            Some(ModelForm::Boolean(panel)) => Some((panel.generation(), panel.selected_bodies())),
+            _ => None,
+        }
+    }
+    /// Feed the viewer / browser selection into the open Boolean (CAD-408).
+    pub(crate) fn sync_boolean_selection(
+        &mut self,
+        selection: &std::collections::BTreeSet<EntityId>,
+    ) {
+        if let Some(ModelForm::Boolean(panel)) = &mut self.form
+            && panel.sync_selection(selection)
+        {
+            self.invalidate();
+        }
+    }
+    /// Bodies picked before the Boolean opened keep their pick order.
+    pub(crate) fn prefer_boolean_order(&mut self, picked: &[EntityId]) {
+        if let Some(ModelForm::Boolean(panel)) = &mut self.form {
+            panel.prefer_order(picked);
+            self.invalidate();
+        }
+    }
     pub fn begin_boolean(
         &mut self,
         session: &Session,
@@ -2528,8 +2554,13 @@ impl ModelToolController {
         resources: &ProjectResources,
         flush: bool,
     ) {
+        // CAD-408: an incomplete Boolean shows its one hint; a preview of it
+        // could only repeat that message as a failure.
+        let incomplete_boolean =
+            matches!(&self.form, Some(ModelForm::Boolean(panel)) if panel.hint().is_some());
         if !self.active()
             || self.preview_waits_for_input()
+            || incomplete_boolean
             || self.current(session, resources, false).is_err()
         {
             if self.auto_preview.take().is_some() {

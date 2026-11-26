@@ -208,10 +208,12 @@ pub fn description(tool: &str) -> Option<&'static str> {
         "engraving" => {
             "Create engraving: opens a sketch on the planar face selected in the 3D view. It defines only the sketch; no depth or material removal."
         }
-        "boolean-join" => "Boolean Join: unite the tool bodies with each target body.",
-        "boolean-subtract" => "Boolean Subtract: remove the tool bodies from each target body.",
+        "boolean-join" => "Boolean Join: merge two or more selected bodies into one.",
+        "boolean-subtract" => {
+            "Boolean Subtract: cut the bodies to cut away out of the body to cut."
+        }
         "boolean-intersect" => {
-            "Boolean Intersect: keep only the region shared by each target and the tool bodies."
+            "Boolean Intersect: keep only the region shared by all selected bodies."
         }
         _ => return None,
     })

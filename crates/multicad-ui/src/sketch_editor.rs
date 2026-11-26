@@ -1150,7 +1150,8 @@ impl SketchEditor {
         self.finish()?;
         self.model
             .begin_boolean(session, resources, &scene, &selected, channel)?;
-        self.message = "Boolean · choose explicit targets and tools".into();
+        self.message =
+            "Boolean · the preview follows the selected bodies; Apply or Enter commits".into();
         Ok(())
     }
     /// Route a path-drawing key to the active wall, fence or slab outline.
@@ -1175,6 +1176,10 @@ impl SketchEditor {
     #[cfg(test)]
     pub(crate) fn model_for_tests_mut(&mut self) -> &mut crate::modeling::ModelToolController {
         &mut self.model
+    }
+    #[cfg(test)]
+    pub(crate) fn tree_selection_for_tests(&self) -> &std::collections::BTreeSet<EntityId> {
+        &self.tree_selection
     }
     #[cfg(test)]
     pub(crate) fn set_tree_selection_for_tests(

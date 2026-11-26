@@ -15,6 +15,8 @@ pub(super) struct Acquisition {
     started: bool,
     split_generation: Option<u64>,
     split_scene: Option<crate::viewport::SceneStamp>,
+    /// Boolean: bodies in the order they were picked before the form opened.
+    picked: Vec<EntityId>,
     /// Extrude / Revolve: the profiles last handed to the open form.
     profile_target: Option<crate::modeling::ProfileTarget>,
 }
@@ -492,6 +494,7 @@ impl SketchEditor {
             started: false,
             split_generation: None,
             split_scene: None,
+            picked: Vec::new(),
             profile_target: None,
         };
         let before = self.tree_selection.len();
@@ -678,6 +681,11 @@ impl SketchEditor {
             self.acquisition = Some(a);
             return;
         }
+        if a.started && a.tool == ModelingTool::Boolean {
+            self.follow_boolean_selection(session, feed, &mut a);
+            self.acquisition = Some(a);
+            return;
+        }
         if a.started {
             if let Some(scene) = feed
                 .visible()
@@ -731,13 +739,29 @@ impl SketchEditor {
             self.acquisition = Some(a);
             return;
         }
+        if a.tool == ModelingTool::Boolean {
+            // Record single picks in order. Several bodies arriving at once
+            // (a pre-selection or box select) have no pick order; the form
+            // lists those in list order after the recorded picks.
+            a.picked.retain(|id| self.tree_selection.contains(id));
+            let new: Vec<_> = self
+                .tree_selection
+                .iter()
+                .copied()
+                .filter(|id| !a.picked.contains(id))
+                .collect();
+            if let [id] = new.as_slice() {
+                a.picked.push(*id);
+            }
+        }
         let enough =
             self.tree_selection.len() >= a.minimum() && self.tree_selection.len() <= a.maximum();
         let ready = enough
             && (confirm
                 || matches!(
                     a.tool,
-                    ModelingTool::Move
+                    ModelingTool::Boolean
+                        | ModelingTool::Move
                         | ModelingTool::Split
                         | ModelingTool::Copy
                         | ModelingTool::Align
@@ -769,7 +793,9 @@ impl SketchEditor {
                 a.channel,
             ),
             ModelingTool::Align => self.begin_alignment(session, resources, feed, a.channel),
-            ModelingTool::Boolean => self.begin_boolean(session, resources, feed, a.channel),
+            ModelingTool::Boolean => self
+                .begin_boolean(session, resources, feed, a.channel)
+                .map(|()| self.model.prefer_boolean_order(&a.picked)),
             ModelingTool::Split => self.begin_split(session, resources, feed, a.channel),
             _ => unreachable!("primitives have no target acquisition"),
         };
@@ -777,7 +803,8 @@ impl SketchEditor {
             Ok(())
                 if matches!(
                     a.tool,
-                    ModelingTool::Move
+                    ModelingTool::Boolean
+                        | ModelingTool::Move
                         | ModelingTool::Copy
                         | ModelingTool::Scale
                         | ModelingTool::Split
@@ -790,6 +817,57 @@ impl SketchEditor {
             Err(error) => {
                 self.message = error;
                 self.acquisition = Some(a);
+            }
+        }
+    }
+    /// CAD-408: while Boolean is open, the viewer / browser selection and
+    /// the Inspector lists stay one selection. A list edit moves the viewer
+    /// selection; a viewer or browser pick updates the lists.
+    fn follow_boolean_selection(
+        &mut self,
+        session: &Session,
+        feed: &SceneFeed,
+        a: &mut Acquisition,
+    ) {
+        let Some((generation, chosen)) = self.model.boolean_selection() else {
+            return;
+        };
+        let parts: std::collections::BTreeSet<_> = self
+            .tree_selection
+            .iter()
+            .copied()
+            .filter(|id| {
+                matches!(
+                    session.document().get(*id).map(|entity| &entity.data),
+                    Some(EntityData::Part { .. })
+                )
+            })
+            .collect();
+        let mut sync = false;
+        if a.split_generation != Some(generation) {
+            a.split_generation = Some(generation);
+            self.tree_selection = chosen;
+            sync = true;
+        } else if parts != chosen {
+            self.model.sync_boolean_selection(&parts);
+            if let Some((_, chosen)) = self.model.boolean_selection() {
+                self.tree_selection = chosen;
+            }
+            sync = true;
+        }
+        if let Some(scene) = feed
+            .visible()
+            .filter(|_| feed.is_current(a.document, a.revision))
+            .filter(|scene| sync || a.split_scene != Some(scene.stamp()))
+        {
+            a.split_scene = Some(scene.stamp());
+            if let Err(error) = self.solid.select_source_entities(
+                session.document(),
+                session.revision(),
+                scene,
+                &self.tree_selection,
+            ) {
+                self.message = error;
             }
         }
     }
@@ -1010,7 +1088,9 @@ impl SketchEditor {
         let Some(a) = &self.acquisition else {
             return false;
         };
-        if a.started && (a.tool == ModelingTool::Split || a.profiles()) {
+        if a.started
+            && (matches!(a.tool, ModelingTool::Split | ModelingTool::Boolean) || a.profiles())
+        {
             return false;
         }
         if a.started {
@@ -1018,8 +1098,34 @@ impl SketchEditor {
             ui.separator();
             return false;
         }
-        ui.strong(format!("{} · select targets", a.tool.label()));
-        ui.label(if a.tool==ModelingTool::EdgeTreatment {"Select one Part definition in the tree or viewer, then its native edges. Linked occurrences follow; Instance-only treatment is unsupported."} else if a.profiles() { "Select a sketch in the tree, then choose one or more closed areas below or in the viewer. Or click planar model faces in the viewer (Shift, Command or Control adds)." } else { "Select objects in the tree or viewer. Shift-click adds or removes a target." });
+        if a.tool == ModelingTool::Boolean {
+            // CAD-408: plain words; the form opens once two bodies are chosen.
+            let (title, hint) = match self.model.boolean_preset() {
+                Some(multicad_core::model::Operation::Join) => (
+                    "Join",
+                    "Select two or more bodies to join in the viewer or the browser. Shift-click adds or removes a body.",
+                ),
+                Some(multicad_core::model::Operation::Intersect) => (
+                    "Intersect",
+                    "Select two or more bodies to intersect in the viewer or the browser. Shift-click adds or removes a body.",
+                ),
+                Some(multicad_core::model::Operation::Cut) => (
+                    "Subtract",
+                    "Select the body to cut and the bodies to cut away in the viewer or the browser. Shift-click adds or removes a body.",
+                ),
+                _ => (
+                    "Boolean",
+                    "Select two or more bodies in the viewer or the browser. Shift-click adds or removes a body.",
+                ),
+            };
+            ui.strong(format!("{title} · select bodies"));
+            ui.label(hint);
+        } else {
+            ui.strong(format!("{} · select targets", a.tool.label()));
+        }
+        if a.tool != ModelingTool::Boolean {
+            ui.label(if a.tool==ModelingTool::EdgeTreatment {"Select one Part definition in the tree or viewer, then its native edges. Linked occurrences follow; Instance-only treatment is unsupported."} else if a.profiles() { "Select a sketch in the tree, then choose one or more closed areas below or in the viewer. Or click planar model faces in the viewer (Shift, Command or Control adds)." } else { "Select objects in the tree or viewer. Shift-click adds or removes a target." });
+        }
         if a.profiles() && !self.profile_faces.is_empty() {
             ui.small(format!(
                 "{} planar face(s) selected as profiles",
