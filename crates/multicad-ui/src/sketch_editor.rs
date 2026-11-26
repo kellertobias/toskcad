@@ -63,6 +63,9 @@ mod profile_connection_host;
 mod scale_host_tests;
 #[path = "sketch_screw_connection_host.rs"]
 mod screw_connection_host;
+mod shape_list;
+#[cfg(test)]
+mod shape_list_tests;
 #[cfg(test)]
 mod sketch_entry_tests;
 #[path = "sketch_snap.rs"]
@@ -200,6 +203,9 @@ pub struct SketchEditor {
     text_tool: text_tool::TextTool,
     draw_preview_id: EntityId,
     element: Option<EntityId>,
+    /// Selected sketch element in the left list (CAD-398).
+    shape: Option<shape_list::ElementKey>,
+    shape_fields: shape_list::ShapeFields,
     pub camera: Camera,
     style: DisplayStyle,
     grid: bool,
@@ -318,6 +324,8 @@ impl Default for SketchEditor {
             text_tool: Default::default(),
             draw_preview_id: EntityId::new(),
             element: None,
+            shape: None,
+            shape_fields: Default::default(),
             camera: Camera {
                 target: [0.; 3],
                 ..Default::default()
@@ -3122,19 +3130,33 @@ impl SketchEditor {
             return Err("Apply or discard pending edits before deleting geometry".into());
         }
         let id = self.selected.ok_or("Select a sketch")?;
+        // A shape selected in the element list deletes all of its curves.
+        let shape_curves = match (self.element, self.shape) {
+            (None, Some(shape_list::ElementKey::Shape(_))) => self
+                .element_highlight(session.document())
+                .into_iter()
+                .collect(),
+            _ => vec![],
+        };
         let element = self
             .element
-            .ok_or("Select a line or rectangle in the Inspector")?;
+            .or(shape_curves.first().copied())
+            .ok_or("Select a curve or a shape in the sketch elements list")?;
         if let Ok((mut source, _, _)) = self.read_source(session.document(), id, session.revision())
         {
             if !source.sketch.curves.iter().any(|c| c.id == element) {
                 return Err("Select a curve to delete".into());
             }
-            source.sketch.curves.retain(|c| c.id != element);
+            let removed: Vec<_> = if shape_curves.is_empty() {
+                vec![element]
+            } else {
+                shape_curves
+            };
+            source.sketch.curves.retain(|c| !removed.contains(&c.id));
             source
                 .sketch
                 .constraints
-                .retain(|c| !c.kind.references().contains(&element));
+                .retain(|c| c.kind.references().iter().all(|r| !removed.contains(r)));
             let edit = multicad_solver::prepare_edit_with_report(
                 session,
                 session.revision(),
@@ -3156,6 +3178,7 @@ impl SketchEditor {
             commit(session, "Delete sketch geometry", edits, channel)?;
         }
         self.element = None;
+        self.shape = None;
         Ok(())
     }
     pub fn dimension(
@@ -3493,6 +3516,7 @@ impl SketchEditor {
                 .size_range(160. ..=(ui.available_width() * 0.35).max(160.))
                 .resizable(true)
                 .show(ui, |ui| {
+                    self.element_list(ui, session);
                     self.architecture_panel(ui, session, resources, feed, scene.as_deref());
                     let options = crate::model_tree::TreeOptions {
                         enabled: (!self.has_pending_edits() || self.acquisition.is_some())
@@ -3738,6 +3762,9 @@ impl SketchEditor {
                             }
                             ui.separator();
                         }
+                        if self.editing && let Some(id) = self.selected {
+                            self.shape_inspector(ui, session, id);
+                        }
                         if let Some(id) = self.selected {
                             let view = self
                                 .preview
@@ -3758,7 +3785,10 @@ impl SketchEditor {
                                         frame.origin[0], frame.origin[1], frame.origin[2]
                                     ));
                                     ui.separator();
-                                    for g in &source.geometry {
+                                    // While editing, the left panel lists the drawn shapes
+                                    // (CAD-398); the per-curve list is only an overview.
+                                    let overview = !self.editing;
+                                    for g in source.geometry.iter().filter(|_| overview) {
                                         let label = match g {
                                             Geometry::Line { a, b, .. } => {
                                                 format!(
@@ -3804,7 +3834,7 @@ impl SketchEditor {
                                     if self.editing
                                         && ui
                                             .add_enabled(
-                                                self.element.is_some_and(|element|!crate::external_references::Controller::protected(session.document(),id,element)),
+                                                self.element.is_some_and(|element|!crate::external_references::Controller::protected(session.document(),id,element)) || (self.element.is_none() && matches!(self.shape,Some(shape_list::ElementKey::Shape(_)))),
                                                 egui::Button::new("Delete selected element"),
                                             )
                                             .on_disabled_hover_text("Select authored geometry to delete. External outputs follow their source; use Remove reference in External references instead")
@@ -5308,6 +5338,11 @@ impl SketchEditor {
                     })
                     .map(|c| c.id)
                     .collect();
+                let shape_highlight = if self.selected == Some(e.id) {
+                    self.element_highlight(session.document())
+                } else {
+                    Default::default()
+                };
                 for g in &source.geometry {
                     let construction = constrained.as_ref().is_some_and(|(source, _, _)| {
                         source
@@ -5324,6 +5359,7 @@ impl SketchEditor {
                         Color32::LIGHT_RED
                     } else if selected
                         && (self.element == Some(g.id())
+                            || shape_highlight.contains(&g.id())
                             || self.constraints.selected(g.id())
                             || self.operations.curve_target() == Some(g.id())
                             || self.operations.curve_boundaries().contains(&g.id())
@@ -5791,6 +5827,9 @@ impl SketchEditor {
                     text_curve,
                     self.camera.on_plane(pointer, rect, frame),
                 );
+            // Canvas → element list (CAD-398): a curve selects the shape it
+            // was drawn with; anything else clears the shape selection.
+            self.select_element_of_curve(session.document(), id, text_curve);
             match hit {
                 _ if opened => {}
                 Some(Hit::Point(point)) => {
