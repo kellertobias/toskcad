@@ -224,8 +224,8 @@ fn picking_a_face_on_a_tilted_placed_occurrence_authors_that_face_frame() {
         .read_source(session.document(), id, session.revision())
         .unwrap();
     let world = editor.display_frame(id, frame);
-    for i in 0..3 {
-        assert!((world.n[i] - normal[i]).abs() < 1e-9, "{:?}", world.n);
+    for (n, expected) in world.n.iter().zip(normal) {
+        assert!((n - expected).abs() < 1e-9, "{:?}", world.n);
     }
     let face_point = panel.pose.point(local);
     let offset: f64 = (0..3)
