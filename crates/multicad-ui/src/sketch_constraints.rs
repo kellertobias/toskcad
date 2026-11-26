@@ -961,6 +961,33 @@ impl ConstraintEditor {
             self.selection.push(id);
         }
     }
+    /// Keep the constraint selection on the editor's selected element while
+    /// the constraint panel is hidden, e.g. during an active draw tool
+    /// (CAD-399). Mirrors the selection bookkeeping at the start of `show`.
+    pub(crate) fn follow_element(
+        &mut self,
+        session: &Session,
+        id: EntityId,
+        element: Option<EntityId>,
+    ) {
+        if self.dirty() || self.external_reference.is_some() {
+            return;
+        }
+        if self.owner != Some(id) {
+            self.selection.clear();
+            self.last_element = None;
+            self.owner = Some(id);
+            self.revision = session.revision();
+            self.result = None;
+            self.error = None;
+            self.dimension_fields.clear();
+            self.point_display = None;
+        }
+        if self.last_element != element {
+            self.last_element = element;
+            self.selection = element.into_iter().collect();
+        }
+    }
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,

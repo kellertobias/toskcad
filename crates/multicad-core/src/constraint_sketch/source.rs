@@ -11,6 +11,22 @@ pub const TYPE: &str = "core.constrained_sketch";
 pub const V2_CAPABILITY: &str = "core.constrained_sketch.2";
 pub const V3_CAPABILITY: &str = "core.constrained_sketch.3";
 pub const V4_CAPABILITY: &str = "core.constrained_sketch.4";
+/// Recorded drawn shapes (CAD-398). Readers without it would reject the
+/// `shapes` field, so a project that records any declares this capability.
+pub const SHAPES_CAPABILITY: &str = "core.constrained_sketch.shapes";
+/// Any constrained sketch that records drawn shapes needs the shapes capability.
+pub fn requires_shapes(document: &Document) -> bool {
+    document.entities().any(|e| {
+        matches!(&e.data, EntityData::Sketch { definition, .. }
+            if definition.type_id == TYPE
+                && definition
+                    .data
+                    .get("sketch")
+                    .and_then(|s| s.get("shapes"))
+                    .and_then(|t| t.as_array())
+                    .is_some_and(|a| !a.is_empty()))
+    })
+}
 /// Any constrained sketch with parametric text needs the text capability.
 pub fn requires_text(document: &Document) -> bool {
     document.entities().any(|e| {
@@ -68,7 +84,14 @@ impl Source {
                     });
                 }
                 sketch::Geometry::Rectangle { a, b, .. } => {
+                    let before = source.sketch.curves.len();
                     let first = source.add_rectangle(a, b)?;
+                    let mut curves: Vec<_> = source.sketch.curves[before..]
+                        .iter()
+                        .map(|c| if c.id == first { id } else { c.id })
+                        .collect();
+                    curves.truncate(4);
+                    source.sketch.record_shape(ShapeKind::Rectangle, curves);
                     for curve in &mut source.sketch.curves {
                         if curve.id == first {
                             curve.id = id;
@@ -267,11 +290,15 @@ impl Source {
     /// transition. `replace` preserves schema 2 after its first introduction,
     /// including when the final expression is later replaced by a literal.
     pub fn definition(&self) -> Result<Definition, DocumentError> {
-        self.validate()?;
+        // Edits that delete, trim or replace curves leave their shape entries
+        // behind; the written source never references a missing curve.
+        let mut source = self.clone();
+        source.sketch.prune_shapes();
+        source.validate()?;
         Ok(Definition {
             type_id: TYPE.into(),
-            schema_version: self.minimum_schema_version(),
-            data: serde_json::to_value(self).map_err(|e| invalid(e.to_string()))?,
+            schema_version: source.minimum_schema_version(),
+            data: serde_json::to_value(&source).map_err(|e| invalid(e.to_string()))?,
         })
     }
     /// Structural validation belongs to the source boundary. Numerical solving
@@ -296,6 +323,7 @@ impl Source {
             .chain(self.sketch.curves.iter().map(|c| c.id))
             .chain(self.sketch.constraints.iter().map(|c| c.id))
             .chain(self.sketch.texts.iter().map(|t| t.id))
+            .chain(self.sketch.shapes.iter().map(|s| s.id))
         {
             if id.is_nil() || !ids.insert(id) {
                 return Err(invalid("Duplicate or nil constrained sketch identity"));
@@ -317,6 +345,26 @@ impl Source {
                 "Sketch text produces {contours} glyph contours; the exact region budget allows {} per sketch. Shorten the text or use another sketch",
                 super::text::MAX_TEXT_CONTOURS
             )));
+        }
+        if self.sketch.shapes.len() > self.sketch.curves.len().max(1) {
+            return Err(invalid("A sketch holds at most one shape per curve"));
+        }
+        let mut owned = BTreeSet::new();
+        for shape in &self.sketch.shapes {
+            let name = shape.name.trim();
+            if name.is_empty() || shape.name.len() > MAX_SHAPE_NAME || name != shape.name {
+                return Err(invalid(
+                    "Sketch shape names must be non-empty, trimmed and at most 128 bytes",
+                ));
+            }
+            if shape.curves.is_empty() || shape.curves.len() > 512 {
+                return Err(invalid("A sketch shape needs between 1 and 512 curves"));
+            }
+            // Missing curves are tolerated here and pruned on write, but no
+            // curve belongs to two shapes.
+            if shape.curves.iter().any(|id| !owned.insert(*id)) {
+                return Err(invalid("A sketch curve belongs to at most one shape"));
+            }
         }
         let points: BTreeSet<_> = self.sketch.points.iter().map(|p| p.id).collect();
         let geometry: BTreeSet<_> = points

@@ -1,7 +1,7 @@
 //! Typed drawing input shared by native tools and external control. A draft
 //! owns its proposed source; dropping it never changes canonical geometry.
 use crate::{
-    constraint_sketch::{ConstraintKind, Curve, CurveKind, source::Source},
+    constraint_sketch::{ConstraintKind, Curve, CurveKind, ShapeKind, source::Source},
     document::{DocumentError, EntityId},
 };
 use multicad_precision::PortableMath as _;
@@ -621,6 +621,24 @@ pub fn draft(source: &Source, request: &DrawRequest) -> Result<DrawDraft, Docume
                 &mut created,
             );
         }
+    }
+    // The draw request is the shape identity (CAD-398): one gesture, one
+    // listed shape, whichever points it shares with earlier geometry.
+    let kind = match &request.input {
+        DrawInput::BSpline { .. } => ShapeKind::Spline,
+        DrawInput::Line { .. } => ShapeKind::Line,
+        DrawInput::Rectangle { .. }
+        | DrawInput::CenterRectangle { .. }
+        | DrawInput::CenterPointsRectangle { .. }
+        | DrawInput::ThreePointRectangle { .. } => ShapeKind::Rectangle,
+        DrawInput::Circle { .. }
+        | DrawInput::TwoPointCircle { .. }
+        | DrawInput::ThreePointCircle { .. } => ShapeKind::Circle,
+        DrawInput::Arc { .. } => ShapeKind::Arc,
+        DrawInput::Polyline { .. } => ShapeKind::Polyline,
+    };
+    if !created.is_empty() {
+        proposed.sketch.record_shape(kind, created.clone());
     }
     proposed.validate()?;
     Ok(DrawDraft {
