@@ -59,6 +59,10 @@ pub struct ExtrudeGroupDraft {
     pub id: EntityId,
     pub name: String,
     pub captured_scope: Option<ExtrudeCapturedScope>,
+    /// The operation was chosen automatically from the extrusion's contact
+    /// with existing bodies rather than picked by the author (CAD-404).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub automatic: bool,
 }
 impl ExtrudeGroupDraft {
     /// Allocate once per form; previews clone this identity and local settings.
@@ -67,6 +71,7 @@ impl ExtrudeGroupDraft {
             id: EntityId::new(),
             name: name.into(),
             captured_scope,
+            automatic: false,
         }
     }
 }
@@ -91,6 +96,10 @@ pub struct ExtrudeGroupDefinition {
     pub tools: Vec<BodyInput>,
     pub results: Vec<ExtrudeGroupResult>,
     pub captured_scope: Option<ExtrudeCapturedScope>,
+    /// Canonical record that the operation was chosen automatically (CAD-404).
+    /// Explicit choices omit it, so existing records keep their exact bytes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub automatic: bool,
 }
 impl PartialEq for ExtrudeGroupDefinition {
     fn eq(&self, other: &Self) -> bool {
@@ -98,6 +107,7 @@ impl PartialEq for ExtrudeGroupDefinition {
             && self.tools == other.tools
             && self.results == other.results
             && self.captured_scope == other.captured_scope
+            && self.automatic == other.automatic
     }
 }
 impl Eq for ExtrudeGroupDefinition {}
@@ -140,8 +150,8 @@ impl ExtrudeGroupDefinition {
     }
     pub fn definition(&self) -> Result<Definition, DocumentError> {
         let minimum = match self.kind {
-            ExtrudeGroupKind::Boolean => EXTRUDE_GROUP_SCHEMA,
-            ExtrudeGroupKind::NewBody => EXTRUDE_GROUP_V2_SCHEMA,
+            ExtrudeGroupKind::Boolean if !self.automatic => EXTRUDE_GROUP_SCHEMA,
+            _ => EXTRUDE_GROUP_V2_SCHEMA,
         };
         self.definition_in_schema(self.source_schema.unwrap_or(minimum).max(minimum))
     }

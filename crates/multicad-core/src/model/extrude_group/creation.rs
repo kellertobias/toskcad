@@ -39,6 +39,7 @@ pub fn prepare_grouped_extrude(
             .collect(),
         results: vec![],
         captured_scope: request.group.captured_scope.clone(),
+        automatic: request.group.automatic,
     };
     let entity = prepare::new_group_entity(
         extrusion.prepared.document(),
