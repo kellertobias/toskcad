@@ -587,6 +587,13 @@ pub(super) fn rebuild(
                     "A cylindrical pipe sleeve is imported only as a single STEP solid",
                 ));
             }
+            step_read::SourceImport::PipeHex(_) => {
+                return Err(error(
+                    IMPORT,
+                    GeometryErrorKind::Unsupported,
+                    "Hex-stock pipe hardware is imported only as a single STEP solid",
+                ));
+            }
             step_read::SourceImport::Radial(owned) => {
                 let boundary = Solid::qualify_imported_radial(*owned, policy)?;
                 (

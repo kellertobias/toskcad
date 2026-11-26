@@ -308,6 +308,9 @@ impl Solid {
                 step_read::SourceImport::PipeSleeve(sleeve) => {
                     Self::import_pipe_sleeve(*sleeve, feature, policy)
                 }
+                step_read::SourceImport::PipeHex(hex) => {
+                    Self::import_pipe_hex(*hex, feature, policy)
+                }
             };
         }
         compound::rebuild(members, feature, policy)

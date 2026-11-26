@@ -1,5 +1,5 @@
 use super::*;
-fn spec(rounded: bool, external: bool, quarter: bool) -> AuthoredSpec {
+pub(in crate::geometry) fn spec(rounded: bool, external: bool, quarter: bool) -> AuthoredSpec {
     let k = if external { 1. / 32. } else { -1. / 32. };
     if rounded {
         let p = 25.4 / 28.;
@@ -37,7 +37,7 @@ fn spec(rounded: bool, external: bool, quarter: bool) -> AuthoredSpec {
         }
     }
 }
-fn frame(posed: bool) -> PlaneFrame {
+pub(in crate::geometry) fn frame(posed: bool) -> PlaneFrame {
     if posed {
         PlaneFrame {
             origin: [10., 20., 30.],
