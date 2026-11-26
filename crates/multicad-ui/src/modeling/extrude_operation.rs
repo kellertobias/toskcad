@@ -6,8 +6,8 @@ use multicad_core::{
     commands::{Actor, Prepared, Session},
     document::{Document, EntityData, EntityId},
     model::{
-        self, BodyInput, CutTargetProbe, CutTargetQuery, CutTargetSelection, CutoutFace,
-        EvaluationOptions, ExtrudeBooleanRequest, ExtrudeRequest, Operation,
+        self, AutomaticOperation, BodyInput, CutTargetProbe, CutTargetQuery, CutTargetSelection,
+        CutoutFace, EvaluationOptions, ExtrudeBooleanRequest, ExtrudeRequest, Operation,
     },
     project_file::ContentHash,
 };
@@ -43,6 +43,12 @@ pub(super) struct OperationControls {
     sheet_sketch: Option<EntityId>,
     developed: bool,
     pub sheet_target: Result<SheetCutTarget, String>,
+    /// The operation the automatic default last set (CAD-404). The author's
+    /// own choice of any other operation ends automatic mode for this form;
+    /// distance and direction edits never change an explicit operation.
+    automatic: Option<Operation>,
+    decision: Option<AutomaticOperation>,
+    names: BTreeMap<EntityId, String>,
 }
 impl OperationControls {
     pub fn new(document: &Document, sketch: Option<EntityId>) -> Self {
@@ -96,6 +102,12 @@ impl OperationControls {
         let developed = sketch.is_some_and(|id| {
             model::developed_sheet_sketch(document, id).is_ok_and(|chart| chart.is_some())
         });
+        let sheet_sketch = sketch.filter(|id| developed || sheet_support(document, *id));
+        let names = document
+            .entities()
+            .filter(|entity| matches!(entity.data, EntityData::Part { .. }))
+            .map(|entity| (entity.id, entity.name.clone()))
+            .collect();
         Self {
             operation: if developed {
                 Operation::Cut
@@ -114,9 +126,13 @@ impl OperationControls {
             context_error: Some(
                 "Wait for a source-current native model before choosing explicit targets".into(),
             ),
-            sheet_sketch: sketch.filter(|id| developed || sheet_support(document, *id)),
+            sheet_sketch,
             developed,
             sheet_target: Err("Wait for the current sheet to resolve its sketch support".into()),
+            // Sheet sketches keep their dedicated through-sheet behaviour.
+            automatic: (!developed && sheet_sketch.is_none()).then_some(Operation::NewBody),
+            decision: None,
+            names,
         }
     }
     pub fn set_context(
@@ -179,6 +195,81 @@ impl OperationControls {
     pub fn label(&self, id: EntityId) -> String {
         choice_label(&self.choices, id)
     }
+    /// True until the author picks an operation; the operation then follows
+    /// the extrusion's contact with existing bodies on every preview.
+    pub fn automatic(&self) -> bool {
+        self.automatic == Some(self.operation)
+    }
+    /// The automatic default must ask the native model which bodies the
+    /// extrusion touches. A document with no bodies is New body at once.
+    pub fn needs_discovery(&self) -> bool {
+        self.automatic() && !self.names.is_empty()
+    }
+    /// Pick an operation explicitly. Later automatic decisions never replace it.
+    pub fn choose(&mut self, operation: Operation) {
+        self.operation = operation;
+        self.automatic = None;
+        self.decision = None;
+        self.invalidate();
+    }
+    /// Return to the automatic default; the next preview decides again.
+    pub fn choose_automatic(&mut self) {
+        if self.developed || self.sheet_sketch.is_some() {
+            return;
+        }
+        self.operation = self
+            .decision
+            .as_ref()
+            .map_or(Operation::NewBody, AutomaticOperation::operation);
+        self.automatic = Some(self.operation);
+        self.invalidate();
+    }
+    /// Record an automatic decision. Returns false, changing nothing, when the
+    /// author has chosen an operation in the meantime.
+    pub fn decide(&mut self, decision: AutomaticOperation, contact: CutTargetSelection) -> bool {
+        if !self.automatic() {
+            return false;
+        }
+        self.operation = decision.operation();
+        self.automatic = Some(self.operation);
+        self.decision = Some(decision);
+        self.receive(contact);
+        true
+    }
+    #[cfg(test)]
+    pub fn decision(&self) -> Option<&AutomaticOperation> {
+        self.decision.as_ref().filter(|_| self.automatic())
+    }
+    fn name(&self, body: EntityId) -> String {
+        self.names
+            .get(&body)
+            .cloned()
+            .unwrap_or_else(|| choice_label(&self.choices, body))
+    }
+    /// Plain inspector feedback for the automatic choice, e.g. "Join · touches Body 1".
+    pub fn automatic_summary(&self) -> Option<String> {
+        if !self.automatic() {
+            return None;
+        }
+        Some(match &self.decision {
+            None => "New body · Preview checks the bodies this extrusion touches".into(),
+            Some(AutomaticOperation::NewBody) => "New body · touches no body".into(),
+            Some(AutomaticOperation::Join(target)) => {
+                format!("Join · touches {}", self.name(target.body))
+            }
+            Some(AutomaticOperation::Cut(target)) => {
+                format!("Cut · enters {}", self.name(target.body))
+            }
+            Some(AutomaticOperation::Several(several)) => format!(
+                "New body · several bodies touch: {}; choose an operation and targets",
+                several
+                    .iter()
+                    .map(|target| self.name(target.body))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        })
+    }
     /// Join uses automatic discovery until the author picks explicit targets.
     pub fn automatic_join(&self) -> bool {
         self.operation == Operation::Join && self.targets.is_empty()
@@ -239,24 +330,66 @@ impl OperationControls {
             ui.small("The selected developed profile cuts through its sheet.");
             return false;
         }
+        let automatic = self.automatic();
+        let can_automate = self.sheet_sketch.is_none();
+        let mut picked = None;
         controls::inspector_combo(ui, "extrude-body-operation")
-            .selected_text(operation_label(self.operation))
+            .selected_text(if automatic {
+                format!("Automatic · {}", operation_label(self.operation))
+            } else {
+                operation_label(self.operation).to_owned()
+            })
             .show_ui(ui, |ui| {
+                if can_automate && ui.selectable_label(automatic, "Automatic").clicked() {
+                    picked = Some(None);
+                }
                 for operation in [
                     Operation::NewBody,
                     Operation::Join,
                     Operation::Cut,
                     Operation::Intersect,
                 ] {
-                    changed |= ui
-                        .selectable_value(
-                            &mut self.operation,
-                            operation,
+                    if ui
+                        .selectable_label(
+                            !automatic && self.operation == operation,
                             operation_label(operation),
                         )
-                        .changed();
+                        .clicked()
+                    {
+                        picked = Some(Some(operation));
+                    }
                 }
             });
+        match picked {
+            Some(Some(operation)) if automatic || operation != self.operation => {
+                self.choose(operation);
+                changed = true;
+            }
+            Some(None) if !automatic => {
+                self.choose_automatic();
+                changed = true;
+            }
+            _ => {}
+        }
+        if let Some(summary) = self.automatic_summary() {
+            ui.strong(summary);
+            if !self.fresh && self.decision.is_some() {
+                ui.small("Previous automatic choice; Preview to update");
+            }
+            if self.operation == Operation::NewBody {
+                return changed;
+            }
+            changed |= ui
+                .checkbox(&mut self.keep_tools, "Keep extrusion tool bodies")
+                .on_hover_text(
+                    "Keep the generated extrusion Parts alongside the resulting target Parts",
+                )
+                .changed();
+            if changed {
+                self.invalidate();
+            }
+            return changed;
+        }
         if self.operation == Operation::NewBody {
             if changed {
                 self.invalidate();
@@ -440,11 +573,31 @@ fn operation_label(operation: Operation) -> &'static str {
     }
 }
 
+/// What one discovery asks the native model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DiscoveryMode {
+    /// Bodies the tools touch face-to-face or overlap.
+    Join,
+    /// Bodies the tools enter.
+    Cut,
+    /// Both, in that probe order, to choose the default operation (CAD-404).
+    Automatic,
+}
+impl DiscoveryMode {
+    fn contacts(self) -> &'static [bool] {
+        match self {
+            Self::Join => &[true],
+            Self::Cut => &[false],
+            Self::Automatic => &[true, false],
+        }
+    }
+}
 pub(super) struct CutDiscovery {
     pub prepared: Prepared,
     pub options: EvaluationOptions,
     pub content: ContentHash,
     extrusion: ExtrudeRequest,
+    mode: DiscoveryMode,
 }
 impl CutDiscovery {
     pub fn prepare(
@@ -454,26 +607,31 @@ impl CutDiscovery {
         component: Option<EntityId>,
         include: Vec<EntityId>,
         exclude: Vec<EntityId>,
-        contact: bool,
+        mode: DiscoveryMode,
     ) -> Result<Self, String> {
         let tools = model::prepare_extrude(session, session.revision(), actor, &extrusion)
             .map_err(|error| error.to_string())?;
         let content = ContentHash::document(tools.prepared.document())?;
+        let tool_ids: Vec<_> = extrusion
+            .outputs
+            .iter()
+            .map(|output| output.feature)
+            .collect();
         let options = EvaluationOptions {
-            cut_targets: vec![CutTargetProbe {
-                id: EntityId::new(),
-                query: CutTargetQuery {
-                    tools: extrusion
-                        .outputs
-                        .iter()
-                        .map(|output| output.feature)
-                        .collect(),
-                    component,
-                    include,
-                    exclude,
-                    contact,
-                },
-            }],
+            cut_targets: mode
+                .contacts()
+                .iter()
+                .map(|&contact| CutTargetProbe {
+                    id: EntityId::new(),
+                    query: CutTargetQuery {
+                        tools: tool_ids.clone(),
+                        component,
+                        include: include.clone(),
+                        exclude: exclude.clone(),
+                        contact,
+                    },
+                })
+                .collect(),
             ..Default::default()
         };
         options.validate().map_err(|error| error.to_string())?;
@@ -482,14 +640,16 @@ impl CutDiscovery {
             options,
             content,
             extrusion,
+            mode,
         })
     }
-    pub fn selection<'a>(
+    /// One selection per probe, in [`DiscoveryMode`] probe order.
+    pub fn selections<'a>(
         &self,
         session: &Session,
         scene: &'a Scene,
         expected: SceneStamp,
-    ) -> Result<&'a CutTargetSelection, String> {
+    ) -> Result<Vec<&'a CutTargetSelection>, String> {
         session
             .validate_preview(&self.prepared)
             .map_err(|error| error.to_string())?;
@@ -505,7 +665,13 @@ impl CutDiscovery {
         if info.source_hash != self.content {
             return Err("Cut target results describe different extrusion source".into());
         }
-        if info.cut_targets.len() != 1 || info.cut_targets[0].id != self.options.cut_targets[0].id {
+        if info.cut_targets.len() != self.options.cut_targets.len()
+            || info
+                .cut_targets
+                .iter()
+                .zip(&self.options.cut_targets)
+                .any(|(result, probe)| result.id != probe.id)
+        {
             return Err("Cut target results do not match the requested probe".into());
         }
         for output in &self.extrusion.outputs {
@@ -522,11 +688,15 @@ impl CutDiscovery {
                 );
             }
         }
-        let selection = info.cut_targets[0]
-            .result
-            .as_ref()
-            .map_err(|error| error.to_string())?;
-        for target in selection.defaults.iter().chain(&selection.targets) {
+        let selections = info
+            .cut_targets
+            .iter()
+            .map(|probe| probe.result.as_ref().map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()?;
+        for target in selections
+            .iter()
+            .flat_map(|selection| selection.defaults.iter().chain(&selection.targets))
+        {
             target
                 .resolve_producer(session.document())
                 .map_err(|error| error.to_string())?;
@@ -561,18 +731,13 @@ impl CutDiscovery {
                 return Err("Cut target results do not match current native body producers".into());
             }
         }
-        Ok(selection)
+        Ok(selections)
     }
     pub fn extrusion(&self) -> &ExtrudeRequest {
         &self.extrusion
     }
-    /// Join discovery also counts face-to-face contact; Cut needs volume.
-    pub fn operation(&self) -> Operation {
-        if self.options.cut_targets[0].query.contact {
-            Operation::Join
-        } else {
-            Operation::Cut
-        }
+    pub fn mode(&self) -> DiscoveryMode {
+        self.mode
     }
 }
 

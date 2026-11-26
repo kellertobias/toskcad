@@ -2506,10 +2506,9 @@ impl ModelToolController {
                 0.075
             }
             Some(ModelForm::Extrude(_))
-                if self
-                    .operations
-                    .as_ref()
-                    .is_none_or(|controls| controls.operation == model::Operation::NewBody) =>
+                if self.operations.as_ref().is_none_or(|controls| {
+                    !controls.needs_discovery() && controls.operation == model::Operation::NewBody
+                }) =>
             {
                 0.075
             }
