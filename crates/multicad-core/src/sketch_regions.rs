@@ -901,6 +901,167 @@ pub fn extract_evaluated_with_queries_and_interrupt(
         interrupt,
     )
 }
+/// Closed areas of an ordinary (datum-plane) sketch for selection and
+/// modeling (CAD-400). Disjoint and nested loops keep their authored-loop
+/// identities. Where closed shapes cross, touch or share straight edges, the
+/// connected curves are split into exact cells instead of being refused; the
+/// authored curves are never trimmed. Open strokes, degenerate or
+/// self-intersecting curves, curved overlaps and parametric text keep their
+/// explicit diagnostics.
+pub fn extract_sketch_with_queries_and_interrupt(
+    points: &[crate::constraint_sketch::Point],
+    curves: &[crate::constraint_sketch::Curve],
+    texts: &[crate::constraint_sketch::text::SketchText],
+    queries: &dyn RegionQueries,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<Extraction, QueryError> {
+    let authored =
+        extract_evaluated_with_queries_and_interrupt(points, curves, texts, queries, interrupt)?;
+    let crossing = authored.diagnostics.iter().any(|d| {
+        d.curves.len() > 1
+            && matches!(
+                d.problem,
+                Problem::Intersection | Problem::Overlap | Problem::AmbiguousJunction
+            )
+    });
+    let refused = authored.diagnostics.iter().any(|d| {
+        matches!(d.problem, Problem::InvalidSource | Problem::QueryFailure)
+            || d.curves.len() == 1 && matches!(d.problem, Problem::Intersection | Problem::Overlap)
+    });
+    if !crossing || refused || !texts.is_empty() {
+        return Ok(authored);
+    }
+    let degenerate: BTreeSet<_> = authored
+        .diagnostics
+        .iter()
+        .filter(|d| d.problem == Problem::DegenerateCurve)
+        .flat_map(|d| d.curves.iter().copied())
+        .collect();
+    let point = |id| {
+        points
+            .iter()
+            .find(|p| p.id == id)
+            .expect("validated point")
+            .position_mm
+    };
+    let mut edges: Vec<_> = curves
+        .iter()
+        .filter(|c| !c.construction && !degenerate.contains(&c.id))
+        .map(|c| Edge {
+            authored: c.id,
+            reversed: false,
+            fragment: None,
+            curve: exact_curve(&c.kind, point),
+        })
+        .collect();
+    edges.sort_by_key(|e| e.authored);
+    let control = QueryControl::new(interrupt);
+    let cells = arrangement::extract_overlapping_cells_with_control(
+        &edges,
+        queries.tolerance_mm(),
+        queries,
+        interrupt,
+        &control,
+    );
+    control.finish()?;
+    check_interrupt(interrupt)?;
+    let mut cells = match cells {
+        Ok(cells) => cells,
+        Err(e) => {
+            let mut result = authored;
+            result.diagnostics.push(diagnostic(
+                Problem::Intersection,
+                edges.iter().map(|e| e.authored).collect(),
+                None,
+                format!(
+                    "Crossing shapes could not be split into closed areas: {}",
+                    e.message
+                ),
+            ));
+            return Ok(result);
+        }
+    };
+    // Several cells with the same boundary curves cannot be told apart by
+    // selection intent; refuse them explicitly instead of picking one.
+    let mut counts = std::collections::BTreeMap::new();
+    for region in &cells.regions {
+        *counts.entry(region.intent()).or_insert(0) += 1;
+    }
+    let ambiguous: Vec<_> = cells
+        .regions
+        .iter()
+        .filter(|r| counts[&r.intent()] > 1)
+        .flat_map(|r| r.outer.intent.curves.iter().copied())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    cells.regions.retain(|r| counts[&r.intent()] == 1);
+    if !ambiguous.is_empty() {
+        cells.diagnostics.push(diagnostic(
+            Problem::AmbiguousJunction,
+            ambiguous,
+            None,
+            "Several closed areas are bounded by the same curves; split a curve so each area has its own boundary",
+        ));
+    }
+    // Keep only diagnostics that remain true: degenerate curves, and open
+    // ends that do not land on another curve.
+    for d in authored.diagnostics {
+        let keep = match d.problem {
+            Problem::DegenerateCurve => true,
+            Problem::OpenBoundary => match d.at_mm {
+                Some(at) => {
+                    let mut on_boundary = false;
+                    for region in &cells.regions {
+                        if region.classify_with_queries_and_interrupt(at, queries, interrupt)?
+                            == PointLocation::Boundary
+                        {
+                            on_boundary = true;
+                            break;
+                        }
+                    }
+                    !on_boundary
+                }
+                None => true,
+            },
+            _ => false,
+        };
+        if keep {
+            cells.diagnostics.push(d);
+        }
+    }
+    Ok(cells)
+}
+fn exact_curve(kind: &CurveKind, point: impl Fn(EntityId) -> Point) -> ExactCurve {
+    match *kind {
+        CurveKind::BSpline {
+            ref poles,
+            ref basis,
+        } => ExactCurve::BSpline {
+            poles: poles.iter().map(|id| point(*id)).collect(),
+            basis: basis.clone(),
+        },
+        CurveKind::Line { start, end } => ExactCurve::Line {
+            a: point(start),
+            b: point(end),
+        },
+        CurveKind::Circle { center, radius_mm } => ExactCurve::Circle {
+            center: point(center),
+            radius_mm,
+        },
+        CurveKind::Arc {
+            center,
+            start,
+            end,
+            clockwise,
+        } => ExactCurve::Arc {
+            center: point(center),
+            a: point(start),
+            b: point(end),
+            clockwise,
+        },
+    }
+}
 fn extraction_error(e: QueryError) -> Extraction {
     Extraction {
         regions: vec![],
@@ -1006,34 +1167,7 @@ fn extract_impl_controlled(
             authored: c.id,
             reversed: false,
             fragment: None,
-            curve: match c.kind {
-                CurveKind::BSpline {
-                    ref poles,
-                    ref basis,
-                } => ExactCurve::BSpline {
-                    poles: poles.iter().map(|id| point(*id)).collect(),
-                    basis: basis.clone(),
-                },
-                CurveKind::Line { start, end } => ExactCurve::Line {
-                    a: point(start),
-                    b: point(end),
-                },
-                CurveKind::Circle { center, radius_mm } => ExactCurve::Circle {
-                    center: point(center),
-                    radius_mm,
-                },
-                CurveKind::Arc {
-                    center,
-                    start,
-                    end,
-                    clockwise,
-                } => ExactCurve::Arc {
-                    center: point(center),
-                    a: point(start),
-                    b: point(end),
-                    clockwise,
-                },
-            },
+            curve: exact_curve(&c.kind, point),
         })
         .collect();
     let mut diagnostics = vec![];

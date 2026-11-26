@@ -52,6 +52,8 @@ mod inline_input_tests;
 mod mechanical_import_host;
 #[path = "model_target_selection.rs"]
 mod model_target_selection;
+#[cfg(test)]
+mod overlap_profile_extrude_tests;
 #[path = "sketch_profile_connection_host.rs"]
 mod profile_connection_host;
 #[cfg(test)]
@@ -261,6 +263,8 @@ pub struct SketchEditor {
     solid_source_sketches: std::collections::BTreeSet<EntityId>,
     tree_scene_stamp: Option<crate::viewport::SceneStamp>,
     pending_profile_pick: Option<(crate::sketch_evaluation::ProfilePickStamp, bool)>,
+    /// Closed area under the pointer in the last viewport frame (hover feedback).
+    hovered_profile: Option<(EntityId, multicad_core::sketch_regions::RegionIntent)>,
     queued_profile_clicks: VecDeque<ProfileClick>,
     solid: crate::viewport::Interaction,
     repair: crate::reference_repair::RepairPanel,
@@ -378,6 +382,7 @@ impl Default for SketchEditor {
             solid_source_sketches: Default::default(),
             tree_scene_stamp: None,
             pending_profile_pick: None,
+            hovered_profile: None,
             queued_profile_clicks: VecDeque::new(),
             solid: Default::default(),
             repair: Default::default(),
@@ -2763,6 +2768,17 @@ impl SketchEditor {
         self.element = None;
         self.message = "Editing sketch · dimensions in millimeters".into();
         Ok(())
+    }
+    /// Area of the closed profile under the pointer in the last frame.
+    pub fn hovered_profile_area(&self) -> Option<f64> {
+        let (sketch, intent) = self.hovered_profile.as_ref()?;
+        Some(
+            self.sketch_evaluation
+                .current(*sketch)?
+                .regions
+                .resolve(intent)?
+                .area_mm2,
+        )
     }
     pub fn finish(&mut self) -> Result<(), String> {
         if self.has_pending_edits() {
@@ -5207,6 +5223,16 @@ impl SketchEditor {
                 }
             })
         };
+        // Tool-first Extrude/Revolve before a sketch is chosen: highlight the
+        // finished sketch area the next click would choose (CAD-400).
+        let tool_first_hover =
+            (!sketch_mode && self.acquiring_profiles() && self.selected.is_none())
+                .then(|| response.hover_pos())
+                .flatten()
+                .and_then(|pointer| {
+                    self.sketch_area_under_pointer(session, scene.as_deref(), rect, pointer)
+                });
+        let mut hovered_profile = None;
         for e in doc.entities().filter(|e| {
             !self.measurement.active()
                 && !self.repair.viewing_candidates()
@@ -5224,8 +5250,10 @@ impl SketchEditor {
             if let Ok((source, frame, _)) =
                 self.read_sketch_with_hash(doc, e.id, session.revision(), source_hash)
             {
-                if self.selected == Some(e.id)
+                let tool_first = tool_first_hover.filter(|(id, _)| *id == e.id);
+                if (self.selected == Some(e.id)
                     && (self.editing || self.acquiring_profiles() || face_preselection)
+                    || tool_first.is_some())
                     && self.tool.is_none()
                     && !self.moving
                     && !self.external.active()
@@ -5234,7 +5262,9 @@ impl SketchEditor {
                     && current.stamp.document == session.document().id()
                     && current.stamp.revision == session.revision()
                 {
-                    let hover = if face_preselection {
+                    let hover = if let Some((_, point)) = tool_first {
+                        Some(point)
+                    } else if face_preselection {
                         face_region.map(|(_, point)| point)
                     } else {
                         response
@@ -5243,7 +5273,11 @@ impl SketchEditor {
                     };
                     for fill in current.fills.iter() {
                         let selected = self.profiles.selected().contains(&fill.intent);
-                        if selected || hover.is_some_and(|p| fill.contains(p)) {
+                        let hovered = hover.is_some_and(|p| fill.contains(p));
+                        if hovered {
+                            hovered_profile = Some((e.id, fill.intent.clone()));
+                        }
+                        if selected || hovered {
                             fill.paint(&painter, self.camera, rect, frame, selected);
                         }
                     }
@@ -5357,6 +5391,7 @@ impl SketchEditor {
                 }
             }
         }
+        self.hovered_profile = hovered_profile;
         // A face-corner drawing whose native check finished commits here,
         // where the canvas holds the session for writing (CAD-383).
         self.finish_projection(session);
@@ -7376,7 +7411,7 @@ mod tests {
             .unwrap();
         assert_eq!(session.document(), &before);
     }
-    fn gesture_frame(
+    pub(super) fn gesture_frame(
         ctx: &egui::Context,
         editor: &mut SketchEditor,
         session: &mut Session,
@@ -7396,7 +7431,7 @@ mod tests {
     ) {
         click_sketch_modifiers(ctx, editor, session, point, egui::Modifiers::NONE);
     }
-    fn click_sketch_modifiers(
+    pub(super) fn click_sketch_modifiers(
         ctx: &egui::Context,
         editor: &mut SketchEditor,
         session: &mut Session,

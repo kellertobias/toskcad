@@ -330,7 +330,7 @@ impl EvaluatedSketch {
                 .regions(&self.geometry()?, &construction, queries, interrupt)
                 .map_err(|e| error(self.sketch, e.message));
         }
-        sketch_regions::extract_evaluated_with_queries_and_interrupt(
+        sketch_regions::extract_sketch_with_queries_and_interrupt(
             &solved.points,
             &solved.curves,
             &self.canonical.sketch.texts,
