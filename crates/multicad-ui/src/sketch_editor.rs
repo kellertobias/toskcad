@@ -5092,6 +5092,17 @@ impl SketchEditor {
             // Dimension drags snap to the grid spacing shown at this zoom.
             self.model
                 .set_drag_grid(crate::viewport::grid_step(self.camera, rect, self.spacing));
+            self.model.set_drag_scene(
+                context
+                    .feed
+                    .visible()
+                    .filter(|_| {
+                        context
+                            .feed
+                            .is_current(session.document().id(), session.revision())
+                    })
+                    .map(|scene| scene.as_ref()),
+            );
             owned |= self.model.primitive_viewport(
                 ui,
                 session,

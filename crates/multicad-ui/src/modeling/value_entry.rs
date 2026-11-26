@@ -94,6 +94,8 @@ pub struct ValueEntry {
     replace_text: bool,
     committed: bool,
     snap: Option<super::drag_snap::DragSnap>,
+    targets: super::drag_snap::DragTargets,
+    on_target: bool,
 }
 impl ValueEntry {
     pub fn new(kind: ValueKind, value: f64) -> Self {
@@ -106,7 +108,17 @@ impl ValueEntry {
             replace_text: false,
             committed: false,
             snap: None,
+            targets: Default::default(),
+            on_target: false,
         }
+    }
+    /// Existing geometry the dragged value snaps to before the grid.
+    pub fn set_drag_targets(&mut self, targets: super::drag_snap::DragTargets) {
+        self.targets = targets;
+    }
+    /// The last dragged value landed on a geometry target.
+    pub fn on_target(&self) -> bool {
+        self.on_target && self.text.is_none()
     }
     /// Snap state for drag motion in this frame; `None` follows the pointer
     /// exactly.
@@ -204,8 +216,11 @@ impl ValueEntry {
                 }
                 let next = start + (pointer - origin);
                 let next = match self.snap {
-                    Some(snap) => match snap.signed(next, self.value) {
-                        Some(next) => next,
+                    Some(snap) => match snap.signed_with(next, self.value, &self.targets) {
+                        Some(snapped) => {
+                            self.on_target = snapped.on_target;
+                            snapped.value
+                        }
                         None => return EntryEffect::None,
                     },
                     None => next,

@@ -189,6 +189,60 @@ impl DragSnap {
     }
 }
 
+/// Existing geometry a signed drag value can snap to, such as face planes
+/// along the Extrude direction. A target within `tolerance` of the dragged
+/// value beats the grid; the nearest target wins.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DragTargets {
+    pub values: Vec<f64>,
+    pub tolerance: f64,
+}
+impl DragTargets {
+    /// The target this value acquires, if any. Zero is never a target.
+    pub fn acquire(&self, value: f64) -> Option<f64> {
+        self.values
+            .iter()
+            .copied()
+            .filter(|target| {
+                target.is_finite()
+                    && *target != 0.
+                    && target.abs() <= MAX_DRAG_MM
+                    && (target - value).abs() <= self.tolerance
+            })
+            .min_by(|a, b| (a - value).abs().total_cmp(&(b - value).abs()))
+    }
+}
+
+/// A snapped signed drag value and whether it landed on a geometry target.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SignedSnap {
+    pub value: f64,
+    pub on_target: bool,
+}
+impl DragSnap {
+    /// Geometry targets first, then the grid; Shift releases both.
+    pub fn signed_with(
+        self,
+        value: f64,
+        previous: f64,
+        targets: &DragTargets,
+    ) -> Option<SignedSnap> {
+        if !self.free
+            && value.is_finite()
+            && let Some(target) = targets.acquire(value)
+        {
+            return Some(SignedSnap {
+                value: target,
+                on_target: true,
+            });
+        }
+        self.signed(value, previous).map(|value| SignedSnap {
+            value,
+            on_target: false,
+        })
+    }
+}
+
 /// Exact admission of a rectangular box as the Rust kernel evaluates it:
 /// every extent and the base area and volume are bounded rationals.
 pub(crate) fn box_admissible(size_mm: [f64; 3]) -> bool {
@@ -263,6 +317,66 @@ mod tests {
             assert_eq!(DragSnap::new(Some(step), false).grid_mm(), None, "{step}");
         }
         assert_eq!(Step::new(1. / 3.), None);
+    }
+
+    #[test]
+    fn geometry_targets_beat_the_grid_within_tolerance_and_shift_frees_them() {
+        let targets = DragTargets {
+            values: vec![43., -7.25, 0., f64::NAN],
+            tolerance: 2.,
+        };
+        let grid = DragSnap::new(Some(10.), false);
+        let snap = |value| grid.signed_with(value, 10., &targets).unwrap();
+        assert_eq!(
+            snap(41.4),
+            SignedSnap {
+                value: 43.,
+                on_target: true
+            }
+        );
+        assert_eq!(
+            snap(44.9),
+            SignedSnap {
+                value: 43.,
+                on_target: true
+            }
+        );
+        assert_eq!(
+            snap(45.2),
+            SignedSnap {
+                value: 50.,
+                on_target: false
+            }
+        );
+        assert_eq!(
+            snap(-6.),
+            SignedSnap {
+                value: -7.25,
+                on_target: true
+            }
+        );
+        // Zero is never acquired; the drag still steps off zero.
+        assert_eq!(
+            snap(0.4),
+            SignedSnap {
+                value: 10.,
+                on_target: false
+            }
+        );
+        let free = grid
+            .with_free(true)
+            .signed_with(41.4, 10., &targets)
+            .unwrap();
+        assert_eq!(
+            free,
+            SignedSnap {
+                value: 41.4,
+                on_target: false
+            }
+        );
+        // Without a grid the targets still apply at the free resolution.
+        let fine = DragSnap::FREE.signed_with(42.1, 10., &targets).unwrap();
+        assert_eq!(fine.value, 43.);
     }
 
     #[test]
