@@ -541,9 +541,11 @@ pub(super) fn rebuild(
         Radial(Box<multicad_rust_kernel::radial_tensor::RadialBoundary>),
         LiteralNpt(Box<multicad_rust_kernel::step_read::npt_stock::OwnedMaterial>),
         PipeHex(
-            Box<multicad_rust_kernel::radial_tensor::RadialBoundary>,
-            step_read::HexStockKind,
-            [step_read::HexRing; 2],
+            Box<(
+                multicad_rust_kernel::radial_tensor::RadialBoundary,
+                step_read::HexStockKind,
+                [step_read::HexRing; 2],
+            )>,
         ),
     }
     for member in members {
@@ -597,7 +599,7 @@ pub(super) fn rebuild(
                 let boundary = Solid::qualify_imported_radial(hex.boundary, policy)?;
                 (
                     super::super::radial_boundary_body::source_signature(&boundary),
-                    Qualified::PipeHex(Box::new(boundary), hex.kind, hex.rings),
+                    Qualified::PipeHex(Box::new((boundary, hex.kind, hex.rings))),
                 )
             }
             step_read::SourceImport::Radial(owned) => {
@@ -641,8 +643,9 @@ pub(super) fn rebuild(
             Qualified::Radial(boundary) => {
                 Solid::from_rust_radial_boundary(*boundary, child, policy)?
             }
-            Qualified::PipeHex(boundary, kind, rings) => {
-                Solid::import_qualified_pipe_hex(*boundary, kind, rings, child, policy)?
+            Qualified::PipeHex(hex) => {
+                let (boundary, kind, rings) = *hex;
+                Solid::import_qualified_pipe_hex(boundary, kind, rings, child, policy)?
             }
         });
     }
