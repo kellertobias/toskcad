@@ -48,6 +48,9 @@ pub(super) struct OperationControls {
     /// distance and direction edits never change an explicit operation.
     automatic: Option<Operation>,
     decision: Option<AutomaticOperation>,
+    /// The automatic Cut target whose material the Cut would remove entirely;
+    /// the default then falls back to New body.
+    consumed: Option<EntityId>,
     names: BTreeMap<EntityId, String>,
 }
 impl OperationControls {
@@ -132,6 +135,7 @@ impl OperationControls {
             // Sheet sketches keep their dedicated through-sheet behaviour.
             automatic: (!developed && sheet_sketch.is_none()).then_some(Operation::NewBody),
             decision: None,
+            consumed: None,
             names,
         }
     }
@@ -210,6 +214,7 @@ impl OperationControls {
         self.operation = operation;
         self.automatic = None;
         self.decision = None;
+        self.consumed = None;
         self.invalidate();
     }
     /// Return to the automatic default; the next preview decides again.
@@ -233,7 +238,21 @@ impl OperationControls {
         self.operation = decision.operation();
         self.automatic = Some(self.operation);
         self.decision = Some(decision);
+        self.consumed = None;
         self.receive(contact);
+        true
+    }
+    /// The automatic Cut would remove all material of its target: fall back
+    /// to New body. Returns false for an explicit Cut, which keeps its error.
+    pub fn cut_removes_all(&mut self) -> bool {
+        let Some(AutomaticOperation::Cut(target)) = self.decision.as_ref().filter(|_| {
+            self.automatic() && self.operation == Operation::Cut && self.consumed.is_none()
+        }) else {
+            return false;
+        };
+        self.consumed = Some(target.body);
+        self.operation = Operation::NewBody;
+        self.automatic = Some(Operation::NewBody);
         true
     }
     #[cfg(test)]
@@ -250,6 +269,12 @@ impl OperationControls {
     pub fn automatic_summary(&self) -> Option<String> {
         if !self.automatic() {
             return None;
+        }
+        if let Some(body) = self.consumed {
+            return Some(format!(
+                "New body · Cut would remove all of {}",
+                self.name(body)
+            ));
         }
         Some(match &self.decision {
             None => "New body · Preview checks the bodies this extrusion touches".into(),

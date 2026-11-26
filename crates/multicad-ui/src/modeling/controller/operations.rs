@@ -325,7 +325,7 @@ impl ModelToolController {
         let request = match (decision.operation(), decision.target()) {
             (operation @ (Operation::Join | Operation::Cut), Some(target)) => {
                 let mut request = self.identities.compose(
-                    extrusion,
+                    extrusion.clone(),
                     operation,
                     vec![target.clone()],
                     keep_tools,
@@ -343,12 +343,59 @@ impl ModelToolController {
             }
             _ => self.new_body_request(&extrusion, true),
         };
+        let cut = decision.operation() == Operation::Cut;
         self.submit_final(
             session,
             resources,
             discovery.channel,
             discovery.form,
             &request,
-        )
+        )?;
+        if cut {
+            self.cut_fallback = Some(super::CutFallback {
+                form: discovery.form,
+                channel: discovery.channel,
+                extrusion,
+            });
+        }
+        Ok(())
+    }
+    /// An automatic Cut whose native result removes all material of its
+    /// target falls back to New body with a note. An explicit Cut keeps the
+    /// error, because the author asked for exactly that operation.
+    pub(super) fn automatic_cut_fallback(
+        &mut self,
+        session: &Session,
+        resources: &ProjectResources,
+        form: FormStamp,
+    ) {
+        if !self
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("removed all material"))
+        {
+            return;
+        }
+        let Some(fallback) = self.cut_fallback.take().filter(|f| f.form == form) else {
+            return;
+        };
+        if !self
+            .operations
+            .as_mut()
+            .is_some_and(OperationControls::cut_removes_all)
+        {
+            return;
+        }
+        self.error = None;
+        let request = self.new_body_request(&fallback.extrusion, true);
+        if let Err(error) = self.submit_final(
+            session,
+            resources,
+            fallback.channel,
+            fallback.form,
+            &request,
+        ) {
+            self.error = Some(error);
+        }
     }
 }

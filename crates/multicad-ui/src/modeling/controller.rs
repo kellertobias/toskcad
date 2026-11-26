@@ -102,6 +102,11 @@ struct Discovery {
     stamp: SceneStamp,
     channel: Channel,
 }
+struct CutFallback {
+    form: FormStamp,
+    channel: Channel,
+    extrusion: ExtrudeRequest,
+}
 struct Handoff {
     document: EntityId,
     revision: u64,
@@ -127,6 +132,8 @@ pub struct ModelToolController {
     keyboard_confirm: Option<FormStamp>,
     preparation: preparation::Lane,
     discovery: Option<Discovery>,
+    /// The automatic Cut preview that may fall back to New body (CAD-404).
+    cut_fallback: Option<CutFallback>,
     surface_inspection: Option<surface_structure::SurfaceInspection>,
     operations: Option<OperationControls>,
     identities: BooleanIdentities,
@@ -1502,6 +1509,7 @@ impl ModelToolController {
         self.auto_preview = None;
         self.observed_preview_form = None;
         self.discovery = None;
+        self.cut_fallback = None;
         self.operations = None;
         self.identities = BooleanIdentities::default();
         self.handoff = None;
@@ -1718,6 +1726,7 @@ impl ModelToolController {
         self.auto_preview = None;
         self.observed_preview_form = None;
         self.discovery = None;
+        self.cut_fallback = None;
         self.operations = None;
         self.identities = BooleanIdentities::default();
         self.handoff = None;
@@ -1766,6 +1775,7 @@ impl ModelToolController {
         self.candidate = None;
         self.auto_preview = None;
         self.discovery = None;
+        self.cut_fallback = None;
         if let Some(operations) = &mut self.operations {
             operations.invalidate();
         }
@@ -2188,7 +2198,9 @@ impl ModelToolController {
                 Err(error) => {
                     candidate.scene = None;
                     candidate.evaluated_scene = None;
+                    let form = candidate.form;
                     self.error = Some(error);
+                    self.automatic_cut_fallback(session, resources, form);
                 }
             }
         }
