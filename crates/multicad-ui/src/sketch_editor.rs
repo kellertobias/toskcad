@@ -5089,6 +5089,9 @@ impl SketchEditor {
                     }
                 }
             }
+            // Dimension drags snap to the grid spacing shown at this zoom.
+            self.model
+                .set_drag_grid(crate::viewport::grid_step(self.camera, rect, self.spacing));
             owned |= self.model.primitive_viewport(
                 ui,
                 session,

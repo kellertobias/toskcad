@@ -264,3 +264,128 @@ fn a_dragged_primitive_commits_as_one_undo_step_with_the_shown_dimensions() {
         .unwrap();
     assert!(h.session.document().entities().next().is_none());
 }
+
+/// The host's per-frame grid report, as `SketchEditor` sends it.
+fn show_grid(h: &mut PrimitiveHarness, base_mm: f64) -> f64 {
+    let step = crate::viewport::grid_step(h.camera, h.rect, base_mm).unwrap();
+    h.controller.set_drag_grid(Some(step));
+    step
+}
+
+fn assert_on_grid(values: &[f64], step: f64) {
+    for value in values {
+        let units = value / step;
+        assert_eq!(
+            units.round() * step,
+            *value,
+            "{value} is not a multiple of {step}"
+        );
+    }
+}
+
+#[test]
+fn primitive_corner_drags_snap_bit_exactly_to_the_displayed_grid_at_two_zoom_levels() {
+    // Zoomed in: the floor grid shows 10 mm.
+    let mut h = PrimitiveHarness::new(top_camera(3.713));
+    assert_eq!(show_grid(&mut h, 10.), 10.);
+    let corner = h.screen([100., 60., 20.]);
+    h.press(corner);
+    // The reported drag: 91.393323 × 41.678413 becomes exactly 90 × 40.
+    let target = h.screen([91.393_323, 41.678_413, 20.]);
+    h.drag(target);
+    let feedback = h.controller.primitive_drag_feedback().unwrap().to_owned();
+    let spacing = format!("grid {}", crate::preferences::format_mm(10.));
+    assert!(feedback.contains(&spacing), "{feedback}");
+    assert!(feedback.contains("Shift for free"), "{feedback}");
+    h.release(target);
+    assert_eq!(h.box_shape(), ([90., 40., 20.], [0.; 3]));
+    h.assert_valid_preview("10 mm grid");
+    // The low corner moves the position onto grid lines too.
+    let low = h.screen([0., 0., 20.]);
+    h.press(low);
+    let target = h.screen([-23.4, -17.8, 20.]);
+    h.drag(target);
+    h.release(target);
+    assert_eq!(h.box_shape(), ([110., 60., 20.], [-20., -20., 0.]));
+    h.assert_valid_preview("moved low corner");
+    // Dragging through and across the opposite corner stops one step short.
+    let high = h.screen([90., 40., 20.]);
+    h.press(high);
+    h.drag(h.screen([-80., -70., 20.]));
+    let (size, origin) = h.box_shape();
+    assert_eq!((size, origin), ([10., 10., 20.], [-20., -20., 0.]));
+    h.release(h.screen([-80., -70., 20.]));
+    h.assert_valid_preview("one step");
+
+    // Zoomed out: the floor grid coarsens to 100 mm and snapping follows it.
+    let mut h = PrimitiveHarness::new(top_camera(0.5));
+    assert_eq!(show_grid(&mut h, 10.), 100.);
+    let corner = h.screen([100., 60., 20.]);
+    h.press(corner);
+    let target = h.screen([391.393_323, 241.678_413, 20.]);
+    h.drag(target);
+    let feedback = h.controller.primitive_drag_feedback().unwrap().to_owned();
+    let spacing = format!("grid {}", crate::preferences::format_mm(100.));
+    assert!(feedback.contains(&spacing), "{feedback}");
+    h.release(target);
+    // The fixed 20 mm height is not dragged and is kept.
+    assert_eq!(h.box_shape(), ([400., 200., 20.], [0.; 3]));
+    h.assert_valid_preview("100 mm grid");
+}
+
+#[test]
+fn shift_frees_the_grid_and_typed_dimensions_override_the_snap() {
+    let mut h = PrimitiveHarness::new(top_camera(3.713));
+    show_grid(&mut h, 10.);
+    let corner = h.screen([100., 60., 20.]);
+    h.modifiers = egui::Modifiers::SHIFT;
+    h.press(corner);
+    let target = h.screen([91.393_323, 41.678_413, 20.]);
+    h.drag(target);
+    let feedback = h.controller.primitive_drag_feedback().unwrap().to_owned();
+    assert!(feedback.contains("free (Shift)"), "{feedback}");
+    h.release(target);
+    let (size, origin) = h.box_shape();
+    assert_eq!(origin, [0.; 3]);
+    // Free sizes follow the pointer at the 0.001 mm resolution.
+    for (value, pointer) in size[..2].iter().zip([91.393_323, 41.678_413]) {
+        assert!((value - pointer).abs() < 0.05, "{size:?}");
+        assert_ne!(value % 10., 0., "{size:?}");
+        assert_eq!((value * 1000.).round() / 1000., *value, "{size:?}");
+    }
+    h.assert_valid_preview("free drag");
+
+    // Releasing Shift mid-drag snaps again.
+    h.press(h.screen([size[0], size[1], 20.]));
+    let target = h.screen([131.7, 48.2, 20.]);
+    h.drag(target);
+    h.modifiers = egui::Modifiers::NONE;
+    h.drag(target + egui::vec2(0.5, 0.));
+    h.release(target + egui::vec2(0.5, 0.));
+    assert_eq!(h.box_shape(), ([130., 50., 20.], [0.; 3]));
+
+    h.assert_valid_preview("snapped again");
+
+    // Add Primitive opens the corner inputs with Width focused; a typed
+    // width is kept exactly while the grid is shown.
+    let mut h = PrimitiveHarness::new(top_camera(3.713));
+    show_grid(&mut h, 10.);
+    h.frame(vec![]);
+    h.frame(vec![]);
+    assert!(h.controller.primitive_corner_input_focused());
+    h.frame(vec![Event::Text("91.393323".into())]);
+    h.frame(vec![]);
+    assert_eq!(h.box_shape(), ([91.393_323, 60., 20.], [0.; 3]));
+    h.assert_valid_preview("typed width");
+    let parts = h
+        .controller
+        .apply(&mut h.session, &Default::default())
+        .unwrap();
+    let stored = model::read_primitive(h.session.document(), parts[0].feature).unwrap();
+    let ResolvedPrimitive::Box { size_mm, .. } =
+        stored.parameters.resolve(h.session.parameters()).unwrap()
+    else {
+        panic!("box")
+    };
+    assert_eq!(size_mm, [91.393_323, 60., 20.]);
+}

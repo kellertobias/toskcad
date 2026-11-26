@@ -14,7 +14,7 @@ mod interaction;
 pub use interaction::Interaction;
 mod grid;
 mod overlay;
-pub use grid::floor_grid;
+pub use grid::{floor_grid, grid_step};
 pub use overlay::overlay_painter;
 mod quality;
 pub use quality::{DisplayQuality, Refinement};
