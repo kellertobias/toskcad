@@ -22,12 +22,63 @@ pub(super) struct RevolvePanel {
     /// with an explicitly chosen axis keep it.
     axis_confirmed: bool,
     axis_lines: Vec<super::operation_guide::GuideLine>,
+    /// Why a tool-first form has no profile yet (CAD-400).
+    missing: Option<String>,
 }
 impl RevolvePanel {
     pub fn new(request: RevolveRequest) -> Result<Self, String> {
         if request.outputs.is_empty() {
             return Err("Select at least one exact closed profile".into());
         }
+        Self::with_request(request)
+    }
+    /// Tool-first entry: the form opens before any profile is picked and
+    /// refuses Preview and Apply with `missing` until profiles arrive.
+    pub fn pending(missing: String) -> Result<Self, String> {
+        let mut panel = Self::with_request(RevolveRequest::from_faces(
+            vec![],
+            RevolveParameters::default(),
+        ))?
+        .acquire_axis();
+        panel.missing = Some(missing);
+        Ok(panel)
+    }
+    /// Replace the picked profiles of a new revolve, keeping the angle. The
+    /// axis is kept only while the profiles stay on the same sketch or
+    /// first face, because it is expressed in that plane.
+    pub(crate) fn retarget(&mut self, request: Option<RevolveRequest>, missing: String) {
+        let plane = |r: &RevolveRequest| {
+            (
+                r.sketch,
+                r.outputs
+                    .first()
+                    .and_then(|o| o.face.as_ref())
+                    .map(|f| f.source),
+            )
+        };
+        let before = plane(&self.request);
+        match request {
+            Some(request) => {
+                if plane(&request) != before {
+                    self.axis_confirmed = false;
+                    self.axis_lines.clear();
+                }
+                self.request.sketch = request.sketch;
+                self.request.outputs = request.outputs;
+                self.missing = None;
+            }
+            None => {
+                self.request.outputs.clear();
+                self.missing = Some(missing);
+            }
+        }
+        self.stamp.changed();
+        self.error = None;
+    }
+    pub(crate) fn profiles_missing(&self) -> bool {
+        self.request.outputs.is_empty()
+    }
+    fn with_request(request: RevolveRequest) -> Result<Self, String> {
         let parameters = &request.parameters;
         Ok(Self {
             origin: [
@@ -41,6 +92,7 @@ impl RevolvePanel {
             error: None,
             axis_confirmed: true,
             axis_lines: vec![],
+            missing: None,
         })
     }
     /// New revolves start with an explicit axis-acquisition step.
@@ -123,6 +175,12 @@ impl RevolvePanel {
     pub fn request(&self, document: &Document, enabled: bool) -> Result<RevolveRequest, String> {
         if !enabled {
             return Err("The native modeling preview provider is unavailable".into());
+        }
+        if self.request.outputs.is_empty() {
+            return Err(self
+                .missing
+                .clone()
+                .unwrap_or_else(|| "Select at least one exact closed profile".into()));
         }
         if !self.axis_confirmed {
             return Err("Choose the revolution axis: click a straight sketch line in the viewer, or pick a sketch axis or line in the Inspector".into());

@@ -236,8 +236,60 @@ pub struct ExtrudePanel {
     error: Option<String>,
     picking_available: bool,
     through_sheet: bool,
+    /// Why a tool-first form has no profile yet (CAD-400). Preview and Apply
+    /// refuse with this explanation until a valid profile set is picked.
+    missing: Option<String>,
 }
 impl ExtrudePanel {
+    /// Tool-first entry: the form opens before any profile is picked. It
+    /// stays unable to preview or apply until [`Self::retarget`] supplies
+    /// valid profiles.
+    pub(super) fn begin_pending(&mut self, missing: String) -> Result<FormStamp, String> {
+        let draft = Draft::new(ExtrudeRequest::from_faces(
+            vec![],
+            ExtrudeParameters::default(),
+        ))?;
+        let stamp = draft.stamp;
+        self.draft = Some(draft);
+        self.missing = Some(missing);
+        self.error = None;
+        Ok(stamp)
+    }
+    /// Replace the picked profiles of a new extrusion while keeping every
+    /// other field the user set. `None` empties the profile set and keeps
+    /// `missing` as the reason Preview and Apply refuse.
+    pub(super) fn retarget(
+        &mut self,
+        request: Option<ExtrudeRequest>,
+        missing: String,
+    ) -> Result<(), String> {
+        let draft = self.draft.as_mut().ok_or("Start Extrude first")?;
+        match request {
+            Some(request) => {
+                validate_new(&request)?;
+                draft.request.sketch = request.sketch;
+                draft.request.outputs = request.outputs;
+                self.missing = None;
+            }
+            None => {
+                draft.request.sketch = EntityId::nil();
+                draft.request.outputs.clear();
+                self.missing = Some(missing);
+            }
+        }
+        draft.stamp.changed();
+        self.error = None;
+        Ok(())
+    }
+    pub(super) fn profiles_missing(&self) -> bool {
+        self.draft
+            .as_ref()
+            .is_some_and(|draft| draft.request.outputs.is_empty())
+    }
+    /// The sketch whose areas are the current profiles; nil for faces.
+    pub(super) fn profile_sketch(&self) -> Option<EntityId> {
+        self.draft.as_ref().map(|draft| draft.request.sketch)
+    }
     pub(super) fn set_through_sheet(&mut self, through_sheet: bool) {
         self.through_sheet = through_sheet;
         if through_sheet && let Some(draft) = &mut self.draft {
@@ -275,43 +327,11 @@ impl ExtrudePanel {
     /// Unsupported associative requests fail explicitly instead of becoming a
     /// distance extrusion and silently losing their references.
     pub fn begin_request(&mut self, request: ExtrudeRequest) -> Result<FormStamp, String> {
-        if request.outputs.is_empty() {
-            return Err("Select at least one exact closed profile".into());
-        }
-        if request.operation != Operation::NewBody
-            || !request.targets.is_empty()
-            || request.keep_tools
-        {
-            return Err("This form currently edits independent new-body extrusions only; the original request was preserved".into());
-        }
-        let output = &request.outputs[0];
-        let mut faces = request.faces.clone();
-        let profile = match &output.face {
-            Some(face) => {
-                faces.push(face.clone());
-                multicad_core::model::ModelProfile::Face(multicad_core::model::FaceProfile {
-                    face: face.intent.id,
-                })
-            }
-            None => multicad_core::model::ProfileSource {
-                sketch: request.sketch,
-                region: output.region.clone(),
-            }
-            .into(),
-        };
-        multicad_core::model::ExtrudeDefinition {
-            profile,
-            output: multicad_core::model::BodyOutput { body: output.body },
-            parameters: request.parameters.clone(),
-            operation: request.operation,
-            targets: request.targets.clone(),
-            keep_tools: request.keep_tools,
-        }
-        .inputs(&faces)
-        .map_err(|error| error.to_string())?;
+        validate_new(&request)?;
         let draft = Draft::new(request)?;
         let stamp = draft.stamp;
         self.draft = Some(draft);
+        self.missing = None;
         self.error = None;
         Ok(stamp)
     }
@@ -388,6 +408,7 @@ impl ExtrudePanel {
     }
     pub fn cancel(&mut self) {
         self.draft = None;
+        self.missing = None;
         self.error = None;
     }
     pub fn termination_picking(&self) -> bool {
@@ -440,11 +461,13 @@ impl ExtrudePanel {
         document: &Document,
         capabilities: ExtrudeCapabilities,
     ) -> Result<ExtrudeRequest, String> {
-        self.draft.as_ref().ok_or("Start Extrude first")?.request(
-            document,
-            capabilities,
-            self.through_sheet,
-        )
+        let draft = self.draft.as_ref().ok_or("Start Extrude first")?;
+        if draft.request.outputs.is_empty()
+            && let Some(missing) = &self.missing
+        {
+            return Err(missing.clone());
+        }
+        draft.request(document, capabilities, self.through_sheet)
     }
     pub fn show(
         &mut self,
@@ -457,6 +480,11 @@ impl ExtrudePanel {
         controls::inspector_layout(ui);
         ui.strong("Extrude");
         ui.label(format!("{} selected profiles", draft.request.outputs.len()));
+        if draft.request.outputs.is_empty()
+            && let Some(missing) = &self.missing
+        {
+            ui.small(missing);
+        }
         ui.small("Preview checks native solids. Apply changes the document only after that preview succeeds.");
         ui.separator();
         let mut changed = false;
@@ -693,6 +721,42 @@ fn show_end(
         picker.begin(side, kind);
     }
     action.changed || action.pick.is_some() || action.cancel
+}
+/// A new independent extrusion with at least one valid profile.
+fn validate_new(request: &ExtrudeRequest) -> Result<(), String> {
+    if request.outputs.is_empty() {
+        return Err("Select at least one exact closed profile".into());
+    }
+    if request.operation != Operation::NewBody || !request.targets.is_empty() || request.keep_tools
+    {
+        return Err("This form currently edits independent new-body extrusions only; the original request was preserved".into());
+    }
+    let output = &request.outputs[0];
+    let mut faces = request.faces.clone();
+    let profile = match &output.face {
+        Some(face) => {
+            faces.push(face.clone());
+            multicad_core::model::ModelProfile::Face(multicad_core::model::FaceProfile {
+                face: face.intent.id,
+            })
+        }
+        None => multicad_core::model::ProfileSource {
+            sketch: request.sketch,
+            region: output.region.clone(),
+        }
+        .into(),
+    };
+    multicad_core::model::ExtrudeDefinition {
+        profile,
+        output: multicad_core::model::BodyOutput { body: output.body },
+        parameters: request.parameters.clone(),
+        operation: request.operation,
+        targets: request.targets.clone(),
+        keep_tools: request.keep_tools,
+    }
+    .inputs(&faces)
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 pub(crate) fn millimeter_value(document: &Document, field: &DimensionField) -> Result<f64, String> {
     let parameters = multicad_core::parameters::evaluate(document).map_err(|e| e.to_string())?;

@@ -4729,7 +4729,12 @@ mod tests {
         ] {
             assert!(app.enabled(command));
             app.invoke(command, &[], Channel::Ui).unwrap();
-            assert!(app.current().sketch.awaiting_model_targets());
+            if command == Command::Modeling(crate::modeling::ModelingTool::Extrude) {
+                // CAD-400: tool-first Extrude opens its form at once.
+                assert!(app.current().sketch.model_active());
+            } else {
+                assert!(app.current().sketch.awaiting_model_targets());
+            }
             assert!(!app.enabled(Command::Parameter));
             app.invoke(Command::Discard, &[], Channel::Ui).unwrap();
         }

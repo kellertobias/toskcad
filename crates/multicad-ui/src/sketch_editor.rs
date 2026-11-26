@@ -5223,15 +5223,14 @@ impl SketchEditor {
                 }
             })
         };
-        // Tool-first Extrude/Revolve before a sketch is chosen: highlight the
-        // finished sketch area the next click would choose (CAD-400).
-        let tool_first_hover =
-            (!sketch_mode && self.acquiring_profiles() && self.selected.is_none())
-                .then(|| response.hover_pos())
-                .flatten()
-                .and_then(|pointer| {
-                    self.sketch_area_under_pointer(session, scene.as_deref(), rect, pointer)
-                });
+        // Tool-first Extrude/Revolve: highlight the finished sketch area the
+        // next click would choose (CAD-400).
+        let tool_first_hover = (!sketch_mode && self.acquiring_profiles())
+            .then(|| response.hover_pos())
+            .flatten()
+            .and_then(|pointer| {
+                self.sketch_area_under_pointer(session, scene.as_deref(), rect, pointer)
+            });
         let mut hovered_profile = None;
         for e in doc.entities().filter(|e| {
             !self.measurement.active()
@@ -6464,7 +6463,9 @@ mod tests {
                 Channel::Ui,
             )
             .unwrap();
-        assert!(h.editor.awaiting_model_targets());
+        // CAD-400: the form opens at once, before any profile is picked.
+        assert!(h.editor.model_active(), "{}", h.editor.message);
+        assert!(!h.editor.awaiting_model_targets());
         assert!(!h.editor.editing);
         h.editor.toggle_transform();
         assert!(!h.editor.moving);
@@ -6521,10 +6522,17 @@ mod tests {
                 .len(),
             2
         );
+        // The per-frame update hands both picks to the open form.
         h.editor
-            .advance_model_targets(&h.session, &Default::default(), &feed, true);
+            .advance_model_targets(&h.session, &Default::default(), &feed, false);
         assert!(h.editor.model_active());
         assert!(!h.editor.awaiting_model_targets());
+        match h.editor.model_request_for_tests(&h.session) {
+            Some(crate::modeling::ModelRequest::Extrude(request)) => {
+                assert_eq!(request.outputs.len(), 2)
+            }
+            other => panic!("{other:?}"),
+        }
         h.editor.cancel_model();
         assert_eq!(h.session.document(), &before);
         assert_eq!(h.session.revision(), revision);

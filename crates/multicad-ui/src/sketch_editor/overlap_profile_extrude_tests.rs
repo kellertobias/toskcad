@@ -255,6 +255,104 @@ impl Reported {
         areas
     }
     /// Preview, then Apply; returns the volume of the new solids.
+    /// One application frame: the per-frame target update and the form's
+    /// automatic preview run in `show_project`, as in the app.
+    fn project_frame(&mut self) {
+        let resources = Default::default();
+        self.ctx
+            .run_ui(input(vec![]), |ui| {
+                self.editor
+                    .show_project(ui, &mut self.session, false, &mut self.feed, &resources)
+            })
+            .drop_without_applying_deltas();
+    }
+    /// Runs application frames until the automatic preview of the current
+    /// picks is ready to apply, without pressing Preview. Returns the areas
+    /// of the profiles that preview uses.
+    fn live_preview(&mut self) -> Vec<f64> {
+        let resources = Default::default();
+        let wait = Instant::now() + Duration::from_secs(30);
+        loop {
+            // `show_project` keeps the sketch evaluation current itself.
+            self.project_frame();
+            self.editor.poll_model(&self.session, &resources);
+            // Ready once the applicable preview is the one of the current
+            // picks; a form that never follows them times out below.
+            let picked = self
+                .editor
+                .profile_inputs(self.session.document(), self.session.revision())
+                .ok()
+                .map(|(_, regions)| BTreeSet::from_iter(regions));
+            let previewed = match self.editor.model_request_for_tests(&self.session) {
+                Some(crate::modeling::ModelRequest::Extrude(request)) => Some(BTreeSet::from_iter(
+                    request.outputs.into_iter().map(|output| output.region),
+                )),
+                _ => None,
+            };
+            if self.editor.model.can_apply(&self.session, &resources)
+                && picked.is_some()
+                && picked == previewed
+            {
+                break;
+            }
+            assert!(
+                self.editor.model.error().is_none(),
+                "{:?}",
+                self.editor.model.error()
+            );
+            assert!(Instant::now() < wait, "live Extrude preview timed out");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let Some(crate::modeling::ModelRequest::Extrude(request)) =
+            self.editor.model_request_for_tests(&self.session)
+        else {
+            panic!("Extrude request")
+        };
+        assert_eq!(request.sketch, self.sketch);
+        let regions = &self
+            .editor
+            .sketch_evaluation
+            .current(self.sketch)
+            .expect("current profiles of the previewed sketch")
+            .regions;
+        let mut areas: Vec<_> = request
+            .outputs
+            .iter()
+            .map(|output| regions.resolve(&output.region).unwrap().area_mm2)
+            .collect();
+        areas.sort_by(f64::total_cmp);
+        areas
+    }
+    /// Enter on a ready preview commits it, as the application's Enter.
+    fn enter(&mut self) -> f64 {
+        let resources = Default::default();
+        let before = self.session.revision();
+        let previous: BTreeSet<_> = self.session.document().entities().map(|e| e.id).collect();
+        assert!(
+            self.editor
+                .arm_model_confirmation(&self.session, &resources)
+        );
+        assert!(
+            self.editor
+                .finish_model_confirmation(&mut self.session, &resources)
+                .unwrap()
+        );
+        assert_eq!(
+            self.session.revision(),
+            before + 1,
+            "one Extrude transaction"
+        );
+        let native = Compiler::default()
+            .compile(self.session.document(), self.session.revision())
+            .unwrap();
+        native
+            .snapshot()
+            .shapes
+            .iter()
+            .filter(|(id, _)| !previous.contains(id))
+            .map(|(_, shape)| shape.volume_mm3)
+            .sum()
+    }
     fn preview_and_apply(&mut self) -> f64 {
         let resources = Default::default();
         self.editor
@@ -367,7 +465,8 @@ fn reported_sketch_extrudes_selection_first_and_tool_first_with_one_undo_each() 
         "one Undo removes the Extrude"
     );
 
-    // Extrude first, then pick one area in the 3D view.
+    // Extrude first: the form opens at once, then each area picked in the
+    // 3D view updates its preview live; Enter commits.
     h.editor.profiles.clear();
     h.editor.tree_selection.clear();
     h.frame(vec![]);
@@ -380,7 +479,9 @@ fn reported_sketch_extrudes_selection_first_and_tool_first_with_one_undo_each() 
             Channel::Ui,
         )
         .unwrap();
-    assert!(h.editor.awaiting_model_targets(), "{}", h.editor.message);
+    assert!(h.editor.model.active(), "{}", h.editor.message);
+    assert!(!h.editor.awaiting_model_targets());
+    assert!(h.editor.model_request_for_tests(&h.session).is_none());
     h.hover(B_POINT);
     assert!(
         h.editor
@@ -392,23 +493,31 @@ fn reported_sketch_extrudes_selection_first_and_tool_first_with_one_undo_each() 
     h.click(B_POINT, false);
     assert_eq!(h.selected_areas().len(), 1, "{}", h.editor.message);
     near(h.selected_areas()[0], B_AREA, "tool-first B");
-    // Shift adds, and removes again, without leaving the tool.
+    let live = h.live_preview();
+    assert_eq!(live.len(), 1);
+    near(live[0], B_AREA, "live preview of B");
+    // Shift adds, and removes again, without leaving the tool; the preview
+    // follows each pick.
     h.click(L_POINT, true);
     assert_eq!(h.selected_areas().len(), 2, "{}", h.editor.message);
+    let live = h.live_preview();
+    assert_eq!(live.len(), 2);
+    near(live[0], B_AREA, "live preview of B and L");
+    near(live[1], L_AREA, "live preview of B and L");
     h.click(L_POINT, true);
     assert_eq!(h.selected_areas().len(), 1, "{}", h.editor.message);
-    assert!(!h.editor.model.active());
-    // "Use selected targets" opens the same Extrude form as selection-first.
-    h.editor
-        .advance_model_targets(&h.session, &resources, &h.feed, true);
-    assert!(h.editor.model.active(), "{}", h.editor.message);
+    let live = h.live_preview();
+    assert_eq!(live.len(), 1);
+    near(live[0], B_AREA, "live preview after removing L");
     let distance = h
         .editor
         .model
         .extrude_distance_for_tests(h.session.document())
         .unwrap();
-    let volume = h.preview_and_apply();
+    let volume = h.enter();
     near(volume, B_AREA * distance.abs(), "tool-first volume");
+    assert!(!h.editor.model.active());
+    assert!(!h.editor.awaiting_model_targets());
 
     // The applied document survives save and reopen with the same solid.
     let project = multicad_core::project_file::ProjectFile {
@@ -521,12 +630,17 @@ fn open_and_self_intersecting_profiles_are_refused_with_an_explicit_message() {
                 Channel::Ui,
             )
             .unwrap();
-        assert!(!h.editor.model.active());
+        // The form opens, but has no profile and cannot preview or apply.
+        assert!(h.editor.model.active());
+        assert!(h.editor.model_request_for_tests(&h.session).is_none());
         assert!(
             h.editor.message.contains("no closed area") && h.editor.message.contains(expected),
             "{}",
             h.editor.message
         );
+        let refusal = h.editor.model_request_error_for_tests(&h.session).unwrap();
+        assert!(refusal.contains(expected), "{refusal}");
+        assert!(h.editor.apply_model(&mut h.session, &resources).is_err());
         h.editor.cancel_model();
         assert_eq!(h.session.revision(), before);
     }
@@ -600,4 +714,62 @@ fn native_cells_refuse_halves_that_share_the_same_boundary_curves() {
         "{:?}",
         result.diagnostics
     );
+}
+
+#[test]
+fn tool_first_revolve_opens_at_once_and_follows_each_pick_until_cleared() {
+    let mut h = Reported::new();
+    // Nothing is selected: the finished sketch is not a whole-sketch input.
+    h.editor.profiles.clear();
+    h.editor.tree_selection.clear();
+    h.editor.selected = None;
+    h.frame(vec![]);
+    let resources = Default::default();
+    let revision = h.session.revision();
+    h.editor
+        .activate_model_tool(
+            &h.session,
+            &resources,
+            &Default::default(),
+            crate::modeling::ModelingTool::Revolve,
+            Channel::Ui,
+        )
+        .unwrap();
+    assert!(h.editor.model.active(), "{}", h.editor.message);
+    assert!(!h.editor.awaiting_model_targets());
+    // An axis chosen before any pick is not a usable request yet.
+    h.editor.model.choose_revolve_axis([0., -10.], 0.);
+    assert!(h.editor.model_request_for_tests(&h.session).is_none());
+    let outputs = |h: &mut Reported| {
+        h.editor
+            .advance_model_targets(&h.session, &resources, &h.feed, false);
+        match h.editor.model_request_for_tests(&h.session) {
+            Some(crate::modeling::ModelRequest::Revolve(request)) => request.outputs.len(),
+            None => 0,
+            Some(other) => panic!("{other:?}"),
+        }
+    };
+    h.click(B_POINT, false);
+    // The first pick sets the sketch plane; the axis is chosen in it again.
+    assert_eq!(outputs(&mut h), 0, "{}", h.editor.message);
+    h.editor.model.choose_revolve_axis([0., -10.], 0.);
+    assert_eq!(outputs(&mut h), 1, "{}", h.editor.message);
+    // Further picks on the same sketch keep the axis.
+    h.click(L_POINT, true);
+    assert_eq!(outputs(&mut h), 2, "{}", h.editor.message);
+    // A plain click outside every area empties the profiles: Apply refuses
+    // with an explanation and nothing is committed.
+    h.click([-50., -50.], false);
+    assert_eq!(outputs(&mut h), 0, "{}", h.editor.message);
+    assert!(
+        h.editor
+            .model_request_error_for_tests(&h.session)
+            .is_some_and(|error| error.contains("Pick one or more closed sketch areas")),
+        "{:?}",
+        h.editor.model_request_error_for_tests(&h.session)
+    );
+    assert!(h.editor.apply_model(&mut h.session, &resources).is_err());
+    assert_eq!(h.session.revision(), revision);
+    h.editor.cancel_model();
+    assert_eq!(h.session.revision(), revision);
 }
