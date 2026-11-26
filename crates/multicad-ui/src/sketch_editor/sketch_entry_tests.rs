@@ -311,7 +311,7 @@ fn hovering_a_face_while_picking_shows_the_ordinary_face_highlight() {
 }
 
 #[test]
-fn datum_planes_still_need_use_plane_and_invalid_faces_change_nothing() {
+fn a_datum_plane_pick_opens_the_sketch_and_invalid_faces_change_nothing() {
     let panel = Panel::new();
     let mut session = Session::new(panel.document.clone()).unwrap();
     let mut editor = SketchEditor {
@@ -331,10 +331,16 @@ fn datum_planes_still_need_use_plane_and_invalid_faces_change_nothing() {
         true,
         Pos2::new(p[0], p[1]),
     );
-    assert!(editor.picking && !editor.editing);
-    assert!(editor.message.contains("Use plane"), "{}", editor.message);
-    assert_eq!(session.document(), &panel.document);
-    assert_eq!(session.revision(), 0);
+    // CAD-397: the datum pick creates and opens the sketch, one Undo step.
+    assert!(editor.editing && !editor.picking, "{}", editor.message);
+    assert_eq!(session.revision(), 1);
+    let sketches = |document: &Document| {
+        document
+            .entities()
+            .filter(|entity| matches!(entity.data, EntityData::Sketch { .. }))
+            .count()
+    };
+    assert_eq!(sketches(session.document()), sketches(&panel.document) + 1);
     // A face that cannot host a sketch reports why and leaves the source alone.
     let EntityData::Feature {
         definition, inputs, ..
