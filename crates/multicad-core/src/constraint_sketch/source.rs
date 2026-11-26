@@ -203,6 +203,15 @@ impl Source {
         });
         id
     }
+    pub fn add_circle(&mut self, center: EntityId, radius_mm: f64) -> EntityId {
+        let id = EntityId::new();
+        self.sketch.curves.push(Curve {
+            id,
+            construction: false,
+            kind: CurveKind::Circle { center, radius_mm },
+        });
+        id
+    }
     pub fn add_constraint(&mut self, kind: ConstraintKind) -> EntityId {
         let id = EntityId::new();
         self.sketch.constraints.push(Constraint {
