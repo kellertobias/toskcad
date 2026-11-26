@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { githubRepositoryUrl, requirePublicationEnvironment, requireVersion } from './release-policy.mjs';
-import {archiveName,archiveShardArguments,commandArguments,exampleGeneratorFilter,nextestVersion,packageTestArguments,testPartitions,workspaceArchiveArguments,workspaceDocTestArguments,workspaceTestArguments} from './native-test-shard.mjs';
+import {archiveRunArguments,exampleGeneratorFilter,nextestVersion,packageTestArguments,partitionArchiveArguments,partitionArchiveName,partitionBinaries,testPartitions,workspaceDocTestArguments,workspaceListArguments,workspaceTestArguments} from './native-test-shard.mjs';
 
 const require = createRequire(import.meta.url);
 const config = require('../release.config.cjs');
@@ -149,32 +149,37 @@ test('active build instructions do not direct developers to the retired provider
   }
 });
 
-test('every platform compiles the workspace tests once and its partitions all gate publication',()=>{
+test('every platform compiles the workspace tests once and its archive runs all gate publication',()=>{
   const release=readFileSync(new URL('../.github/workflows/release.yml',import.meta.url),'utf8');
   const base=['nextest','run','--workspace','--cargo-profile','ci','--locked','--no-fail-fast'];
   assert.deepEqual(workspaceTestArguments(),base);
   assert.deepEqual(workspaceTestArguments('generators'),[...base,'-E',`test(${exampleGeneratorFilter})`]);
   assert.deepEqual(workspaceTestArguments('remaining'),[...base,'-E',`not test(${exampleGeneratorFilter})`]);
   assert.throws(()=>workspaceTestArguments('typo'));
-  assert.deepEqual(workspaceArchiveArguments('a.tar.zst'),['nextest','archive','--workspace','--cargo-profile','ci','--locked','--archive-file','a.tar.zst']);
-  // Disjoint hash partitions 1..N together select every test exactly once.
+  assert.deepEqual(workspaceListArguments(),['nextest','list','--workspace','--cargo-profile','ci','--locked','--message-format','json']);
+  assert.deepEqual(partitionArchiveArguments(['a::x','b::y'],'p.tar.zst'),['nextest','archive','--workspace','--cargo-profile','ci','--locked','-E','binary_id(=a::x) | binary_id(=b::y)','--archive-file','p.tar.zst']);
+  assert.throws(()=>partitionArchiveArguments([],'p.tar.zst'));
+  assert.deepEqual(archiveRunArguments('p.tar.zst'),['nextest','run','--archive-file','p.tar.zst','--workspace-remap','.','--extract-to','.','--extract-overwrite','--no-fail-fast']);
   assert(Number.isInteger(testPartitions)&&testPartitions>1);
-  const partitions=[];
-  for(let k=1;k<=testPartitions;k++){
-    const args=archiveShardArguments('a.tar.zst',k);
-    assert.deepEqual(args,['nextest','run','--archive-file','a.tar.zst','--workspace-remap','.','--extract-to','.','--extract-overwrite','--partition',`hash:${k}/${testPartitions}`,'--no-fail-fast']);
-    partitions.push(args[args.indexOf('--partition')+1]);
+  for(let k=1;k<=testPartitions;k++)assert.equal(partitionArchiveName(k),`nextest-${k}.tar.zst`);
+  for(const bad of [0,testPartitions+1,1.5])assert.throws(()=>partitionArchiveName(bad));
+  // Every listed binary lands in exactly one partition, whatever the weights
+  // say; weights only balance runtime, and the split is deterministic.
+  const suites={};
+  for(let i=0;i<37;i++)suites[`crate-${i%5}::bin_${i}`]={testcases:Object.fromEntries(Array.from({length:i%7},(_,t)=>[`t${t}`,{}]))};
+  const ids=Object.keys(suites).sort();
+  for(const weights of [{},{'crate-0::bin_0':10000},{'crate-1::bin_1':0.5,missing:99}]){
+    const bins=partitionBinaries(suites,weights);
+    assert.equal(bins.length,testPartitions);
+    const assigned=bins.flatMap(b=>b.binaries);
+    assert.deepEqual([...assigned].sort(),ids);
+    assert.equal(new Set(assigned).size,ids.length);
+    assert.deepEqual(partitionBinaries(suites,weights),bins);
   }
-  assert.equal(new Set(partitions).size,testPartitions);
-  for(const bad of [0,testPartitions+1,1.5,Number.NaN])assert.throws(()=>archiveShardArguments('a.tar.zst',bad));
-  assert.deepEqual(commandArguments(['archive','a.tar.zst']),workspaceArchiveArguments('a.tar.zst'));
-  assert.deepEqual(commandArguments(['shard','a.tar.zst','2']),archiveShardArguments('a.tar.zst',2));
-  assert.deepEqual(commandArguments([]),base);
-  for(const argv of [['archive'],['shard','a.tar.zst'],['full','extra']])assert.throws(()=>commandArguments(argv));
-  for(const target of ['linux-x64','macos-arm64','windows-x64'])assert.equal(archiveName(target),`nextest-${target}.tar.zst`);
-  assert.throws(()=>archiveName('../x'));
+  const heavy=partitionBinaries(suites,{'crate-0::bin_0':10000});
+  assert(heavy.some(b=>b.binaries.length===1&&b.binaries[0]==='crate-0::bin_0'),'the heaviest binary gets its own runner');
   // Local packaging tests first; the CI package job leaves that to the
-  // archive partitions of the same commit.
+  // archive runs of the same commit.
   assert.deepEqual(packageTestArguments('full'),base);
   assert.equal(packageTestArguments('gated'),null);
   assert.throws(()=>packageTestArguments('remaining'));
@@ -183,14 +188,22 @@ test('every platform compiles the workspace tests once and its partitions all ga
   const job=name=>release.split(`\n  ${name}:\n`)[1]?.split(/\n  [a-z_]+:\n/)[0]??'';
   const archive=job('test_archive'),test=job('test'),pack=job('package');
   for(const os of ['ubuntu-24.04','macos-15','windows-2025'])for(const [name,text] of [['test_archive',archive],['test',test],['package',pack]])assert(text.includes(`os: ${os}`),`${name} ${os}`);
-  assert(archive.includes('run: node tools/native-test-shard.mjs archive "nextest-${{ matrix.target }}.tar.zst"'));
+  assert(archive.includes('run: node tools/native-test-shard.mjs archive nextest'));
   assert(archive.includes('run: cargo test --workspace --doc --profile ci --locked'));
   assert(archive.includes('run: node tools/release-budgets.mjs --profile ci --repeat 1'));
+  for(let k=1;k<=testPartitions;k++){
+    assert(archive.includes(`name: nextest-\${{ matrix.target }}-${k}-\${{ github.sha }}\n          path: nextest/nextest-${k}.tar.zst\n`),`upload ${k}`);
+  }
+  assert.equal(archive.match(/path: nextest\/nextest-\d+\.tar\.zst/g)?.length,testPartitions);
   assert.match(test,/needs: test_archive\n/);
   assert(test.includes(`partition: [${Array.from({length:testPartitions},(_,i)=>i+1).join(', ')}]`));
-  assert(test.includes('run: node tools/native-test-shard.mjs shard "nextest-${{ matrix.target }}.tar.zst" ${{ matrix.partition }}'));
+  assert(test.includes('name: nextest-${{ matrix.target }}-${{ matrix.partition }}-${{ github.sha }}'));
+  assert(test.includes('run: node tools/native-test-shard.mjs shard "nextest-${{ matrix.partition }}.tar.zst"'));
   assert.doesNotMatch(pack,/nextest/);
   assert.match(release,/needs: \[metadata, quality, package, test, owned-kernel\]/);
+  const weights=JSON.parse(readFileSync(new URL('./test-weights.json',import.meta.url),'utf8'));
+  assert.match(weights.source,/never skips a test/);
+  for(const [id,seconds] of Object.entries(weights.seconds))assert(/^[a-z0-9-]+(::\S+)?$/.test(id)&&Number.isFinite(seconds)&&seconds>=0,id);
 });
 
 test('hosted release notes stay below GitHub\'s body limit and link the full change list',async()=>{

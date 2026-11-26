@@ -65,9 +65,9 @@ jobs:
       - run: node mockup/verify.mjs
 
   test_archive:
-    # Compile every workspace test once per platform. The archive runs on
-    # several runners below; doctests and the headless budget smoke reuse
-    # the same compiled dependencies here.
+    # Compile every workspace test once per platform and split the test
+    # binaries into one archive per test runner below. Doctests and the
+    # headless budget smoke reuse the same compiled dependencies here.
     name: Compile tests / ${{ matrix.target }}
     needs: metadata
     runs-on: ${{ matrix.os }}
@@ -100,6 +100,27 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
+      - name: Free runner disk
+        # All ci-profile test targets (about 26 GB) plus their archives
+        # exceed the images' free space. Remove SDKs this job never uses.
+        if: runner.os != 'Windows'
+        run: |
+          df -h .
+          if [ "$RUNNER_OS" = macOS ]; then
+            active="$(realpath "$(xcode-select -p)/../..")"
+            case "$active" in
+              /Applications/Xcode*.app)
+                for x in /Applications/Xcode*.app; do
+                  [ -L "$x" ] && continue
+                  [ "$(realpath "$x")" = "$active" ] || sudo rm -rf "$x"
+                done ;;
+              *) echo "Selected developer directory is not an Xcode app; keeping every Xcode." ;;
+            esac
+            sudo rm -rf "$HOME/Library/Android" "$HOME/.dotnet" /usr/local/share/dotnet
+          else
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          fi
+          df -h .
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Install pinned cargo-nextest
@@ -109,8 +130,8 @@ jobs:
       - name: Linux native window development libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev
-      - name: Compile every workspace test into one archive
-        run: node tools/native-test-shard.mjs archive "nextest-${{ matrix.target }}.tar.zst"
+      - name: Compile every workspace test and split the binaries into one archive per runner
+        run: node tools/native-test-shard.mjs archive nextest && cat nextest/partitions.json && df -h .
       - name: Doctests
         run: cargo test --workspace --doc --profile ci --locked
       - name: Headless budget smoke (ci profile, one run; not a performance result)
@@ -123,18 +144,50 @@ jobs:
           path: artifacts/benchmarks/
           if-no-files-found: warn
           retention-days: 7
-      - name: Share the compiled test archive
+      - name: Share test archive 1
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: nextest-${{ matrix.target }}-${{ github.sha }}
-          path: nextest-${{ matrix.target }}.tar.zst
+          name: nextest-${{ matrix.target }}-1-${{ github.sha }}
+          path: nextest/nextest-1.tar.zst
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
+      - name: Share test archive 2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nextest-${{ matrix.target }}-2-${{ github.sha }}
+          path: nextest/nextest-2.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Share test archive 3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nextest-${{ matrix.target }}-3-${{ github.sha }}
+          path: nextest/nextest-3.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Share test archive 4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nextest-${{ matrix.target }}-4-${{ github.sha }}
+          path: nextest/nextest-4.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Keep the partition manifest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nextest-${{ matrix.target }}-partitions-${{ github.sha }}
+          path: nextest/partitions.json
+          if-no-files-found: error
+          retention-days: 7
 
   test:
-    # Each runner runs one disjoint hash partition of the platform archive;
-    # together the partitions run every workspace test exactly once.
+    # Each runner runs one archive of the platform's test binaries. Every
+    # binary is in exactly one archive, so the runners together run every
+    # workspace test exactly once.
     name: Test / ${{ matrix.target }} / ${{ matrix.partition }}
     needs: test_archive
     runs-on: ${{ matrix.os }}
@@ -178,9 +231,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: nextest-${{ matrix.target }}-${{ github.sha }}
-      - name: Run test partition ${{ matrix.partition }}
-        run: node tools/native-test-shard.mjs shard "nextest-${{ matrix.target }}.tar.zst" ${{ matrix.partition }}
+          name: nextest-${{ matrix.target }}-${{ matrix.partition }}-${{ github.sha }}
+      - name: Run test archive ${{ matrix.partition }}
+        run: node tools/native-test-shard.mjs shard "nextest-${{ matrix.partition }}.tar.zst"
 
   package:
     # Builds, smoke-checks and archives the shipped executable. The test jobs
