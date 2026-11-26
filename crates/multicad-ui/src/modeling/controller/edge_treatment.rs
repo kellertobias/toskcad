@@ -254,4 +254,230 @@ mod tests {
         assert!(!controller.active());
         assert_eq!(session.document(), &original);
     }
+
+    /// CAD-411: a box face sketch with a circle around the face corner,
+    /// clipped to two straight edges and an arc, extruded `height` as a new
+    /// body. Returns the session and the new body's top cap edges.
+    fn corner_segment(height: f64) -> (Session, model::BodyInput, Vec<GeometryIntent>) {
+        use multicad_core::{
+            commands::Request,
+            constraint_sketch::{Curve, CurveKind, source::Source},
+            references::AnalyticGeometry,
+            sketch::{self, CreationPlane, PlaneOptions},
+        };
+        let actor = || Actor::local(Channel::Ui);
+        let compile = |s: &Session| {
+            Compiler::default()
+                .compile(s.document(), s.revision())
+                .unwrap()
+        };
+        let mut session = Session::new(Document::new("Corner segment").unwrap()).unwrap();
+        let stock = model::PrimitiveRequest::new(
+            "Box",
+            model::PrimitiveParameters::Box {
+                size: [model::length(20.), model::length(20.), model::length(10.)],
+                frame: Default::default(),
+            },
+        );
+        session
+            .commit(
+                model::prepare_primitive(&session, session.revision(), actor(), &stock)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+        let compiled = compile(&session);
+        let topology = &compiled.snapshot().shapes[&stock.feature].topology;
+        let top = topology
+            .elements
+            .iter()
+            .find(|e| {
+                e.key.kind == TopologyKind::Face
+                    && matches!(e.geometry, Some(AnalyticGeometry::Plane { frame })
+                        if frame.normal()[2] > 0.9 && (frame.origin_mm[2] - 10.).abs() < 1e-9)
+            })
+            .unwrap();
+        let anchor = top.frames.first().unwrap().origin.clone();
+        let created = sketch::prepare_new(
+            &session,
+            session.revision(),
+            actor(),
+            "Corner circle",
+            CreationPlane::Face {
+                snapshot: topology,
+                key: top.key,
+                anchor: Some(&anchor),
+            },
+            PlaneOptions::default(),
+        )
+        .unwrap();
+        let (sketch, frame) = (created.sketch, created.frame);
+        session.commit(created.prepared).unwrap();
+        let report = compile(&session).snapshot().references.clone();
+        let mut source = Source::read_for_evaluation(
+            session.document(),
+            sketch,
+            session.revision(),
+            Some(&report),
+        )
+        .unwrap()
+        .0;
+        let center = source.add_point(frame.coordinates([2., 3., 10.]));
+        source.sketch.curves.push(Curve {
+            id: EntityId::new(),
+            construction: false,
+            kind: CurveKind::Circle {
+                center,
+                radius_mm: 8.,
+            },
+        });
+        session
+            .apply(Request {
+                expected_revision: session.revision(),
+                actor: actor(),
+                label: "Circle around the face corner".into(),
+                edits: source.replace(session.document(), sketch).unwrap(),
+            })
+            .unwrap();
+        let report = compile(&session).snapshot().references.clone();
+        let queries = multicad_kernel::NativeRegionQueries::analytic(Default::default()).unwrap();
+        let semantic = multicad_solver::evaluate_document_sketch(
+            session.document(),
+            session.revision(),
+            sketch,
+            Some(&report),
+        )
+        .unwrap();
+        let inside = semantic.frame.coordinates([1., 1., 10.]);
+        let region = semantic
+            .regions_with_queries(&queries)
+            .unwrap()
+            .regions
+            .into_iter()
+            .find(|r| r.contains_with_queries(inside, &queries).unwrap())
+            .unwrap();
+        let request = model::ExtrudeRequest::new(
+            sketch,
+            vec![region.intent()],
+            model::ExtrudeParameters {
+                extent: model::Extent::OneSided {
+                    end: model::Termination::Distance {
+                        distance: model::length(height),
+                    },
+                },
+                ..Default::default()
+            },
+        );
+        let body = model::BodyInput {
+            body: request.outputs[0].body,
+            producer: request.outputs[0].feature,
+        };
+        session
+            .commit(
+                model::prepare_extrude(&session, session.revision(), actor(), &request)
+                    .unwrap()
+                    .prepared,
+            )
+            .unwrap();
+        let compiled = compile(&session);
+        let scene = native_fixture::scene(session.document(), compiled.snapshot(), 0).unwrap();
+        let topology = scene.geometry_snapshot(body.producer).unwrap();
+        let z = 10. + height;
+        let edges: Vec<_> = topology
+            .elements
+            .iter()
+            .filter(|e| {
+                e.key.kind == TopologyKind::Edge
+                    && match e.geometry {
+                        Some(AnalyticGeometry::Line { a_mm, b_mm }) => {
+                            (a_mm[2] - z).abs() < 1e-9 && (b_mm[2] - z).abs() < 1e-9
+                        }
+                        Some(AnalyticGeometry::CircularArc { frame, .. }) => {
+                            (frame.origin_mm[2] - z).abs() < 1e-9
+                        }
+                        _ => false,
+                    }
+            })
+            .map(|e| GeometryIntent::capture(&topology, e.key).unwrap())
+            .collect();
+        assert_eq!(edges.len(), 3, "the arc and both straight top edges");
+        (session, body, edges)
+    }
+
+    fn previewed(
+        session: &Session,
+        body: &model::BodyInput,
+        edges: &[GeometryIntent],
+    ) -> ModelToolController {
+        let resources = ProjectResources::default();
+        let native = Compiler::default()
+            .compile(session.document(), session.revision())
+            .unwrap();
+        let scene = native_fixture::scene(session.document(), native.snapshot(), 0).unwrap();
+        let mut controller = ModelToolController::default();
+        controller.set_backend(Box::new(native_fixture::NativeBackend::new()));
+        controller
+            .begin_edge_treatment(
+                session,
+                &resources,
+                &scene,
+                body.body,
+                edges.to_vec(),
+                Channel::Ui,
+            )
+            .unwrap();
+        controller
+            .preview(session, &resources, Channel::Ui)
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(30);
+        while controller.pending() {
+            controller.poll(session, &resources);
+            assert!(Instant::now() < until, "fillet preview timed out");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        controller
+    }
+
+    #[test]
+    fn corner_segment_top_edges_fillet_previews_and_applies() {
+        let (mut session, body, edges) = corner_segment(5.);
+        let resources = ProjectResources::default();
+        // The Inspector's default 2 mm fillet on the arc and both straight edges.
+        let mut controller = previewed(&session, &body, &edges);
+        assert_eq!(controller.error(), None);
+        assert!(controller.can_apply(&session, &resources));
+        let before = session.revision();
+        controller.apply(&mut session, &resources).unwrap();
+        assert_eq!(session.revision(), before + 1);
+        let compiled = Compiler::default()
+            .compile(session.document(), session.revision())
+            .unwrap();
+        let treated = compiled
+            .snapshot()
+            .shapes
+            .values()
+            .filter(|shape| shape.volume_mm3 > 0.)
+            .count();
+        assert!(treated >= 2, "box and filleted segment both compile");
+    }
+
+    #[test]
+    fn corner_segment_fillet_refusal_is_plain_and_keeps_the_edges() {
+        // A 2 mm fillet cannot fit a 1.5 mm tall body.
+        let (session, body, edges) = corner_segment(1.5);
+        let resources = ProjectResources::default();
+        let controller = previewed(&session, &body, &edges);
+        let error = controller
+            .error()
+            .expect("the fillet must refuse")
+            .to_owned();
+        assert!(
+            error.contains("too large for the height of the body"),
+            "{error}"
+        );
+        assert!(!error.contains("rectangular box"), "{error}");
+        assert!(!controller.can_apply(&session, &resources));
+        assert!(controller.edge_treatment_active());
+        assert_eq!(controller.edge_treatment_edges(), Some(edges.as_slice()));
+    }
 }
