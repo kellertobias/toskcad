@@ -153,6 +153,84 @@ impl Work<'_> {
         Ok(())
     }
 }
+/// Stock chart of a joined mesh: origin then the unit images of the local
+/// x, y and z axes. The identity chart takes exact local coordinates; any
+/// other chart projects and places every value through outward intervals.
+#[derive(Clone, Copy)]
+struct Chart {
+    origin: [f64; 3],
+    axes: [[f64; 3]; 3],
+    identity: bool,
+}
+impl Chart {
+    const IDENTITY: Self = Self {
+        origin: [0.; 3],
+        axes: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+        identity: true,
+    };
+    fn new(frame: [[f64; 3]; 4]) -> Result<Self, Error> {
+        let [origin, u, v, n] = frame;
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let cross = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        if frame.iter().flatten().any(|x| !x.is_finite())
+            || (dot(u, u) - 1.).abs() > 1e-12
+            || (dot(v, v) - 1.).abs() > 1e-12
+            || (dot(n, n) - 1.).abs() > 1e-12
+            || dot(u, v).abs() > 1e-12
+            || (0..3).any(|i| (cross[i] - n[i]).abs() > 4e-12)
+        {
+            return Err(Error::Invalid);
+        }
+        let identity = Self::IDENTITY;
+        Ok(if origin == identity.origin && [u, v, n] == identity.axes {
+            identity
+        } else {
+            Self {
+                origin,
+                axes: [u, v, n],
+                identity: false,
+            }
+        })
+    }
+    /// Local coordinates of a world point.
+    fn local(&self, p: [f64; 3]) -> [I; 3] {
+        if self.identity {
+            return p.map(I::point);
+        }
+        let d: [I; 3] = std::array::from_fn(|k| I::point(p[k]) - I::point(self.origin[k]));
+        self.axes
+            .map(|a| (0..3).fold(I::point(0.), |s, k| s + d[k] * I::point(a[k])))
+    }
+    /// World image of a local direction.
+    fn vector(&self, d: [I; 3]) -> [I; 3] {
+        if self.identity {
+            return d;
+        }
+        std::array::from_fn(|k| {
+            (0..3).fold(I::point(0.), |s, j| s + d[j] * I::point(self.axes[j][k]))
+        })
+    }
+    /// World image of a local point.
+    fn world(&self, p: [I; 3]) -> [I; 3] {
+        if self.identity {
+            return p;
+        }
+        let v = self.vector(p);
+        std::array::from_fn(|k| v[k] + I::point(self.origin[k]))
+    }
+    /// Chart-plane coordinates for the planar triangulation only.
+    fn plane(&self, p: [f64; 3]) -> [f64; 2] {
+        if self.identity {
+            return [p[0], p[1]];
+        }
+        let l = self.local(p);
+        [l[0].midpoint(), l[1].midpoint()]
+    }
+}
 struct Rims {
     vertices: [Vec<u32>; 2],
     caps: [u32; 2],
@@ -164,8 +242,13 @@ struct Rims {
     // Actual finite original cap-curve to emitted rim chord correspondence.
     distance: f64,
 }
-fn rims(source: ThreadBoundaryMesh<'_, '_>, work: &mut Work<'_>) -> Result<Rims, Error> {
+fn rims(
+    source: ThreadBoundaryMesh<'_, '_>,
+    chart: Chart,
+    work: &mut Work<'_>,
+) -> Result<Rims, Error> {
     match source {
+        ThreadBoundaryMesh::Clipped(_) if !chart.identity => Err(Error::Unsupported),
         ThreadBoundaryMesh::Clipped(trace) => {
             let count = trace.candidate().mesh().vertices.len() / 3;
             let mut vertices = [Vec::new(), Vec::new()];
@@ -226,15 +309,27 @@ fn rims(source: ThreadBoundaryMesh<'_, '_>, work: &mut Work<'_>) -> Result<Rims,
                 return Err(Error::Unsupported);
             }
             let axes = trace.source().cap_axes();
-            if axes.iter().any(|a| {
-                a.origin[0] != 0.
-                    || a.origin[1] != 0.
-                    || a.reference != [1., 0., 0.]
-                    || a.normal[0] != 0.
-                    || a.normal[1] != 0.
-                    || a.normal[2].abs() != 1.
-            }) {
-                return Err(Error::Unsupported);
+            if chart.identity {
+                if axes.iter().any(|a| {
+                    a.origin[0] != 0.
+                        || a.origin[1] != 0.
+                        || a.reference != [1., 0., 0.]
+                        || a.normal[0] != 0.
+                        || a.normal[1] != 0.
+                        || a.normal[2].abs() != 1.
+                }) {
+                    return Err(Error::Unsupported);
+                }
+            } else {
+                // Caps perpendicular to the stock axis; the actual rim
+                // vertex lift off each stock plane is charged below.
+                let n = chart.axes[2];
+                if axes.iter().any(|a| {
+                    let along = (0..3).fold(0., |s, k| s + a.normal[k] * n[k]);
+                    (along.abs() - 1.).abs() > 1e-12
+                }) {
+                    return Err(Error::Unsupported);
+                }
             }
             let rings = trace.cap_rims();
             work.storage((rings[0].len() + rings[1].len()) * 4)?;
@@ -252,15 +347,23 @@ fn rims(source: ThreadBoundaryMesh<'_, '_>, work: &mut Work<'_>) -> Result<Rims,
             Ok(Rims {
                 vertices,
                 caps: rings.map(|r| r[0].cap_face as u32),
-                height: axes.map(|a| a.origin[2]),
+                height: axes.map(|a| {
+                    if chart.identity {
+                        a.origin[2]
+                    } else {
+                        chart.local(a.origin)[2].midpoint()
+                    }
+                }),
                 unchanged_source_bound: q.deflection,
                 distance,
             })
         }
     }
 }
+#[allow(clippy::too_many_arguments)]
 fn plane(
     mesh: &mut DisplayMesh,
+    chart: Chart,
     outer: &[u32],
     inner: &[u32],
     positive: bool,
@@ -277,10 +380,10 @@ fn plane(
     let points = vertices
         .iter()
         .map(|id| {
-            spade::Point2::new(
-                mesh.vertices[3 * *id as usize],
-                mesh.vertices[3 * *id as usize + 1],
-            )
+            let i = 3 * *id as usize;
+            let [x, y] =
+                chart.plane([mesh.vertices[i], mesh.vertices[i + 1], mesh.vertices[i + 2]]);
+            spade::Point2::new(x, y)
         })
         .collect();
     let edges = (0..outer.len())
@@ -298,11 +401,11 @@ fn plane(
             mesh,
             ids,
             face,
-            [
+            chart.vector([
                 I::point(0.),
                 I::point(0.),
                 I::point(if positive { 1. } else { -1. }),
-            ],
+            ]),
         )?;
     }
     Ok(())
@@ -315,6 +418,29 @@ fn plane(
 pub fn join<'a, 's>(
     source: ThreadBoundaryMesh<'a, 's>,
     kind: Kind,
+    options: MeshOptions,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<JoinedMeshCandidate<'a, 's>, Error> {
+    join_with(source, kind, Chart::IDENTITY, options, interrupt)
+}
+/// The same join for a retained thread traced in world coordinates and a
+/// stock placed by `chart` (origin, then the unit images of the local x, y
+/// and z axes). Every height, containment and normal check is made through
+/// outward interval projections; new hex corners carry their own placement
+/// rounding into the reported distance.
+pub fn join_in_chart<'a, 's>(
+    source: ThreadBoundaryMesh<'a, 's>,
+    kind: Kind,
+    chart: [[f64; 3]; 4],
+    options: MeshOptions,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<JoinedMeshCandidate<'a, 's>, Error> {
+    join_with(source, kind, Chart::new(chart)?, options, interrupt)
+}
+fn join_with<'a, 's>(
+    source: ThreadBoundaryMesh<'a, 's>,
+    kind: Kind,
+    chart: Chart,
     options: MeshOptions,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<JoinedMeshCandidate<'a, 's>, Error> {
@@ -349,7 +475,18 @@ pub fn join<'a, 's>(
     };
     work.storage(0)?;
     work.charge(1)?;
-    let mut rings = rims(source, &mut work)?;
+    let mut rings = rims(source, chart, &mut work)?;
+    if !chart.identity && rings.height[0] > rings.height[1] {
+        // A placed file may list its caps in either order; the lower stock
+        // plane along the chart axis is the first rim. Each rim keeps its
+        // orientation relative to the chart axis, so its traversal reverses.
+        rings.vertices.swap(0, 1);
+        for ring in &mut rings.vertices {
+            ring.reverse();
+        }
+        rings.caps.swap(0, 1);
+        rings.height.swap(0, 1);
+    }
     work.held = work
         .held
         .checked_add(
@@ -384,10 +521,9 @@ pub fn join<'a, 's>(
     for (end, ring) in rings.vertices.iter().enumerate() {
         for &id in ring {
             work.charge(1)?;
-            cap_height_error = cap_height_error.max(
-                (I::point(source_mesh.vertices[3 * id as usize + 2]) - I::point(rings.height[end]))
-                    .magnitude(),
-            );
+            let p = std::array::from_fn(|k| source_mesh.vertices[3 * id as usize + k]);
+            cap_height_error =
+                cap_height_error.max((chart.local(p)[2] - I::point(rings.height[end])).magnitude());
         }
     }
     // Declared sewn source vertices need not lie exactly on the cap support.
@@ -410,6 +546,8 @@ pub fn join<'a, 's>(
     ];
     for p in source_mesh.vertices.as_chunks::<3>().0 {
         work.charge(16)?;
+        let l = chart.local(*p);
+        let p = [l[0].magnitude(), l[1].magnitude()];
         // Convexity covers complete literal triangles. The actual complete
         // source is within the inherited Euclidean C0 tube; these halfspaces
         // have gradient norms2 and1 respectively. Thus this strict margin
@@ -471,7 +609,7 @@ pub fn join<'a, 's>(
     for z in [lower, upper] {
         for xy in hex {
             work.charge(32)?;
-            let p = [xy[0], xy[1], z];
+            let p = chart.world([xy[0], xy[1], z]);
             let literal = p.map(|v| v.lo + (v.hi - v.lo) * 0.5);
             if literal.iter().any(|v| !v.is_finite()) {
                 return Err(Error::Unsupported);
@@ -509,7 +647,7 @@ pub fn join<'a, 's>(
         let dx = hex[j][0] - hex[i][0];
         let dy = hex[j][1] - hex[i][1];
         let length = (dx.square() + dy.square()).sqrt();
-        let normal = [dy / length, -dx / length, zero];
+        let normal = chart.vector([dy / length, -dx / length, zero]);
         let a = (base + i) as u32;
         let b = (base + j) as u32;
         let c = b + 6;
@@ -522,16 +660,26 @@ pub fn join<'a, 's>(
     if head.is_some() {
         plane(
             &mut mesh,
+            chart,
             &outer0,
             &rings.vertices[1],
             false,
             face_base + 6,
             &mut work,
         )?;
-        plane(&mut mesh, &outer1, &[], true, face_base + 7, &mut work)?;
+        plane(
+            &mut mesh,
+            chart,
+            &outer1,
+            &[],
+            true,
+            face_base + 7,
+            &mut work,
+        )?;
     } else {
         plane(
             &mut mesh,
+            chart,
             &outer0,
             &rings.vertices[0],
             false,
@@ -540,6 +688,7 @@ pub fn join<'a, 's>(
         )?;
         plane(
             &mut mesh,
+            chart,
             &outer1,
             &rings.vertices[1],
             true,
