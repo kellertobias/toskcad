@@ -26,6 +26,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Owned exact arithmetic and geometry tests
         run: cargo test -p multicad-precision -p multicad-rust-kernel --profile ci --locked
       - name: Owned kernel strict lint checks

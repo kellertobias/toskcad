@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { githubRepositoryUrl, requirePublicationEnvironment, requireVersion } from './release-policy.mjs';
-import {exampleGeneratorFilter,nextestVersion,packageTestArguments,workspaceDocTestArguments,workspaceTestArguments} from './native-test-shard.mjs';
+import {archiveName,archiveShardArguments,commandArguments,exampleGeneratorFilter,nextestVersion,packageTestArguments,testPartitions,workspaceArchiveArguments,workspaceDocTestArguments,workspaceTestArguments} from './native-test-shard.mjs';
 
 const require = createRequire(import.meta.url);
 const config = require('../release.config.cjs');
@@ -93,24 +93,23 @@ test('version and repository inputs cannot escape their intended scope',()=>{
   assert.equal(githubRepositoryUrl({GITHUB_REPOSITORY:'owner/repo'}),'https://github.com/owner/repo.git');
 });
 
-test('native regression suites are read-only and gate publication on every platform',()=>{
+test('native regression suites are read-only and stay runnable by hand',()=>{
   const regression=readFileSync(new URL('../.github/workflows/native-regression.yml',import.meta.url),'utf8');
   const release=readFileSync(new URL('../.github/workflows/release.yml',import.meta.url),'utf8');
   const owned=readFileSync(new URL('../.github/workflows/owned-kernel.yml',import.meta.url),'utf8');
   assert.match(regression,/^permissions:\n {2}contents: read$/m);
   assert.doesNotMatch(regression,/secrets\.|: *write|npm publish|semantic-release|git push|git tag/);
+  assert.match(regression,/^ {2}workflow_dispatch:$/m);
   for(const os of ['ubuntu-24\\.04','macos-15','windows-2025'])assert.match(regression,new RegExp(`- os: ${os}\\n`));
   for(const suite of ['--bin multicad files::','--test release_hardening','--test project_file','--test drawing_exports','--test control_desk','cargo nextest run --workspace --locked --no-fail-fast'])assert(regression.includes(suite),suite);
   assert.doesNotMatch(regression,/cargo test /);
-  assert.match(release,/regression:\n {4}name: Native regression suites\n {4}uses: \.\/\.github\/workflows\/native-regression\.yml/);
-  assert.match(release,/needs: \[metadata, quality, build, owned-kernel, regression, windows_generators\]/);
-  const packaging=readFileSync(new URL('./package-release.mjs',import.meta.url),'utf8');
-  assert.match(release,/uses: \.\/\.github\/workflows\/native-regression\.yml\n {4}with:\n {6}packaging_runs_full_workspace: true/);
-  assert.match(regression,/packaging_runs_full_workspace:[\s\S]*?type: boolean\n {8}default: false/);
-  assert.match(regression,/name: Complete workspace tests\n {8}if: \$\{\{ matrix\.group == 'files' && \(!inputs\.packaging_runs_full_workspace\) \}\}/);
   for(const os of ['ubuntu-24\\.04','macos-15','windows-2025'])for(const group of ['kernel','files','interface'])assert.match(regression,new RegExp(`- os: ${os}\\n.*\\n {12}group: ${group}\\n`),`${os} ${group}`);
-  assert.match(packaging,/const testArgs=packageTestArguments\(process\.env\.MULTICAD_NATIVE_TEST_SHARD\?\?'full'\)/);
-  assert.match(packaging,/run\('cargo',testArgs,\{env,stdio:'inherit'\}\);\n  run\('cargo',workspaceDocTestArguments\(\),\{env,stdio:'inherit'\}\)/);
+  // The partitioned complete-workspace archive runs every test these named
+  // suites run, so publication no longer waits for a second compile of them.
+  assert.doesNotMatch(release,/native-regression\.yml/);
+  const packaging=readFileSync(new URL('./package-release.mjs',import.meta.url),'utf8');
+  assert.match(packaging,/const testArgs=packageTestArguments\(process\.env\.MULTICAD_PACKAGE_TESTS\?\?'full'\)/);
+  assert.match(packaging,/if\(testArgs\)\{\n    run\('cargo',testArgs,\{env,stdio:'inherit'\}\);\n    run\('cargo',workspaceDocTestArguments\(\),\{env,stdio:'inherit'\}\);\n  \}/);
   assert.deepEqual(workspaceDocTestArguments(),['test','--workspace','--doc','--profile','ci','--locked']);
   // Every platform package job runs the packaged example/MCP workflow and the
   // statically linked OpenCascade code audit on the archived executable.
@@ -118,8 +117,10 @@ test('native regression suites are read-only and gate publication on every platf
   assert.match(packaging,/await mcpSmoke\(layout\.executable,/);
   const install=`- name: Install pinned cargo-nextest\n        run: cargo install cargo-nextest --version ${nextestVersion} --locked\n`;
   assert.equal(regression.split(install).length-1,1);
-  assert.equal(release.split(install).length-1,2);
-  assert(release.includes(`${install}      - name: Regenerate every matching shipped example`));
+  // CI downloads the same pinned nextest release instead of compiling it.
+  const prebuilt=`- name: Install pinned cargo-nextest\n        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3\n        with:\n          tool: nextest@${nextestVersion}\n`;
+  assert.equal(release.split(prebuilt).length-1,2);
+  assert.doesNotMatch(release,/cargo install cargo-nextest/);
   const cargo=readFileSync(new URL('../Cargo.toml',import.meta.url),'utf8');
   const profile=cargo.split('[profile.ci]')[1]?.split(/\n\[/)[0];
   assert(profile,'An optimized CI test profile must exist');
@@ -133,6 +134,11 @@ test('native regression suites are read-only and gate publication on every platf
   assert(owned.includes('cargo clippy -p multicad-precision -p multicad-rust-kernel --all-targets --profile ci --locked -- -D warnings'));
   for(const workflow of [owned,regression,release])assert.doesNotMatch(workflow,/foundation-deps|spikes\/native-foundation|native-deps|features.*occt|MULTICAD_OCCT/);
   assert.match(release,/uses: \.\/\.github\/workflows\/owned-kernel\.yml/);
+  // Dependency caches only restore compiled dependencies; every job still
+  // checks out and builds the exact commit.
+  const cache='uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3';
+  assert.equal(release.split(cache).length-1,3);
+  assert.equal(owned.split(cache).length-1,1);
 });
 
 test('active build instructions do not direct developers to the retired provider',()=>{
@@ -143,25 +149,48 @@ test('active build instructions do not direct developers to the retired provider
   }
 });
 
-test('Windows generator and package jobs partition the full suite and both gate publication',()=>{
+test('every platform compiles the workspace tests once and its partitions all gate publication',()=>{
   const release=readFileSync(new URL('../.github/workflows/release.yml',import.meta.url),'utf8');
   const base=['nextest','run','--workspace','--cargo-profile','ci','--locked','--no-fail-fast'];
   assert.deepEqual(workspaceTestArguments(),base);
   assert.deepEqual(workspaceTestArguments('generators'),[...base,'-E',`test(${exampleGeneratorFilter})`]);
   assert.deepEqual(workspaceTestArguments('remaining'),[...base,'-E',`not test(${exampleGeneratorFilter})`]);
   assert.throws(()=>workspaceTestArguments('typo'));
-  for(const platform of ['win32','darwin','linux']){
-    assert.deepEqual(packageTestArguments('full',platform),base);
-    assert.throws(()=>packageTestArguments('generators',platform));
-    assert.throws(()=>packageTestArguments('typo',platform));
+  assert.deepEqual(workspaceArchiveArguments('a.tar.zst'),['nextest','archive','--workspace','--cargo-profile','ci','--locked','--archive-file','a.tar.zst']);
+  // Disjoint hash partitions 1..N together select every test exactly once.
+  assert(Number.isInteger(testPartitions)&&testPartitions>1);
+  const partitions=[];
+  for(let k=1;k<=testPartitions;k++){
+    const args=archiveShardArguments('a.tar.zst',k);
+    assert.deepEqual(args,['nextest','run','--archive-file','a.tar.zst','--workspace-remap','.','--extract-to','.','--extract-overwrite','--partition',`hash:${k}/${testPartitions}`,'--no-fail-fast']);
+    partitions.push(args[args.indexOf('--partition')+1]);
   }
-  assert.deepEqual(packageTestArguments('remaining','win32'),workspaceTestArguments('remaining'));
-  for(const platform of ['darwin','linux'])assert.throws(()=>packageTestArguments('remaining',platform));
-  assert.match(release,/windows_generators:\n {4}name: Windows example generator regression\n {4}needs: metadata\n {4}runs-on: windows-2025/);
-  assert.match(release,/run: node tools\/native-test-shard\.mjs generators/);
-  assert.match(release,/if: runner\.os == 'Windows'\n {8}env:\n {10}MULTICAD_NATIVE_TEST_SHARD: remaining/);
-  assert.equal(release.match(/MULTICAD_NATIVE_TEST_SHARD/g)?.length,1);
-  assert.match(release,/needs: \[metadata, quality, build, owned-kernel, regression, windows_generators\]/);
+  assert.equal(new Set(partitions).size,testPartitions);
+  for(const bad of [0,testPartitions+1,1.5,Number.NaN])assert.throws(()=>archiveShardArguments('a.tar.zst',bad));
+  assert.deepEqual(commandArguments(['archive','a.tar.zst']),workspaceArchiveArguments('a.tar.zst'));
+  assert.deepEqual(commandArguments(['shard','a.tar.zst','2']),archiveShardArguments('a.tar.zst',2));
+  assert.deepEqual(commandArguments([]),base);
+  for(const argv of [['archive'],['shard','a.tar.zst'],['full','extra']])assert.throws(()=>commandArguments(argv));
+  for(const target of ['linux-x64','macos-arm64','windows-x64'])assert.equal(archiveName(target),`nextest-${target}.tar.zst`);
+  assert.throws(()=>archiveName('../x'));
+  // Local packaging tests first; the CI package job leaves that to the
+  // archive partitions of the same commit.
+  assert.deepEqual(packageTestArguments('full'),base);
+  assert.equal(packageTestArguments('gated'),null);
+  assert.throws(()=>packageTestArguments('remaining'));
+  assert.equal(release.match(/MULTICAD_PACKAGE_TESTS/g)?.length,1);
+  assert.match(release,/ {6}MULTICAD_PACKAGE_TESTS: gated\n/);
+  const job=name=>release.split(`\n  ${name}:\n`)[1]?.split(/\n  [a-z_]+:\n/)[0]??'';
+  const archive=job('test_archive'),test=job('test'),pack=job('package');
+  for(const os of ['ubuntu-24.04','macos-15','windows-2025'])for(const [name,text] of [['test_archive',archive],['test',test],['package',pack]])assert(text.includes(`os: ${os}`),`${name} ${os}`);
+  assert(archive.includes('run: node tools/native-test-shard.mjs archive "nextest-${{ matrix.target }}.tar.zst"'));
+  assert(archive.includes('run: cargo test --workspace --doc --profile ci --locked'));
+  assert(archive.includes('run: node tools/release-budgets.mjs --profile ci --repeat 1'));
+  assert.match(test,/needs: test_archive\n/);
+  assert(test.includes(`partition: [${Array.from({length:testPartitions},(_,i)=>i+1).join(', ')}]`));
+  assert(test.includes('run: node tools/native-test-shard.mjs shard "nextest-${{ matrix.target }}.tar.zst" ${{ matrix.partition }}'));
+  assert.doesNotMatch(pack,/nextest/);
+  assert.match(release,/needs: \[metadata, quality, package, test, owned-kernel\]/);
 });
 
 test('hosted release notes stay below GitHub\'s body limit and link the full change list',async()=>{
