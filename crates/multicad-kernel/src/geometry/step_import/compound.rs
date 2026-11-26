@@ -540,6 +540,11 @@ pub(super) fn rebuild(
         Analytic(Box<(Readback, ImportSolid)>),
         Radial(Box<multicad_rust_kernel::radial_tensor::RadialBoundary>),
         LiteralNpt(Box<multicad_rust_kernel::step_read::npt_stock::OwnedMaterial>),
+        PipeHex(
+            Box<multicad_rust_kernel::radial_tensor::RadialBoundary>,
+            step_read::HexStockKind,
+            [step_read::HexRing; 2],
+        ),
     }
     for member in members {
         let (signature, member) = match member {
@@ -587,12 +592,13 @@ pub(super) fn rebuild(
                     "A cylindrical pipe sleeve is imported only as a single STEP solid",
                 ));
             }
-            step_read::SourceImport::PipeHex(_) => {
-                return Err(error(
-                    IMPORT,
-                    GeometryErrorKind::Unsupported,
-                    "Hex-stock pipe hardware is imported only as a single STEP solid",
-                ));
+            step_read::SourceImport::PipeHex(hex) => {
+                let hex = *hex;
+                let boundary = Solid::qualify_imported_radial(hex.boundary, policy)?;
+                (
+                    super::super::radial_boundary_body::source_signature(&boundary),
+                    Qualified::PipeHex(Box::new(boundary), hex.kind, hex.rings),
+                )
             }
             step_read::SourceImport::Radial(owned) => {
                 let boundary = Solid::qualify_imported_radial(*owned, policy)?;
@@ -634,6 +640,9 @@ pub(super) fn rebuild(
             }
             Qualified::Radial(boundary) => {
                 Solid::from_rust_radial_boundary(*boundary, child, policy)?
+            }
+            Qualified::PipeHex(boundary, kind, rings) => {
+                Solid::import_qualified_pipe_hex(*boundary, kind, rings, child, policy)?
             }
         });
     }

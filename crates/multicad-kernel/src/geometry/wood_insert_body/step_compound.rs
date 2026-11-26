@@ -48,6 +48,7 @@ impl Solid {
             || self.hanger_body().is_some()
             || self.orthogonal_seat_body().is_some()
             || self.has_retained_pipe_hardware_step_source()
+            || self.pipe_hex_body().is_some()
             || self
                 .rust_compound()
                 .is_some_and(|compound| compound.members().any(Self::has_partitioned_step_source))
@@ -379,6 +380,34 @@ impl Solid {
                         &mut result.members.bounds_mm,
                         [e.map(|[lo, _]| lo), e.map(|[_, hi]| hi)],
                     );
+                } else if leaf.pipe_hex_body().is_some() {
+                    // Imported hex stock: one flat member decoded to the same
+                    // retained thread tables and earned stock corners.
+                    if count != 1 || actual[0].mapping_link().is_some() {
+                        return Err(fail(
+                            GeometryErrorKind::InvalidResult,
+                            "Imported pipe hex member must be one flat member",
+                        ));
+                    }
+                    let view = file
+                        .local_member_document(
+                            actual[0].item_entity(),
+                            read::Options::default(),
+                            interrupt,
+                        )
+                        .map_err(read_error)?;
+                    let (volume, bounds) = leaf
+                        .verify_pipe_hex_step_source(view.as_str(), tolerance)
+                        .expect("imported pipe hex source")?;
+                    result
+                        .members
+                        .retained_members
+                        .push(RetainedStepMemberMass {
+                            member_index: cursor as u32,
+                            decoded_volume_bounds_mm3: volume,
+                            source_volume_bounds_mm3: volume,
+                        });
+                    include(&mut result.members.bounds_mm, [bounds.min, bounds.max]);
                 } else if let Some((body, frame)) = leaf.hanger_body() {
                     assert_eq!(count, 1, "single connected hanger source");
                     let proof = body.verify_step_member(
