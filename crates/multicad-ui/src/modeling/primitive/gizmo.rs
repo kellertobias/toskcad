@@ -1,10 +1,10 @@
+use super::super::drag_snap::{DragSnap, MAX_DRAG_MM, Step, box_admissible};
 use super::super::gizmo::math::{Point, add, axis_parameter, cross, dot, mul, plane_point, sub};
 use crate::{camera::Camera, egui, viewport::Ray};
 use multicad_core::{model::ResolvedPrimitive, sketch::Frame};
 use multicad_precision::PortableMath as _;
 
 const GUIDE: egui::Color32 = egui::Color32::from_rgb(90, 190, 240);
-const MIN_SIZE_MM: f64 = 0.001;
 const HIT_RADIUS: f32 = 9.;
 const DRAG_THRESHOLD: f32 = 4.;
 
@@ -14,6 +14,10 @@ pub(in crate::modeling) struct ResizeGizmo {
     /// Box axes (U, V, N) whose size a corner drag must not change, such as
     /// a panel thickness that its stock controls.
     locked: [bool; 3],
+    /// Shared drag-snap state for this frame, set by the host (CAD-402).
+    snap: DragSnap,
+    /// Feedback shown with the handles: the active spacing and the modifier.
+    feedback: Option<String>,
 }
 
 #[derive(Default)]
@@ -27,6 +31,10 @@ pub(in crate::modeling) struct ResizeGesture {
 struct Drag {
     corner: usize,
     locked: [bool; 3],
+    snap: DragSnap,
+    /// The pointer reached a state with no valid shape, so the last valid
+    /// draft is kept (CAD-401).
+    refused: bool,
     camera: Camera,
     rect: egui::Rect,
     original: ResolvedPrimitive,
@@ -210,6 +218,8 @@ impl Drag {
         Some(Self {
             corner,
             locked,
+            snap: DragSnap::FREE,
+            refused: false,
             camera,
             rect,
             original: shape.clone(),
@@ -219,31 +229,51 @@ impl Drag {
         })
     }
 
+    /// The snapped shape at this pointer position, or `None` when the pointer
+    /// gives no valid shape (off the drag plane, nonfinite or beyond the
+    /// admitted size); the caller then keeps the last valid draft.
     fn update(&self, position: egui::Pos2) -> Option<ResolvedPrimitive> {
         if !position.is_finite() {
             return None;
         }
         let ray = || self.camera.ray(position, self.rect);
+        let snap = self.snap;
         let result = match (&self.motion, &self.original) {
             (Motion::Box { pointer, fixed }, ResolvedPrimitive::Box { size_mm, frame }) => {
-                let mut frame = *frame;
-                let mut next = *size_mm;
-                let delta = pointer.delta(ray()?)?;
-                for (axis, direction) in [frame.u, frame.v, frame.n].into_iter().enumerate() {
-                    if axis == *fixed || self.locked[axis] {
-                        continue;
+                let delta = finite(pointer.delta(ray()?)?)?;
+                let axes = [frame.u, frame.v, frame.n];
+                let candidate = |step: Step| {
+                    let mut origin = frame.origin;
+                    let mut next = *size_mm;
+                    for (axis, direction) in axes.into_iter().enumerate() {
+                        if axis == *fixed || self.locked[axis] {
+                            continue;
+                        }
+                        let (size, low) = move_side(
+                            step,
+                            size_mm[axis],
+                            side_low(frame.origin, direction),
+                            dot(delta, direction),
+                            high(self.corner, axis),
+                        )?;
+                        next[axis] = size;
+                        origin = place_low(
+                            origin,
+                            direction,
+                            low,
+                            size_mm[axis] - size,
+                            high(self.corner, axis),
+                        )?;
                     }
-                    let (size, shift) = move_side(
-                        size_mm[axis],
-                        dot(delta, direction),
-                        high(self.corner, axis),
-                    );
-                    next[axis] = size;
-                    frame.origin = add(frame.origin, mul(direction, shift));
-                }
+                    Some((next, origin))
+                };
+                let step = snap.box_step(|step| {
+                    candidate(step).is_some_and(|(size, _)| box_admissible(size))
+                })?;
+                let (size_mm, origin) = candidate(step)?;
                 ResolvedPrimitive::Box {
-                    size_mm: next,
-                    frame,
+                    size_mm,
+                    frame: Frame { origin, ..*frame },
                 }
             }
             (
@@ -254,17 +284,29 @@ impl Drag {
                     frame,
                 },
             ) => {
-                let mut frame = *frame;
-                let delta = pointer.delta(ray()?)?;
-                let radius_mm = (radius_mm + dot(delta, *radial) * std::f64::consts::FRAC_1_SQRT_2)
-                    .max(radius_mm.min(MIN_SIZE_MM));
-                let (height_mm, shift) =
-                    move_side(*height_mm, dot(delta, frame.n), high(self.corner, 2));
-                frame.origin = add(frame.origin, mul(frame.n, shift));
+                let step = snap.step();
+                let original_height = *height_mm;
+                let delta = finite(pointer.delta(ray()?)?)?;
+                let radius_mm =
+                    snap.length(radius_mm + dot(delta, *radial) * std::f64::consts::FRAC_1_SQRT_2)?;
+                let (height_mm, low) = move_side(
+                    step,
+                    *height_mm,
+                    side_low(frame.origin, frame.n),
+                    dot(delta, frame.n),
+                    high(self.corner, 2),
+                )?;
+                let origin = place_low(
+                    frame.origin,
+                    frame.n,
+                    low,
+                    original_height - height_mm,
+                    high(self.corner, 2),
+                )?;
                 ResolvedPrimitive::Cylinder {
                     radius_mm,
                     height_mm,
-                    frame,
+                    frame: Frame { origin, ..*frame },
                 }
             }
             (
@@ -276,7 +318,7 @@ impl Drag {
             ) => {
                 let delta = f64::from((position - self.press).dot(*radial)) / pixels_per_mm;
                 ResolvedPrimitive::Sphere {
-                    radius_mm: (radius_mm + delta).max(radius_mm.min(MIN_SIZE_MM)),
+                    radius_mm: snap.length(radius_mm + delta)?,
                     frame: *frame,
                 }
             }
@@ -286,14 +328,99 @@ impl Drag {
     }
 }
 
-fn move_side(size: f64, delta: f64, high: bool) -> (f64, f64) {
-    let minimum = size.min(MIN_SIZE_MM);
-    if high {
-        ((size + delta).max(minimum), 0.)
-    } else {
-        let next = (size - delta).max(minimum);
-        (next, size - next)
+fn finite(point: Point) -> Option<Point> {
+    point.iter().all(|v| v.is_finite()).then_some(point)
+}
+
+/// The low-side coordinate along a world-axis direction; rotated sides have
+/// no world grid position.
+fn side_low(origin: Point, direction: Point) -> Option<f64> {
+    world_axis(direction).map(|(axis, sign)| sign * origin[axis])
+}
+
+/// The world axis and sign of a signed world unit vector.
+fn world_axis(direction: Point) -> Option<(usize, f64)> {
+    let axis = direction.iter().position(|v| v.abs() == 1.)?;
+    direction
+        .iter()
+        .enumerate()
+        .all(|(i, v)| i == axis || *v == 0.)
+        .then_some((axis, direction[axis]))
+}
+
+/// New size and, when the side lies on world grid lines, the new low-side
+/// coordinate along `direction` of one dragged box side.
+///
+/// The fixed opposite side never moves. When it lies exactly on the snap
+/// grid, the dragged side snaps to a grid line, so both the size and the
+/// position are exact multiples; otherwise the size snaps. A drag through or
+/// across the fixed side stops one step short of it, so a size is never zero
+/// or negative.
+fn move_side(
+    step: Step,
+    size: f64,
+    low: Option<f64>,
+    delta: f64,
+    high: bool,
+) -> Option<(f64, Option<f64>)> {
+    let maximum = step.index(MAX_DRAG_MM)?;
+    let anchor = low.filter(|low| low.abs() <= MAX_DRAG_MM).and_then(|low| {
+        let index = step.exact_index(low)?;
+        let anchor = if high {
+            index
+        } else {
+            index.checked_add(step.exact_index(size)?)?
+        };
+        Some((low, anchor))
+    });
+    if let Some((low, anchor)) = anchor {
+        let moving = step.index(if high {
+            low + size + delta
+        } else {
+            low + delta
+        })?;
+        let count = if high {
+            moving - anchor
+        } else {
+            anchor - moving
+        }
+        .clamp(1, maximum);
+        let low = if high {
+            None
+        } else {
+            Some(step.value(anchor - count))
+        };
+        return Some((step.value(count), low));
     }
+    let raw = if high { size + delta } else { size - delta };
+    Some((step.value(step.index(raw)?.clamp(1, maximum)), None))
+}
+
+/// Move the origin so the low side lands on `low` (exact for a world-axis
+/// direction) or by `shift` along `direction` when the low side moved.
+fn place_low(
+    origin: Point,
+    direction: Point,
+    low: Option<f64>,
+    shift: f64,
+    high: bool,
+) -> Option<Point> {
+    if high {
+        return Some(origin);
+    }
+    let moved = match (low, world_axis(direction)) {
+        (Some(low), Some((axis, sign))) => {
+            let mut origin = origin;
+            // `+ 0.` keeps a zero coordinate positive.
+            origin[axis] = sign * low + 0.;
+            origin
+        }
+        _ => add(origin, mul(direction, shift)),
+    };
+    moved
+        .iter()
+        .all(|v| v.is_finite() && v.abs() <= MAX_DRAG_MM)
+        .then_some(moved)
 }
 
 #[derive(Clone, Copy)]
@@ -324,7 +451,25 @@ fn visible_handles(points: [Point; 8], camera: Camera, rect: egui::Rect) -> Vec<
 
 impl ResizeGizmo {
     pub(in crate::modeling) fn locked(locked: [bool; 3]) -> Self {
-        Self { drag: None, locked }
+        Self {
+            locked,
+            ..Default::default()
+        }
+    }
+
+    /// Grid spacing for the next frames; Shift is read live during the drag.
+    pub(in crate::modeling) fn set_snap(&mut self, snap: DragSnap) {
+        self.snap = snap;
+    }
+
+    pub(in crate::modeling) fn snap(&self) -> DragSnap {
+        self.snap
+    }
+
+    /// Size readout, active spacing and modifier shown with the handles.
+    #[cfg(test)]
+    pub(in crate::modeling) fn feedback(&self) -> Option<&str> {
+        self.feedback.as_deref()
     }
 
     pub(in crate::modeling) fn active(&self) -> bool {
@@ -424,15 +569,23 @@ impl ResizeGizmo {
             );
         }
 
+        let modifiers = ui.input(|input| input.modifiers);
+        let snap = self.snap.with_free(DragSnap::free_modifier(modifiers));
         if let Some(drag) = &mut self.drag {
             drag.moved |= crossed;
+            drag.snap = snap;
         }
-        let changed = self
+        let mut changed = None;
+        if let Some(drag) = self
             .drag
-            .as_ref()
+            .as_mut()
             .filter(|drag| drag.moved && (down || release.is_some()))
-            .and_then(|drag| drag.update(release.or(pointer).or(press)?))
-            .filter(|next| next != shape);
+            && let Some(position) = release.or(pointer).or(press)
+        {
+            let next = drag.update(position);
+            drag.refused = next.is_none();
+            changed = next.filter(|next| next != shape);
+        }
         let preview = changed.as_ref().unwrap_or(shape);
         let points = corners(preview);
         let painter = ui.painter_at(rect);
@@ -454,6 +607,26 @@ impl ResizeGizmo {
                     GUIDE
                 },
             );
+        }
+        self.feedback = (self.drag.is_some() || hovered.is_some()).then(|| {
+            let mut text = format!("{} · {}", size_text(preview), snap.label());
+            if self.drag.as_ref().is_some_and(|drag| drag.refused) {
+                text.push_str(" · outside the supported size range; keeping the last valid size");
+            }
+            text
+        });
+        if let (Some(text), Some(anchor)) = (
+            &self.feedback,
+            active
+                .and_then(|corner| {
+                    visible_handles(points, camera, rect)
+                        .into_iter()
+                        .find(|handle| handle.corner == corner)
+                })
+                .or(hovered)
+                .map(|handle| handle.position),
+        ) {
+            paint_feedback(&painter, rect, anchor, text);
         }
         if self.drag.is_some() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -485,6 +658,38 @@ impl ResizeGizmo {
             clicked_corner,
         }
     }
+}
+
+fn size_text(shape: &ResolvedPrimitive) -> String {
+    let mm = |value: f64| crate::preferences::format_mm(value);
+    match *shape {
+        ResolvedPrimitive::Box { size_mm, .. } => size_mm.map(mm).join(" × "),
+        ResolvedPrimitive::Cylinder {
+            radius_mm,
+            height_mm,
+            ..
+        } => format!("R {} × {}", mm(radius_mm), mm(height_mm)),
+        ResolvedPrimitive::Sphere { radius_mm, .. } => format!("R {}", mm(radius_mm)),
+    }
+}
+
+fn paint_feedback(painter: &egui::Painter, rect: egui::Rect, anchor: egui::Pos2, text: &str) {
+    let galley = painter.layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::proportional(12.),
+        egui::Color32::WHITE,
+    );
+    let size = galley.size() + egui::vec2(10., 6.);
+    let mut min = anchor + egui::vec2(14., 10.);
+    min.x = min.x.min(rect.right() - size.x).max(rect.left());
+    min.y = min.y.min(rect.bottom() - size.y).max(rect.top());
+    let bounds = egui::Rect::from_min_size(min, size);
+    painter.rect_filled(bounds, 4., egui::Color32::from_black_alpha(200));
+    painter.galley(
+        bounds.min + egui::vec2(5., 3.),
+        galley,
+        egui::Color32::WHITE,
+    );
 }
 
 fn line(painter: &egui::Painter, camera: Camera, rect: egui::Rect, a: Point, b: Point) {

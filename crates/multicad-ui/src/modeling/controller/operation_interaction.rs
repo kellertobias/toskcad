@@ -128,6 +128,14 @@ impl ModelToolController {
     pub fn operation_value_display(&self) -> Option<String> {
         self.operation.entry.as_ref().map(ValueEntry::display)
     }
+    /// Active spacing and modifier shown with the Extrude distance arrow.
+    pub fn operation_snap_label(&self) -> Option<String> {
+        self.operation
+            .entry
+            .as_ref()?
+            .drag_snap()
+            .map(super::super::drag_snap::DragSnap::label)
+    }
 
     pub fn operation_viewport(
         &mut self,
@@ -293,6 +301,11 @@ impl ModelToolController {
         }
         if let (Some(entry), Some(value)) = (&mut self.operation.entry, value) {
             entry.sync_external(value);
+        }
+        // Distance drags share the dimension-drag snap policy (CAD-403).
+        let snap = (kind == ValueKind::Distance).then(|| self.drag_snap(ui));
+        if let Some(entry) = &mut self.operation.entry {
+            entry.set_drag_snap(snap);
         }
         let entry_value = self.operation.entry.as_ref().map_or(0., ValueEntry::value);
         let painted = self.operation.drag.as_ref().map_or(handle, |d| d.handle);
@@ -570,6 +583,15 @@ impl ModelToolController {
                 galley.clone(),
                 Color32::WHITE,
             );
+            if let Some(snap) = self.operation_snap_label() {
+                painter.text(
+                    rect.left_top() - egui::vec2(0., 4.),
+                    egui::Align2::LEFT_BOTTOM,
+                    snap,
+                    egui::FontId::proportional(11.),
+                    Color32::from_gray(200),
+                );
+            }
             if let Some(error) = &self.error {
                 painter.text(
                     rect.left_bottom() + egui::vec2(0., 4.),

@@ -89,6 +89,11 @@ impl CabinetPanel {
             })
     }
 
+    /// Snap panel corner drags to the displayed grid spacing (CAD-402).
+    pub(in crate::modeling) fn set_drag_snap(&mut self, snap: super::super::drag_snap::DragSnap) {
+        self.resize.set_snap(snap);
+    }
+
     pub(in crate::modeling) fn viewport(
         &mut self,
         ui: &mut egui::Ui,
@@ -106,7 +111,9 @@ impl CabinetPanel {
         if valid {
             self.last_shape = current.clone();
         } else {
+            let snap = self.resize.snap();
             self.resize = gizmo::ResizeGizmo::locked(LOCKED);
+            self.resize.set_snap(snap);
         }
         let Some(shape) = current.or_else(|| self.last_shape.clone()) else {
             return PrimitiveViewportResult::default();
