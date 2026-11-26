@@ -47,6 +47,7 @@ impl Solid {
             || self.clipped_npt_body().is_some()
             || self.hanger_body().is_some()
             || self.orthogonal_seat_body().is_some()
+            || self.has_retained_pipe_hardware_step_source()
             || self
                 .rust_compound()
                 .is_some_and(|compound| compound.members().any(Self::has_partitioned_step_source))
@@ -343,6 +344,41 @@ impl Solid {
                         proof.correspondence_enclosure_mm,
                     );
                     result.healed_members.push((cursor as u32, proof));
+                } else if leaf.has_retained_pipe_hardware_step_source() {
+                    // One flat member: its local view must decode to the
+                    // retained thread tables and hex corners exactly.
+                    assert_eq!(count, 1, "single connected pipe hardware source");
+                    if actual[0].mapping_link().is_some() {
+                        return Err(fail(
+                            GeometryErrorKind::InvalidResult,
+                            "Pipe hardware member must not carry an occurrence mapping",
+                        ));
+                    }
+                    let view = file
+                        .local_member_document(
+                            actual[0].item_entity(),
+                            read::Options::default(),
+                            interrupt,
+                        )
+                        .map_err(read_error)?;
+                    let proof = leaf
+                        .verify_pipe_hardware_step_source(view.as_str(), tolerance, interrupt)
+                        .expect("retained pipe hardware source")?;
+                    // Bit-identical tables and corners: the decoded member is
+                    // this source, so its volume is the source interval.
+                    result
+                        .members
+                        .retained_members
+                        .push(RetainedStepMemberMass {
+                            member_index: cursor as u32,
+                            decoded_volume_bounds_mm3: proof.world_sewn_volume_mm3,
+                            source_volume_bounds_mm3: proof.world_sewn_volume_mm3,
+                        });
+                    let e = proof.world_sewn_enclosure_mm;
+                    include(
+                        &mut result.members.bounds_mm,
+                        [e.map(|[lo, _]| lo), e.map(|[_, hi]| hi)],
+                    );
                 } else if let Some((body, frame)) = leaf.hanger_body() {
                     assert_eq!(count, 1, "single connected hanger source");
                     let proof = body.verify_step_member(

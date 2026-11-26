@@ -3726,8 +3726,11 @@ impl Solid {
                 self.rust_periodic_repaired_phillips_source().is_some()
                     || (standalone && self.has_degree11_phillips_step_source())
             }
-            // Written only as a whole standalone mapped file (no replay).
-            SolidBody::PipeHardware(body) => standalone && body.supports_step(),
+            // A clipped head is a whole standalone mapped file; retained hex
+            // stock is one flat member and may join a compound.
+            SolidBody::PipeHardware(body) => {
+                body.supports_step() && (standalone || body.supports_compound_step())
+            }
             SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
@@ -4028,8 +4031,8 @@ impl Solid {
                     GeometryErrorKind::Unsupported => step::StepError::Unsupported,
                     _ => step::StepError::InvalidGeometry,
                 }),
-            SolidBody::PipeHardware(..)
-            | SolidBody::Line8Nut(..)
+            SolidBody::PipeHardware(body) => body.append_step(writer, self.policy),
+            SolidBody::Line8Nut(..)
             | SolidBody::ExternalNptStock(..)
             | SolidBody::CosmeticFastener(..)
             | SolidBody::CosmeticProfiled(..)
