@@ -11,8 +11,8 @@ pub use correspondence::{
 };
 mod file;
 pub use file::{
-    CompoundDocument, DocumentOptions, File, MappingLink, Member, MemberDocument, MemberPacket,
-    SelectedSourceDocument,
+    CompoundDocument, DocumentOptions, File, MappingLink, Member, MemberDocument, MemberOperator,
+    MemberPacket, SelectedSourceDocument,
 };
 mod bindings;
 mod flux;

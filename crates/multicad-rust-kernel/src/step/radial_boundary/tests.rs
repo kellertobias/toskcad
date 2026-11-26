@@ -362,3 +362,85 @@ fn pipe_hex_hardware_keeps_exact_thread_tables_and_stock_for_nuts_and_heads() {
         }
     }
 }
+#[test]
+fn pipe_hex_hardware_readback_refuses_tampered_corners_senses_and_span_tolerance_edges() {
+    use crate::step_read::{HexStock, HexStockKind, read_pipe_hex_hardware};
+    let head = pipe_boundary(true, true);
+    let stock = HexStock {
+        kind: HexStockKind::Head,
+        origin: [0.; 3],
+        normal: [0., 0., 1.],
+        reference: [1., 0., 0.],
+        across_flats_mm: 16.,
+        span_mm: [6., 10.],
+    };
+    let text = write_pipe_hex_hardware(&head, stock, 1e-7).unwrap();
+    let corner = stock.corners().unwrap()[1][1];
+    let spelled = format!("{}", Coordinates(corner));
+    assert_eq!(text.matches(&spelled).count(), 1);
+    // A sub-tolerance corner nudge still reads but is not the written stock;
+    // a large one is not a planar hex prism at all.
+    for (delta, decodes) in [(1e-9, true), (1e-3, false)] {
+        let moved = Coordinates([corner[0], corner[1], corner[2] + delta]).to_string();
+        let tampered = text.replace(&spelled, &moved);
+        assert_eq!(read_pipe_hex_hardware(&tampered, 1e-7).is_ok(), decodes);
+        assert!(verify_pipe_hex_hardware(&tampered, &head, stock, 1e-7).is_err());
+    }
+    // Reversing the head top's sense breaks the outward stock orientation.
+    let top = text.rfind("ADVANCED_FACE(").unwrap();
+    let end = top + text[top..].find(";\n").unwrap();
+    let flipped = format!(
+        "{}{}{}",
+        &text[..top],
+        text[top..end].replace(",.T.)", ",.F.)"),
+        &text[end..]
+    );
+    assert_ne!(flipped, text);
+    assert!(read_pipe_hex_hardware(&flipped, 1e-7).is_err());
+    // A cylindrical sleeve is not hex hardware.
+    let sleeve = write_pipe_sleeve(
+        &internal_npt_cavity(),
+        SleeveStock {
+            origin: [0.; 3],
+            normal: [0., 0., 1.],
+            reference: [1., 0., 0.],
+            radius_mm: 7.,
+            height_mm: 8.,
+        },
+        1e-7,
+    )
+    .unwrap();
+    assert!(read_pipe_hex_hardware(&sleeve, 1e-7).is_err());
+    // The cap heights must meet the span ends within the stated tolerance.
+    let nut = pipe_boundary(false, false);
+    let edge = |offset: f64| HexStock {
+        kind: HexStockKind::Nut,
+        span_mm: [0., 6. + offset],
+        ..stock
+    };
+    let near = write_pipe_hex_hardware(&nut, edge(0.5e-7), 1e-7).unwrap();
+    verify_pipe_hex_hardware(&near, &nut, edge(0.5e-7), 1e-7).unwrap();
+    assert!(verify_pipe_hex_hardware(&near, &nut, edge(0.), 1e-7).is_err());
+    assert_eq!(
+        write_pipe_hex_hardware(&nut, edge(2e-7), 1e-7),
+        Err(StepError::InvalidGeometry)
+    );
+    for tolerance in [0., -1., f64::NAN] {
+        assert_eq!(
+            write_pipe_hex_hardware(&nut, edge(0.), tolerance),
+            Err(StepError::InvalidGeometry)
+        );
+    }
+    // A span thinner than the tolerance is degenerate.
+    assert!(
+        write_pipe_hex_hardware(
+            &head,
+            HexStock {
+                span_mm: [6., 6. + 0.5e-7],
+                ..stock
+            },
+            1e-7
+        )
+        .is_err()
+    );
+}

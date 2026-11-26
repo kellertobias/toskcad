@@ -179,6 +179,7 @@ impl step::Writer {
             candidate.as_str(),
             candidate_bytes,
             options,
+            None,
             interrupt,
         )?;
         Ok(AppendReceipt {
@@ -197,11 +198,15 @@ impl step::Writer {
     /// qualified singleton text. `candidate_bytes` is the caller's complete
     /// resident candidate (text, owned material and wrapper). This core adds
     /// no material authority: callers must have qualified `text` itself.
+    /// With `placement` (origin, u, v, u×v), the rebased local solid is held
+    /// by one declared map and placed by one `MAPPED_ITEM`; the caller must
+    /// have proved that frame proper and orthonormal.
     pub(crate) fn append_qualified_singleton(
         &mut self,
         text: &str,
         candidate_bytes: usize,
         options: AppendOptions,
+        placement: Option<[[f64; 3]; 4]>,
         interrupt: Option<&dyn Fn() -> bool>,
     ) -> Result<ReplayCore, Error> {
         checkpoint(interrupt)?;
@@ -326,7 +331,14 @@ impl step::Writer {
                 work_used: work.used,
                 accounted_peak_bytes: work.peak,
             });
-            Ok::<_, Error>(step::Entity(trace.member as usize))
+            let member = step::Entity(trace.member as usize);
+            Ok::<_, Error>(match placement {
+                Some(frame) => {
+                    work.step(4096)?;
+                    file.mapped_singleton(member, frame)
+                }
+                None => member,
+            })
         })?;
         Ok(receipt.expect("successful typed atomic replay"))
     }

@@ -138,11 +138,41 @@ impl QualifiedStep {
         &self.qualification
     }
 }
+const IDENTITY_OPERATOR: [[[f64; 2]; 3]; 4] = [
+    [[0., 0.], [0., 0.], [0., 0.]],
+    [[1., 1.], [0., 0.], [0., 0.]],
+    [[0., 0.], [1., 1.], [0., 0.]],
+    [[0., 0.], [0., 0.], [1., 1.]],
+];
 fn qualification(
     source: &Material,
     text: &str,
     candidate_capacity: usize,
     proposal_work: usize,
+    options: Options,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<QualifiedMaterial, Error> {
+    qualification_through(
+        source,
+        text,
+        candidate_capacity,
+        proposal_work,
+        IDENTITY,
+        IDENTITY_OPERATOR,
+        options,
+        interrupt,
+    )
+}
+/// `text` is the decoded file's LOCAL member; `operator` encloses its file
+/// map (identity for a flat singleton) and `occurrence` is the source's.
+#[allow(clippy::too_many_arguments)]
+fn qualification_through(
+    source: &Material,
+    text: &str,
+    candidate_capacity: usize,
+    proposal_work: usize,
+    occurrence: [[f64; 3]; 4],
+    operator: [[[f64; 2]; 3]; 4],
     options: Options,
     interrupt: Option<&dyn Fn() -> bool>,
 ) -> Result<QualifiedMaterial, Error> {
@@ -204,9 +234,10 @@ fn qualification(
             .ok_or(Error::Limit)?,
     );
     let matched = source
-        .match_replayed_material(
+        .match_replayed_material_through(
             read.material(),
-            IDENTITY,
+            occurrence,
+            operator,
             MatchOptions {
                 maximum_work,
                 maximum_bytes,
@@ -311,6 +342,8 @@ pub fn export_retained(
         qualification,
     })
 }
+mod placed;
+pub use placed::{export_retained_placed, qualify_placed_actual_file};
 mod authored;
 pub use authored::{
     AuthoredAppendReceipt, AuthoredOptions, AuthoredVerification, QualifiedAuthoredMaterial,

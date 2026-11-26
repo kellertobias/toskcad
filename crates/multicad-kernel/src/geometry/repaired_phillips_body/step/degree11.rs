@@ -2,10 +2,15 @@
 //! retained tokens are only a proposal: the ACTUAL written bytes are decoded
 //! independently and their distinctly repaired material must match the
 //! retained source within the unchanged correspondence bounds.
-//! Only the imported (identity) occurrence is a flat singleton; a moved or
-//! instanced occurrence needs a mapped-member proof and is refused here.
+//! The imported (identity) occurrence writes the original flat singleton. A
+//! moved or instanced occurrence replays the same local records inside one
+//! mapped item; the decoded file operator is enclosed and every bound is
+//! transported through it to this occurrence.
 use super::*;
-use multicad_rust_kernel::step::degree11_phillips as d11;
+use multicad_rust_kernel::{
+    step::degree11_phillips as d11,
+    step_read::PhillipsOwnedDegree11Material as OwnedDegree11Material,
+};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DecodedDegree11PhillipsStepVerification {
     /// Independently decoded repaired material, not exact raw STEP mass.
@@ -80,21 +85,28 @@ impl RepairedPhillipsBody {
         })
     }
 }
-fn flat(frame: PlaneFrame) -> Result<(), GeometryError> {
-    if frame == PlaneFrame::default() {
-        Ok(())
+fn flat(frame: PlaneFrame) -> bool {
+    frame == PlaneFrame::default()
+}
+fn qualify(
+    source: &OwnedDegree11Material,
+    text: &str,
+    frame: PlaneFrame,
+    options: d11::Options,
+    interrupt: Option<&dyn Fn() -> bool>,
+) -> Result<d11::QualifiedMaterial, GeometryError> {
+    if flat(frame) {
+        d11::qualify_actual_file(source, text, options, interrupt)
     } else {
-        Err(fail(
-            GeometryErrorKind::Unsupported,
-            "A moved degree-eleven occurrence needs a mapped-member proof",
-        ))
+        d11::qualify_placed_actual_file(source, text, occurrence(frame), options, interrupt)
     }
+    .map_err(d11_error)
 }
 impl Solid {
     /// Whether this solid re-exports its imported degree-eleven material.
     pub fn has_degree11_phillips_step_source(&self) -> bool {
         self.repaired_phillips_body()
-            .is_some_and(|(body, frame)| body.source.degree11().is_some() && flat(frame).is_ok())
+            .is_some_and(|(body, _)| body.source.degree11().is_some())
     }
     /// Fresh qualification of ACTUAL bytes against the retained material.
     pub fn verify_degree11_phillips_step_source(
@@ -107,10 +119,8 @@ impl Solid {
         let source = body.source.degree11()?;
         Some((|| {
             checkpoint(interrupt)?;
-            flat(frame)?;
             let options = d11_options(self.policy, tolerance)?;
-            let verified =
-                d11::qualify_actual_file(source, text, options, interrupt).map_err(d11_error)?;
+            let verified = qualify(source, text, frame, options, interrupt)?;
             checkpoint(interrupt)?;
             body.degree11_receipt(verified.verification(), frame, options)
         })())
@@ -127,9 +137,13 @@ impl Solid {
         let source = body.source.degree11()?;
         Some((|| {
             checkpoint(interrupt)?;
-            flat(frame)?;
             let options = d11_options(self.policy, tolerance)?;
-            let candidate = d11::export_retained(source, options, interrupt).map_err(d11_error)?;
+            let candidate = if flat(frame) {
+                d11::export_retained(source, options, interrupt)
+            } else {
+                d11::export_retained_placed(source, occurrence(frame), options, interrupt)
+            }
+            .map_err(d11_error)?;
             let (tmp, mut file) = temporary(path)?;
             file.write_all(candidate.as_str().as_bytes())
                 .and_then(|()| file.sync_all())
@@ -147,8 +161,7 @@ impl Solid {
                     "Actual output exceeds file quota",
                 ));
             }
-            let verified =
-                d11::qualify_actual_file(source, &actual, options, interrupt).map_err(d11_error)?;
+            let verified = qualify(source, &actual, frame, options, interrupt)?;
             let receipt = body.degree11_receipt(verified.verification(), frame, options)?;
             checkpoint(interrupt)?;
             fs::rename(&tmp.0, path)

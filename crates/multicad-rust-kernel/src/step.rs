@@ -933,6 +933,33 @@ impl StepFile {
         self.entity(format_args!("{entity}('',{wire},.T.)"))
     }
 
+    /// One local solid held by a declared `REPRESENTATION_MAP` and placed by
+    /// one `MAPPED_ITEM` whose operator states `origin`, `u`, `v` and `u×v`
+    /// (columns of `frame`). The local records are not rewritten.
+    fn mapped_singleton(&mut self, body: Entity, frame: [Point; 4]) -> Entity {
+        let [origin, u, v, n] = frame;
+        let local_origin = self.point([0.; 3]);
+        let source_axis = self.axis(local_origin, [0., 0., 1.], [1., 0., 0.]);
+        let length = self.entity(format_args!(
+            "(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.))"
+        ));
+        let angle = self.entity(format_args!(
+            "(NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.))"
+        ));
+        let solid_angle = self.entity(format_args!(
+            "(NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT())"
+        ));
+        let context = self.entity(format_args!("(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT(({length},{angle},{solid_angle})) REPRESENTATION_CONTEXT('',''))"));
+        let local = self.entity(format_args!(
+            "SHAPE_REPRESENTATION('',({body},{source_axis}),{context})"
+        ));
+        let map = self.entity(format_args!("REPRESENTATION_MAP({source_axis},{local})"));
+        let target_origin = self.point(origin);
+        let [axis1, axis2, axis3] = [u, v, n].map(|d| self.direction(d));
+        let target = self.entity(format_args!("(CARTESIAN_TRANSFORMATION_OPERATOR({axis1},{axis2},{target_origin},1.)CARTESIAN_TRANSFORMATION_OPERATOR_3D({axis3})FUNCTIONALLY_DEFINED_TRANSFORMATION('','')GEOMETRIC_REPRESENTATION_ITEM()REPRESENTATION_ITEM(''))"));
+        self.entity(format_args!("MAPPED_ITEM('',{map},{target})"))
+    }
+
     fn solid(&mut self, faces: &[Entity]) -> Entity {
         let shell = self.entity(format_args!("CLOSED_SHELL('',{})", Entities(faces)));
         self.entity(format_args!("MANIFOLD_SOLID_BREP('',{shell})"))

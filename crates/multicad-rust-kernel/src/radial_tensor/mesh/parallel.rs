@@ -21,9 +21,18 @@ pub(super) fn check(
     accepted: &mut Vec<[usize; 3]>,
     work: &mut Work<'_>,
 ) -> Result<bool, Error> {
-    let workers = std::thread::available_parallelism()
-        .map_or(1, usize::from)
-        .min(8);
+    // Coverage instrumentation (cargo-llvm-cov sets `cfg(coverage)`) makes
+    // every worker update the same profile counters, so this cell check runs
+    // several times slower in parallel than serially there; the R 1/8 UI
+    // preview went from 9.5 s serial to over 45 s with eight workers. Serial
+    // and parallel checks emit bit-identical meshes (paired BSPT test).
+    let workers = if cfg!(coverage) {
+        1
+    } else {
+        std::thread::available_parallelism()
+            .map_or(1, usize::from)
+            .min(8)
+    };
     #[cfg(test)]
     let workers = parallel_probe::WORKERS.with(Cell::get).unwrap_or(workers);
     let threshold = MIN_FACETS;

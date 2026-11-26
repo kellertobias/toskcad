@@ -379,8 +379,8 @@ fn actual_native_meshes_keep_source_volume_and_literal_placement_receipts_and_qu
             receipt.decoded_volume_bounds_mm3,
             decoded.world_volume_mm3()
         );
-        // A bad tolerance, a cancelled write and a moved occurrence are
-        // refused; the destination is never replaced.
+        // A bad tolerance and a cancelled write are refused; the
+        // destination is never replaced.
         assert!(
             imported
                 .verify_degree11_phillips_step_source(&reexported, 0., None)
@@ -394,22 +394,40 @@ fn actual_native_meshes_keep_source_volume_and_literal_placement_receipts_and_qu
                 .unwrap()
                 .is_err()
         );
+        assert_eq!(std::fs::read(&again).unwrap(), b"existing output");
+        // A moved occurrence replays the same local records in one mapped
+        // item and is requalified through the decoded file operator.
         let shifted = imported
             .transformed(crate::RigidTransform {
                 translation_mm: [0., 0., 1e-3],
                 ..Default::default()
             })
             .unwrap();
-        assert!(!shifted.has_degree11_phillips_step_source());
-        assert!(!shifted.supports_step_export());
-        assert!(shifted.write_step(&again).is_err());
+        assert!(shifted.has_degree11_phillips_step_source());
+        assert!(shifted.supports_step_export());
         assert!(
             shifted
                 .verify_degree11_phillips_step_source(&reexported, 1e-7, None)
                 .unwrap()
                 .is_err()
         );
-        assert_eq!(std::fs::read(&again).unwrap(), b"existing output");
+        let placed = dir.path().join("placed.step");
+        shifted.write_step(&placed).unwrap();
+        let mapped = std::fs::read_to_string(&placed).unwrap();
+        assert_eq!(mapped.matches("MAPPED_ITEM(").count(), 1);
+        let receipt = shifted
+            .verify_degree11_phillips_step_source(&mapped, 1e-7, None)
+            .unwrap()
+            .unwrap();
+        assert!(receipt.maximum_world_position_error_mm <= 1e-7);
+        assert!(receipt.maximum_world_chart_derivative_error_mm <= 1e-7);
+        assert!(receipt.independent_volume_discrepancy_mm3 <= 1e-5);
+        assert!(
+            imported
+                .verify_degree11_phillips_step_source(&mapped, 1e-7, None)
+                .unwrap()
+                .is_err()
+        );
         let moved = s
             .transformed(crate::RigidTransform {
                 translation_mm: [0., 0., 1e-3],
