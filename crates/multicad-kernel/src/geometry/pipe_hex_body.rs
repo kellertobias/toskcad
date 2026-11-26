@@ -606,7 +606,7 @@ impl PipeHexBody {
             });
         }
         let mut edges = Vec::new();
-        for level in 0..2 {
+        for (level, face) in level_face.iter().enumerate() {
             let z = self.span_mm[level];
             for k in 0..6 {
                 edges.push(TopologyElement {
@@ -615,7 +615,7 @@ impl PipeHexBody {
                         ordinal: first_edge + (6 * level + k) as u32,
                     },
                     origins: BTreeSet::from([rim(level, k)]),
-                    boundary: BTreeSet::from([level_face[level].clone(), wall(k)]),
+                    boundary: BTreeSet::from([face.clone(), wall(k)]),
                     frames: vec![],
                     geometry: Some(AnalyticGeometry::Line {
                         a_mm: position(frame, self.corner(k, z)),
@@ -640,7 +640,7 @@ impl PipeHexBody {
             });
         }
         let mut vertices = Vec::new();
-        for level in 0..2 {
+        for (level, face) in level_face.iter().enumerate() {
             for k in 0..6 {
                 vertices.push(TopologyElement {
                     key: TopologyKey {
@@ -648,11 +648,7 @@ impl PipeHexBody {
                         ordinal: first_vertex + (6 * level + k) as u32,
                     },
                     origins: BTreeSet::from([corner_vertex(level, k)]),
-                    boundary: BTreeSet::from([
-                        level_face[level].clone(),
-                        wall((k + 5) % 6),
-                        wall(k),
-                    ]),
+                    boundary: BTreeSet::from([face.clone(), wall((k + 5) % 6), wall(k)]),
                     frames: vec![],
                     geometry: Some(AnalyticGeometry::Point {
                         position_mm: position(frame, self.corner(k, self.span_mm[level])),
