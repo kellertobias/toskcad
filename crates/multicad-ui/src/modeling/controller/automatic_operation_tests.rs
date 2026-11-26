@@ -172,6 +172,21 @@ impl Harness {
             &[],
         )
     }
+    /// The whole top face as one rectangle.
+    fn whole_face() -> Self {
+        Self::on_box_face(
+            |source, frame| {
+                source
+                    .add_rectangle(
+                        frame.coordinates([0., 0., 10.]),
+                        frame.coordinates([20., 20., 10.]),
+                    )
+                    .unwrap();
+            },
+            |area| (area - 400.).abs() < 1e-6,
+            &[],
+        )
+    }
     /// A datum XY sketch far from the box.
     fn separate() -> Self {
         let mut session = Session::new(Document::new("CAD-404 separate").unwrap()).unwrap();
@@ -225,6 +240,12 @@ impl Harness {
     /// Edit the signed distance as the arrow or typed value does, preview, and
     /// wait until the final native candidate is ready to apply.
     fn distance(&mut self, millimeters: f64) {
+        if let Err(error) = self.try_distance(millimeters) {
+            panic!("{error}");
+        }
+    }
+    /// Like [`Self::distance`], but returns the preview's refusal.
+    fn try_distance(&mut self, millimeters: f64) -> Result<(), String> {
         let Some(ModelForm::Extrude(panel)) = &mut self.controller.form else {
             panic!("extrude form")
         };
@@ -238,12 +259,15 @@ impl Harness {
             .can_apply(&self.session, &Default::default())
         {
             self.controller.poll(&self.session, &Default::default());
-            if let Some(error) = self.controller.error() {
-                panic!("{error}");
+            if !self.controller.pending()
+                && let Some(error) = self.controller.error()
+            {
+                return Err(error.to_owned());
             }
             assert!(Instant::now() < until, "native preview did not settle");
             std::thread::sleep(Duration::from_millis(2));
         }
+        Ok(())
     }
     fn summary(&self) -> Option<String> {
         self.controls().automatic_summary()
@@ -448,4 +472,53 @@ fn reported_corner_circle_joins_outward_and_cuts_inward_on_the_box() {
         };
         assert!((after - expected).abs() < 1e-4, "{after} != {expected}");
     }
+}
+
+#[test]
+fn an_automatic_cut_that_would_remove_the_whole_body_falls_back_to_new_body() {
+    let mut h = Harness::whole_face();
+    h.distance(-15.);
+    assert_eq!(h.controls().operation, Operation::NewBody);
+    assert!(h.controls().automatic());
+    assert_eq!(
+        h.summary().as_deref(),
+        Some("New body · Cut would remove all of Box")
+    );
+    let (_, state) = h.apply();
+    assert_eq!(state.definition.kind, ExtrudeGroupKind::NewBody);
+    assert!(state.definition.automatic);
+    // The box is untouched and the extrusion is its own body.
+    let compiled = compile(&h.session);
+    let volume = compiled
+        .solid(h.stock.producer)
+        .unwrap()
+        .volume_mm3()
+        .unwrap();
+    assert!((volume - 20. * 20. * 10.).abs() < 1e-6, "{volume}");
+    // A shallower edit cuts again automatically.
+    let mut h = Harness::whole_face();
+    h.distance(-15.);
+    h.distance(-4.);
+    assert_eq!(h.controls().operation, Operation::Cut);
+    assert_eq!(h.summary().as_deref(), Some("Cut · enters Box"));
+}
+
+#[test]
+fn an_explicit_cut_that_would_remove_the_whole_body_keeps_its_error() {
+    let mut h = Harness::whole_face();
+    h.controller
+        .operations
+        .as_mut()
+        .unwrap()
+        .choose(Operation::Cut);
+    h.controller.operation_changed();
+    let error = h.try_distance(-15.).unwrap_err();
+    assert!(error.contains("removed all material"), "{error}");
+    assert_eq!(h.controls().operation, Operation::Cut);
+    assert!(!h.controls().automatic());
+    assert!(
+        h.controller
+            .apply(&mut h.session, &Default::default())
+            .is_err()
+    );
 }
