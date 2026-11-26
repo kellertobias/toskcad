@@ -196,7 +196,7 @@ impl Solid {
             {
                 return result;
             }
-            return match treatment {
+            let existing = match treatment {
                 EdgeTreatment::Chamfer { distance_mm } => match edges {
                     [edge]
                         if topology.elements.iter().any(|element| {
@@ -210,7 +210,7 @@ impl Solid {
                             [distance_mm; 2],
                             feature,
                             policy,
-                            topology,
+                            topology.clone(),
                         )
                     }
                     _ if edges.len() > 1
@@ -229,7 +229,7 @@ impl Solid {
                             distance_mm,
                             feature,
                             policy,
-                            topology,
+                            topology.clone(),
                             interrupt,
                         )
                     }
@@ -238,6 +238,14 @@ impl Solid {
                 EdgeTreatment::Fillet { radius_mm } => {
                     self.rust_fillet_box_edges(edges, radius_mm, feature, policy, &topology)
                 }
+            };
+            // The box constructions keep their established results; any other
+            // selection on a plain prism is treated edge by edge.
+            return match existing {
+                Err(cause) if cause.kind == GeometryErrorKind::Unsupported => self
+                    .rust_treat_prism_edges(edges, treatment, feature, policy, &topology)
+                    .unwrap_or(Err(cause)),
+                other => other,
             };
         }
         let handle = ffi::treat_edges(self.occt()?, &indices, mode, size)

@@ -86,6 +86,7 @@ mod orthogonal_body;
 mod parallel_cylinder;
 mod parallel_extrusion_intersection;
 mod planar_boolean_body;
+mod prism_treatment;
 mod radial_boundary_body;
 mod repaired_phillips_body;
 mod smooth_loft_body;

@@ -33,6 +33,22 @@ pub(crate) struct NormalSweepBody {
     cap_anchors: Option<[ReferenceFrame; 2]>,
 }
 
+/// A plain prism view of a normal sweep. The ring runs counterclockwise in
+/// the placement frame; `span` is its extent along the frame normal. Cap
+/// face ordinal 0 lies at height 0 and ordinal 1 at the far end; side
+/// `i` is face `2 + i`.
+pub(super) struct TreatablePrism<'a> {
+    pub(super) ring: &'a [Edge],
+    pub(super) span: [f64; 2],
+    pub(super) reverse: bool,
+    pub(super) feature: EntityId,
+    pub(super) origins: Vec<&'a Origin>,
+    /// The authored profile ran clockwise and was reversed into the ring.
+    pub(super) authored_reversed: bool,
+    pub(super) path_origin: Option<&'a Origin>,
+    pub(super) cap_anchors: Option<[ReferenceFrame; 2]>,
+}
+
 #[derive(Clone)]
 struct Side {
     edge: Edge,
@@ -214,6 +230,14 @@ impl Solid {
         })
     }
 
+    /// Restore the local cap anchors of the sweep this one was rebuilt from.
+    pub(super) fn with_local_cap_anchors(mut self, anchors: Option<[ReferenceFrame; 2]>) -> Self {
+        if let SolidBody::NormalSweep(body, _) = &mut self.body {
+            Rc::make_mut(body).cap_anchors = anchors;
+        }
+        self
+    }
+
     pub(crate) fn normal_sweep_body(&self) -> Option<(&NormalSweepBody, PlaneFrame)> {
         match &self.body {
             SolidBody::NormalSweep(body, frame) => Some((body, *frame)),
@@ -302,6 +326,36 @@ impl NormalSweepBody {
     /// concatenated rings of [`Self::prism_profile`].
     pub(super) fn side_origins(&self) -> impl Iterator<Item = &Origin> {
         self.sides.iter().map(|side| &side.origin)
+    }
+
+    /// The single outer ring of an unpierced line-and-arc sweep without
+    /// stock history, for edge treatments that rebuild the prism.
+    pub(super) fn treatable_prism(&self) -> Option<TreatablePrism<'_>> {
+        let rings = self.sweep.rings();
+        (self.openings.is_none()
+            && self.stock_history.is_none()
+            && rings.len() == 1
+            && self.sides.len() == rings[0].len()
+            && !rings[0]
+                .iter()
+                .any(|edge| matches!(edge, Edge::Circle { .. })))
+        .then(|| {
+            let height = self.sweep.height_mm();
+            TreatablePrism {
+                ring: &rings[0],
+                span: if self.reverse {
+                    [-height, 0.]
+                } else {
+                    [0., height]
+                },
+                reverse: self.reverse,
+                feature: self.feature,
+                origins: self.sides.iter().map(|side| &side.origin).collect(),
+                authored_reversed: self.sides.first().is_some_and(|side| side.reversed),
+                path_origin: self.path_origin.as_ref(),
+                cap_anchors: self.cap_anchors,
+            }
+        })
     }
 
     pub(super) fn unpierced_profile(&self) -> Option<(&[Vec<Edge>], f64)> {
