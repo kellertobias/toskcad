@@ -16,6 +16,8 @@ use multicad_core::{
 use multicad_precision::PortableMath as _;
 use std::{cell::OnceCell, collections::VecDeque};
 #[cfg(test)]
+mod add_sketch_pick_tests;
+#[cfg(test)]
 #[path = "sketch_advanced_context_tests.rs"]
 mod advanced_context_tests;
 #[path = "sketch_advanced_host.rs"]
@@ -5146,22 +5148,23 @@ impl SketchEditor {
             self.plane_picker
                 .paint_preview(&painter, self.camera, rect, context);
             if response.clicked() {
-                // CAD-381: a valid planar face is an unambiguous target, so
-                // clicking it creates and enters the sketch at once. Datum and
-                // construction planes keep the explicit Use plane confirmation.
+                // CAD-381/CAD-397: a viewer pick is an unambiguous target, so
+                // clicking a valid planar face, datum or construction plane
+                // creates and enters the sketch at once as one transaction.
+                // Offset/angle options already set in the Inspector apply to it.
                 match self.plane_picker.click_hovered(context) {
-                    Ok(preview) if matches!(preview.choice, PlaneChoice::Face(_)) => {
+                    Ok(preview) => {
                         if let Err(error) = self.create_on_plane(session, preview, Channel::Ui) {
                             self.message = format!(
                                 "{error}. The document is unchanged; choose another face or plane."
                             );
                         }
                     }
-                    Ok(_) => {
-                        self.message =
-                            "Plane selected · adjust offset or angle, then Use plane".into()
+                    Err(error) => {
+                        self.message = format!(
+                            "{error} · nothing was created; pick a datum, construction plane or planar face, or press Escape"
+                        )
                     }
-                    Err(error) => self.message = error,
                 }
             }
         }
