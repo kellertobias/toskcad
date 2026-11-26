@@ -49,6 +49,28 @@ pub(super) fn extract_cells_with_control(
     interrupt: Option<&dyn Fn() -> bool>,
     control: &QueryControl<'_>,
 ) -> Result<Extraction, QueryError> {
+    cells_with_control(edges, tolerance_mm, queries, interrupt, control, false)
+}
+/// Ordinary sketches (CAD-400): straight edges that lie on each other share
+/// one derived segment, owned by the lower authored identity. The authored
+/// curves are not edited. Curved overlaps still require repair.
+pub(super) fn extract_overlapping_cells_with_control(
+    edges: &[Edge],
+    tolerance_mm: f64,
+    queries: &dyn RegionQueries,
+    interrupt: Option<&dyn Fn() -> bool>,
+    control: &QueryControl<'_>,
+) -> Result<Extraction, QueryError> {
+    cells_with_control(edges, tolerance_mm, queries, interrupt, control, true)
+}
+fn cells_with_control(
+    edges: &[Edge],
+    tolerance_mm: f64,
+    queries: &dyn RegionQueries,
+    interrupt: Option<&dyn Fn() -> bool>,
+    control: &QueryControl<'_>,
+    merge_line_overlaps: bool,
+) -> Result<Extraction, QueryError> {
     if !tolerance_mm.is_finite() || !(1e-10..=1e-3).contains(&tolerance_mm) {
         return Err(fail("Invalid arrangement tolerance"));
     }
@@ -82,7 +104,27 @@ pub(super) fn extract_cells_with_control(
                 control,
             )?;
             if hits.overlap {
-                return Err(fail("Overlapping curves require explicit repair"));
+                let (true, ExactCurve::Line { a: p, b: q }, ExactCurve::Line { a: r, b: s }) =
+                    (merge_line_overlaps, &edges[i].curve, &edges[j].curve)
+                else {
+                    return Err(fail("Overlapping curves require explicit repair"));
+                };
+                // Each line is split where the other one's ends lie on it; the
+                // shared interval then appears twice and is merged below.
+                for (index, (a, b), others) in [(i, (*p, *q), [*r, *s]), (j, (*r, *s), [*p, *q])] {
+                    let d = sub(b, a);
+                    for point in others {
+                        let t = dot(sub(point, a), d) / dot(d, d);
+                        if distance(along(a, d, t), point) <= tolerance_mm
+                            && distance(point, a) > tolerance_mm
+                            && distance(point, b) > tolerance_mm
+                            && (0. ..=1.).contains(&t)
+                        {
+                            cuts[index].push((t, point));
+                        }
+                    }
+                }
+                continue;
             }
             for point in hits.points {
                 for index in [i, j] {
@@ -159,12 +201,11 @@ pub(super) fn extract_cells_with_control(
             if segments.len() == MAX_SEGMENTS {
                 return Err(fail("Arrangement exceeds its derived-segment budget"));
             }
-            tangents.push([
+            let directions = [
                 tangent(&curve, false, queries, tolerance_mm, control)?,
                 tangent(&curve, true, queries, tolerance_mm, control)?.map(|v| -v),
-            ]);
-            spans.push((index, points.len() - 1));
-            segments.push((
+            ];
+            let segment = (
                 Edge {
                     authored: edge.authored,
                     reversed: false,
@@ -172,7 +213,33 @@ pub(super) fn extract_cells_with_control(
                     curve,
                 },
                 [pair[0], pair[1]],
-            ));
+            );
+            let span = (index, points.len() - 1);
+            let duplicate = merge_line_overlaps
+                .then(|| {
+                    segments
+                        .iter()
+                        .position(|(other, ends): &(Edge, [usize; 2])| {
+                            matches!(other.curve, ExactCurve::Line { .. })
+                                && matches!(segment.0.curve, ExactCurve::Line { .. })
+                                && (*ends == segment.1 || *ends == [segment.1[1], segment.1[0]])
+                        })
+                })
+                .flatten();
+            match duplicate {
+                // Order-independent owner: the lower authored identity.
+                Some(k) if segment.0.authored < segments[k].0.authored => {
+                    segments[k] = segment;
+                    tangents[k] = directions;
+                    spans[k] = span;
+                }
+                Some(_) => {}
+                None => {
+                    tangents.push(directions);
+                    spans.push(span);
+                    segments.push(segment);
+                }
+            }
         }
     }
     // Half-edge rotation system: each face keeps material on its left.
