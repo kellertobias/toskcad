@@ -41,6 +41,8 @@ fn project(world: vec3<f32>, bias_edge: bool) -> vec4<f32> {
     out.world = world;
     out.color = select(v.color, v.material, v.material.a >= 0.0);
     out.emphasis = 0u;
+    // CAD-409: an instance alpha below one marks a faded context body.
+    if v.color.a < 0.99 {out.color = vec4(mix(out.color.rgb, vec3(0.86,0.88,0.9), 0.62), 1.0);out.emphasis=4u;}
     if v.selection.y == 1u || v.selection.x == v.face {out.color = vec4(0.95,0.65,0.18,1.0);out.emphasis=1u;}
     if v.selection.z == v.face {out.color=vec4(0.2,0.6,0.95,1.0);out.emphasis=2u;}
     if v.selection.w == 1u && v.selection.x != v.face {out.emphasis=3u;}
@@ -62,6 +64,7 @@ struct AxisFragment {
     if v.emphasis==1u {return vec4(0.95,0.65,0.18,1.0);}
     if v.emphasis==2u {return vec4(0.2,0.6,0.95,1.0); }
     if camera.clip.w>0.5 {return vec4(0.53,0.66,0.79,1.0);}
+    if v.emphasis==4u {return vec4(0.55,0.6,0.66,1.0);}
     return vec4(0.07,0.1,0.15,1.0);
 }
 @fragment fn fragment(v: Fragment) -> @location(0) vec4<f32> {

@@ -99,6 +99,28 @@ impl ModelToolController {
         }
         Ok(())
     }
+    /// Move a new treatment to another body whose edge was picked (CAD-409).
+    /// Returns the body's name for the status line.
+    pub fn retarget_edge_treatment(
+        &mut self,
+        session: &Session,
+        resources: &ProjectResources,
+        scene: &Scene,
+        body: EntityId,
+        edges: Vec<GeometryIntent>,
+    ) -> Result<String, String> {
+        self.verify_context(session, resources, scene)?;
+        if !scene.is_full_model() {
+            return Err("Edge captures require the complete current canonical model".into());
+        }
+        let Some(ModelForm::EdgeTreatment(panel)) = &mut self.form else {
+            return Err("Open Fillet / Chamfer before selecting edges".into());
+        };
+        panel.retarget(session.document(), session.revision(), scene, body, &edges)?;
+        let name = panel.name().to_owned();
+        self.invalidate();
+        Ok(name)
+    }
     pub(super) fn stop_edge_treatment_picking(&mut self) {
         if let Some(ModelForm::EdgeTreatment(panel)) = &mut self.form {
             panel.stop_picking();
@@ -259,127 +281,11 @@ mod tests {
     /// clipped to two straight edges and an arc, extruded `height` as a new
     /// body. Returns the session and the new body's top cap edges.
     fn corner_segment(height: f64) -> (Session, model::BodyInput, Vec<GeometryIntent>) {
-        use multicad_core::{
-            commands::Request,
-            constraint_sketch::{Curve, CurveKind, source::Source},
-            references::AnalyticGeometry,
-            sketch::{self, CreationPlane, PlaneOptions},
-        };
-        let actor = || Actor::local(Channel::Ui);
-        let compile = |s: &Session| {
-            Compiler::default()
-                .compile(s.document(), s.revision())
-                .unwrap()
-        };
-        let mut session = Session::new(Document::new("Corner segment").unwrap()).unwrap();
-        let stock = model::PrimitiveRequest::new(
-            "Box",
-            model::PrimitiveParameters::Box {
-                size: [model::length(20.), model::length(20.), model::length(10.)],
-                frame: Default::default(),
-            },
-        );
-        session
-            .commit(
-                model::prepare_primitive(&session, session.revision(), actor(), &stock)
-                    .unwrap()
-                    .prepared,
-            )
+        use multicad_core::references::AnalyticGeometry;
+        let (session, _, body) = native_fixture::corner_segment_session(height);
+        let compiled = Compiler::default()
+            .compile(session.document(), session.revision())
             .unwrap();
-        let compiled = compile(&session);
-        let topology = &compiled.snapshot().shapes[&stock.feature].topology;
-        let top = topology
-            .elements
-            .iter()
-            .find(|e| {
-                e.key.kind == TopologyKind::Face
-                    && matches!(e.geometry, Some(AnalyticGeometry::Plane { frame })
-                        if frame.normal()[2] > 0.9 && (frame.origin_mm[2] - 10.).abs() < 1e-9)
-            })
-            .unwrap();
-        let anchor = top.frames.first().unwrap().origin.clone();
-        let created = sketch::prepare_new(
-            &session,
-            session.revision(),
-            actor(),
-            "Corner circle",
-            CreationPlane::Face {
-                snapshot: topology,
-                key: top.key,
-                anchor: Some(&anchor),
-            },
-            PlaneOptions::default(),
-        )
-        .unwrap();
-        let (sketch, frame) = (created.sketch, created.frame);
-        session.commit(created.prepared).unwrap();
-        let report = compile(&session).snapshot().references.clone();
-        let mut source = Source::read_for_evaluation(
-            session.document(),
-            sketch,
-            session.revision(),
-            Some(&report),
-        )
-        .unwrap()
-        .0;
-        let center = source.add_point(frame.coordinates([2., 3., 10.]));
-        source.sketch.curves.push(Curve {
-            id: EntityId::new(),
-            construction: false,
-            kind: CurveKind::Circle {
-                center,
-                radius_mm: 8.,
-            },
-        });
-        session
-            .apply(Request {
-                expected_revision: session.revision(),
-                actor: actor(),
-                label: "Circle around the face corner".into(),
-                edits: source.replace(session.document(), sketch).unwrap(),
-            })
-            .unwrap();
-        let report = compile(&session).snapshot().references.clone();
-        let queries = multicad_kernel::NativeRegionQueries::analytic(Default::default()).unwrap();
-        let semantic = multicad_solver::evaluate_document_sketch(
-            session.document(),
-            session.revision(),
-            sketch,
-            Some(&report),
-        )
-        .unwrap();
-        let inside = semantic.frame.coordinates([1., 1., 10.]);
-        let region = semantic
-            .regions_with_queries(&queries)
-            .unwrap()
-            .regions
-            .into_iter()
-            .find(|r| r.contains_with_queries(inside, &queries).unwrap())
-            .unwrap();
-        let request = model::ExtrudeRequest::new(
-            sketch,
-            vec![region.intent()],
-            model::ExtrudeParameters {
-                extent: model::Extent::OneSided {
-                    end: model::Termination::Distance {
-                        distance: model::length(height),
-                    },
-                },
-                ..Default::default()
-            },
-        );
-        let body = model::BodyInput {
-            body: request.outputs[0].body,
-            producer: request.outputs[0].feature,
-        };
-        session
-            .commit(
-                model::prepare_extrude(&session, session.revision(), actor(), &request)
-                    .unwrap()
-                    .prepared,
-            )
-            .unwrap();
-        let compiled = compile(&session);
         let scene = native_fixture::scene(session.document(), compiled.snapshot(), 0).unwrap();
         let topology = scene.geometry_snapshot(body.producer).unwrap();
         let z = 10. + height;

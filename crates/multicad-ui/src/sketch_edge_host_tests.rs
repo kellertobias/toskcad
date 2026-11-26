@@ -220,6 +220,14 @@ impl Host {
                     .prepared,
             )
             .unwrap();
+        Self::with_session(session, request.body, request.feature, [15., 10., 5.])
+    }
+    fn with_session(
+        session: Session,
+        body: EntityId,
+        producer: EntityId,
+        target: [f32; 3],
+    ) -> Self {
         let mut feed = SceneFeed::default();
         feed.set_backend(Box::new(NativeBackend::new()));
         let until = Instant::now() + Duration::from_secs(5);
@@ -238,8 +246,8 @@ impl Host {
             editor,
             feed,
             ctx: Default::default(),
-            body: request.body,
-            producer: request.feature,
+            body,
+            producer,
         };
         host.ctx.enable_accesskit();
         for _ in 0..5 {
@@ -249,7 +257,7 @@ impl Host {
             yaw: -0.6,
             pitch: 0.6,
             scale: 6.,
-            target: [15., 10., 5.],
+            target,
             perspective: false,
         };
         host.frame(vec![]);
@@ -573,4 +581,264 @@ fn native_tool_first_part_edges_shift_toggle_and_cancel_preserve_canonical_sourc
     assert!(h.editor.model.edge_treatment_active());
     h.editor.cancel_model();
     assert_eq!(h.session.document(), &original);
+}
+
+impl Host {
+    /// The reported model (CAD-409): the box and the corner-circle segment
+    /// extruded from its top face as a second body.
+    fn two_bodies() -> (Self, model::BodyInput, model::BodyInput) {
+        let (session, stock, segment) = crate::modeling::native_fixture::corner_segment_session(5.);
+        let host = Self::with_session(session, stock.body, stock.producer, [10., 10., 7.]);
+        (host, stock, segment)
+    }
+    /// Bodies in the scene the 3D viewport painted in the latest frame. The
+    /// edited body may be drawn under its producer identity.
+    fn drawn_bodies(&mut self, bodies: &[&model::BodyInput]) -> BTreeSet<EntityId> {
+        self.frame(vec![]);
+        let scene = crate::viewport::painted_scene(&self.ctx).expect("a painted 3D viewport");
+        scene
+            .instances()
+            .iter()
+            .filter_map(|instance| {
+                bodies
+                    .iter()
+                    .find(|b| instance.id == b.body || instance.id == b.producer)
+                    .map(|b| b.body)
+            })
+            .collect()
+    }
+    /// Bodies the latest painted scene draws faded as context.
+    fn faded_bodies(&mut self, bodies: &[&model::BodyInput]) -> BTreeSet<EntityId> {
+        self.frame(vec![]);
+        let scene = crate::viewport::painted_scene(&self.ctx).expect("a painted 3D viewport");
+        scene
+            .instances()
+            .iter()
+            .filter(|instance| instance.color[3] == crate::viewport::CONTEXT_ALPHA)
+            .filter_map(|instance| {
+                bodies
+                    .iter()
+                    .find(|b| instance.id == b.body || instance.id == b.producer)
+                    .map(|b| b.body)
+            })
+            .collect()
+    }
+    /// A screen point where a face pick with no edge under it lands on `producer`.
+    fn visible_face_of(&self, producer: EntityId) -> Pos2 {
+        let scene = self
+            .editor
+            .edge_source_scene(&self.session, &self.feed)
+            .unwrap();
+        let viewport = self.editor.viewport_rect.unwrap();
+        let rect = viewport.shrink(16.);
+        let pick = |p: Pos2, filter| {
+            scene.pick_screen_with(
+                self.editor.camera,
+                viewport,
+                p,
+                PickOptions {
+                    filter,
+                    include_hidden: false,
+                    section: None,
+                },
+            )
+        };
+        let step = 6.;
+        (0..(rect.width() / step) as usize)
+            .flat_map(|x| (0..(rect.height() / step) as usize).map(move |y| (x, y)))
+            .map(|(x, y)| rect.min + Vec2::new(x as f32 * step, y as f32 * step))
+            .find(|p| {
+                pick(*p, PickFilter::Edges).is_none()
+                    && pick(*p, PickFilter::Faces).is_some_and(|hit| hit.geometry == producer)
+            })
+            .expect("a visible face")
+    }
+    /// A screen point whose edge pick in the edge-picking scene lands on a
+    /// straight edge of `producer`.
+    fn visible_edge_of(&self, producer: EntityId) -> Pos2 {
+        let scene = self
+            .editor
+            .edge_source_scene(&self.session, &self.feed)
+            .unwrap();
+        let rect = self.editor.viewport_rect.unwrap();
+        scene
+            .geometry_snapshot(producer)
+            .unwrap()
+            .elements
+            .iter()
+            .find_map(|element| {
+                let Some(AnalyticGeometry::Line { a_mm, b_mm }) = element.geometry else {
+                    return None;
+                };
+                let p = self.editor.camera.project(
+                    std::array::from_fn(|i| ((a_mm[i] + b_mm[i]) / 2.) as f32),
+                    rect,
+                );
+                let p = Pos2::new(p[0], p[1]);
+                let hit = scene.pick_screen_with(
+                    self.editor.camera,
+                    rect,
+                    p,
+                    PickOptions {
+                        filter: PickFilter::Edges,
+                        include_hidden: false,
+                        section: None,
+                    },
+                )?;
+                (hit.geometry == producer && hit.key == element.key && rect.shrink(16.).contains(p))
+                    .then_some(p)
+            })
+            .expect("a visible straight edge")
+    }
+    /// Every painted text and whether any of it is drawn in the error red.
+    fn painted_text(&mut self) -> (Vec<String>, bool) {
+        self.frame(vec![]);
+        let out = self.render(vec![]);
+        let mut red = false;
+        let texts = out
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(text) => {
+                    red |= text
+                        .galley
+                        .job
+                        .sections
+                        .iter()
+                        .any(|section| section.format.color == egui::Color32::LIGHT_RED);
+                    Some(text.galley.text().to_owned())
+                }
+                _ => None,
+            })
+            .collect();
+        out.drop_without_applying_deltas();
+        (texts, red)
+    }
+}
+
+#[test]
+fn fillet_keeps_both_bodies_drawn_and_pickable_and_starts_with_a_neutral_hint() {
+    let (mut h, stock, segment) = Host::two_bodies();
+    let both = BTreeSet::from([stock.body, segment.body]);
+    assert_eq!(h.drawn_bodies(&[&stock, &segment]), both);
+    h.editor.tree_selection = BTreeSet::from([stock.body]);
+    h.editor
+        .activate_model_tool(
+            &h.session,
+            &Default::default(),
+            &h.feed,
+            ModelingTool::EdgeTreatment,
+            Channel::Ui,
+        )
+        .unwrap();
+    assert!(h.editor.model.edge_treatment_picking());
+    // Open, nothing picked: both bodies drawn, the other one faded, a
+    // neutral instruction and no red.
+    assert_eq!(h.drawn_bodies(&[&stock, &segment]), both);
+    assert_eq!(
+        h.faded_bodies(&[&stock, &segment]),
+        BTreeSet::from([segment.body])
+    );
+    let (texts, red) = h.painted_text();
+    assert!(
+        texts.iter().any(|t| t == "Pick edges to fillet"),
+        "{texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t.contains("explicit edges")),
+        "{texts:?}"
+    );
+    assert!(!red, "no error is shown before the first pick: {texts:?}");
+    // Before the first edge, an edge of the other body switches to it.
+    let point = h.visible_edge_of(segment.producer);
+    h.click(point, false);
+    assert_eq!(
+        h.editor.model.edge_treatment_input().unwrap().body,
+        segment.body
+    );
+    assert_eq!(h.editor.model.edge_treatment_edges().unwrap().len(), 1);
+    assert_eq!(h.drawn_bodies(&[&stock, &segment]), both);
+    assert_eq!(
+        h.faded_bodies(&[&stock, &segment]),
+        BTreeSet::from([stock.body])
+    );
+    // With an edge picked the body is fixed: a box edge is ignored with a hint.
+    let point = h.visible_edge_of(stock.producer);
+    h.click(point, false);
+    assert_eq!(
+        h.editor.model.edge_treatment_input().unwrap().body,
+        segment.body
+    );
+    assert_eq!(h.editor.model.edge_treatment_edges().unwrap().len(), 1);
+    assert!(
+        h.editor.message.contains("clear its picked edges"),
+        "{}",
+        h.editor.message
+    );
+    assert_eq!(h.drawn_bodies(&[&stock, &segment]), both);
+    // The native preview of the segment fillet still draws the box.
+    h.click_label("Finish picking edges");
+    h.ready();
+    assert_eq!(h.drawn_bodies(&[&stock, &segment]), both);
+    h.editor.cancel_model();
+}
+
+#[test]
+fn before_the_first_edge_a_face_of_another_body_switches_the_edited_body() {
+    let (mut h, stock, segment) = Host::two_bodies();
+    h.editor.tree_selection = BTreeSet::from([stock.body]);
+    h.editor
+        .activate_model_tool(
+            &h.session,
+            &Default::default(),
+            &h.feed,
+            ModelingTool::EdgeTreatment,
+            Channel::Ui,
+        )
+        .unwrap();
+    h.frame(vec![]);
+    let point = h.visible_face_of(segment.producer);
+    h.click(point, false);
+    assert_eq!(
+        h.editor.model.edge_treatment_input().unwrap().body,
+        segment.body
+    );
+    assert!(h.editor.model.edge_treatment_edges().unwrap().is_empty());
+    assert_eq!(
+        h.faded_bodies(&[&stock, &segment]),
+        BTreeSet::from([stock.body])
+    );
+    let (texts, red) = h.painted_text();
+    assert!(
+        texts.iter().any(|t| t == "Pick edges to fillet"),
+        "{texts:?}"
+    );
+    assert!(!red, "{texts:?}");
+    h.editor.cancel_model();
+}
+
+#[test]
+fn chamfer_hint_is_neutral_and_names_the_chamfer() {
+    let (mut h, stock, segment) = Host::two_bodies();
+    h.editor.tree_selection = BTreeSet::from([segment.body]);
+    h.editor
+        .activate_model_tool(
+            &h.session,
+            &Default::default(),
+            &h.feed,
+            ModelingTool::EdgeTreatment,
+            Channel::Ui,
+        )
+        .unwrap();
+    h.click_label("Chamfer");
+    let (texts, red) = h.painted_text();
+    assert!(
+        texts.iter().any(|t| t == "Pick edges to chamfer"),
+        "{texts:?}"
+    );
+    assert!(!red, "{texts:?}");
+    assert_eq!(
+        h.drawn_bodies(&[&stock, &segment]),
+        BTreeSet::from([stock.body, segment.body])
+    );
 }
