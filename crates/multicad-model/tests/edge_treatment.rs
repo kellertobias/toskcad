@@ -986,12 +986,19 @@ fn rust_box_fillet_accepts_each_complete_edge_and_preserves_the_other_edges() {
             );
         }
     }
+    // CAD-411: two perpendicular edges that meet at a box corner bound one
+    // common face and meet along a mitred blend. Each blend removes the
+    // corner strip (1 - pi/4) r^2 along its edge; where they meet, the
+    // section integral of the inset corner adds back (5/3 - pi/2) r^3.
     let (first, a, b) = &edges[0];
     let across = (0..3).find(|&axis| a[axis] != b[axis]).unwrap();
-    let (perpendicular, ..) = edges
+    let (perpendicular, c, d) = edges
         .iter()
-        .find(|(_, a, b)| a[across] == b[across])
+        .find(|(_, c, d)| c[across] == d[across] && (c == a || c == b || d == a || d == b))
         .unwrap();
+    let span =
+        |p: &[f64; 3], q: &[f64; 3]| (0..3).map(|axis| (p[axis] - q[axis]).abs()).sum::<f64>();
+    let lengths = [span(a, b), span(c, d)];
     let multiple = EdgeTreatmentRequest::new(
         input,
         parameters(&session),
@@ -999,20 +1006,68 @@ fn rust_box_fillet_accepts_each_complete_edge_and_preserves_the_other_edges() {
     );
     let prepared =
         model::prepare_edge_treatment(&session, session.revision(), actor(), &multiple).unwrap();
-    let result = Compiler::default().compile_with_backend(
-        prepared.prepared.document(),
-        session.revision() + 1,
-        GeometryBackend::Rust,
-        None,
+    let result = compile(prepared.prepared.document(), session.revision() + 1);
+    let shape = &result.snapshot().shapes[&multiple.feature];
+    let r: f64 = 2.;
+    near(
+        shape.volume_mm3,
+        6000. - (lengths[0] + lengths[1]) * (1. - std::f64::consts::FRAC_PI_4) * r * r
+            + (5. / 3. - std::f64::consts::FRAC_PI_2) * r.powi(3),
     );
-    let failure = result
+}
+
+#[test]
+fn rust_box_fillet_refuses_a_rounded_edge_ending_beside_one_unselected_corner_edge() {
+    use multicad_model::GeometryBackend;
+
+    let (session, input, vertical) = fixture();
+    let base = Compiler::default()
+        .compile_with_backend(
+            session.document(),
+            session.revision(),
+            GeometryBackend::Rust,
+            None,
+        )
+        .unwrap();
+    let stock = &base.snapshot().shapes[&input.producer].topology;
+    let line = |predicate: &dyn Fn([f64; 3], [f64; 3]) -> bool| {
+        let element = stock
+            .elements
+            .iter()
+            .find(|element| {
+                matches!(element.geometry, Some(AnalyticGeometry::Line { a_mm, b_mm }) if predicate(a_mm, b_mm))
+            })
+            .unwrap();
+        GeometryIntent::capture(stock, element.key).unwrap()
+    };
+    // The vertical edge at (30, 20), the top edge along x at y = 20 that
+    // meets it, and the top edge along y at x = 0 that does not. In every
+    // axis view one rounded edge ends at a corner with only one of its two
+    // other edges selected.
+    let along_x = line(&|a, b| a[1] == 20. && b[1] == 20. && a[2] == 10. && b[2] == 10.);
+    let along_y = line(&|a, b| a[0] == 0. && b[0] == 0. && a[2] == 10. && b[2] == 10.);
+    let request = EdgeTreatmentRequest::new(
+        input,
+        parameters(&session),
+        vec![vertical, along_x, along_y],
+    );
+    let prepared =
+        model::prepare_edge_treatment(&session, session.revision(), actor(), &request).unwrap();
+    let failure = Compiler::default()
+        .compile_with_backend(
+            prepared.prepared.document(),
+            session.revision() + 1,
+            GeometryBackend::Rust,
+            None,
+        )
         .err()
-        .expect("perpendicular blends require shared corner surfaces");
+        .expect("this corner needs a setback blend the kernel does not build");
+    let message = failure.to_string();
     assert!(
-        failure
-            .to_string()
-            .contains("complete parallel straight edges")
+        message.contains("select both of them or neither"),
+        "{message}"
     );
+    assert_eq!(request.edges.len(), 3, "the selection stays for repair");
 }
 
 #[test]
