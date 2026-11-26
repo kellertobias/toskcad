@@ -130,11 +130,13 @@ impl ModelToolController {
     }
     /// Active spacing and modifier shown with the Extrude distance arrow.
     pub fn operation_snap_label(&self) -> Option<String> {
-        self.operation
-            .entry
-            .as_ref()?
-            .drag_snap()
-            .map(super::super::drag_snap::DragSnap::label)
+        let entry = self.operation.entry.as_ref()?;
+        let snap = entry.drag_snap()?;
+        Some(if entry.on_target() {
+            "face plane · Shift for free".into()
+        } else {
+            snap.label()
+        })
     }
 
     pub fn operation_viewport(
@@ -304,11 +306,29 @@ impl ModelToolController {
         }
         // Distance drags share the dimension-drag snap policy (CAD-403).
         let snap = (kind == ValueKind::Distance).then(|| self.drag_snap(ui));
+        let painted = self.operation.drag.as_ref().map_or(handle, |d| d.handle);
+        // Face planes along the arrow are targets within 8 px.
+        let targets = match painted {
+            Handle::Linear { start, direction } if snap.is_some() => {
+                let pixels = screen(input.camera, input.rect, start)
+                    .zip(screen(input.camera, input.rect, add(start, direction)))
+                    .map_or(0., |(a, b)| f64::from(a.distance(b)));
+                if pixels > 1e-3 {
+                    super::super::drag_snap::DragTargets {
+                        values: self.drag_plane_offsets(start, direction),
+                        tolerance: 8. / pixels,
+                    }
+                } else {
+                    Default::default()
+                }
+            }
+            _ => Default::default(),
+        };
         if let Some(entry) = &mut self.operation.entry {
             entry.set_drag_snap(snap);
+            entry.set_drag_targets(targets);
         }
         let entry_value = self.operation.entry.as_ref().map_or(0., ValueEntry::value);
-        let painted = self.operation.drag.as_ref().map_or(handle, |d| d.handle);
         // Screen geometry.
         let (path, grip): (Vec<Pos2>, Option<Pos2>) = match painted {
             Handle::Linear { start, direction } => {

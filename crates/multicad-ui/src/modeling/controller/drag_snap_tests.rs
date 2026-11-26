@@ -397,18 +397,56 @@ struct ExtrudeHarness {
     camera: Camera,
     rect: Rect,
     modifiers: egui::Modifiers,
+    scene: Option<std::sync::Arc<crate::viewport::Scene>>,
 }
 
 impl ExtrudeHarness {
     /// A 30 × 20 mm rectangle on XY, Extrude open with the default 10 mm,
     /// seen obliquely at the given zoom.
     fn new(scale: f32) -> Self {
+        Self::with_document(scale, Document::new("Extrude snap").unwrap())
+    }
+    /// The same profile beside an existing 30 × 20 × `height` box whose
+    /// faces the viewport reports as the canonical scene.
+    fn with_box(scale: f32, height: f64) -> Self {
+        let mut session = Session::new(Document::new("Extrude face snap").unwrap()).unwrap();
+        let request = model::PrimitiveRequest::new(
+            "Existing body",
+            model::PrimitiveParameters::Box {
+                size: [30., 20., height].map(model::length),
+                frame: model::PrimitiveFrame {
+                    origin: [40., 0., 0.].map(model::length),
+                    ..Default::default()
+                },
+            },
+        );
+        let prepared = model::prepare_primitive(
+            &session,
+            session.revision(),
+            Actor::local(Channel::Ui),
+            &request,
+        )
+        .unwrap();
+        session.commit(prepared.prepared).unwrap();
+        let mut h = Self::with_document(scale, session.document().clone());
+        let compiled = multicad_model::Compiler::default()
+            .compile_with_backend(
+                h.session.document(),
+                h.session.revision(),
+                multicad_model::GeometryBackend::Rust,
+                None,
+            )
+            .unwrap();
+        let scene =
+            crate::modeling::native_fixture::scene(h.session.document(), compiled.snapshot(), 1)
+                .unwrap();
+        h.scene = Some(scene);
+        h
+    }
+    fn with_document(scale: f32, document: Document) -> Self {
         use multicad_core::{constraint_sketch::source::Source, sketch::Datum, sketch_regions};
         let (sketch, edits) = Source::create(Datum::Xy, "Snap profile").unwrap();
-        let document = Document::new("Extrude snap")
-            .unwrap()
-            .edited(&edits)
-            .unwrap();
+        let document = document.edited(&edits).unwrap();
         let mut source = Source::read(&document, sketch).unwrap().0;
         source.add_rectangle([0., 0.], [30., 20.]).unwrap();
         let profiles = sketch_regions::extract(&source)
@@ -449,6 +487,7 @@ impl ExtrudeHarness {
             },
             rect: Rect::from_min_size(Pos2::ZERO, SIZE),
             modifiers: egui::Modifiers::NONE,
+            scene: None,
         }
     }
     fn screen(&self, p: [f64; 3]) -> Pos2 {
@@ -462,6 +501,7 @@ impl ExtrudeHarness {
         let mut result = None;
         self.controller
             .set_drag_grid(crate::viewport::grid_step(camera, rect, 10.));
+        self.controller.set_drag_scene(self.scene.as_deref());
         self.ctx
             .run_ui(
                 egui::RawInput {
@@ -621,4 +661,45 @@ fn shift_frees_the_extrude_distance_and_typed_values_override_the_snap() {
     h.typed("31.37");
     assert!(matches!(h.settle(), Some(ModelToolOutcome::Applied(_))));
     assert_eq!(h.stored_distance(), 31.37);
+}
+
+#[test]
+fn extrude_distance_drags_snap_to_existing_face_planes_before_the_grid() {
+    let mut h = ExtrudeHarness::with_box(3.713, 43.);
+    h.frame(vec![]);
+    let offsets = h
+        .controller
+        .drag_plane_offsets([15., 10., 0.], [0., 0., 1.]);
+    assert!(offsets.contains(&43.), "{offsets:?}");
+    h.button([15., 10., 10.], true);
+    // Near the 43 mm top face of the other body: the face beats the grid.
+    h.drag([15., 10., 41.6]);
+    assert_eq!(h.value(), 43.);
+    assert!(
+        h.controller
+            .operation_snap_label()
+            .unwrap()
+            .starts_with("face plane")
+    );
+    // Away from the face the grid applies again.
+    h.drag([15., 10., 31.4]);
+    assert_eq!(h.value(), 30.);
+    assert!(
+        h.controller
+            .operation_snap_label()
+            .unwrap()
+            .starts_with("grid")
+    );
+    // Shift releases the face as well as the grid.
+    h.modifiers = egui::Modifiers::SHIFT;
+    h.drag([15., 10., 41.6]);
+    let free = h.value();
+    assert!(free != 43. && (free - 41.6).abs() < 0.05, "{free}");
+    h.modifiers = egui::Modifiers::NONE;
+    h.drag([15., 10., 44.1]);
+    assert_eq!(h.value(), 43.);
+    h.button([15., 10., 44.1], false);
+    h.typed("");
+    assert!(matches!(h.settle(), Some(ModelToolOutcome::Applied(_))));
+    assert_eq!(h.stored_distance(), 43.);
 }

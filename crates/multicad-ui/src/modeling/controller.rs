@@ -115,6 +115,8 @@ struct Handoff {
     evaluated_scene: Arc<Scene>,
     architecture_levels: std::sync::OnceLock<crate::architecture_view::Levels>,
 }
+/// A world face plane: a point on it and its unit normal.
+type FacePlane = ([f64; 3], [f64; 3]);
 #[derive(Default)]
 pub struct ModelToolController {
     architecture_level: Option<Option<EntityId>>,
@@ -143,6 +145,9 @@ pub struct ModelToolController {
     /// Floor-grid spacing the viewport displays at the current zoom; the
     /// shared drag-snap step for dimension handles (CAD-402, CAD-403).
     drag_grid_mm: Option<f64>,
+    /// World face planes (point, unit normal) of the current canonical
+    /// scene, cached by its stamp, for geometry drag targets (CAD-403).
+    drag_planes: Option<(SceneStamp, Arc<Vec<FacePlane>>)>,
     context_valid: bool,
     context_attempt: Option<SceneStamp>,
     context_notice: Option<String>,
@@ -2655,6 +2660,55 @@ impl ModelToolController {
     /// frame; `None` leaves dimension drags at the free resolution.
     pub fn set_drag_grid(&mut self, spacing_mm: Option<f64>) {
         self.drag_grid_mm = spacing_mm;
+    }
+    /// The host reports the canonical scene it displays; its planar faces
+    /// become drag targets. `None` (no current scene) clears them.
+    pub fn set_drag_scene(&mut self, scene: Option<&Scene>) {
+        let Some(scene) = scene else {
+            self.drag_planes = None;
+            return;
+        };
+        if self
+            .drag_planes
+            .as_ref()
+            .is_some_and(|(stamp, _)| *stamp == scene.stamp())
+        {
+            return;
+        }
+        let mut planes = vec![];
+        for instance in scene.instances() {
+            let Some(snapshot) = scene.topology_snapshot(instance.id) else {
+                continue;
+            };
+            for element in snapshot.elements {
+                if let Some(multicad_core::references::AnalyticGeometry::Plane { frame }) =
+                    element.geometry
+                {
+                    let normal = frame.normal();
+                    let length = normal.iter().map(|v| v * v).sum::<f64>().sqrt();
+                    if length.is_finite() && length > 0. {
+                        planes.push((frame.origin_mm, normal.map(|v| v / length)));
+                    }
+                }
+            }
+        }
+        self.drag_planes = Some((scene.stamp(), Arc::new(planes)));
+    }
+    /// Signed distances along `direction` from `start` to the face planes
+    /// perpendicular to it.
+    pub(crate) fn drag_plane_offsets(&self, start: [f64; 3], direction: [f64; 3]) -> Vec<f64> {
+        let dot = |a: [f64; 3], b: [f64; 3]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+        let mut offsets: Vec<f64> = self
+            .drag_planes
+            .iter()
+            .flat_map(|(_, planes)| planes.iter())
+            .filter(|(_, normal)| dot(*normal, direction).abs() >= 1. - 1e-9)
+            .map(|(point, _)| dot([0, 1, 2].map(|i| point[i] - start[i]), direction))
+            .filter(|offset| offset.is_finite())
+            .collect();
+        offsets.sort_by(f64::total_cmp);
+        offsets.dedup();
+        offsets
     }
     /// Snap state of the shared dimension-drag policy for this frame.
     pub(crate) fn drag_snap(&self, ui: &egui::Ui) -> super::drag_snap::DragSnap {
