@@ -6,7 +6,7 @@
 //! pickable in the 3D view and extrudable in either order.
 use super::tests::{click_sketch_modifiers, input, session, settle};
 use super::*;
-use crate::modeling::native_fixture::{NativeBackend, scene};
+use crate::modeling::native_fixture::NativeBackend;
 use multicad_core::{
     constraint_sketch::CurveKind,
     sketch_draw::{DrawInput, DrawRequest, PointInput},
@@ -48,6 +48,7 @@ struct Reported {
     editor: SketchEditor,
     sketch: EntityId,
     ctx: egui::Context,
+    feed: crate::viewport::SceneFeed,
 }
 
 impl Reported {
@@ -122,27 +123,46 @@ impl Reported {
         editor.tool = None;
         settle(&mut editor, &session);
         editor.finish().unwrap();
+        let mut feed = crate::viewport::SceneFeed::default();
+        feed.set_backend(Box::new(NativeBackend::new()));
         Self {
             session,
             editor,
             sketch,
             ctx,
+            feed,
         }
     }
-    fn scene(&self) -> Arc<crate::viewport::Scene> {
-        let native = Compiler::default()
-            .compile(self.session.document(), self.session.revision())
-            .unwrap();
-        scene(self.session.document(), native.snapshot(), 1).unwrap()
+    /// Waits for the native scene of the current revision, like the app.
+    fn scene(&mut self) -> Arc<crate::viewport::Scene> {
+        let (document, revision) = (self.session.document().id(), self.session.revision());
+        let until = Instant::now() + Duration::from_secs(10);
+        while !self.feed.is_current(document, revision) {
+            self.feed.tick(self.session.document(), revision);
+            assert!(Instant::now() < until, "{:?}", self.feed.error());
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.feed.visible().unwrap().clone()
     }
     fn frame(&mut self, events: Vec<egui::Event>) {
         let scene = self.scene();
         self.editor.display_scene = Some(scene.clone());
         settle(&mut self.editor, &self.session);
+        let resources = Default::default();
         self.ctx
             .run_ui(input(events), |ui| {
-                self.editor
-                    .canvas(ui, &mut self.session, false, Some(scene.clone()), true)
+                self.editor.canvas_with_model(
+                    ui,
+                    &mut self.session,
+                    false,
+                    Some(scene.clone()),
+                    true,
+                    Some(ModelCanvas {
+                        resources: &resources,
+                        feed: &self.feed,
+                        symbol_view: false,
+                    }),
+                )
             })
             .drop_without_applying_deltas();
     }
@@ -360,17 +380,28 @@ fn reported_sketch_extrudes_selection_first_and_tool_first_with_one_undo_each() 
             Channel::Ui,
         )
         .unwrap();
+    assert!(h.editor.awaiting_model_targets(), "{}", h.editor.message);
+    h.hover(B_POINT);
+    assert!(
+        h.editor
+            .hovered_profile_area()
+            .is_some_and(|a| (a - B_AREA).abs() < 1e-3),
+        "tool-first hover: {}",
+        h.editor.message
+    );
     h.click(B_POINT, false);
-    let wait = Instant::now() + Duration::from_secs(10);
-    while !h.editor.model.active() {
-        h.frame(vec![]);
-        assert!(
-            Instant::now() < wait,
-            "Extrude did not start: {}",
-            h.editor.message
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    assert_eq!(h.selected_areas().len(), 1, "{}", h.editor.message);
+    near(h.selected_areas()[0], B_AREA, "tool-first B");
+    // Shift adds, and removes again, without leaving the tool.
+    h.click(L_POINT, true);
+    assert_eq!(h.selected_areas().len(), 2, "{}", h.editor.message);
+    h.click(L_POINT, true);
+    assert_eq!(h.selected_areas().len(), 1, "{}", h.editor.message);
+    assert!(!h.editor.model.active());
+    // "Use selected targets" opens the same Extrude form as selection-first.
+    h.editor
+        .advance_model_targets(&h.session, &resources, &h.feed, true);
+    assert!(h.editor.model.active(), "{}", h.editor.message);
     let distance = h
         .editor
         .model
@@ -407,4 +438,166 @@ fn reported_sketch_extrudes_selection_first_and_tool_first_with_one_undo_each() 
             .sum()
     };
     near(total(&after), total(&before), "reopened volume");
+}
+
+/// Draws one more finished sketch on XY with `input`, through the editor.
+fn finished_sketch(h: &mut Reported, input: DrawInput) -> EntityId {
+    h.editor
+        .create(&mut h.session, Datum::Xy, Channel::Ui)
+        .unwrap();
+    let id = h.editor.selected.unwrap();
+    settle(&mut h.editor, &h.session);
+    h.editor
+        .draw(
+            &mut h.session,
+            &DrawRequest {
+                input,
+                construction: false,
+            },
+            Channel::Ui,
+        )
+        .unwrap();
+    settle(&mut h.editor, &h.session);
+    h.editor.finish().unwrap();
+    id
+}
+
+#[test]
+fn open_and_self_intersecting_profiles_are_refused_with_an_explicit_message() {
+    let mut h = Reported::new();
+    let resources = Default::default();
+    // Selected as a whole, the reported sketch still offers both areas.
+    h.editor.tree_selection = BTreeSet::from([h.sketch]);
+    h.editor.selected = Some(h.sketch);
+    h.editor
+        .activate_model_tool(
+            &h.session,
+            &resources,
+            &h.feed,
+            crate::modeling::ModelingTool::Extrude,
+            Channel::Ui,
+        )
+        .unwrap();
+    assert!(h.editor.model.active(), "{}", h.editor.message);
+    h.editor.cancel_model();
+
+    let position = |p: [f64; 2]| PointInput::Position(p);
+    let open = finished_sketch(
+        &mut h,
+        DrawInput::Polyline {
+            vertices: [[200., 0.], [260., 0.], [260., 40.], [200., 40.]]
+                .map(position)
+                .to_vec(),
+            closed: false,
+        },
+    );
+    let crossing = finished_sketch(
+        &mut h,
+        DrawInput::BSpline {
+            poles: [[300., 0.], [340., 40.], [340., 0.], [300., 40.]]
+                .map(position)
+                .to_vec(),
+            basis: multicad_core::constraint_sketch::SplineBasis::open_uniform(3, 5).unwrap(),
+            closed: true,
+        },
+    );
+    h.frame(vec![]);
+    for (id, expected) in [
+        (open, "Open profile endpoint"),
+        (crossing, "Self-intersecting"),
+    ] {
+        let presentation = h.editor.sketch_evaluation.current(id).unwrap();
+        assert!(presentation.regions.regions.is_empty(), "{expected}");
+        // Selection-first: Extrude on the whole sketch explains the refusal.
+        h.editor.tree_selection = BTreeSet::from([id]);
+        h.editor.selected = Some(id);
+        let before = h.session.revision();
+        h.editor
+            .activate_model_tool(
+                &h.session,
+                &resources,
+                &h.feed,
+                crate::modeling::ModelingTool::Extrude,
+                Channel::Ui,
+            )
+            .unwrap();
+        assert!(!h.editor.model.active());
+        assert!(
+            h.editor.message.contains("no closed area") && h.editor.message.contains(expected),
+            "{}",
+            h.editor.message
+        );
+        h.editor.cancel_model();
+        assert_eq!(h.session.revision(), before);
+    }
+    // Tool-first: a click inside the open U finds no area and says why.
+    h.editor.tree_selection.clear();
+    h.editor.selected = None;
+    h.editor.profiles.clear();
+    h.editor
+        .activate_model_tool(
+            &h.session,
+            &resources,
+            &h.feed,
+            crate::modeling::ModelingTool::Extrude,
+            Channel::Ui,
+        )
+        .unwrap();
+    h.frame(vec![]);
+    let rect = h.editor.viewport_rect.unwrap();
+    h.editor.camera.fit(&[[0., 0., 0.], [350., 60., 0.]], rect);
+    let inside = h.screen([230., 20.]);
+    assert!(rect.contains(inside));
+    h.click([230., 20.], false);
+    assert!(h.editor.profiles.selected().is_empty());
+    assert!(
+        h.editor.message.contains("no closed area"),
+        "{}",
+        h.editor.message
+    );
+}
+
+#[test]
+fn native_cells_refuse_halves_that_share_the_same_boundary_curves() {
+    use multicad_core::sketch_regions::{Problem, extract_sketch_with_queries_and_interrupt};
+    let mut source = Source {
+        u: [1., 0., 0.],
+        sketch: Default::default(),
+    };
+    source.add_rectangle([20., 20.], [30., 30.]).unwrap();
+    let center = source.add_point([0., 0.]);
+    source
+        .sketch
+        .curves
+        .push(multicad_core::constraint_sketch::Curve {
+            id: EntityId::new(),
+            construction: false,
+            kind: CurveKind::Circle {
+                center,
+                radius_mm: 10.,
+            },
+        });
+    let a = source.add_point([-10., 0.]);
+    let b = source.add_point([10., 0.]);
+    source.add_line(a, b);
+    let result = extract_sketch_with_queries_and_interrupt(
+        &source.sketch.points,
+        &source.sketch.curves,
+        &[],
+        &NativeRegionQueries::default(),
+        None,
+    )
+    .unwrap();
+    // Both half disks are bounded by {circle, diameter}: neither is offered,
+    // the refusal is explicit, and the rectangle stays available.
+    assert_eq!(result.regions.len(), 1, "{:?}", result.diagnostics);
+    assert!((result.regions[0].area_mm2 - 100.).abs() < 1e-6);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.problem == Problem::AmbiguousJunction && d.message.contains("same curves")),
+        "{:?}",
+        result.diagnostics
+    );
 }

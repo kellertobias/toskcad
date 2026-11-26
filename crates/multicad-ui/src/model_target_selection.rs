@@ -734,6 +734,17 @@ impl SketchEditor {
             // CAD-152: explain a refused face set (e.g. not coplanar).
             self.message = format!("{} · {error}", a.tool.label());
         }
+        if a.profiles()
+            && confirm
+            && !profiles_ready
+            && self.profile_faces.is_empty()
+            && let Some(refusal) = self
+                .selected
+                .and_then(|id| self.closed_area_refusal(session, id))
+        {
+            // CAD-400: an open or self-intersecting sketch says why.
+            self.message = format!("{} · {refusal}", a.tool.label());
+        }
         let ready = if a.profiles() {
             confirm && profiles_ready
         } else {
@@ -928,13 +939,41 @@ impl SketchEditor {
         };
         let modifiers = crate::selection_input::click_modifiers(ui, response);
         if a.profiles() && self.selected.is_none() {
+            let label = a.tool.label();
             let toggle = modifiers.shift || modifiers.command || modifiers.ctrl;
+            let current = feed
+                .visible()
+                .filter(|_| feed.is_current(session.document().id(), session.revision()))
+                .map(|scene| scene.as_ref());
+            if let Some((id, point)) =
+                self.sketch_area_under_pointer(session, current, rect, pointer)
+            {
+                // A finished sketch's closed area: choose that sketch and area.
+                self.selected = Some(id);
+                self.tree_selection = BTreeSet::from([id]);
+                self.profile_faces.clear();
+                if let Err(error) = self.enqueue_profile_click(
+                    session.document(),
+                    session.revision(),
+                    id,
+                    point,
+                    toggle,
+                ) {
+                    self.message = error;
+                }
+                return;
+            }
             if let Some(scene) = feed
                 .visible()
                 .filter(|_| feed.is_current(session.document().id(), session.revision()))
                 .cloned()
             {
                 self.pick_profile_face(session, &scene, rect, pointer, toggle);
+                if self.profile_faces.is_empty()
+                    && let Some(refusal) = self.refusal_under_pointer(session, rect, pointer)
+                {
+                    self.message = format!("{label} · {refusal}");
+                }
             } else {
                 self.message = "Wait for current native geometry before selecting faces".into();
             }
