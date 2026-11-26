@@ -41,7 +41,6 @@ pub(super) struct EdgeTreatmentPanel {
     profile: EdgeTreatmentProfile,
     size: DimensionField,
     stamp: FormStamp,
-    picking: bool,
     picking_available: bool,
     name: String,
     mode: ChamferMode,
@@ -81,7 +80,6 @@ impl EdgeTreatmentPanel {
             choice.label,
         )?;
         panel.set_edges(scene, &edges)?;
-        panel.picking = true;
         panel.picking_available = true;
         Ok(panel)
     }
@@ -136,7 +134,6 @@ impl EdgeTreatmentPanel {
             profile: parameters.profile,
             size: DimensionField::from_dimension(&parameters.size, "mm")?,
             stamp: FormStamp::new(),
-            picking: !editing,
             picking_available: false,
             name,
             mode,
@@ -167,8 +164,14 @@ impl EdgeTreatmentPanel {
     pub fn edges(&self) -> &[GeometryIntent] {
         &self.edges
     }
+    /// CAD-410: edges are picked for as long as the tool is open; there is
+    /// no separate step to start or finish picking.
     pub fn picking(&self) -> bool {
-        self.picking_available && (self.picking || self.face_for.is_some())
+        self.picking_available
+    }
+    /// Auto-preview waits while nothing is picked or a side face is chosen.
+    pub fn awaiting_pick(&self) -> bool {
+        self.edges.is_empty() || self.face_for.is_some()
     }
     pub fn pick_kind(&self) -> Option<TopologyKind> {
         self.picking().then_some(if self.face_for.is_some() {
@@ -196,7 +199,6 @@ impl EdgeTreatmentPanel {
         self.picking_available = available;
     }
     pub fn stop_picking(&mut self) {
-        self.picking = false;
         self.face_for = None;
     }
     /// CAD-409: until the first edge is picked, an edge or face picked on
@@ -401,28 +403,12 @@ impl EdgeTreatmentPanel {
             }
         }
         ui.label(format!("{} captured edge(s)", self.edges.len()));
-        if ui
-            .add_enabled(
-                self.picking_available,
-                egui::Button::new(if self.picking && self.face_for.is_none() {
-                    "Finish picking edges"
-                } else {
-                    "Select / reselect edges"
-                }),
-            )
-            .on_hover_text(
-                "Pick the exact frozen upstream Part edges; Shift adds or removes captures",
-            )
-            .on_disabled_hover_text(
-                "Wait for complete current native source geometry before picking",
-            )
-            .clicked()
-        {
-            self.picking = !self.picking;
-            self.face_for = None;
-        }
         if self.picking() {
-            ui.small(if self.face_for.is_some(){"Choose one adjacent face for the indicated edge."}else{"Click an upstream edge. Shift toggles edges. Finish picking to preview the complete model."});
+            ui.small(if self.face_for.is_some() {
+                "Choose one adjacent face for the indicated edge."
+            } else {
+                "Click an edge to preview. Shift adds or removes edges."
+            });
         }
         changed |= self.show_edge_sides(ui);
         let validation = self.request(document, enabled);
@@ -444,7 +430,6 @@ impl EdgeTreatmentPanel {
             Some(FormAction::Preview) => {
                 let request = validation.ok()?;
                 self.remember(&request);
-                self.stop_picking();
                 Some(ModelEvent::Preview {
                     stamp: self.stamp,
                     request: ModelRequest::EdgeTreatment(Box::new(request)),

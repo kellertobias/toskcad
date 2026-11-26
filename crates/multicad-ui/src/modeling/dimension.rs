@@ -92,13 +92,15 @@ impl DimensionField {
     }
     pub fn show(&mut self, ui: &mut egui::Ui, label: &str, help: &str) -> bool {
         ui.label(format!("{label} ({})", self.unit));
-        ui.add(
-            egui::TextEdit::singleline(&mut self.text)
-                .desired_width(crate::controls::inspector_width(ui))
-                .hint_text(format!("Value or =$parameter · {}", self.unit)),
-        )
-        .on_hover_text(help)
-        .changed()
+        let response = ui
+            .add(
+                egui::TextEdit::singleline(&mut self.text)
+                    .desired_width(crate::controls::inspector_width(ui))
+                    .hint_text(format!("Value or =$parameter · {}", self.unit)),
+            )
+            .on_hover_text(help);
+        note_enter(ui, &response);
+        response.changed()
     }
     /// Stable identity for forms whose validation or preview messages can insert
     /// widgets before an active edit. Other tools keep the existing auto-ID path.
@@ -111,14 +113,16 @@ impl DimensionField {
     ) -> bool {
         let id = ui.make_persistent_id(id_salt);
         ui.label(format!("{label} ({})", self.unit));
-        ui.add(
-            egui::TextEdit::singleline(&mut self.text)
-                .id(id)
-                .desired_width(crate::controls::inspector_width(ui))
-                .hint_text(format!("Value or =$parameter · {}", self.unit)),
-        )
-        .on_hover_text(help)
-        .changed()
+        let response = ui
+            .add(
+                egui::TextEdit::singleline(&mut self.text)
+                    .id(id)
+                    .desired_width(crate::controls::inspector_width(ui))
+                    .hint_text(format!("Value or =$parameter · {}", self.unit)),
+            )
+            .on_hover_text(help);
+        note_enter(ui, &response);
+        response.changed()
     }
     /// The unit unqualified input is read in.
     pub fn unit(&self) -> &str {
@@ -145,13 +149,16 @@ impl DimensionField {
         } else {
             text
         });
-        ui.add(
-            egui::TextEdit::singleline(&mut self.text)
-                .id(id)
-                .desired_width(crate::controls::inspector_width(ui))
-                .hint_text(format!("Value or =$parameter · {}", self.unit)),
-        )
-        .on_hover_text(help)
+        let response = ui
+            .add(
+                egui::TextEdit::singleline(&mut self.text)
+                    .id(id)
+                    .desired_width(crate::controls::inspector_width(ui))
+                    .hint_text(format!("Value or =$parameter · {}", self.unit)),
+            )
+            .on_hover_text(help);
+        note_enter(ui, &response);
+        response
     }
     /// Two-column Inspector grids reserve room for their label instead of
     /// requesting the entire row for the value. The caller supplies an
@@ -171,14 +178,16 @@ impl DimensionField {
             egui::Label::new(format!("{label} ({})", self.unit)).wrap(),
         );
         let id = ui.make_persistent_id(id_salt);
-        ui.add(
-            egui::TextEdit::singleline(&mut self.text)
-                .id(id)
-                .desired_width(width)
-                .hint_text(format!("Value or =$parameter · {}", self.unit)),
-        )
-        .on_hover_text(help)
-        .changed()
+        let response = ui
+            .add(
+                egui::TextEdit::singleline(&mut self.text)
+                    .id(id)
+                    .desired_width(width)
+                    .hint_text(format!("Value or =$parameter · {}", self.unit)),
+            )
+            .on_hover_text(help);
+        note_enter(ui, &response);
+        response.changed()
     }
     pub fn resolve(&self, document: &Document) -> Result<Dimension, String> {
         if self.text.trim_start().starts_with('=') {
@@ -218,6 +227,23 @@ impl DimensionField {
         self.original = dimension.clone();
         self.original_text = self.text.clone();
     }
+}
+
+const FIELD_ENTER: &str = "multicad.modeling.field-enter";
+/// CAD-410: Enter that ends editing a numeric field asks the active tool to
+/// apply, exactly like Apply, once its value is valid.
+fn note_enter(ui: &egui::Ui, response: &egui::Response) {
+    if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+        let pass = ui.ctx().cumulative_pass_nr();
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::new(FIELD_ENTER), pass));
+    }
+}
+/// Whether a numeric field took Enter in this pass; clears the request.
+pub(crate) fn take_field_enter(ctx: &egui::Context) -> bool {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|data| data.remove_temp::<u64>(egui::Id::new(FIELD_ENTER)))
+        .is_some_and(|noted| noted == pass)
 }
 
 #[cfg(test)]

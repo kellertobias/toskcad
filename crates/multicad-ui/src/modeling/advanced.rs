@@ -81,7 +81,6 @@ pub(super) struct AdvancedPanel {
     stamp: FormStamp,
     fields: fields::ParameterFields,
     inputs: inputs::Inputs,
-    picking: bool,
     picking_available: bool,
 }
 impl AdvancedPanel {
@@ -121,7 +120,6 @@ impl AdvancedPanel {
         if let (Some(scene), Some(input)) = (scene, panel.request.input.as_ref()) {
             validate_faces(scene, input, &panel.request.faces)?;
         }
-        panel.picking = kind.face_tool();
         panel.picking_available = scene.is_some();
         Ok(panel)
     }
@@ -151,7 +149,6 @@ impl AdvancedPanel {
             kind,
             editing,
             stamp: FormStamp::new(),
-            picking: false,
             picking_available: false,
         })
     }
@@ -167,14 +164,13 @@ impl AdvancedPanel {
     pub fn captures(&self) -> &[GeometryIntent] {
         &self.request.faces
     }
+    /// CAD-410: a face tool picks for as long as it is open; there is no
+    /// separate step to start or finish picking.
     pub fn picking(&self) -> bool {
-        self.kind.face_tool() && self.picking && self.picking_available
+        self.kind.face_tool() && self.picking_available
     }
     pub fn set_picking_available(&mut self, available: bool) {
         self.picking_available = available;
-    }
-    pub fn stop_picking(&mut self) {
-        self.picking = false;
     }
     pub fn set_captures(
         &mut self,
@@ -276,24 +272,8 @@ impl AdvancedPanel {
                 "{} captured source face(s)",
                 self.request.faces.len()
             ));
-            if ui
-                .add_enabled(
-                    self.picking_available,
-                    egui::Button::new(if self.picking {
-                        "Finish picking faces"
-                    } else {
-                        "Select / reselect faces"
-                    }),
-                )
-                .on_hover_text("Pick faces on the frozen upstream Part; Shift adds or removes")
-                .clicked()
-            {
-                self.picking = !self.picking;
-            }
             if self.picking() {
-                ui.small(
-                    "Select the source faces in the viewer, then finish picking to preview the complete model.",
-                );
+                ui.small("Click faces to preview. Shift adds or removes faces.");
             }
             let mut remove = None;
             for (index, capture) in self.request.faces.iter().enumerate() {
@@ -329,7 +309,6 @@ impl AdvancedPanel {
         match action {
             Some(FormAction::Preview) => {
                 let command = self.request(document, enabled).ok()?;
-                self.stop_picking();
                 Some(ModelEvent::Preview {
                     stamp: self.stamp,
                     request: ModelRequest::Advanced(Box::new(command)),

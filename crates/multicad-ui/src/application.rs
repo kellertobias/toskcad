@@ -5237,6 +5237,9 @@ mod inspector_tests;
 #[path = "application/ribbon_fit_tests.rs"]
 mod ribbon_fit_tests;
 #[cfg(test)]
+#[path = "application/tool_enter_tests.rs"]
+mod tool_enter_tests;
+#[cfg(test)]
 #[path = "application/tool_search_tests.rs"]
 mod tool_search_tests;
 #[cfg(test)]

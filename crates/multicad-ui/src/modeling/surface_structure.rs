@@ -35,7 +35,6 @@ pub(super) struct SurfaceStructurePanel {
     offset: [DimensionField; 2],
     rotation: DimensionField,
     border: DimensionField,
-    picking: bool,
     picking_available: bool,
     image_requested: bool,
     /// Callout ↔ field linking of the relief schematic.
@@ -47,14 +46,12 @@ impl SurfaceStructurePanel {
         Self::from_source(EntityId::new(), None, vec![], Parameters::default())
     }
     pub fn existing(request: SurfaceStructureRequest) -> Result<Self, String> {
-        let mut panel = Self::from_source(
+        Self::from_source(
             request.feature,
             Some(request.input),
             request.faces,
             request.parameters,
-        )?;
-        panel.picking = false;
-        Ok(panel)
+        )
     }
     fn from_source(
         feature: EntityId,
@@ -76,7 +73,6 @@ impl SurfaceStructurePanel {
             offset: [mm(&parameters.offset[0])?, mm(&parameters.offset[1])?],
             rotation: DimensionField::from_dimension(&parameters.rotation, "deg")?,
             border: mm(&parameters.border)?,
-            picking: true,
             picking_available: false,
             image_requested: false,
             link: DiagramLink::default(),
@@ -91,14 +87,13 @@ impl SurfaceStructurePanel {
     pub fn faces(&self) -> &[GeometryIntent] {
         &self.faces
     }
+    /// CAD-410: faces are picked for as long as the tool is open; there is
+    /// no separate step to start or finish picking.
     pub fn picking(&self) -> bool {
-        self.picking && self.picking_available
+        self.picking_available
     }
     pub fn set_picking_available(&mut self, available: bool) {
         self.picking_available = available;
-    }
-    pub fn stop_picking(&mut self) {
-        self.picking = false;
     }
     pub fn take_image_request(&mut self) -> Option<FormStamp> {
         std::mem::take(&mut self.image_requested).then_some(self.stamp)
@@ -214,17 +209,6 @@ impl SurfaceStructurePanel {
             "{} of {MAX_SURFACE_STRUCTURE_FACES} planar faces selected",
             self.faces.len()
         ));
-        let pick = if self.picking() {
-            "Finish picking faces"
-        } else {
-            "Pick or repair faces"
-        };
-        if ui
-            .add_enabled(self.picking_available, egui::Button::new(pick))
-            .clicked()
-        {
-            self.picking = !self.picking;
-        }
         if self.picking() {
             ui.small("Click a planar face. Hold Shift to add or remove a face.");
         }

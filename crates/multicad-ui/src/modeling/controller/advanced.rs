@@ -131,9 +131,4 @@ impl ModelToolController {
             panel.set_sketch_context(context.profiles.clone(), context.paths.clone());
         }
     }
-    pub(super) fn stop_advanced_picking(&mut self) {
-        if let Some(ModelForm::Advanced(panel)) = &mut self.form {
-            panel.stop_picking();
-        }
-    }
 }
