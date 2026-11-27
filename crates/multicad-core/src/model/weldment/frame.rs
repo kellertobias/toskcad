@@ -950,3 +950,111 @@ pub(super) fn validate_frames(document: &Document) -> Result<(), DocumentError> 
     }
     Ok(())
 }
+
+/// One node's derived joint as the Frame tool shows it: the joint kind and
+/// whether its members are reversed from automatic, or the reason it cannot
+/// be built.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NodeJoint {
+    pub node: EntityId,
+    pub pairs: Vec<FramePair>,
+    pub overridden: bool,
+    pub problem: Option<String>,
+}
+/// The derived joint at every node where two or more members meet, checked
+/// against the same cut builders the evaluator uses, on a document that
+/// already holds the frame and its member features.
+pub fn frame_joint_report(
+    document: &Document,
+    parameters: &EvaluatedParameters,
+    frame: EntityId,
+) -> Result<Vec<NodeJoint>, DocumentError> {
+    let definition = read_frame(document, frame)?;
+    let mut resolved = BTreeMap::new();
+    for (member, feature) in frame_member_features(document, frame) {
+        let source = read_member(document, feature)?;
+        let segment = frame_member_path(document, parameters, frame, member)?;
+        resolved.insert(
+            member,
+            resolve_member(document, parameters, &source, segment)?,
+        );
+    }
+    let mut out = vec![];
+    for node in &definition.nodes {
+        let mut single = definition.clone();
+        // Report each node on its own so one refusal does not hide others.
+        single.joints.retain(|j| j.node == node.id);
+        let incident = definition
+            .members
+            .iter()
+            .filter(|m| m.start == node.id || m.end == node.id)
+            .count()
+            + usize::from(matches!(node.position, NodePosition::Along { .. }));
+        if incident < 2 && definition.joint(node.id).is_none() {
+            continue;
+        }
+        single.nodes.retain(|n| n.id == node.id);
+        let pairs = node_pairs(
+            document,
+            &definition,
+            &single,
+            parameters,
+            &resolved,
+            node.id,
+        );
+        let overridden = definition.joint(node.id).is_some();
+        match pairs {
+            Ok(pairs) => {
+                let problem = pairs.iter().find_map(|p| {
+                    resolve_connection(
+                        p.kind,
+                        &resolved[&p.members[0]],
+                        &resolved[&p.members[1]],
+                        p.gap_mm,
+                    )
+                    .err()
+                    .map(|e| match e {
+                        DocumentError::Invalid(m) => m,
+                        other => other.to_string(),
+                    })
+                });
+                if pairs.is_empty() && problem.is_none() && !overridden {
+                    continue;
+                }
+                out.push(NodeJoint {
+                    node: node.id,
+                    pairs,
+                    overridden,
+                    problem,
+                });
+            }
+            Err(e) => out.push(NodeJoint {
+                node: node.id,
+                pairs: vec![],
+                overridden,
+                problem: Some(match e {
+                    DocumentError::Invalid(m) => m,
+                    other => other.to_string(),
+                }),
+            }),
+        }
+    }
+    Ok(out)
+}
+/// The pairs at one node: `single` holds only that node and its override,
+/// with the full definition's members.
+fn node_pairs(
+    document: &Document,
+    full: &FrameDefinition,
+    single: &FrameDefinition,
+    parameters: &EvaluatedParameters,
+    resolved: &BTreeMap<EntityId, ResolvedMember>,
+    node: EntityId,
+) -> Result<Vec<FramePair>, DocumentError> {
+    let mut probe = full.clone();
+    probe.joints = single.joints.clone();
+    Ok(frame_pairs(document, &probe, parameters, resolved, None)?
+        .into_iter()
+        .filter(|p| p.node == node)
+        .collect())
+}
