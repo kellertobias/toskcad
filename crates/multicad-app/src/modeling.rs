@@ -20,6 +20,11 @@ use std::{
 mod architecture_authoring_tests;
 #[path = "modeling/architecture_plan.rs"]
 mod architecture_plan;
+#[path = "modeling/opening_display.rs"]
+mod opening_display;
+#[cfg(test)]
+#[path = "modeling/opening_display_tests.rs"]
+mod opening_display_tests;
 #[cfg(test)]
 #[path = "modeling/tests.rs"]
 mod tests;
@@ -546,6 +551,11 @@ fn scene_with_display_cache(
             }))
         })
         .and_then(|scene| scene.with_native_bounds(model.stamp.source_hash, native_bounds))
+        .and_then(|scene| {
+            // CAD-429: doors and windows inside their wall openings.
+            let elements = opening_display::elements(document, model, &scene)?;
+            scene.with_display_elements(elements)
+        })
         .and_then(|scene| scene.with_envelope_boxes(model.envelope_boxes.clone()))
         .and_then(|scene| scene.with_guide_outlines(model.guide_outlines.clone()))
         .and_then(|scene| {
