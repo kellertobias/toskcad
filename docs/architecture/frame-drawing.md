@@ -1,9 +1,9 @@
 # Frame drawing: profile and tube frames drawn as lines (CAD-435 design)
 
-Status: **design proposal, phase 1.** Nothing in this document is
-implemented yet. The open product decisions are PLAINER questions on
-CAD-435; the recommended answers are marked below. Phase 2 and later start
-only after the product owner has answered.
+Status: **design accepted for planning, 2026-11-27.** The product owner
+answered the eleven CAD-435 questions (§10). Nothing in this document is
+implemented yet except the CAD-434 stock picker work it builds on. Slice 1
+(§9) is re-planned for the answers: it is a full 3D slice.
 
 Related: [weldments.md](weldments.md) (what exists today),
 [walls.md](walls.md) and CAD-427 (the wall drawing gesture this follows),
@@ -162,7 +162,8 @@ radius with its own capability).
 
 ## 4. Interaction
 
-The tool is **Model → Frame → Draw frame** (question Q7 covers placement).
+The tool is **Model → Metal → Frame** (Q7: a new Model ribbon group
+"Metal" with a "Frame" tool; Project stays ribbon-free).
 It opens a form on the right, like walls: profile, placement, plane, then
 the node and member lists. The viewport is where most of the work happens.
 
@@ -272,8 +273,12 @@ onto the leg top, or two butts). The editor lists the order explicitly.
 
 ### 5.2 Gap and weld preparation
 
-- **Gap** moves each cut back by the gap (half per side for a mitre), as
-  today. It changes the cut list lengths. (Q9)
+- **Gap** (Q9: "make configurable weld gap, defaults to 0") is a value on
+  each joint, with a frame-level default of 0 mm. A non-zero gap moves each
+  cut back by the gap (half per side for a mitre), as weldment connections
+  do today, so the cut list shows real saw lengths. *This shortening
+  reading is our interpretation of the answer and is pending the product
+  owner's confirmation.*
 - **Preparation**: none, bevel (angle, land) or V on the cut edge. Modelled
   as an exact chamfer on the cut faces in a later slice; until then it is
   carried to the weld schedule and the cutting sheet as an annotation.
@@ -314,6 +319,15 @@ Evaluated per node from current geometry; shown as a badge in the viewport
 The user changes any node in the joint editor: a linked diagram of the two
 (or more) sections at the node, with the kind as picture tiles, the through
 member as a toggle, and gap and prep fields linked to the diagram.
+
+### 5.5 Joints on channel, T and I/H sections
+
+CAD-434 adds parametric channel, T and I/H stock (Q11). Until a later
+slice adds their joint rules, members of these sections can be placed and
+mitred when mirrored, and they butt square onto a flat face only as the
+terminating member. Copes against them and butt joints with them running
+through are refused with the reason, for example "Copes against a channel
+are not supported yet; use a butt joint onto a flat face".
 
 ## 6. Outputs
 
@@ -408,99 +422,115 @@ How this is clearly better:
 
 ## 9. Phasing
 
-### Slice 1: planar frames, two-member joints (the first useful slice)
+Slice 1 is a **full 3D slice** (Q3). It is ordered so a planar frame works
+first, but it is only done when off-plane members, temporary planes,
+multi-member nodes and T/X joints work too.
 
-Scope: draw a planar frame, get exact members and corners, edit by
-dragging, read the cut list. Enough for a gate, a table top frame, a
-picture frame, a bracket.
+### Slice 1: 3D frames with automatic joints
 
-1. **Core model**: `weldment.frame` entity with nodes (`Absolute`, `Polar`),
-   members (stock, placement with grid and side anchors, offset, roll,
-   extensions), joint overrides; `MemberPath::FrameMember`; capability
-   `weldment.frame.1`; typed transactions (create frame, add chain, move
-   node, set member placement, set joint, delete member/node) shared by UI
-   and MCP.
-2. **Evaluation**: frame members evaluate through the existing
-   `ResolvedMember` and native solid; joints at two-member nodes derive cuts
-   with the existing miter, butt and cope builders; automatic defaults
-   rules 1, 4, 5, 6; refusals are reported per node.
-3. **Draw frame tool**: plane pick, chained drawing with live section
-   preview, typed length and relative angle with units, closing loops,
-   snapping to nodes and to angle steps, Backspace, Enter, Esc, Apply and
-   Discard; node dragging; joint badges and a joint editor with kind,
-   through member and gap.
-4. **Placement**: frame default stock and placement; per-member override;
-   inner/outer for closed loops and left/right for open chains.
-5. **Cut list**: the existing cut list and groups shown in the form and via
-   MCP for frame members, plus mass per member and total.
+Work order inside the slice (each step is usable on its own):
 
-Acceptance criteria for slice 1 (proposed follow-up item):
+1. **Core model and transactions.** `weldment.frame` with nodes
+   (`Absolute`, `Polar` with `rise`, `Along`), members (stock, placement
+   with grid and side anchors, offset, roll, up rule, extensions) and joint
+   overrides (kind, through member, gap with frame default 0, order);
+   `MemberPath::FrameMember`; capability `weldment.frame.1`; typed
+   transactions shared by UI and MCP (create frame, add chain, move node,
+   split/merge member, set placement, set joint, delete member/node).
+2. **Planar evaluation.** Two-member nodes derive cuts with the existing
+   miter, butt and cope builders; default rules 1, 4, 5, 6 (§5.4); per-node
+   refusals in plain language.
+3. **Frame tool, planar.** Model → Metal → Frame: plane pick, chained
+   drawing with live section preview, typed length and relative angle with
+   units, closing loops, snapping to nodes and angle steps, Backspace,
+   Enter, Esc, Apply, Discard; node dragging; joint badges and the joint
+   editor (kind, through member, gap). Placement: frame default stock and
+   placement, per-member override, inner/outer for loops (Q6) and
+   left/right for open chains.
+4. **T and X joints.** `Along` nodes by snapping onto a member; collinear
+   chains run through as one member (Q5); split and merge; X joints as one
+   through member and two butted or coped halves.
+5. **3D.** Off-plane members (`Z` lock and typed rise), temporary drawing
+   planes through two members, off-plane up rule, snapping in 3D.
+6. **Multi-member nodes.** Three or more members at a node with an explicit
+   order (leg through, rule 8), angled butt joints and butt against round
+   members.
+7. **Outputs in the tool.** Live cut list with both end angles, long-point
+   faces, groups, mass per member and total.
+8. **Slot profiles.** Automatic, overridable fasteners at slot-profile
+   nodes (Q10) through `profile_connections.rs`.
 
-- A user draws a closed 4-node rectangle 1000 × 600 mm of SHS 40×40×2 with
-  side = inner, by typing lengths and angles, and gets four member Parts
-  whose outside is exactly 1000 × 600 mm and four mitred corners;
-  `member_cut_list` reports 2 × 1000 mm and 2 × 600 mm, 45° at both ends,
-  long points on the outer face.
-- Changing a `Polar` length to `=$width` and editing `$width` resizes the
-  frame; member feature and Part ids are unchanged.
-- Dragging a node updates both member lengths and their mitres live;
-  Discard restores the source; Undo/Redo restore exactly.
-- A round tube branch drawn onto a larger round tube gets a cope by
-  default; a 30×30 member ending on a 40×40 gets a butt with the 40×40
-  through; overriding to "A through" is stored and survives edits;
-  deleting a member reports the override as no longer valid.
-- Angles below 15° and non-meeting members are refused at the node with
-  the reason, never built.
-- MCP creates the same frame with the same transactions and returns the
-  same cut list.
-- The frame and its members save, reopen and round-trip through files
-  requiring `weldment.frame.1`; files without frames are byte-identical.
-- UI tests drive the tool by real input (clicks, typed entry) and wait on
-  readiness conditions; model tests measure the native solids.
+Acceptance criteria for slice 1:
 
-### Slice 2: T and X joints, multi-member nodes
+- **Planar rectangle.** A user draws a closed 4-node rectangle
+  1000 × 600 mm of SHS 40×40×2 with side = inner by typing lengths and
+  angles, and gets four member Parts whose outside is exactly
+  1000 × 600 mm and four mitres (Q4); `member_cut_list` reports
+  2 × 1000 mm and 2 × 600 mm, 45° at both ends, long points on the outer
+  face.
+- **Parametric.** Changing a `Polar` length to `=$width` and editing
+  `$width` resizes the frame; member feature and Part ids are unchanged.
+- **Editing.** Dragging a node updates every attached member and joint
+  live; Discard restores the source; Undo/Redo restore exactly.
+- **Defaults and overrides.** A round branch onto a larger round tube is
+  coped; a 30×30 end on a 40×40 is butted with the 40×40 through;
+  overriding to "A through" is stored and survives edits; deleting a member
+  reports a stale override instead of replacing it.
+- **Gap.** A frame gap default of 0 builds members that meet exactly; a
+  2 mm gap on one mitre shortens both members by their share and the cut
+  list shows the saw lengths.
+- **T and X.** Starting a chain on a member's midpoint makes a T: the
+  member runs through and the branch is butted or coped. Drawing straight
+  through a node keeps one member. Crossing a member at a node makes an X
+  with one through member and two halves.
+- **3D table.** From the closed rectangle, four 700 mm legs drawn along
+  the plane normal give a table frame whose corner nodes each hold two
+  mitred rails and a leg running through to the top; all eight members are
+  separate Parts and the cut list lists 4 legs with square ends.
+- **Refusals.** Angles below 15°, members that do not meet and joints a
+  section cannot take (for example a cope against a channel, §5.5) are
+  refused at the node with the reason, never built.
+- **Slot profiles.** An item Line 8 rectangle gets universal end fasteners
+  at its corners by default; removing one at a node is stored.
+- **MCP parity.** MCP builds the same frames with the same transactions and
+  returns the same cut list.
+- **Files.** Frames save, reopen and round-trip in files requiring
+  `weldment.frame.1`; files without frames are unchanged.
+- **Tests.** UI tests drive the tool by real input (clicks, typed entry)
+  and wait on readiness conditions; model tests measure the native solids.
 
-`Along` nodes (snap onto a member), T and X joints, joints with three or
-more members and their order, member split/merge/reverse, collinear
-through members (rule 2), angled butt joints and butt against round.
+### Slice 2: fabrication outputs (Q8)
 
-### Slice 3: 3D frames
+Cope wrap templates (1:1 PDF), a generated cutting-sheet drawing page and
+bar nesting with kerf; then per-member STEP for tube lasers; DSTV NC1
+later.
 
-Off-plane members (`Polar.rise`, `Z` lock), temporary planes through two
-members, "copy loop up with legs", up-rule for off-plane members, leg-through
-corners (rule 8).
-
-### Slice 4: more joints and parts
+### Slice 3: more joints and parts
 
 Overlap, notch, tab and slot, gussets and end caps as Parts from Project
 sheet stock, weld preparation as exact chamfers, joint-created weld
-records.
+records, joints against channel, T and I/H sections.
 
-### Slice 5: fabrication outputs
+### Slice 4: standard section tables
 
-Cope wrap templates (PDF), bar nesting with kerf, generated cutting sheet
-page, per-member STEP export for tube lasers; DSTV NC1 later.
+EN 10365 IPE, HEA/HEB, UPE/UPN size tables with root radii for the
+parametric shapes CAD-434 adds.
 
-### Slice 6: slot profile fasteners
+## 10. Decisions (answered 2026-11-27)
 
-Automatic item Line 8 fasteners at slot-profile nodes (rule 3) using
-`profile_connections.rs`; further slot systems as stock and recipes.
-
-## 10. Open questions (PLAINER, CAD-435)
-
-| # | Question | Recommended |
+| # | Question | Answer |
 | --- | --- | --- |
-| Q1 | Source of truth for node positions | Own node graph with absolute / polar / along definitions |
-| Q2 | Relationship to existing members and connections | Extend: frame-owned `weldment.member` features, joints on nodes |
-| Q3 | Scope of the first slice | Planar frames with two-member joints |
-| Q4 | Default at an L corner of equal profiles | Mitre |
-| Q5 | Drawing straight through a node | One member runs through; the node is a station |
-| Q6 | Meaning of "inner/outer" alignment | Relative to the closed loop; left/right for open chains |
-| Q7 | Where the tool lives and how the profile is chosen | Model → Frame → Draw frame, choosing Project stock with an inline "New profile stock…" |
-| Q8 | First fabrication output after slice 1 | Cope templates and cutting sheet |
-| Q9 | Weld gap semantics | Gap shortens the members (real cut lengths) |
-| Q10 | Slot profile fasteners at nodes | Added automatically as an overridable default |
-| Q11 | Channels, T and I/H beams | Separate item with parametric standard shapes after slice 1 |
+| Q1 | Source of truth for node positions | Own node graph (recommended) |
+| Q2 | Relationship to existing members and connections | No preference; the team applies the recommendation: extend, frame-owned `weldment.member` features, joints on nodes |
+| Q3 | Scope of the first slice | **Full 3D first** (not the recommendation); see §9 |
+| Q4 | Default at an L corner of equal profiles | Mitre (recommended) |
+| Q5 | Drawing straight through a node | One member runs through (recommended) |
+| Q6 | Meaning of "inner/outer" alignment | Relative to the loop (recommended) |
+| Q7 | Where the tool lives | Free text: "Model -> Metal -> Frame". Profile picker and inline New profile stock as proposed |
+| Q8 | First fabrication output after slice 1 | Cope templates and cutting sheet (recommended) |
+| Q9 | Weld gap | Free text: "make configurable weld gap, defaults to 0". Interpreted as a per-joint value with a frame default of 0 that shortens members (pending confirmation) |
+| Q10 | Slot profile fasteners at nodes | Automatic, overridable (recommended) |
+| Q11 | Channels, T and I/H beams | **Add now in CAD-434** (not the recommendation): parametric shapes in the picker; joints frames cannot yet handle are refused in plain language; standard size tables later |
 
 ## 11. Spike
 
