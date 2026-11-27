@@ -276,9 +276,8 @@ onto the leg top, or two butts). The editor lists the order explicitly.
 - **Gap** (Q9: "make configurable weld gap, defaults to 0") is a value on
   each joint, with a frame-level default of 0 mm. A non-zero gap moves each
   cut back by the gap (half per side for a mitre), as weldment connections
-  do today, so the cut list shows real saw lengths. *This shortening
-  reading is our interpretation of the answer and is pending the product
-  owner's confirmation.*
+  do today, so the cut list shows real saw lengths (confirmed by the
+  product owner: "Shortens members").
 - **Preparation**: none, bevel (angle, land) or V on the cut edge. Modelled
   as an exact chamfer on the cut faces in a later slice; until then it is
   carried to the weld schedule and the cutting sheet as an annotation.
@@ -422,7 +421,10 @@ How this is clearly better:
 
 ## 9. Phasing
 
-Slice 1 is a **full 3D slice** (Q3). It is ordered so a planar frame works
+Slice 1 is a **full 3D slice** (Q3), tracked as CAD-439 (model, joints,
+MCP), CAD-440 (planar tool), CAD-441 (3D, T/X, multi-member nodes) and
+CAD-442 (slot-profile fasteners). Later slices: CAD-443 (outputs),
+CAD-444 (more joints), CAD-445 (section tables). It is ordered so a planar frame works
 first, but it is only done when off-plane members, temporary planes,
 multi-member nodes and T/X joints work too.
 
@@ -528,7 +530,7 @@ parametric shapes CAD-434 adds.
 | Q6 | Meaning of "inner/outer" alignment | Relative to the loop (recommended) |
 | Q7 | Where the tool lives | Free text: "Model -> Metal -> Frame". Profile picker and inline New profile stock as proposed |
 | Q8 | First fabrication output after slice 1 | Cope templates and cutting sheet (recommended) |
-| Q9 | Weld gap | Free text: "make configurable weld gap, defaults to 0". Interpreted as a per-joint value with a frame default of 0 that shortens members (pending confirmation) |
+| Q9 | Weld gap | Free text: "make configurable weld gap, defaults to 0". A per-joint value with a frame default of 0; a non-zero gap shortens members (confirmed) |
 | Q10 | Slot profile fasteners at nodes | Automatic, overridable (recommended) |
 | Q11 | Channels, T and I/H beams | **Add now in CAD-434** (not the recommendation): parametric shapes in the picker; joints frames cannot yet handle are refused in plain language; standard size tables later |
 
