@@ -66,7 +66,17 @@ export function partitionBinaries(suites,weights={},total=testPartitions){
 function cargo(args,options={}){
   return execFileSync('cargo',args,{cwd:root,maxBuffer:1<<30,...options});
 }
+// nextest stores the target directory as `target/`, and `archiveRunArguments`
+// extracts it to the workspace's `target/`. Tests launch `multicad` through
+// the compile-time CARGO_BIN_EXE path, so the archived binaries must be
+// compiled in exactly that directory, not the configured `target/cargo`.
+export function archiveTargetDirectory(workspace=root){
+  return join(workspace,'target');
+}
 export function archivePartitions(directory,total=testPartitions){
+  const targetDirectory=process.env.CARGO_TARGET_DIR&&resolve(process.env.CARGO_TARGET_DIR);
+  const same=(a,b)=>process.platform==='win32'?a?.toLowerCase()===b.toLowerCase():a===b;
+  if(!same(targetDirectory,archiveTargetDirectory()))throw new Error(`Set CARGO_TARGET_DIR=${archiveTargetDirectory()} to archive tests: extracted archives place binaries there`);
   const listed=JSON.parse(cargo(workspaceListArguments(),{encoding:'utf8',stdio:['ignore','pipe','inherit']}));
   const suites=listed['rust-suites'];
   const weights=JSON.parse(readFileSync(join(root,'tools/test-weights.json'),'utf8')).seconds;

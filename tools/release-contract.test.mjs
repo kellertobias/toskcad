@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { githubRepositoryUrl, requirePublicationEnvironment, requireVersion } from './release-policy.mjs';
-import {archiveRunArguments,exampleGeneratorFilter,nextestVersion,packageTestArguments,partitionArchiveArguments,partitionArchiveName,partitionBinaries,testPartitions,workspaceDocTestArguments,workspaceListArguments,workspaceTestArguments} from './native-test-shard.mjs';
+import {archivePartitions,archiveRunArguments,archiveTargetDirectory,exampleGeneratorFilter,nextestVersion,packageTestArguments,partitionArchiveArguments,partitionArchiveName,partitionBinaries,testPartitions,workspaceDocTestArguments,workspaceListArguments,workspaceTestArguments} from './native-test-shard.mjs';
 
 const require = createRequire(import.meta.url);
 const config = require('../release.config.cjs');
@@ -189,6 +189,17 @@ test('every platform compiles the workspace tests once and its archive runs all 
   const archive=job('test_archive'),test=job('test'),pack=job('package');
   for(const os of ['ubuntu-24.04','macos-15','windows-2025'])for(const [name,text] of [['test_archive',archive],['test',test],['package',pack]])assert(text.includes(`os: ${os}`),`${name} ${os}`);
   assert(archive.includes('run: node tools/native-test-shard.mjs archive nextest'));
+  // Tests start `multicad` through a compile-time path; extracted archives
+  // put binaries in `target/`, so the archive job compiles exactly there.
+  assert(archive.includes('      CARGO_TARGET_DIR: ${{ github.workspace }}/target\n'));
+  assert.equal(archiveTargetDirectory('/w'),join('/w','target'));
+  const saved=process.env.CARGO_TARGET_DIR;
+  try{
+    for(const wrong of [undefined,'target/cargo']){
+      if(wrong===undefined)delete process.env.CARGO_TARGET_DIR;else process.env.CARGO_TARGET_DIR=wrong;
+      assert.throws(()=>archivePartitions('unused'),/CARGO_TARGET_DIR=/);
+    }
+  }finally{if(saved===undefined)delete process.env.CARGO_TARGET_DIR;else process.env.CARGO_TARGET_DIR=saved;}
   assert(archive.includes('run: cargo test --workspace --doc --profile ci --locked'));
   assert(archive.includes('run: node tools/release-budgets.mjs --profile ci --repeat 1'));
   for(let k=1;k<=testPartitions;k++){

@@ -89,6 +89,11 @@ jobs:
       MULTICAD_RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
       MULTICAD_BUILD_COMMIT: ${{ github.sha }}
       CARGO_TERM_COLOR: always
+      # nextest archives the target directory as `target/` and the test
+      # runners extract it there. Tests start `multicad` through a
+      # compile-time path, so compile into that same `target/` directory
+      # instead of the repository default `target/cargo`.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     defaults:
       run:
         shell: bash
