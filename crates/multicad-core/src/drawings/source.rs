@@ -138,6 +138,9 @@ pub struct Page {
     /// Dimensions, notes, leaders, weld symbols, tables and drafting.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub annotations: Vec<super::Annotation>,
+    /// Views projected from a base view on this page, kept aligned with it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projections: Vec<super::ProjectedView>,
 }
 impl Page {
     pub fn new(number: impl Into<String>) -> Self {
@@ -149,6 +152,7 @@ impl Page {
             notes: vec![],
             views: vec![],
             annotations: vec![],
+            projections: vec![],
         }
     }
 }
@@ -245,6 +249,7 @@ impl DrawingBook {
                     ));
                 }
             }
+            super::projections::validate_projections(page)?;
             if page.annotations.len() > super::MAX_ANNOTATIONS {
                 return Err(invalid("Too many annotations on a drawing page"));
             }

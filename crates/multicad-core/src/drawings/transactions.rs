@@ -44,10 +44,17 @@ pub fn prepare(
             for note in &mut copy.notes {
                 note.id = EntityId::new();
             }
+            let mut ids = std::collections::BTreeMap::new();
             for view in &mut copy.views {
-                view.id = EntityId::new();
+                let id = EntityId::new();
+                ids.insert(view.id, id);
+                view.id = id;
                 // A copy is free-standing; only the original follows its guide.
                 view.guide = None;
+            }
+            for link in &mut copy.projections {
+                link.view = ids[&link.view];
+                link.base = ids[&link.base];
             }
             book.pages.insert(i + 1, copy);
             "Duplicate drawing page"

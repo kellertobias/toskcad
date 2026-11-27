@@ -341,3 +341,163 @@ fn a_picked_parent_line_defines_a_finite_section_and_paper_points_invert() {
     let back = top.model_point(top.paper_point([5., 6.]));
     assert!((back[0] - 5.).abs() < 1e-12 && (back[1] - 6.).abs() < 1e-12);
 }
+
+/// CAD-437: front, top and right views of the same frame origin.
+fn three_views(source: EntityId) -> (Page, [EntityId; 3]) {
+    let mut page = Page::new("P1");
+    let mut front = view(source);
+    front.frame.v = [0., 0., 1.];
+    front.position_mm = [100., 150.];
+    let mut top = view(source);
+    top.name = "Top".into();
+    top.position_mm = [100., 60.];
+    let mut right = view(source);
+    right.name = "Right".into();
+    right.frame.u = [0., 1., 0.];
+    right.frame.v = [0., 0., 1.];
+    right.position_mm = [200., 150.];
+    let ids = [front.id, top.id, right.id];
+    page.views = vec![front, top, right];
+    page.projections = vec![
+        ProjectedView {
+            view: ids[1],
+            base: ids[0],
+        },
+        ProjectedView {
+            view: ids[2],
+            base: ids[0],
+        },
+    ];
+    (page, ids)
+}
+fn at(page: &Page, id: EntityId) -> [f64; 2] {
+    page.views.iter().find(|v| v.id == id).unwrap().position_mm
+}
+
+#[test]
+fn moving_a_base_view_carries_its_projections_and_projections_slide_on_their_axis() {
+    let (mut page, [front, top, right]) = three_views(EntityId::new());
+    page.settings.paper = PaperSize::A3;
+    page.settings.orientation = Orientation::Landscape;
+    DrawingBook {
+        pages: vec![page.clone()],
+    }
+    .validate()
+    .unwrap();
+    // The base carries both projections by the same delta.
+    assert_eq!(move_view(&mut page, front, [10., -5.]).unwrap(), [10., -5.]);
+    assert_eq!(at(&page, front), [110., 145.]);
+    assert_eq!(at(&page, top), [110., 55.]);
+    assert_eq!(at(&page, right), [210., 145.]);
+    // A top view keeps the front's column; a side view keeps its row.
+    assert_eq!(move_view(&mut page, top, [30., -20.]).unwrap(), [0., -20.]);
+    assert_eq!(at(&page, top), [110., 35.]);
+    assert_eq!(move_view(&mut page, right, [40., 25.]).unwrap(), [40., 0.]);
+    assert_eq!(at(&page, right), [250., 145.]);
+    // The whole group stops at the printable area instead of leaving it.
+    let margin = page.settings.margin_mm;
+    move_view(&mut page, front, [-1000., 0.]).unwrap();
+    assert!((at(&page, front)[0] - margin).abs() < 1e-9);
+    assert_eq!(at(&page, top)[0], at(&page, front)[0]);
+    assert!(move_view(&mut page, front, [f64::NAN, 0.]).is_err());
+    // Scale and origin changes on the base re-align the projections.
+    page.views[0].scale = Scale {
+        numerator: 1,
+        denominator: 5,
+    };
+    page.views[1].frame.origin_mm = [50., 0., 0.];
+    align_projections(&mut page);
+    assert_eq!(page.views[1].scale, page.views[0].scale);
+    assert!((at(&page, top)[0] - (at(&page, front)[0] + 10.)).abs() < 1e-9);
+    // Removing the base frees its projections.
+    remove_view(&mut page, front);
+    assert!(page.projections.is_empty());
+}
+
+#[test]
+fn projection_links_validate_roundtrip_with_their_capability_and_survive_duplicate() {
+    let mut doc = Document::new("Projected").unwrap();
+    let part = Entity::new(
+        "Part",
+        EntityData::Part {
+            features: vec![],
+            material: None,
+            tags: Default::default(),
+        },
+    );
+    let source = part.id;
+    doc.insert(part).unwrap();
+    let (page, [front, top, _]) = three_views(source);
+    // Invalid links never enter the document.
+    for bad in [
+        ProjectedView {
+            view: top,
+            base: EntityId::new(),
+        },
+        ProjectedView {
+            view: front,
+            base: top,
+        },
+    ] {
+        let mut p = page.clone();
+        p.projections.push(bad);
+        assert!(DrawingBook { pages: vec![p] }.validate().is_err());
+    }
+    let mut same_direction = page.clone();
+    same_direction.views[1].frame = same_direction.views[0].frame.clone();
+    assert!(
+        DrawingBook {
+            pages: vec![same_direction]
+        }
+        .validate()
+        .is_err()
+    );
+    let book = DrawingBook { pages: vec![page] }.entity("Drawing").unwrap();
+    let id = book.id;
+    doc.insert(book).unwrap();
+    let mut session = Session::new(doc).unwrap();
+    let project = ProjectFile::new(session.document().clone()).unwrap();
+    assert!(project.capabilities().contains(PROJECTION_CAPABILITY));
+    let mut bytes = vec![];
+    project_file::write(&project, &mut bytes, Default::default()).unwrap();
+    let mut older = project_file::supported_capabilities();
+    older.remove(PROJECTION_CAPABILITY);
+    assert!(project_file::read(&mut bytes.as_slice(), Default::default(), &older).is_err());
+    let reopened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap();
+    assert_eq!(
+        read(&reopened.project.document, id).unwrap(),
+        read(session.document(), id).unwrap()
+    );
+    // A duplicated page links its own copies.
+    let first = read(session.document(), id).unwrap().pages[0].id;
+    let copy = EntityId::new();
+    let prepared = prepare(
+        &session,
+        session.revision(),
+        actor(),
+        id,
+        PageAction::Duplicate {
+            page: first,
+            new_page: copy,
+        },
+    )
+    .unwrap();
+    session.commit(prepared).unwrap();
+    let book = read(session.document(), id).unwrap();
+    let ids: Vec<_> = book.pages[1].views.iter().map(|v| v.id).collect();
+    assert_eq!(book.pages[1].projections.len(), 2);
+    assert!(
+        book.pages[1]
+            .projections
+            .iter()
+            .all(|l| ids.contains(&l.view) && ids.contains(&l.base))
+    );
+    // Without projections the wire form is unchanged.
+    let wire = serde_json::to_string(&Page::new("x")).unwrap();
+    assert!(!wire.contains("projections"));
+}
