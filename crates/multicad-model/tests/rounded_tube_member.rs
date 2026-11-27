@@ -2,7 +2,7 @@
 //! member solid uses the stock radius exactly (inside radius = radius less
 //! wall), miters keep their geometry, and files keep the radius.
 use multicad_core::{
-    commands::{Actor, Channel, Prepared, Request, Session},
+    commands::{Actor, Channel, Prepared, Session},
     document::{Document, Entity, EntityData, EntityId},
     materials::*,
     model::{
@@ -47,6 +47,7 @@ fn shs(material: EntityId, name: &str, radius: Option<f64>) -> Entity {
             shape: ProfileShape::Rectangular,
             section: None,
             corner_radius_mm: radius,
+            web_mm: None,
         },
     })
     .entity(EntityId::new(), name)
