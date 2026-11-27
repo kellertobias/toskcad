@@ -156,6 +156,9 @@ pub struct FramePanel {
     /// Member names of applied members, for labels.
     names: BTreeMap<EntityId, String>,
     drawing: bool,
+    /// The next viewport click picks a planar face as the drawing plane.
+    picking_face: bool,
+    face_label: Option<String>,
     /// The nodes of the chain being drawn, with the member that reached each.
     chain: Vec<(EntityId, Option<EntityId>)>,
     hover: Option<[f64; 2]>,
@@ -226,6 +229,8 @@ impl FramePanel {
             drag_from: None,
             error: None,
             counter: 0,
+            picking_face: false,
+            face_label: None,
         })
     }
     /// Reopen the frame that member `feature` belongs to.
@@ -640,6 +645,21 @@ impl FramePanel {
     }
     /// Draw, pick and move on the plane; returns whether the source changed.
     pub fn viewport(&mut self, session: &Session, view: TerminationViewport<'_>) -> bool {
+        if self.picking_face {
+            if view.clicked && view.pointer.is_some_and(|p| view.rect.contains(p)) {
+                self.picking_face = false;
+                match Self::face_plane(session.document(), &view) {
+                    Ok((plane, label)) => {
+                        self.definition.plane = plane;
+                        self.face_label = Some(label);
+                        self.changed();
+                        return true;
+                    }
+                    Err(e) => self.error = Some(e),
+                }
+            }
+            return false;
+        }
         let parameters = session.parameters();
         let frame = self.plane_frame(parameters);
         let tolerance = (PICK_PX / view.camera.scale.max(1e-6)) as f64;
@@ -756,6 +776,63 @@ impl FramePanel {
                 )
             })
             .unwrap_or_default();
+    }
+    /// The plane of the planar model face under the pointer: its semantic
+    /// face frame, with the frame's u axis.
+    fn face_plane(
+        document: &Document,
+        view: &TerminationViewport<'_>,
+    ) -> Result<(FramePlane, String), String> {
+        let scene = view
+            .scene
+            .ok_or("Wait for the current model before picking a face")?;
+        let pointer = view.pointer.ok_or("Point at a face")?;
+        let ray = view
+            .camera
+            .ray(pointer, view.rect)
+            .ok_or("Point at a face")?;
+        let hit = scene
+            .pick_face_section(ray, view.section)
+            .ok_or("That click hits no model face; click a flat face of a body")?;
+        let occurrence = scene
+            .instances()
+            .iter()
+            .find(|i| i.id == hit.instance && i.geometry == hit.geometry)
+            .ok_or("That face is no longer shown")?;
+        if occurrence.transform != Default::default() {
+            return Err("Faces of placed occurrences cannot be drawn on yet; pick a face of an unplaced body".into());
+        }
+        let snapshot = scene
+            .geometry_snapshot(hit.geometry)
+            .ok_or("The face has no current topology; wait for the model to rebuild")?;
+        let frame = snapshot
+            .elements
+            .iter()
+            .find(|e| e.key == hit.key)
+            .and_then(|e| e.frames.first())
+            .ok_or("Choose a flat face; curved faces cannot hold a frame plane")?
+            .frame;
+        frame.validate()?;
+        let n = frame.normal();
+        let name = document
+            .entities()
+            .find_map(|e| match &e.data {
+                multicad_core::document::EntityData::Part { features, .. }
+                    if features.contains(&hit.geometry) =>
+                {
+                    Some(e.name.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| "a body".into());
+        Ok((
+            FramePlane {
+                origin: frame.origin_mm.map(length),
+                u: frame.u,
+                normal: n,
+            },
+            format!("Face of {name}"),
+        ))
     }
     /// Rewrite a node's own position to an absolute plane point; nodes that
     /// depend on it follow.
@@ -1076,7 +1153,12 @@ impl FramePanel {
         let empty = self.definition.nodes.is_empty();
         ui.add_enabled_ui(empty, |ui| {
             controls::inspector_combo(ui, "frame-plane")
-                .selected_text(current.clone().unwrap_or_else(|| "Custom plane".into()))
+                .selected_text(
+                    current
+                        .clone()
+                        .or_else(|| self.face_label.clone())
+                        .unwrap_or_else(|| "Custom plane".into()),
+                )
                 .show_ui(ui, |ui| {
                     for (label, plane) in &choices {
                         if ui
@@ -1084,10 +1166,24 @@ impl FramePanel {
                             .clicked()
                         {
                             self.definition.plane = plane.clone();
+                            self.face_label = None;
                             changed = true;
                         }
                     }
                 });
+            let label = if self.picking_face {
+                "Click a planar face…"
+            } else {
+                "Pick a planar face"
+            };
+            if ui
+                .button(label)
+                .on_hover_text("Then click a flat face of a model body to draw on it")
+                .clicked()
+            {
+                self.picking_face = !self.picking_face;
+                self.drawing = false;
+            }
         });
         // Profile stock with pictures and plain names.
         ui.label("Profile stock");

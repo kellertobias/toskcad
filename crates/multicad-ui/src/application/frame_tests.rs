@@ -652,3 +652,82 @@ fn a_frame_drawn_on_a_level_sits_at_its_elevation() {
         .unwrap();
     near((b.min[2] + b.max[2]) / 2., 3000.);
 }
+
+#[test]
+fn a_picked_planar_face_becomes_the_drawing_plane() {
+    let mut session = Session::new(document()).unwrap();
+    let request = model::PrimitiveRequest::new(
+        "Block",
+        model::PrimitiveParameters::Box {
+            size: [model::length(30.), model::length(20.), model::length(10.)],
+            frame: Default::default(),
+        },
+    );
+    let prepared = model::prepare_primitive(
+        &session,
+        session.revision(),
+        Actor::local(Channel::Ui),
+        &request,
+    )
+    .unwrap()
+    .prepared;
+    session.commit(prepared).unwrap();
+    let mut h = Harness::new(session.document().clone());
+    // Where the box's top face is, from its own solid.
+    let top = {
+        let document = h.app.current().session.document().clone();
+        let model = multicad_model::Compiler::default()
+            .compile(&document, 0)
+            .unwrap();
+        let b = model
+            .solid(model.snapshot().bodies[&request.body])
+            .unwrap()
+            .bounds()
+            .unwrap();
+        [
+            (b.min[0] + b.max[0]) / 2.,
+            (b.min[1] + b.max[1]) / 2.,
+            b.max[2],
+        ]
+    };
+    open_tool(&mut h);
+    h.click_label("Pick a planar face");
+    let viewport = h.app.current().sketch.viewport_rect.unwrap();
+    let s = h
+        .app
+        .current()
+        .sketch
+        .camera
+        .project(top.map(|v| v as f32), viewport);
+    h.click_at(egui::pos2(s[0], s[1]));
+    assert!(
+        h.texts().iter().any(|t| t == "Face of Block"),
+        "{:?}",
+        h.texts()
+    );
+    h.type_into_field_and_enter(LENGTH, "20");
+    apply(&mut h);
+    let document = h.app.current().session.document().clone();
+    let frame = model::read_frame(&document, the_frame(&document)).unwrap();
+    // The plane lies in the top face: its normal is ±Z at the top height.
+    assert!(
+        (frame.plane.normal[2].abs() - 1.).abs() < 1e-9,
+        "{:?}",
+        frame.plane
+    );
+    let model = multicad_model::Compiler::default()
+        .compile(&document, 0)
+        .unwrap();
+    let r = model
+        .member_cut_list(&document)
+        .unwrap()
+        .into_iter()
+        .find(|r| matches!(r.path, model::MemberPath::FrameMember { .. }))
+        .unwrap();
+    let b = model
+        .solid(model.snapshot().bodies[&r.part])
+        .unwrap()
+        .bounds()
+        .unwrap();
+    near((b.min[2] + b.max[2]) / 2., top[2]);
+}
