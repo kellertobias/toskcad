@@ -11,7 +11,7 @@
 //! exact length or width each panel lacks and where that material would
 //! go, so the user can resize or move the panel with the normal controls.
 use super::*;
-use crate::parameters::EvaluatedParameters;
+use crate::{model::RigidPose, parameters::EvaluatedParameters};
 
 const TOL: f64 = 1e-6;
 
@@ -192,6 +192,9 @@ struct Side<'a> {
     role: PairRole,
     editable: bool,
     panel: &'a PanelBox,
+    /// From where the panel now is back to its panel feature's own frame,
+    /// where its origin is edited (identity unless it was moved).
+    back: RigidPose,
     /// The panel's extents in A's frame.
     lo: [f64; 3],
     hi: [f64; 3],
@@ -216,19 +219,23 @@ pub fn diagnose_panel_corner(
             .is_some_and(|p| matches!(p.source, PanelSource::Rectangle { .. }));
         (name, editable)
     };
+    let back = |part| -> Result<RigidPose, DocumentError> {
+        let feature = panel_feature(document, part).expect("checked panel");
+        super::joint::panel_pose_after(document, parameters, part, feature)?.inverse()
+    };
     let (a_name, a_editable) = info(pair.a);
     let (b_name, b_editable) = info(pair.b);
     guide([
-        (pair.a, &a_name, a_editable, &a),
-        (pair.b, &b_name, b_editable, &b),
+        (pair.a, &a_name, a_editable, &a, back(pair.a)?),
+        (pair.b, &b_name, b_editable, &b, back(pair.b)?),
     ])
 }
 
 fn guide(
     [
-        (a_part, a_name, a_editable, a),
-        (b_part, b_name, b_editable, b),
-    ]: [(EntityId, &str, bool, &PanelBox); 2],
+        (a_part, a_name, a_editable, a, a_back),
+        (b_part, b_name, b_editable, b, b_back),
+    ]: [(EntityId, &str, bool, &PanelBox, RigidPose); 2],
 ) -> Result<Option<CornerGuide>, DocumentError> {
     let BInA {
         axis: b_axis,
@@ -256,6 +263,7 @@ fn guide(
         role: PairRole::A,
         editable: a_editable,
         panel: a,
+        back: a_back,
         lo: [0.; 3],
         hi: a_hi,
     };
@@ -264,6 +272,7 @@ fn guide(
         role: PairRole::B,
         editable: b_editable,
         panel: b,
+        back: b_back,
         lo: b_lo,
         hi: b_hi,
     };
@@ -347,8 +356,10 @@ fn guide(
             current_mm: [p.length_mm, p.width_mm][k],
             amount_mm: amount,
             at_start,
-            origin_mm: p.origin,
-            new_origin_mm: std::array::from_fn(|c| p.origin[c] + delta[c]),
+            origin_mm: side.back.point(p.origin),
+            new_origin_mm: side
+                .back
+                .point(std::array::from_fn(|c| p.origin[c] + delta[c])),
             editable: side.editable,
             region: to_box(lo, hi),
         });

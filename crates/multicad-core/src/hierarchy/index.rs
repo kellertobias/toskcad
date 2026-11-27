@@ -55,7 +55,9 @@ impl<'a> Index<'a> {
                 self.document
                     .entities()
                     .filter(|entity| {
-                        is_model_entry(&entity.data) && !self.parents.contains_key(&entity.id)
+                        is_model_entry(&entity.data)
+                            && !is_joint_entry(&entity.data)
+                            && !self.parents.contains_key(&entity.id)
                     })
                     .map(|entity| entity.id),
             );
