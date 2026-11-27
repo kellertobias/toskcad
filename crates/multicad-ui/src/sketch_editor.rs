@@ -68,6 +68,9 @@ mod shape_list;
 mod shape_list_tests;
 #[cfg(test)]
 mod sketch_entry_tests;
+mod sketch_tree;
+#[cfg(test)]
+mod sketch_tree_tests;
 #[path = "sketch_snap.rs"]
 mod snap;
 #[path = "sketch_snap_host.rs"]
@@ -209,6 +212,8 @@ pub struct SketchEditor {
     /// Selected sketch element in the left list (CAD-398).
     shape: Option<shape_list::ElementKey>,
     shape_fields: shape_list::ShapeFields,
+    /// Model / Sketch tabs of the left sidebar (CAD-415).
+    sketch_sidebar: sketch_tree::SketchSidebar,
     pub camera: Camera,
     style: DisplayStyle,
     grid: bool,
@@ -329,6 +334,7 @@ impl Default for SketchEditor {
             element: None,
             shape: None,
             shape_fields: Default::default(),
+            sketch_sidebar: Default::default(),
             camera: Camera {
                 target: [0.; 3],
                 ..Default::default()
@@ -3539,8 +3545,14 @@ impl SketchEditor {
                 .size_range(160. ..=(ui.available_width() * 0.35).max(160.))
                 .resizable(true)
                 .show(ui, |ui| {
-                    self.element_list(ui, session);
+                    // CAD-415: while a sketch is open, Model and Sketch tabs;
+                    // the Sketch tab opens with the sketch.
+                    let tab = self.sidebar_tabs(ui);
                     self.architecture_panel(ui, session, resources, feed, scene.as_deref());
+                    if tab == sketch_tree::SidebarTab::Sketch {
+                        self.sketch_tree(ui, session);
+                        return;
+                    }
                     let options = crate::model_tree::TreeOptions {
                         enabled: (!self.has_pending_edits() || self.acquisition.is_some())
                             && !self.measurement.active(),
@@ -5862,6 +5874,9 @@ impl SketchEditor {
                     self.reset_profile_clicks();
                     self.element = None;
                     self.constraints.select_geometry(point, None, extend);
+                    if !extend {
+                        self.select_element_of_hit(session.document(), id, None, Some(point));
+                    }
                     self.profiles.clear();
                     self.message = format!(
                         "{} selected sketch entities · Shift-click adds or removes",
