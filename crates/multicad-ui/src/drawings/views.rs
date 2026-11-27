@@ -96,6 +96,7 @@ impl DrawingEditor {
         if self.feed.tick(ctx.input(|i| i.time)) {
             ctx.request_repaint();
         }
+        self.remember_shown(session);
         if self.feed.pending() {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
@@ -108,7 +109,10 @@ impl DrawingEditor {
         {
             return true;
         }
-        if self.draft.as_ref().map(|p| &p.views) == self.original.as_ref().map(|p| &p.views) {
+        // Moving views changes no generated geometry.
+        if self.draft.as_ref().map(|p| unplaced(&p.views))
+            == self.original.as_ref().map(|p| unplaced(&p.views))
+        {
             return true;
         }
         self.preview_matches(session)
@@ -119,6 +123,72 @@ impl DrawingEditor {
                     })
                 })
             })
+    }
+    /// The preview to draw: the current one, or while a page that only moved
+    /// views regenerates, the last current one for the same views.
+    pub(super) fn shown_evaluation(
+        &self,
+        session: &Session,
+    ) -> Option<std::sync::Arc<drawings::DrawingEvaluation>> {
+        if self.preview_matches(session) {
+            return self.feed.result.clone();
+        }
+        let (page, revision, result) = self.last_shown.as_ref()?;
+        let draft = self.draft.as_ref()?;
+        (*revision == session.revision()
+            && result.stamp.document == session.document().id()
+            && page.id == draft.id
+            && unplaced(&page.views) == unplaced(&draft.views))
+        .then(|| result.clone())
+    }
+    fn remember_shown(&mut self, session: &Session) {
+        if !self.preview_matches(session) {
+            return;
+        }
+        let (Some(result), Some(draft)) = (&self.feed.result, &self.draft) else {
+            return;
+        };
+        if self
+            .last_shown
+            .as_ref()
+            .is_some_and(|(page, revision, shown)| {
+                std::sync::Arc::ptr_eq(shown, result)
+                    && *revision == session.revision()
+                    && page == draft
+            })
+        {
+            return;
+        }
+        self.last_shown = Some((draft.clone(), session.revision(), result.clone()));
+    }
+    /// Finish dragging a placed view by `delta_mm`. A move of a saved page is
+    /// applied at once as one undoable edit; inside a pending draft it joins
+    /// the draft for Apply.
+    pub(super) fn finish_view_drag(
+        &mut self,
+        session: &mut Session,
+        id: EntityId,
+        delta_mm: [f64; 2],
+    ) -> Result<(), String> {
+        let saved = !self.dirty() && self.revision == Some(session.revision());
+        let delta = delta_mm.map(|v| (v * 10.).round() / 10.);
+        let page = self.draft.as_mut().ok_or("Select a page")?;
+        let applied = drawings::move_view(page, id, delta).map_err(|e| e.to_string())?;
+        self.selected_view = Some(id);
+        if applied == [0.; 2] || !saved {
+            return Ok(());
+        }
+        // The preview still shows these views; keep it across our own edit.
+        let shown = self.shown_evaluation(session).is_some();
+        self.invoke(session, DrawingTool::Apply, Channel::Ui)?;
+        if shown && let Some((_, revision, _)) = &mut self.last_shown {
+            *revision = session.revision();
+        }
+        self.notice = Some(format!(
+            "View moved · revision {} · Undo restores its position",
+            session.revision()
+        ));
+        Ok(())
     }
     pub(super) fn add_view(&mut self, kind: ViewKind) -> Result<(), String> {
         let page = self.draft.as_mut().ok_or("Add a page first")?;
@@ -451,9 +521,11 @@ impl DrawingEditor {
         });
         ui.small(format!("Printed as \"{}\"", drawings::caption_text(view)));
         if remove {
-            page.views.retain(|v| v.id != id);
+            drawings::remove_view(page, id);
             self.selected_view = page.views.first().map(|v| v.id);
         }
+        // Projected views follow their base's scale and shared axis.
+        drawings::align_projections(page);
         if fit && let Err(error) = self.fit_view(id, session) {
             self.error = Some(error);
         }
@@ -493,7 +565,11 @@ impl DrawingEditor {
         if let Err(error) = self.validate_draft() {
             ui.colored_label(egui::Color32::LIGHT_RED, error);
         }
-        if self.dirty() && self.revision != Some(session.revision()) {
+        if !self.dirty() {
+            // Nothing pending: no Apply or Discard to offer.
+            return;
+        }
+        if self.revision != Some(session.revision()) {
             ui.colored_label(
                 egui::Color32::LIGHT_RED,
                 "The source changed. Discard this stale page draft before editing again.",
@@ -503,6 +579,10 @@ impl DrawingEditor {
             ui.small("A changed view needs a successful current native preview before Apply.");
         }
         ui.separator();
+        ui.colored_label(
+            egui::Color32::LIGHT_YELLOW,
+            "Unapplied page edits · Apply page commits them as one undoable edit",
+        );
         let mut action = None;
         ui.horizontal_wrapped(|ui| {
             if ui
@@ -703,4 +783,16 @@ mod direction_tests {
         assert!((u[0] * v[0] + u[1] * v[1] + u[2] * v[2]).abs() < 1e-12);
         assert!(frame_for_direction([0.; 3]).is_none());
     }
+}
+
+/// Views with their sheet anchors cleared: what generates their geometry.
+fn unplaced(views: &[DrawingView]) -> Vec<DrawingView> {
+    views
+        .iter()
+        .cloned()
+        .map(|mut view| {
+            view.position_mm = [0.; 2];
+            view
+        })
+        .collect()
 }

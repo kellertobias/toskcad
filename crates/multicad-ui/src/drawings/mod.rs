@@ -14,6 +14,8 @@ pub use schedules::ScheduleStatus;
 #[cfg(test)]
 mod loading_tests;
 #[cfg(test)]
+mod move_tests;
+#[cfg(test)]
 mod placement_tests;
 #[cfg(test)]
 mod tests;
@@ -218,6 +220,13 @@ pub struct DrawingEditor {
     /// The paper's screen rectangle and scale from the last frame.
     last_paper: Option<(egui::Rect, f32)>,
     sheet_view: canvas::SheetView,
+    /// A placed view being dragged and the paper mm moved so far.
+    view_drag: Option<(EntityId, [f64; 2])>,
+    /// Confirmation of the last completed page edit, until the next edit.
+    notice: Option<String>,
+    /// The last current preview with its page and revision. A page that only
+    /// moved views keeps showing it while the moved page regenerates.
+    last_shown: Option<(Page, u64, std::sync::Arc<drawings::DrawingEvaluation>)>,
 }
 impl DrawingEditor {
     pub fn dirty(&self) -> bool {
@@ -408,6 +417,10 @@ impl DrawingEditor {
             self.revision = None;
             self.sync(session)?;
             self.error = None;
+            self.notice = Some(format!(
+                "Page applied · revision {} · Undo restores the previous page",
+                session.revision()
+            ));
             return Ok(());
         }
         if self.dirty() {
@@ -505,6 +518,9 @@ impl DrawingEditor {
     }
     pub fn show(&mut self, ui: &mut egui::Ui, session: &mut Session) {
         self.sync(session).ok();
+        if self.dirty() {
+            self.notice = None;
+        }
         if let Some(action) = self.sidebar(ui, session) {
             let result = match action {
                 sidebar::Action::Select { book, page } => self.select_sheet(session, book, page),
@@ -540,22 +556,24 @@ impl DrawingEditor {
                     self.sheet_view.fit();
                 }
                 ui.set_clip_rect(ui.clip_rect().intersect(ui.available_rect_before_wrap()));
-                let evaluation = if self.preview_matches(session) {
-                    self.feed.result.as_deref()
-                } else {
-                    None
-                };
+                let evaluation = self.shown_evaluation(session);
+                // A dragged view follows the pointer before the move is applied.
+                let moved = self.view_drag.and_then(|(id, delta)| {
+                    let mut page = page.clone();
+                    drawings::move_view(&mut page, id, delta).ok()?;
+                    Some(page)
+                });
                 event = canvas::show(
                     ui,
                     &mut self.sheet_view,
-                    page,
+                    moved.as_ref().unwrap_or(page),
                     book.pages
                         .iter()
                         .position(|p| Some(p.id) == self.selected)
                         .unwrap_or(0)
                         + 1,
                     book.pages.len(),
-                    evaluation,
+                    evaluation.as_deref(),
                     self.selected_view,
                     self.section_pick.map(|(_, first)| first),
                     self.selected_annotation,
@@ -588,9 +606,28 @@ impl DrawingEditor {
                 });
             }
         });
-        if self.placing() {
+        if self.placing() || self.section_pick.is_some() {
             event.view = None;
             event.annotation = None;
+            event.drag = None;
+            self.view_drag = None;
+        }
+        match event.drag {
+            Some((id, delta, false)) => {
+                self.view_drag = Some((id, [delta.x as f64, delta.y as f64]));
+            }
+            Some((id, delta, true)) => {
+                let last = self.view_drag.take().filter(|(view, _)| *view == id);
+                let delta = if delta.is_finite() {
+                    [delta.x as f64, delta.y as f64]
+                } else {
+                    last.map_or([0.; 2], |(_, d)| d)
+                };
+                if let Err(error) = self.finish_view_drag(session, id, delta) {
+                    self.error = Some(error);
+                }
+            }
+            None => self.view_drag = None,
         }
         if let Some(id) = event.view {
             self.selected_view = Some(id);

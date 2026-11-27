@@ -152,8 +152,6 @@ pub fn groups(mode: Mode, tab: &RibbonTab) -> Vec<Group> {
                         "page-earlier",
                         "page-later",
                         "page-setup",
-                        "page-apply",
-                        "page-discard",
                     ],
                 ),
                 (

@@ -27,6 +27,9 @@ impl DrawingEditor {
                 if let Some(error) = &self.error {
                     ui.colored_label(egui::Color32::LIGHT_RED, error);
                 }
+                if let Some(notice) = &self.notice {
+                    ui.colored_label(egui::Color32::LIGHT_GREEN, notice);
+                }
                 if let Some(error) = &self.feed.error {
                     ui.colored_label(egui::Color32::LIGHT_RED, error);
                 }
