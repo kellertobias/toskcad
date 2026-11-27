@@ -1852,10 +1852,17 @@ mod tests {
         }
     }
     #[test]
-    fn sketch_creation_is_global_instead_of_duplicated_in_the_model_ribbon() {
+    fn model_common_offers_add_sketch_through_the_global_sketch_command() {
+        // CAD-418 (product-owner approval 2026-11-27): Model's Common group
+        // lists Add Sketch, which runs the same command as the global action.
         let registry = Registry::default();
         let tab = &registry.workspace(Mode::Model).tabs[0];
-        assert!(!tab.tools.contains(&"new-sketch"));
+        assert_eq!(tab.title, "Common");
+        assert!(tab.tools.contains(&"new-sketch"));
+        let tool = registry.tool("new-sketch").unwrap();
+        assert_eq!(tool.action, Command::NewSketch);
+        assert_eq!(tool.label, "Add Sketch");
+        assert!(matches!(tool.icon, Icon::Sketch));
         assert!(!tab.tools.contains(&"engraving"));
         assert_eq!(
             registry.resolve("sketch").unwrap().action,
