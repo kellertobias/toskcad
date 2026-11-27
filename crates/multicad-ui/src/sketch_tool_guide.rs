@@ -103,7 +103,7 @@ impl DrawTool {
                 }),
                 commit: "Nothing is committed while you place poles. Apply in the action bar \
                          (or Enter) commits an open spline once four poles are placed; clicking \
-                         the first pole commits a closed spline."
+                         the first pole commits a closed spline. Then the tool returns to Select."
                     .into(),
                 escape: if pending > 0 {
                     format!(
@@ -160,7 +160,7 @@ impl DrawTool {
                 pending: None,
                 commit: format!(
                     "Each corner click applies the {} {} from this Inspector immediately; the tool \
-                     stays active for the next corner.",
+                     stays active for the next corner until Enter or a right-click ends it.",
                     self.noun(),
                     if self == Self::Fillet { "radius" } else { "setback" }
                 ),
@@ -189,7 +189,7 @@ impl DrawTool {
                         .then(|| format!("Pending: {placed} · not in the sketch yet")),
                     commit: format!(
                         "The {} click commits the {noun} immediately; no Apply is needed. \
-                         The tool stays active for the next {noun}.",
+                         Then the tool returns to Select; a right-click there repeats it.",
                         points[total - 1]
                             .split_once(" (")
                             .map_or(points[total - 1], |(name, _)| name)
