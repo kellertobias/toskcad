@@ -238,8 +238,13 @@ impl SketchEditor {
     }
     /// Status line for the current pointer step of the active tool.
     pub(super) fn set_tool_status(&mut self) {
-        if let Some(guide) = self.tool_guide() {
-            self.message = guide.status();
+        if let (Some(guide), Some(tool)) = (self.tool_guide(), self.tool) {
+            // The status line names the active tool and how it ends (CAD-413).
+            self.message = format!(
+                "{} · {} · Enter or right-click ends the tool",
+                tool.label(),
+                guide.status()
+            );
         }
     }
     /// Status line after a pointer gesture committed geometry.
@@ -252,7 +257,13 @@ impl SketchEditor {
             let noun = tool.noun();
             let mut noun = noun.to_owned();
             noun[..1].make_ascii_uppercase();
-            self.message = format!("{noun} committed · Undo removes it · {}", guide.status());
+            if tool.single_shot() {
+                // A tool that creates one thing returns to Select (CAD-413).
+                self.message = format!("{noun} committed · Undo removes it");
+                self.end_single_shot(tool);
+            } else {
+                self.message = format!("{noun} committed · Undo removes it · {}", guide.status());
+            }
         }
     }
     /// Inspector body for the active drawing tool: the pointer step, pending

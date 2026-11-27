@@ -26,6 +26,14 @@ impl DrawTool {
                 | Self::Text
         )
     }
+    /// Tools that create one thing and then return to Select (CAD-413).
+    /// Polyline, the corner treatments and Text keep going until ended.
+    pub fn single_shot(self) -> bool {
+        !matches!(
+            self,
+            Self::Polyline | Self::Fillet | Self::Chamfer | Self::Text
+        )
+    }
     /// Corner treatments that modify existing lines instead of drawing.
     pub fn corner(self) -> bool {
         matches!(self, Self::Fillet | Self::Chamfer)

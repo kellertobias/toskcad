@@ -33,6 +33,15 @@ impl ChamferMode {
         }
     }
 }
+/// The values a repeated Fillet / Chamfer starts with (CAD-413).
+#[derive(Clone, Debug)]
+pub(crate) struct EdgeTreatmentSettings {
+    profile: EdgeTreatmentProfile,
+    mode: ChamferMode,
+    size: DimensionField,
+    second: DimensionField,
+    angle: DimensionField,
+}
 pub(super) struct EdgeTreatmentPanel {
     input: BodyInput,
     feature: EntityId,
@@ -51,6 +60,29 @@ pub(super) struct EdgeTreatmentPanel {
     face_for: Option<EntityId>,
 }
 impl EdgeTreatmentPanel {
+    /// Profile and sizes, without the picked edges (CAD-413).
+    pub(super) fn settings(&self) -> EdgeTreatmentSettings {
+        EdgeTreatmentSettings {
+            profile: self.profile,
+            mode: self.mode,
+            size: self.size.clone(),
+            second: self.second.clone(),
+            angle: self.angle.clone(),
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn size_text(&self) -> &str {
+        &self.size.text
+    }
+    /// Start from a previous treatment's profile and sizes (CAD-413).
+    pub(super) fn restore(&mut self, settings: &EdgeTreatmentSettings) {
+        self.profile = settings.profile;
+        self.mode = settings.mode;
+        self.size = settings.size.clone();
+        self.second = settings.second.clone();
+        self.angle = settings.angle.clone();
+        self.stamp.changed();
+    }
     pub fn new(
         document: &Document,
         revision: u64,
