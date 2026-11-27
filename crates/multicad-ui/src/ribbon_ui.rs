@@ -1499,6 +1499,7 @@ mod tests {
                         "Create sheet part",
                         "Add flange",
                         "Attached fasteners",
+                        "Frame",
                         "Tube / profile",
                         "Miter / cope",
                         "Weld joint",
