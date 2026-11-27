@@ -73,7 +73,7 @@ impl ResolvedWall {
         let (a, b) = (o.offset_mm, o.offset_mm + o.width_mm);
         let (s, h) = (o.sill_mm, o.sill_mm + o.height_mm);
         let f = OPENING_FRAME_MM.min(o.width_mm / 6.).min(o.height_mm / 6.);
-        if !(f > 0.) {
+        if f.is_nan() || f <= 0. {
             return None;
         }
         let (right, left) = (plan.right_mm, plan.left_mm);
