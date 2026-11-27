@@ -5237,6 +5237,9 @@ mod boolean_ux_tests;
 #[path = "application/inspector_tests.rs"]
 mod inspector_tests;
 #[cfg(test)]
+#[path = "application/panel_placement_tests.rs"]
+mod panel_placement_tests;
+#[cfg(test)]
 #[path = "application/ribbon_fit_tests.rs"]
 mod ribbon_fit_tests;
 #[cfg(test)]
