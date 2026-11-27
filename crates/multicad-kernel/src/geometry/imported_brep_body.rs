@@ -614,10 +614,11 @@ impl ImportedBrepBody {
             let mut bounds = [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]];
             for &(e, _) in uses {
                 let edge = &boundary.edges[e];
-                for axis in 0..3 {
-                    let [low, high] = edge.curve.extent(edge.range[0], edge.range[1], axis);
-                    bounds[0][axis] = bounds[0][axis].min(low);
-                    bounds[1][axis] = bounds[1][axis].max(high);
+                let [lows, highs] = &mut bounds;
+                for (axis, (low, high)) in lows.iter_mut().zip(highs.iter_mut()).enumerate() {
+                    let [a, b] = edge.curve.extent(edge.range[0], edge.range[1], axis);
+                    *low = low.min(a);
+                    *high = high.max(b);
                 }
             }
             bounds
