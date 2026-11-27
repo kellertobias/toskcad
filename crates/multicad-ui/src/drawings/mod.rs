@@ -23,6 +23,8 @@ mod move_tests;
 mod placement_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tree_tests;
 use crate::{egui, icons::Icon};
 use multicad_core::{
     commands::{Actor, Channel, Session},
@@ -559,6 +561,15 @@ impl DrawingEditor {
             let result = match action {
                 sidebar::Action::Select { book, page } => self.select_sheet(session, book, page),
                 sidebar::Action::New => self.invoke(session, DrawingTool::NewDocument, Channel::Ui),
+                sidebar::Action::View { book, page, view } => {
+                    self.select_sheet(session, book, Some(page)).map(|()| {
+                        self.selected_view = Some(view);
+                        self.selected_annotation = None;
+                    })
+                }
+                sidebar::Action::Part { view, part, shown } => {
+                    self.set_part_shown(session, view, part, shown)
+                }
             };
             if let Err(error) = result {
                 self.error = Some(error);

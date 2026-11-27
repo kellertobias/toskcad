@@ -25,14 +25,19 @@ impl DrawingBackend for BoxPublisher {
     fn request(&mut self, document: &Document, stamp: DrawingStamp) -> Result<(), String> {
         let mut views = std::collections::BTreeMap::new();
         for id in drawings::books(document) {
-            for view in drawings::read(document, id)
+            for (page, view) in drawings::read(document, id)
                 .unwrap()
                 .pages
                 .iter()
-                .flat_map(|p| &p.views)
+                .flat_map(|p| p.views.iter().map(move |v| (p, v)))
             {
                 let mut vectors = vec![];
+                let filter = page.part_filter(view.id);
                 for source in view.source.entities() {
+                    // Like the native provider, hidden parts are not drawn.
+                    if filter.is_some_and(|f| !f.shows(document, source)) {
+                        continue;
+                    }
                     let Some((lo, hi)) = self.boxes.get(&source) else {
                         continue;
                     };
@@ -114,17 +119,21 @@ pub(crate) fn box_factory(boxes: Boxes) -> DrawingBackendFactory {
 }
 /// A document with parts of these box sizes (x, y, z), side by side on x.
 pub(crate) fn boxed_document(sizes: &[[f64; 3]]) -> (Document, Vec<EntityId>, Boxes) {
+    tagged_document(&sizes.iter().map(|s| (*s, &[][..])).collect::<Vec<_>>())
+}
+/// Parts of these box sizes with these tags, side by side on x.
+pub(crate) fn tagged_document(parts: &[([f64; 3], &[&str])]) -> (Document, Vec<EntityId>, Boxes) {
     let mut doc = Document::new("Guided views").unwrap();
     let mut boxes = std::collections::BTreeMap::new();
     let mut ids = vec![];
     let mut x = 0.;
-    for (i, size) in sizes.iter().enumerate() {
+    for (i, (size, tags)) in parts.iter().enumerate() {
         let part = Entity::new(
             format!("Block {}", i + 1),
             EntityData::Part {
                 features: vec![],
                 material: None,
-                tags: Default::default(),
+                tags: tags.iter().map(|t| t.to_string()).collect(),
             },
         );
         boxes.insert(part.id, ([x, 0., 0.], [x + size[0], size[1], size[2]]));
@@ -134,14 +143,14 @@ pub(crate) fn boxed_document(sizes: &[[f64; 3]]) -> (Document, Vec<EntityId>, Bo
     }
     (doc, ids, Arc::new(boxes))
 }
-fn editor(sizes: &[[f64; 3]]) -> (DrawingEditor, Session, Vec<EntityId>) {
+pub(super) fn editor(sizes: &[[f64; 3]]) -> (DrawingEditor, Session, Vec<EntityId>) {
     let (doc, ids, boxes) = boxed_document(sizes);
     let mut editor = DrawingEditor::default();
     editor.set_backend_factory(box_factory(boxes));
     (editor, Session::new(doc).unwrap(), ids)
 }
 /// Run frames until `done`, with a frame budget instead of a fixed count.
-fn until(
+pub(super) fn until(
     ctx: &egui::Context,
     editor: &mut DrawingEditor,
     session: &mut Session,
@@ -157,7 +166,7 @@ fn until(
     }
     panic!("Timed out waiting for {what}");
 }
-fn saved(session: &Session, editor: &DrawingEditor) -> drawings::Page {
+pub(super) fn saved(session: &Session, editor: &DrawingEditor) -> drawings::Page {
     drawings::read(session.document(), editor.book.unwrap())
         .unwrap()
         .pages
@@ -165,7 +174,7 @@ fn saved(session: &Session, editor: &DrawingEditor) -> drawings::Page {
         .find(|p| Some(p.id) == editor.selected)
         .unwrap()
 }
-fn screen(editor: &DrawingEditor, mm: [f64; 2]) -> egui::Pos2 {
+pub(super) fn screen(editor: &DrawingEditor, mm: [f64; 2]) -> egui::Pos2 {
     let (paper, scale) = editor.last_paper.expect("paper drawn");
     paper.min + egui::vec2(mm[0] as f32, mm[1] as f32) * scale
 }

@@ -190,6 +190,159 @@ impl DrawingEditor {
         ));
         Ok(())
     }
+    /// Edit the page now: a saved page is applied at once as one undoable
+    /// edit; inside a pending draft the change joins the draft for Apply.
+    fn edit_page_now(
+        &mut self,
+        session: &mut Session,
+        notice: String,
+        edit: impl FnOnce(&Document, &mut Page) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let saved = !self.dirty() && self.revision == Some(session.revision());
+        let page = self.draft.as_mut().ok_or("Select a page")?;
+        edit(session.document(), page)?;
+        if saved && self.dirty() {
+            self.invoke(session, DrawingTool::Apply, Channel::Ui)?;
+            self.notice = Some(notice);
+        }
+        Ok(())
+    }
+    /// Show or hide one part in a view (CAD-438).
+    pub fn set_part_shown(
+        &mut self,
+        session: &mut Session,
+        view: EntityId,
+        part: EntityId,
+        shown: bool,
+    ) -> Result<(), String> {
+        let name = session
+            .document()
+            .get(part)
+            .map_or_else(|| "Part".to_owned(), |e| e.name.clone());
+        self.selected_view = Some(view);
+        self.edit_page_now(
+            session,
+            format!(
+                "{name} {} in this view · Undo restores it",
+                if shown { "shown" } else { "hidden" }
+            ),
+            |document, page| {
+                page.set_part_shown(document, view, part, shown)
+                    .map_err(|e| e.to_string())
+            },
+        )
+    }
+    /// Replace a view's include and exclude tags (CAD-438).
+    pub fn set_view_tag_filter(
+        &mut self,
+        session: &mut Session,
+        view: EntityId,
+        include: std::collections::BTreeSet<String>,
+        exclude: std::collections::BTreeSet<String>,
+    ) -> Result<(), String> {
+        self.selected_view = Some(view);
+        self.edit_page_now(
+            session,
+            "View tag filter applied · Undo restores it".into(),
+            |_, page| {
+                page.set_tag_filter(view, include, exclude)
+                    .map_err(|e| e.to_string())
+            },
+        )
+    }
+    /// Which parts the selected view shows, and its tag filter.
+    fn view_parts_inspector(&mut self, ui: &mut egui::Ui, session: &mut Session, id: EntityId) {
+        let Some(page) = self.draft.as_ref() else {
+            return;
+        };
+        let Some(view) = page.views.iter().find(|v| v.id == id) else {
+            return;
+        };
+        let document = session.document();
+        let parts = drawings::view_parts(document, view);
+        let filter = page.part_filter(id).cloned().unwrap_or_default();
+        let shown = parts
+            .iter()
+            .filter(|p| filter.is_empty() || filter.shows(document, **p))
+            .count();
+        let mut tags = std::collections::BTreeSet::new();
+        for part in &parts {
+            if let Some(EntityData::Part { tags: t, .. }) = document.get(*part).map(|e| &e.data) {
+                tags.extend(t.iter().cloned());
+            }
+        }
+        ui.separator();
+        ui.strong("Parts shown");
+        ui.label(if filter.is_empty() {
+            format!("All {} parts", parts.len())
+        } else {
+            format!("{shown} of {} parts", parts.len())
+        });
+        let mut change = None;
+        if tags.is_empty() {
+            ui.small("Tag parts in Model (part properties) to filter this view by tag.");
+        } else {
+            for (title, include) in [("Only parts tagged", true), ("Hide parts tagged", false)] {
+                ui.label(title);
+                ui.horizontal_wrapped(|ui| {
+                    for tag in &tags {
+                        let set = if include {
+                            &filter.include_tags
+                        } else {
+                            &filter.exclude_tags
+                        };
+                        let on = set.contains(tag);
+                        if ui
+                            .selectable_label(on, tag)
+                            .on_hover_text(if include {
+                                "Show only parts with one of the chosen tags"
+                            } else {
+                                "Hide parts with this tag"
+                            })
+                            .clicked()
+                        {
+                            let (mut inc, mut exc) =
+                                (filter.include_tags.clone(), filter.exclude_tags.clone());
+                            let target = if include { &mut inc } else { &mut exc };
+                            if on {
+                                target.remove(tag);
+                            } else {
+                                target.insert(tag.clone());
+                                // A tag is either required or excluded.
+                                if include {
+                                    exc.remove(tag);
+                                } else {
+                                    inc.remove(tag);
+                                }
+                            }
+                            change = Some((inc, exc));
+                        }
+                    }
+                });
+            }
+        }
+        if !filter.is_empty()
+            && ui
+                .button("Show everything")
+                .on_hover_text("Clear the tag filter and part toggles of this view")
+                .clicked()
+            && let Err(error) = self.edit_page_now(
+                session,
+                "View shows everything · Undo restores the filter".into(),
+                |_, page| {
+                    page.part_filters.retain(|f| f.view != id);
+                    Ok(())
+                },
+            )
+        {
+            self.error = Some(error);
+        }
+        if let Some((include, exclude)) = change
+            && let Err(error) = self.set_view_tag_filter(session, id, include, exclude)
+        {
+            self.error = Some(error);
+        }
+    }
     pub(super) fn add_view(&mut self, kind: ViewKind) -> Result<(), String> {
         let page = self.draft.as_mut().ok_or("Add a page first")?;
         let id = EntityId::new();
@@ -538,6 +691,7 @@ impl DrawingEditor {
             Some(false) => self.cancel_section_pick(),
             None => {}
         }
+        self.view_parts_inspector(ui, session, id);
         if self.feed.pending() {
             ui.label("Generating native drawing…");
         }
