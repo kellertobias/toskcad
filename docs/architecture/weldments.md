@@ -129,6 +129,57 @@ Editing the sketch moves and resizes its members in place. Their feature
 and Part identities stay, so later connections, welds, BOM rows and
 drawing references keep pointing at the same members.
 
+## Frames drawn as lines (CAD-439)
+
+A `weldment.frame` extension (design: `frame-drawing.md`) is the canonical
+source of a frame drawn as lines. It holds a base plane, nodes, members
+between nodes and per-node joint overrides only. Files with frames require
+`weldment.frame.1`.
+
+- **Nodes** are `Absolute { u, v, w }` plane coordinates, `Polar { from,
+  length, angle, rise }` from another node, or `Along { member, distance,
+  from_end }` stations on a member. Values are dimensions, so `=$width`
+  drives them. Positions evaluate in dependency order; cycles, stations
+  outside their member and two nodes at one place are refused.
+- **Members** are ordinary `weldment.member` features with path
+  `FrameMember { frame, member }`, one Part each. Feature and Part ids are
+  created with the member and kept through every frame edit; removing a
+  member from the frame removes its feature, Part and properties.
+- **Side.** A member's section lies centered on its line (its own grid
+  anchor), or inner/outer (toward or away from the in-plane centroid of the
+  nodes) or left/right looking along it with the plane normal up. The frame
+  default applies unless a member sets its own. In-plane members take the
+  plane normal as section height; members along the normal (legs) take the
+  plane u axis.
+- **Joints** are derived at every node and built with the miter, butt and
+  cope builders above; the frame is the joint's source in cut records.
+  Defaults: a straight pair needs no joint; two equal sections mitre; round
+  tubes cope with the larger through (equal rounds mitre); different
+  sections butt with the larger through; an end on a station butts (flat
+  face) or copes; three or more ends put the member along the plane normal
+  (a leg) through and butt or cope the others onto it. An override sets the
+  kind, the through member and the gap; the frame gap defaults to 0 mm and
+  a gap shortens the members. An override that no longer applies (its
+  member was deleted, too few members meet) is reported at the node and
+  never replaced.
+- **Typed edits** shared by the UI and MCP: add a chain (a straight
+  continuation extends the previous member), add a station, move a node,
+  set a joint override, set a side, remove a member; `prepare_frame`
+  commits them as one transaction. MCP: `create_frame`, `edit_frame`.
+- **Cut list.** Records carry `mass_kg` from the measured volume and the
+  material density.
+
+Frame limits in this slice:
+- A table corner puts the leg through to the top of the rails, with both
+  rails butted onto the leg's inner faces; the rails do not also mitre.
+- The Rust kernel copes a round branch only onto a receiving tube that runs
+  past the joint (a T), so two different round tubes meeting at an L corner
+  are refused there.
+- Centroid anchors, section offsets, an overridable off-plane up rule,
+  frame-default stock that follows later changes, model-bound nodes and
+  split/merge of drawn members are not implemented yet; the Frame tool is
+  CAD-440.
+
 ## What the planner refuses
 
 The planner and evaluator report these cases instead of building wrong
