@@ -392,6 +392,9 @@ impl SketchEditor {
         if tool == ModelingTool::Member {
             return self.begin_weldment(session, resources, channel);
         }
+        if tool == ModelingTool::Frame {
+            return self.begin_frame(session, resources, channel);
+        }
         if tool == ModelingTool::WoodBox {
             return self.begin_wood_box(session, resources, channel);
         }

@@ -9,6 +9,7 @@ use super::{
     edge_treatment::EdgeTreatmentPanel,
     fdm_aid::{FdmAidCommand, FdmAidPanel},
     fence::FencePanel,
+    frame::{FrameCommand, FramePanel},
     gear::{GearPairCommand, GearPanel},
     group_edit::GroupEditPanel,
     joint::{JointCommand, JointPanel},
@@ -66,6 +67,7 @@ pub enum ModelRequest {
     Advanced(Box<super::AdvancedCommand>),
     Alignment(Box<super::AlignmentCommand>),
     Wall(Box<WallCommand>),
+    Frame(Box<FrameCommand>),
     Fence(Box<model::FenceChange>),
     SymbolConstruction(Box<crate::symbols::ArchitecturalSymbolCommand>),
     Opening(Box<OpeningCommand>),
@@ -159,6 +161,12 @@ impl ModelRequest {
             Self::Wall(command) => {
                 if command.edit_id() != Some(feature) {
                     return Err("Wall edit changed its producer identity".into());
+                }
+                return command.prepare(session, actor);
+            }
+            Self::Frame(command) => {
+                if !command.edits(session.document(), feature) {
+                    return Err("Frame edit changed its frame".into());
                 }
                 return command.prepare(session, actor);
             }
@@ -294,6 +302,12 @@ impl ModelRequest {
             Self::Wall(command) => {
                 if command.edit_id().is_some() {
                     return Err("Reopen the saved wall before editing it".into());
+                }
+                return command.prepare(session, actor);
+            }
+            Self::Frame(command) => {
+                if command.editing {
+                    return Err("Reopen the saved frame before editing it".into());
                 }
                 return command.prepare(session, actor);
             }
@@ -501,6 +515,7 @@ pub(super) enum ModelForm {
     Advanced(Box<AdvancedPanel>),
     Alignment(Box<AlignmentPanel>),
     Wall(Box<WallPanel>),
+    Frame(Box<FramePanel>),
     Fence(Box<FencePanel>),
     Opening(Box<OpeningPanel>),
     CompoundCutout(Box<super::compound_cutout::CompoundCutoutPanel>),
@@ -538,6 +553,7 @@ impl ModelForm {
             Self::Advanced(panel) => panel.stamp(),
             Self::Alignment(panel) => panel.stamp(),
             Self::Wall(panel) => panel.stamp(),
+            Self::Frame(panel) => panel.stamp(),
             Self::Fence(panel) => panel.stamp(),
             Self::Opening(panel) => panel.stamp(),
             Self::CompoundCutout(panel) => panel.stamp(),
@@ -575,6 +591,7 @@ impl ModelForm {
             Self::Advanced(panel) => panel.label(),
             Self::Alignment(_) => "Referenced alignment",
             Self::Wall(panel) => panel.label(),
+            Self::Frame(panel) => panel.label(),
             Self::Fence(panel) => panel.label(),
             Self::Opening(panel) => panel.label(),
             Self::CompoundCutout(panel) => panel.label(),
@@ -608,6 +625,7 @@ impl ModelForm {
                 .map(|command| ModelRequest::Alignment(Box::new(command))),
             Self::Fence(panel) => panel.model_request(document, capabilities.new_body),
             Self::Wall(panel) => panel.model_request(document, capabilities.new_body),
+            Self::Frame(panel) => panel.model_request(document, capabilities.new_body),
             Self::Opening(panel) => panel
                 .request(document, capabilities.new_body)
                 .map(|command| ModelRequest::Opening(Box::new(command))),
@@ -766,6 +784,7 @@ impl ModelForm {
             Self::Advanced(panel) => panel.show(ui, document, capabilities.new_body, preview),
             Self::Alignment(panel) => panel.show(ui, document, capabilities.new_body, preview),
             Self::Wall(panel) => panel.show(ui, document, capabilities.new_body, preview),
+            Self::Frame(panel) => panel.show(ui, document, capabilities.new_body, preview),
             Self::Fence(panel) => panel.show(ui, document, capabilities.new_body, preview),
             Self::Opening(panel) => panel.show(ui, document, capabilities.new_body, preview),
             Self::CompoundCutout(panel) => panel.show(ui, document, capabilities.new_body, preview),

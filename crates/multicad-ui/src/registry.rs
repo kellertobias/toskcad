@@ -680,6 +680,7 @@ impl Default for Registry {
                                         | ModelingTool::FdmSupport
                                         | ModelingTool::SurfaceStructure
                                         | ModelingTool::Member
+                                        | ModelingTool::Frame
                                         | ModelingTool::Connection
                                         | ModelingTool::Weld
                                         | ModelingTool::Sheet
@@ -1361,6 +1362,7 @@ mod tests {
                         | ModelingTool::FdmSupport
                         | ModelingTool::SurfaceStructure
                         | ModelingTool::Member
+                        | ModelingTool::Frame
                         | ModelingTool::Connection
                         | ModelingTool::Weld
                         | ModelingTool::Sheet

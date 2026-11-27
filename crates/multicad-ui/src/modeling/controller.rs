@@ -455,6 +455,21 @@ impl ModelToolController {
             self.scope.as_mut().expect("opened scope").execution = Execution::Edit { feature };
             return Ok(());
         }
+        if let Ok(model::MemberDefinition {
+            path: model::MemberPath::FrameMember { .. },
+            ..
+        }) = model::read_member(document, feature)
+        {
+            let form = super::frame::FramePanel::existing(document, feature)?;
+            self.begin_form(
+                session,
+                resources,
+                channel,
+                ModelForm::Frame(Box::new(form)),
+            )?;
+            self.scope.as_mut().expect("opened scope").execution = Execution::Edit { feature };
+            return Ok(());
+        }
         if model::read_member(document, feature).is_ok() {
             let form = super::weldment::WeldmentPanel::existing(document, feature)?;
             self.begin_form(
@@ -968,6 +983,7 @@ impl ModelToolController {
         match &self.form {
             Some(
                 ModelForm::Wall(_)
+                | ModelForm::Frame(_)
                 | ModelForm::Fence(_)
                 | ModelForm::CompoundCutout(_)
                 | ModelForm::WoodBox(_),
@@ -982,6 +998,7 @@ impl ModelToolController {
     pub(crate) fn outline_key(&mut self, key: super::OutlineKey) -> Option<bool> {
         let changed = match self.form.as_mut() {
             Some(ModelForm::Wall(panel)) => panel.outline_key(key),
+            Some(ModelForm::Frame(panel)) => panel.outline_key(key),
             Some(ModelForm::Fence(panel)) => panel.outline_key(key),
             Some(ModelForm::Architecture(panel)) => panel.outline_key(key),
             _ => None,
@@ -1003,6 +1020,7 @@ impl ModelToolController {
                 panel.viewport(document, revision, view)
             }
             Some(ModelForm::Fence(panel)) => panel.viewport(session, view),
+            Some(ModelForm::Frame(panel)) => panel.viewport(session, view),
             Some(ModelForm::WoodBox(panel)) => panel.viewport(session, view),
             Some(ModelForm::CompoundCutout(panel)) => {
                 panel.viewport(document, session.parameters(), view)
@@ -1223,6 +1241,23 @@ impl ModelToolController {
             }
             _ => None,
         }
+    }
+    pub fn begin_frame(
+        &mut self,
+        session: &Session,
+        resources: &ProjectResources,
+        channel: Channel,
+    ) -> Result<(), String> {
+        let name = GeneratedNames::new(session.document()).numbered("Frame", "");
+        self.begin_form(
+            session,
+            resources,
+            channel,
+            ModelForm::Frame(Box::new(super::frame::FramePanel::new(
+                session.document(),
+                name,
+            )?)),
+        )
     }
     pub fn begin_weldment(
         &mut self,

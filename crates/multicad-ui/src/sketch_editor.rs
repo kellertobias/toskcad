@@ -1773,6 +1773,25 @@ impl SketchEditor {
             "Tube / profile · choose stock and a sketch or two points in the Inspector".into();
         Ok(())
     }
+    pub fn begin_frame(
+        &mut self,
+        session: &Session,
+        resources: &multicad_core::project_file::ProjectResources,
+        channel: Channel,
+    ) -> Result<(), String> {
+        if !self.primitive_ready() {
+            return Err(
+                "Install native modeling and apply or cancel pending edits before drawing a frame"
+                    .into(),
+            );
+        }
+        self.finish()?;
+        self.model.begin_frame(session, resources, channel)?;
+        self.message =
+            "Frame · choose stock, then draw in the viewport or type segments in the Inspector"
+                .into();
+        Ok(())
+    }
     pub fn begin_weld(
         &mut self,
         session: &Session,
