@@ -258,9 +258,9 @@ jobs:
     env:
       MULTICAD_RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
       MULTICAD_PACKAGE_TESTS: gated
-    defaults:
-      run:
-        shell: bash
+    # Default shells on purpose: packaging calls `tar`, and Git Bash's GNU tar
+    # reads Windows drive paths (D:\...) as remote hosts. PowerShell resolves
+    # the system tar, as the release jobs always have.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -277,7 +277,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev
       - name: Build, smoke-check and archive the exact version
-        run: node tools/package-release.mjs build "$MULTICAD_RELEASE_VERSION"
+        run: node tools/package-release.mjs build "${{ needs.metadata.outputs.version }}"
       - name: Preserve verified platform archive
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

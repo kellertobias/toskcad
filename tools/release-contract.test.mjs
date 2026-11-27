@@ -200,6 +200,8 @@ test('every platform compiles the workspace tests once and its archive runs all 
   assert(test.includes('name: nextest-${{ matrix.target }}-${{ matrix.partition }}-${{ github.sha }}'));
   assert(test.includes('run: node tools/native-test-shard.mjs shard "nextest-${{ matrix.partition }}.tar.zst"'));
   assert.doesNotMatch(pack,/nextest/);
+  // Packaging runs `tar`; Git Bash's GNU tar misreads Windows drive paths.
+  assert.doesNotMatch(pack,/shell: bash/);
   assert.match(release,/needs: \[metadata, quality, package, test, owned-kernel\]/);
   const weights=JSON.parse(readFileSync(new URL('./test-weights.json',import.meta.url),'utf8'));
   assert.match(weights.source,/never skips a test/);
