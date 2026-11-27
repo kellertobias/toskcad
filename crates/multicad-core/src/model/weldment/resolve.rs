@@ -163,6 +163,44 @@ fn item_line_8_outer() -> Vec<SectionEdge> {
     edges
 }
 
+/// A counterclockwise rectangle from `min` to `max` with circular corners of
+/// `radius`. A full-round side (radius = half that side) leaves out its
+/// zero-length straight edge; a full round square is a circle.
+fn rounded_rect(min: [f64; 2], max: [f64; 2], radius: f64) -> SectionLoop {
+    let ([x0, y0], [x1, y1], r) = (min, max, radius);
+    if r <= 0. {
+        return SectionLoop::Polygon(vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
+    }
+    let (w, h) = (x1 - x0, y1 - y0);
+    if (w - 2. * r).abs() <= 1e-12 && (h - 2. * r).abs() <= 1e-12 {
+        return SectionLoop::Circle {
+            center: [x0 + r, y0 + r],
+            radius_mm: r,
+        };
+    }
+    let mut edges = vec![];
+    let line = |a: [f64; 2], b: [f64; 2], edges: &mut Vec<SectionEdge>| {
+        if (b[0] - a[0]).abs() + (b[1] - a[1]).abs() > 1e-12 {
+            edges.push(SectionEdge::Line { a, b });
+        }
+    };
+    let arc = |center: [f64; 2], a: [f64; 2], b: [f64; 2]| SectionEdge::Arc {
+        center,
+        a,
+        b,
+        clockwise: false,
+    };
+    line([x0 + r, y0], [x1 - r, y0], &mut edges);
+    edges.push(arc([x1 - r, y0 + r], [x1 - r, y0], [x1, y0 + r]));
+    line([x1, y0 + r], [x1, y1 - r], &mut edges);
+    edges.push(arc([x1 - r, y1 - r], [x1, y1 - r], [x1 - r, y1]));
+    line([x1 - r, y1], [x0 + r, y1], &mut edges);
+    edges.push(arc([x0 + r, y1 - r], [x0 + r, y1], [x0, y1 - r]));
+    line([x0, y1 - r], [x0, y0 + r], &mut edges);
+    edges.push(arc([x0 + r, y0 + r], [x0, y0 + r], [x0 + r, y0]));
+    SectionLoop::Curved(edges)
+}
+
 fn item_line_8_area() -> f64 {
     let r = ITEM_LINE_8_CORNER_RADIUS_MM;
     let core = ITEM_LINE_8_CORE_DIAMETER_MM / 2.;
@@ -192,6 +230,8 @@ pub struct ProfileSection {
     pub stock_length_mm: f64,
     /// The resolved sketch section of `ProfileShape::Sketch` stock.
     pub custom: Option<super::SketchSection>,
+    /// Outside corner radius of a rectangular section; none when sharp.
+    pub corner_radius_mm: Option<f64>,
 }
 impl ProfileSection {
     pub fn from_stock(stock: &Stock) -> Result<Self, DocumentError> {
@@ -203,6 +243,7 @@ impl ProfileSection {
             wall_mm,
             shape,
             section,
+            corner_radius_mm,
         } = &stock.specification
         else {
             return Err(invalid("Members need profile stock"));
@@ -224,6 +265,7 @@ impl ProfileSection {
             wall_mm: *wall_mm,
             stock_length_mm: *length_mm,
             custom,
+            corner_radius_mm: corner_radius_mm.filter(|_| *shape == ProfileShape::Rectangular),
         })
     }
     pub fn is_sketch(&self) -> bool {
@@ -261,9 +303,12 @@ impl ProfileSection {
             };
         }
         match self.shape {
-            ProfileShape::Rectangular => {
-                SectionLoop::Polygon(vec![[-g, -g], [w + g, -g], [w + g, h + g], [-g, h + g]])
-            }
+            ProfileShape::Rectangular => match self.corner_radius_mm {
+                Some(r) => rounded_rect([-g, -g], [w + g, h + g], r + g),
+                None => {
+                    SectionLoop::Polygon(vec![[-g, -g], [w + g, -g], [w + g, h + g], [-g, h + g]])
+                }
+            },
             ProfileShape::Round => SectionLoop::Circle {
                 center: [w / 2., h / 2.],
                 radius_mm: w / 2. + g,
@@ -327,12 +372,19 @@ impl ProfileSection {
         };
         let (w, h) = (self.width_mm, self.height_mm);
         match self.shape {
-            ProfileShape::Rectangular => vec![SectionLoop::Polygon(vec![
-                [t, t],
-                [w - t, t],
-                [w - t, h - t],
-                [t, h - t],
-            ])],
+            ProfileShape::Rectangular => {
+                vec![
+                    match crate::materials::inner_corner_radius(self.corner_radius_mm, Some(t)) {
+                        Some(r) => rounded_rect([t, t], [w - t, h - t], r),
+                        None => SectionLoop::Polygon(vec![
+                            [t, t],
+                            [w - t, t],
+                            [w - t, h - t],
+                            [t, h - t],
+                        ]),
+                    },
+                ]
+            }
             ProfileShape::Round => vec![SectionLoop::Circle {
                 center: [w / 2., h / 2.],
                 radius_mm: w / 2. - t,
@@ -346,9 +398,19 @@ impl ProfileSection {
             return custom.area_mm2;
         }
         let (w, h) = (self.width_mm, self.height_mm);
+        // A rounded corner removes (4 − π)·r² from its rectangle.
+        let corners = |r: Option<f64>| (4. - std::f64::consts::PI) * r.map_or(0., |r| r * r);
+        let outer = w * h - corners(self.corner_radius_mm);
         match (self.shape, self.wall_mm) {
-            (ProfileShape::Rectangular, None) => w * h,
-            (ProfileShape::Rectangular, Some(t)) => w * h - (w - 2. * t) * (h - 2. * t),
+            (ProfileShape::Rectangular, None) => outer,
+            (ProfileShape::Rectangular, Some(t)) => {
+                outer
+                    - ((w - 2. * t) * (h - 2. * t)
+                        - corners(crate::materials::inner_corner_radius(
+                            self.corner_radius_mm,
+                            Some(t),
+                        )))
+            }
             (ProfileShape::Round, None) => std::f64::consts::PI * w * w / 4.,
             (ProfileShape::Round, Some(t)) => {
                 let r = w / 2.;
@@ -370,6 +432,11 @@ impl ProfileSection {
         if let Some(custom) = &self.custom {
             return super::sketch_section::sampled(&custom.outer);
         }
+        if self.corner_radius_mm.is_some() {
+            // Rounded corners are sampled at most 1° apart, so perimeters
+            // and extents measured on these points include the arcs.
+            return super::sketch_section::sampled(&self.outer(0.));
+        }
         match self.outer(0.) {
             SectionLoop::Polygon(points) => points,
             SectionLoop::Curved(edges) => edges
@@ -389,7 +456,13 @@ impl ProfileSection {
     }
     pub fn label(&self) -> String {
         let shape = match (self.shape, self.wall_mm) {
+            (ProfileShape::Rectangular, Some(_)) if self.corner_radius_mm.is_some() => {
+                "rectangular tube, rounded corners"
+            }
             (ProfileShape::Rectangular, Some(_)) => "rectangular tube",
+            (ProfileShape::Rectangular, None) if self.corner_radius_mm.is_some() => {
+                "bar, rounded corners"
+            }
             (ProfileShape::Rectangular, None) => "bar",
             (ProfileShape::Round, Some(_)) => "round tube",
             (ProfileShape::Round, None) => "round bar",
@@ -660,6 +733,7 @@ mod tests {
             wall_mm: wall,
             stock_length_mm: 6000.,
             custom: None,
+            corner_radius_mm: None,
         };
         near(
             s(ProfileShape::Rectangular, 40., 20., Some(2.)).area_mm2(),

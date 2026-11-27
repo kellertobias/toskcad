@@ -132,6 +132,7 @@ fn sketch_stock(
             wall_mm: None,
             shape: ProfileShape::Sketch,
             section: Some(Box::new(ProfileSketch { sketch })),
+            corner_radius_mm: None,
         },
     })
     .entity(id, name)
@@ -281,6 +282,7 @@ fn invalid_section_edits_never_reach_the_document_or_geometry() {
             wall_mm: None,
             shape: ProfileShape::Sketch,
             section: Some(Box::new(ProfileSketch { sketch: open })),
+            corner_radius_mm: None,
         },
     });
     assert!(stale.entity(f.slot, "Slot tube").is_err());
@@ -324,6 +326,7 @@ fn custom_sections_miter_and_butt_but_refuse_copes() {
             wall_mm: Some(2.),
             shape: ProfileShape::Rectangular,
             section: None,
+            corner_radius_mm: None,
         },
     })
     .entity(EntityId::new(), "SHS 40×40×2")

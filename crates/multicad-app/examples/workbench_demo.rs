@@ -155,6 +155,7 @@ fn profile(
             wall_mm: wall,
             shape: ProfileShape::Rectangular,
             section: None,
+            corner_radius_mm: None,
         },
     })
     .entity(EntityId::new(), designation)?)

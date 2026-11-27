@@ -342,6 +342,7 @@ fn welded_corner() -> Corner {
             wall_mm: Some(2.),
             shape: ProfileShape::Rectangular,
             section: None,
+            corner_radius_mm: None,
         },
     })
     .entity(EntityId::new(), "SHS 40")

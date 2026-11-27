@@ -363,6 +363,11 @@ pub(crate) fn support(section_loop: &SectionLoop, direction: [f64; 2]) -> f64 {
 /// Boundary points for comparing placed sections and measuring cut
 /// perimeters: every vertex, plus points at most 1° apart along arcs and
 /// circles. Never used as geometry.
+/// Points along a section boundary, arcs sampled at most 1° apart; for
+/// pictures and measurements on the outline, never as geometry.
+pub fn sample_section_loop(section_loop: &SectionLoop) -> Vec<[f64; 2]> {
+    sampled(section_loop)
+}
 pub(crate) fn sampled(section_loop: &SectionLoop) -> Vec<[f64; 2]> {
     let arc_points = |center: [f64; 2], from: f64, sweep: f64, r: f64| {
         let steps = ((sweep.abs().to_degrees()).ceil() as usize).max(1);

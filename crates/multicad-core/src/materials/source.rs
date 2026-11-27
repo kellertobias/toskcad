@@ -127,6 +127,50 @@ pub struct ProfileSketch {
 pub const SKETCH_PROFILE_SIZE_TOLERANCE_MM: f64 = 1e-9;
 
 pub const ITEM_LINE_8_PROFILE_CAPABILITY: &str = "materials.profile.item_line_8_40x40.1";
+/// Required by files whose rectangular profile stock has rounded corners.
+pub const CORNER_RADIUS_PROFILE_CAPABILITY: &str = "materials.profile.corner_radius.1";
+
+/// Why an outside corner radius cannot be used on this section, if it cannot.
+/// The radius must be positive and fit the smaller side; for a tube the
+/// derived inside radius (outside radius less the wall) then always fits the
+/// bore, so the wall needs no separate limit beyond `2 × wall < side`.
+pub fn corner_radius_problem(
+    shape: ProfileShape,
+    width_mm: f64,
+    height_mm: f64,
+    wall_mm: Option<f64>,
+    radius_mm: f64,
+) -> Option<String> {
+    if shape != ProfileShape::Rectangular {
+        return Some("Only rectangular tubes and bars have a corner radius".into());
+    }
+    if !radius_mm.is_finite() || radius_mm <= 0. {
+        return Some("Enter a corner radius above 0 mm, or leave the corners sharp".into());
+    }
+    let limit = width_mm.min(height_mm) / 2.;
+    if radius_mm > limit {
+        return Some(format!(
+            "The corner radius can be at most half the smaller side ({limit} mm)"
+        ));
+    }
+    if let Some(t) =
+        wall_mm.filter(|t| t.is_finite() && *t > 0. && t * 2. <= width_mm.min(height_mm))
+    {
+        let inner = radius_mm - t;
+        if inner > (width_mm.min(height_mm) - 2. * t) / 2. {
+            return Some(format!(
+                "The inside radius ({inner} mm = radius − wall) does not fit the bore"
+            ));
+        }
+    }
+    None
+}
+/// The inside corner radius of a hollow rectangular section: the outside
+/// radius less the wall, or none (a sharp inside corner) when not positive.
+pub fn inner_corner_radius(radius_mm: Option<f64>, wall_mm: Option<f64>) -> Option<f64> {
+    let (r, t) = (radius_mm?, wall_mm?);
+    (r - t > 0.).then_some(r - t)
+}
 impl ProfileShape {
     pub fn is_rectangular(&self) -> bool {
         *self == Self::Rectangular
@@ -159,6 +203,11 @@ pub enum StockKind {
         /// The owned section sketch of `ProfileShape::Sketch`; none otherwise.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         section: Option<Box<ProfileSketch>>,
+        /// Outside corner radius of a rectangular section (CAD-434); none
+        /// for sharp corners. A hollow section's inside radius is derived:
+        /// the outside radius less the wall, sharp when that is not positive.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        corner_radius_mm: Option<f64>,
     },
     Print {
         process: String,
@@ -326,8 +375,12 @@ impl LibraryDefinition {
                             wall_mm,
                             shape,
                             section,
+                            corner_radius_mm,
                         } => {
-                            !designation.trim().is_empty()
+                            corner_radius_mm.is_none_or(|r| {
+                                corner_radius_problem(*shape, *width_mm, *height_mm, *wall_mm, r)
+                                    .is_none()
+                            }) && !designation.trim().is_empty()
                                 && designation.len() <= 256
                                 && [*length_mm, *width_mm, *height_mm]
                                     .into_iter()
@@ -364,6 +417,23 @@ impl LibraryDefinition {
             Self::MaterialStyle(s) => !s.material.is_nil(),
             Self::PartProperties(s) => !s.part.is_nil(),
         };
+        if let Self::Stock(Stock {
+            specification:
+                StockKind::Profile {
+                    width_mm,
+                    height_mm,
+                    wall_mm,
+                    shape,
+                    corner_radius_mm: Some(r),
+                    ..
+                },
+            ..
+        }) = self
+            && let Some(problem) =
+                corner_radius_problem(*shape, *width_mm, *height_mm, *wall_mm, *r)
+        {
+            return Err(DocumentError::Invalid(problem));
+        }
         if !valid || self.links().iter().any(|l| l.target.is_nil()) {
             return Err(DocumentError::Invalid(format!(
                 "Invalid {} definition",
@@ -472,6 +542,37 @@ pub fn required_capability(document: &Document) -> bool {
     )
 }
 
+/// Whether any profile stock, including stock inside a library symbol, has
+/// an outside corner radius.
+pub fn requires_profile_corner_radius(document: &Document) -> bool {
+    let rounded = |data: &serde_json::Value| {
+        data.pointer("/value/specification/corner_radius_mm")
+            .is_some_and(|v| !v.is_null())
+    };
+    document.entities().any(|entity| match &entity.data {
+        EntityData::Extension { definition, .. } if definition.type_id == "materials.stock" => {
+            rounded(&definition.data)
+        }
+        EntityData::Extension { definition, .. }
+            if definition.type_id == crate::symbols::DEFINITION_TYPE =>
+        {
+            definition
+                .data
+                .pointer("/template/entities")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|entities| {
+                    entities.values().any(|entity| {
+                        entity
+                            .pointer("/data/definition/type_id")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("materials.stock")
+                            && entity.pointer("/data/definition/data").is_some_and(rounded)
+                    })
+                })
+        }
+        _ => false,
+    })
+}
 pub fn requires_item_line_8_profile(document: &Document) -> bool {
     let slotted_stock = |data: &serde_json::Value| {
         data.pointer("/value/specification/shape")
@@ -558,3 +659,6 @@ pub(crate) fn invalidation_edges(
     }
     Ok(edges)
 }
+
+#[cfg(test)]
+mod corner_radius_tests;

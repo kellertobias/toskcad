@@ -111,6 +111,11 @@ pub struct ProfileStockArgs {
     /// Bar length the stock is supplied in (default 6000).
     #[serde(default)]
     pub bar_length_mm: Option<f64>,
+    /// Rectangular stock only: outside corner radius, above 0 and at most
+    /// half the smaller side. A tube's inside radius is this radius less the
+    /// wall (sharp when not positive). Omit for sharp corners.
+    #[serde(default)]
+    pub corner_radius_mm: Option<f64>,
 }
 #[derive(Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -388,6 +393,11 @@ pub(super) fn create_profile_stock(
             }
         };
         let specification = if matches!(args.shape, ProfileShapeArg::Sketch) {
+            if args.corner_radius_mm.is_some() {
+                return Err(ToolError::invalid(
+                    "Sketch stock has no corner_radius_mm; draw the arcs in the section instead",
+                ));
+            }
             if args.wall_mm.is_some() {
                 return Err(ToolError::invalid(
                     "Sketch stock has no wall_mm; draw holes in the section instead",
@@ -435,6 +445,7 @@ pub(super) fn create_profile_stock(
                     ProfileShapeArg::Angle | ProfileShapeArg::Sketch => ProfileShape::Angle,
                 },
                 section: None,
+                corner_radius_mm: args.corner_radius_mm,
             }
         };
         let stock = LibraryDefinition::Stock(Stock {
@@ -827,7 +838,7 @@ pub(super) fn weldment_cut_list(host: &dyn Host, call: &Request, _: super::NoArg
     let records = model.member_cut_list(&document)?;
     Ok(json!({
         "revision": revision,
-        "scope": "Lengths measured from the evaluated member solids along each member axis (overall length, farthest point to farthest point; span is the measured axial range from the path start). End angles: plane cuts from square (0 = square, 45 = right-angle miter); copes give the branch angle to the receiving axis. Sections are modeled with sharp corners. A geometric record, not a nesting plan, certified procedure or structural check.",
+        "scope": "Lengths measured from the evaluated member solids along each member axis (overall length, farthest point to farthest point; span is the measured axial range from the path start). End angles: plane cuts from square (0 = square, 45 = right-angle miter); copes give the branch angle to the receiving axis. Rectangular sections use their stock's outside corner radius (inside radius = radius less wall); round sections are exact; angle root radii are not modeled. A geometric record, not a nesting plan, certified procedure or structural check.",
         "members": records.iter().map(|r| json!({
             "part": r.part, "feature": r.feature, "name": r.name,
             "material": r.material, "stock": r.stock, "stock_name": r.stock_name,
@@ -948,6 +959,7 @@ fn sketch_spec(
         section: Some(Box::new(materials::ProfileSketch {
             sketch: solved.sketch,
         })),
+        corner_radius_mm: None,
     }
 }
 
