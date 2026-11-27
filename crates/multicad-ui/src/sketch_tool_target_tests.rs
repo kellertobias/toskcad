@@ -216,6 +216,7 @@ fn joint_tool_clicks_fill_a_then_b_preview_and_enter_or_escape_finish_atomically
             editor.poll_model(session, &Default::default());
         };
     let top = crate::camera::Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         scale: 0.5,
@@ -354,6 +355,7 @@ fn a_butted_joint_corner_shows_the_missing_material_and_the_fix() {
         editor.poll_model(&session, &Default::default());
         if i == 0 {
             editor.camera = crate::camera::Camera {
+                roll: 0.0,
                 yaw: 0.6,
                 pitch: 0.5,
                 scale: 0.5,

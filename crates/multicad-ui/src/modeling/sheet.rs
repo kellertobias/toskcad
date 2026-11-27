@@ -845,6 +845,7 @@ mod tests {
     };
     fn camera() -> crate::camera::Camera {
         crate::camera::Camera {
+            roll: 0.0,
             yaw: 0.5,
             pitch: 0.6,
             scale: 2.5,

@@ -56,6 +56,7 @@ impl Harness {
         Self {
             ctx: Default::default(),
             camera: Camera {
+                roll: 0.0,
                 yaw: -0.6,
                 pitch: 0.6,
                 scale: 4.,
@@ -717,6 +718,7 @@ fn top_view_host_drag(basis: GizmoBasis, coalesced: bool) {
         panel.set_drag_parameters(&control).unwrap();
     }
     let camera = Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         scale: 1.3374,

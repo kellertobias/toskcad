@@ -207,6 +207,7 @@ mod tests {
     #[test]
     fn home_restores_orientation_and_frames_the_whole_model() {
         let mut turned = Camera {
+            roll: 0.0,
             yaw: 2.,
             pitch: -0.3,
             scale: 9.,

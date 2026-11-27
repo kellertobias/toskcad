@@ -68,6 +68,7 @@ mod tests {
 
     fn camera(scale: f32, pitch: f32) -> Camera {
         Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch,
             scale,

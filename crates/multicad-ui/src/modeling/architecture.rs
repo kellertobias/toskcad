@@ -944,6 +944,7 @@ mod tests {
         let before = session.document().clone();
         let ctx = egui::Context::default();
         let camera = crate::camera::Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: std::f32::consts::FRAC_PI_2,
             target: [0., 0., 3000.],

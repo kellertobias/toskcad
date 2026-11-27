@@ -626,7 +626,7 @@ fn valid_view(rect: egui::Rect, camera: Camera) -> bool {
         && camera
             .target
             .iter()
-            .chain([&camera.yaw, &camera.pitch])
+            .chain([&camera.yaw, &camera.pitch, &camera.roll])
             .all(|v| v.is_finite())
 }
 

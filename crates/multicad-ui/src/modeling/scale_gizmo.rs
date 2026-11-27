@@ -505,6 +505,7 @@ mod tests {
                 input: ScaleViewport {
                     scene: None,
                     camera: Camera {
+                        roll: 0.0,
                         yaw: -0.6,
                         pitch: 0.6,
                         scale: 4.,

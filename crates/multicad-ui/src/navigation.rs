@@ -97,6 +97,7 @@ impl Camera {
             self.pitch = 0.0;
             self.yaw = x.portable_atan2(y);
         }
+        self.roll = 0.0;
     }
 }
 fn axis_points(camera: &Camera, rect: Rect) -> Vec<(AxisView, [f32; 3])> {
@@ -119,10 +120,165 @@ fn endpoint_radius(depth: f32, rect: Rect) -> f32 {
     let center_depth = rect.height() / 29.0 * 2.0;
     6.5 + 1.5 * (center_depth - depth).clamp(-1.0, 1.0)
 }
+/// Direction of a 90° roll button (CAD-419).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Roll {
+    CounterClockwise,
+    Clockwise,
+}
+impl Roll {
+    pub const ALL: [Self; 2] = [Self::CounterClockwise, Self::Clockwise];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::CounterClockwise => "Roll view counter-clockwise",
+            Self::Clockwise => "Roll view clockwise",
+        }
+    }
+    fn quarters(self) -> i32 {
+        match self {
+            Self::CounterClockwise => -1,
+            Self::Clockwise => 1,
+        }
+    }
+}
+/// Seconds a roll button takes to turn the view.
+pub const ROLL_SECONDS: f64 = 0.2;
+#[derive(Clone, Copy)]
+struct RollAnimation {
+    from: f32,
+    to: f32,
+    quarters: i32,
+    start: f64,
+}
+/// Whether a roll started from the widget whose response has this id is
+/// still turning.
+pub fn roll_animating(ctx: &egui::Context, widget: egui::Id) -> bool {
+    ctx.data(|d| d.get_temp::<RollAnimation>(widget.with("roll")).is_some())
+}
+/// Advance a running roll; the last frame lands on the exact quarter turn.
+fn drive_roll(ui: &egui::Ui, id: egui::Id, camera: &mut Camera) {
+    let Some(animation) = ui.data(|d| d.get_temp::<RollAnimation>(id)) else {
+        return;
+    };
+    let t = ((ui.input(|i| i.time) - animation.start) / ROLL_SECONDS) as f32;
+    if t >= 1.0 || !t.is_finite() {
+        camera.roll = Camera::quarter_roll(animation.quarters);
+        ui.data_mut(|d| d.remove::<RollAnimation>(id));
+    } else {
+        let eased = t.max(0.0) * t.max(0.0) * (3.0 - 2.0 * t.max(0.0));
+        camera.roll = animation.from + (animation.to - animation.from) * eased;
+        ui.ctx().request_repaint();
+    }
+}
+/// Start a 90° roll about the view direction, or about `axis` (toward the
+/// eye) when given: the view first turns to look along it, keeping target,
+/// zoom and the current roll.
+fn start_roll(
+    ui: &egui::Ui,
+    id: egui::Id,
+    camera: &mut Camera,
+    roll: Roll,
+    axis: Option<[f32; 3]>,
+) {
+    if let Some(axis) = axis {
+        let toward_eye = camera.basis()[2];
+        let along = (0..3).map(|i| toward_eye[i] * axis[i]).sum::<f32>();
+        if along < 1.0 - 1e-6 {
+            camera.look_from(axis);
+        }
+    }
+    let running = ui.data(|d| d.get_temp::<RollAnimation>(id));
+    let quarters = running.map_or_else(|| camera.roll_quarters(), |a| a.quarters) + roll.quarters();
+    // Turn the short way from what is shown now to the next quarter.
+    let target = Camera::quarter_roll(quarters);
+    let mut delta = (target - camera.roll) % std::f32::consts::TAU;
+    if delta > std::f32::consts::PI {
+        delta -= std::f32::consts::TAU;
+    } else if delta < -std::f32::consts::PI {
+        delta += std::f32::consts::TAU;
+    }
+    let animation = RollAnimation {
+        from: camera.roll,
+        to: camera.roll + delta,
+        quarters,
+        start: ui.input(|i| i.time),
+    };
+    ui.data_mut(|d| d.insert_temp(id, animation));
+    ui.ctx().request_repaint();
+}
+fn paint_roll(ui: &egui::Ui, rect: Rect, roll: Roll, color: Color32) {
+    let center = rect.center();
+    let radius = rect.width() * 0.32;
+    let stroke = Stroke::new(1.4, color);
+    // A three-quarter circle opening at the top, arrowhead on the side the
+    // view turns toward.
+    let points: Vec<Pos2> = (0..=18)
+        .map(|k| {
+            let a =
+                -std::f32::consts::FRAC_PI_4 * 3.0 + k as f32 * (std::f32::consts::PI * 1.5) / 18.0;
+            let (s, c) = (a + std::f32::consts::FRAC_PI_2).portable_sin_cos();
+            center + Vec2::new(c, s) * radius
+        })
+        .collect();
+    ui.painter().add(egui::Shape::line(points.clone(), stroke));
+    let (tip, previous) = match roll {
+        // Screen y points down, so the points run clockwise.
+        Roll::Clockwise => (points[18], points[17]),
+        Roll::CounterClockwise => (points[0], points[1]),
+    };
+    let back = (previous - tip).normalized() * 3.6;
+    let side = back.rot90() * 0.8;
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![tip, tip + back + side, tip + back - side],
+        color,
+        Stroke::NONE,
+    ));
+}
 /// A real projected axis cross. Six independently accessible hit targets follow
 /// the camera orientation. Pointer drag rotates the same camera as the scene.
+/// Two arrows at the top right roll the view 90° (CAD-419).
 pub fn orientation(ui: &mut egui::Ui, camera: &mut Camera) -> egui::Response {
+    orientation_about(ui, camera, None)
+}
+/// [`orientation`] whose roll arrows turn about `roll_axis` (a unit vector
+/// toward the eye, such as the active sketch normal) instead of the current
+/// view direction.
+pub fn orientation_about(
+    ui: &mut egui::Ui,
+    camera: &mut Camera,
+    roll_axis: Option<[f32; 3]>,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(104.0), Sense::drag());
+    let roll_id = response.id.with("roll");
+    drive_roll(ui, roll_id, camera);
+    for (index, roll) in Roll::ALL.into_iter().enumerate() {
+        let button = Rect::from_min_size(
+            rect.right_top() + Vec2::new(-34.0 + 17.0 * index as f32, 0.0),
+            Vec2::splat(16.0),
+        );
+        let r = ui.interact(button, ui.id().with(roll.label()), Sense::click());
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, roll.label()));
+        if r.hovered() {
+            ui.painter()
+                .rect_filled(button, 3, Color32::from_white_alpha(28));
+        }
+        paint_roll(
+            ui,
+            button,
+            roll,
+            Color32::from_gray(if r.hovered() { 245 } else { 190 }),
+        );
+        let clicked = r.clicked();
+        r.on_hover_text(match roll {
+            Roll::CounterClockwise => {
+                "Roll the view 90° counter-clockwise about the viewing direction"
+            }
+            Roll::Clockwise => "Roll the view 90° clockwise about the viewing direction",
+        });
+        if clicked {
+            start_roll(ui, roll_id, camera, roll, roll_axis);
+        }
+    }
     if response.dragged() {
         camera.orbit(ui.input(|i| i.pointer.delta()));
     }
@@ -333,6 +489,9 @@ pub fn toolbar_for_model(
         });
     actions
 }
+#[cfg(test)]
+#[path = "navigation_roll_tests.rs"]
+mod roll_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

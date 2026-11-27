@@ -1902,6 +1902,7 @@ mod tests {
     ) -> (bool, egui::FullOutput) {
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 800.));
         let camera = crate::camera::Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: 1.5,
             scale: 0.1,

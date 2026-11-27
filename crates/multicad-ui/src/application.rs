@@ -5255,6 +5255,9 @@ mod workbench_tests;
 const RIBBON_TAB_STRIP: f32 = 36.0;
 const RIBBON_BOTTOM_PAD: f32 = 2.0;
 #[cfg(test)]
+#[path = "application/view_roll_tests.rs"]
+mod view_roll_tests;
+#[cfg(test)]
 #[path = "application/open_fit_tests.rs"]
 mod open_fit_tests;
 #[cfg(test)]

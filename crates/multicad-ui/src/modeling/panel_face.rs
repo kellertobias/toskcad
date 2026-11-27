@@ -468,6 +468,7 @@ mod tests {
     #[test]
     fn only_faces_turned_towards_the_camera_read_as_visible() {
         let mut camera = crate::camera::Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: std::f32::consts::FRAC_PI_2,
             scale: 0.5,

@@ -156,6 +156,7 @@ impl PrimitiveHarness {
 /// to long decimal millimetre values.
 pub(super) fn top_camera(scale: f32) -> Camera {
     Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         scale,
@@ -200,6 +201,7 @@ fn every_free_primitive_drag_state_previews_natively_without_arithmetic_errors()
 #[test]
 fn off_plane_perspective_drag_keeps_the_last_valid_draft() {
     let mut camera = Camera {
+        roll: 0.0,
         yaw: 0.6,
         pitch: 0.9,
         scale: 3.1,
@@ -479,6 +481,7 @@ impl ExtrudeHarness {
             controller,
             ctx: egui::Context::default(),
             camera: Camera {
+                roll: 0.0,
                 yaw: 0.6,
                 pitch: 0.5,
                 scale,
