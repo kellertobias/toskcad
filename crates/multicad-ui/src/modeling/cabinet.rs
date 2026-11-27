@@ -973,15 +973,11 @@ impl CabinetPanel {
                     )
                     .changed();
             } else {
-                ui.horizontal(|ui| {
-                    ui.label("Count");
-                    changed |= ui
-                        .add(
-                            egui::DragValue::new(&mut self.shelf_count)
-                                .range(0..=model::MAX_SHELVES as u32),
-                        )
-                        .changed();
-                });
+                changed |= crate::numeric_field::NumericField::new("Count", "count")
+                    .id(ui.make_persistent_id("cabinet-shelf-count"))
+                    .value(ui, &mut self.shelf_count, 0..=model::MAX_SHELVES as u32)
+                    .input
+                    .changed();
             }
         }
         let fit_title = format!(

@@ -576,23 +576,22 @@ impl ThreadPanel {
         );
         self.preset_length_default &= !length_changed;
         changed |= length_changed;
-        ui.horizontal(|ui| {
-            ui.label("Starts");
-            changed |= ui
-                .add_enabled(
-                    !(self.family == ThreadFamily::IsoMetric
-                        && (self.fit != ThreadFit::NominalBasic || self.end_treatments_enabled))
-                        && !self.family.is_unified()
-                        && !self.family.is_rounded()
-                        && !matches!(
-                            self.family,
-                            ThreadFamily::Bspt
-                                | ThreadFamily::Npt
-                                | ThreadFamily::Buttress
-                                | ThreadFamily::Round
-                        ),
-                    egui::DragValue::new(&mut self.starts).range(1..=8),
-                )
+        let starts_enabled = !(self.family == ThreadFamily::IsoMetric
+            && (self.fit != ThreadFit::NominalBasic || self.end_treatments_enabled))
+            && !self.family.is_unified()
+            && !self.family.is_rounded()
+            && !matches!(
+                self.family,
+                ThreadFamily::Bspt
+                    | ThreadFamily::Npt
+                    | ThreadFamily::Buttress
+                    | ThreadFamily::Round
+            );
+        ui.add_enabled_ui(starts_enabled, |ui| {
+            changed |= crate::numeric_field::NumericField::new("Starts", "count")
+                .id(ui.make_persistent_id("thread-starts"))
+                .value(ui, &mut self.starts, 1..=8)
+                .input
                 .changed();
         });
         ui.horizontal(|ui| {

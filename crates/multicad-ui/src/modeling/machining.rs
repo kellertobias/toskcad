@@ -556,12 +556,11 @@ impl MachiningPanel {
                     });
                 changed |= self.at[0].show(ui, "Position u", "Pattern origin along the length");
                 changed |= self.at[1].show(ui, "Position v", "Pattern origin along the width");
-                ui.horizontal(|ui| {
-                    ui.label("Quarter turns");
-                    changed |= ui
-                        .add(egui::DragValue::new(&mut self.turns).range(0..=3))
-                        .changed();
-                });
+                changed |= crate::numeric_field::NumericField::new("Quarter turns", "count")
+                    .id(ui.make_persistent_id("machining-quarter-turns"))
+                    .value(ui, &mut self.turns, 0..=3)
+                    .input
+                    .changed();
             }
         }
         ui.separator();

@@ -101,18 +101,16 @@ impl JunctionEditor {
                         host.points.saturating_sub(1)
                     };
                     let mut shown = junction.host_segment + 1;
-                    ui.horizontal(|ui| {
-                        ui.label("Host segment");
-                        if ui
-                            .add(egui::DragValue::new(&mut shown).range(1..=count.max(1)))
-                            .changed()
-                        {
-                            junction.host_segment = shown - 1;
-                            junction.host_point_count = host.points;
-                            junction.host_closed = host.closed;
-                            changed = true;
-                        }
-                    });
+                    if crate::numeric_field::NumericField::new("Host segment", "count")
+                        .value(ui, &mut shown, 1..=count.max(1))
+                        .input
+                        .changed()
+                    {
+                        junction.host_segment = shown - 1;
+                        junction.host_point_count = host.points;
+                        junction.host_closed = host.closed;
+                        changed = true;
+                    }
                     if junction.host_point_count != host.points
                         || junction.host_closed != host.closed
                     {

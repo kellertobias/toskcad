@@ -252,12 +252,12 @@ impl ArchitecturePanel {
             "Width",
             "Clear stair width",
         );
-        ui.horizontal(|ui| {
-            ui.label("Risers");
-            let response = ui.add(egui::DragValue::new(&mut self.risers).range(2..=64));
-            link.track(visual::STAIR_RISERS, &response);
-            changed |= response.changed();
-        });
+        let response = crate::numeric_field::NumericField::new("Risers", "count")
+            .id(ui.make_persistent_id("stair-risers"))
+            .value(ui, &mut self.risers, 2..=64)
+            .input;
+        link.track(visual::STAIR_RISERS, &response);
+        changed |= response.changed();
         changed |= link.field(
             ui,
             visual::STAIR_GOING,
@@ -272,23 +272,26 @@ impl ArchitecturePanel {
         );
         let reveal = link.reveals(&visual::STAIR_POSITION);
         diagram::section(ui, "stair-position-section", &title, reveal, |ui| {
-            ui.label("Start of the first riser (x, y mm)");
-            ui.horizontal(|ui| {
-                for (axis, v) in self.start.iter_mut().enumerate() {
-                    let response = ui.add(egui::DragValue::new(v).speed(10.));
-                    if axis == 0 {
-                        link.track(visual::STAIR_START, &response);
-                    }
-                    changed |= response.changed();
+            for (axis, (label, v)) in ["First riser start X", "First riser start Y"]
+                .into_iter()
+                .zip(self.start.iter_mut())
+                .enumerate()
+            {
+                let response = crate::numeric_field::NumericField::new(label, "mm")
+                    .id(ui.make_persistent_id(("stair-start", axis)))
+                    .value(ui, v, f64::NEG_INFINITY..=f64::INFINITY)
+                    .input;
+                if axis == 0 {
+                    link.track(visual::STAIR_START, &response);
                 }
-            });
-            ui.horizontal(|ui| {
-                ui.label("Direction °");
-                let response =
-                    ui.add(egui::DragValue::new(&mut self.direction_deg).range(-360.0..=360.0));
-                link.track(visual::STAIR_DIRECTION, &response);
                 changed |= response.changed();
-            });
+            }
+            let response = crate::numeric_field::NumericField::new("Direction", "deg")
+                .id(ui.make_persistent_id("stair-direction"))
+                .value(ui, &mut self.direction_deg, -360.0..=360.0)
+                .input;
+            link.track(visual::STAIR_DIRECTION, &response);
+            changed |= response.changed();
             ui.checkbox(&mut self.stair_snap, "Snap placement to 10 mm");
         });
         self.link = link;

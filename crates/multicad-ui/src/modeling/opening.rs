@@ -1015,13 +1015,12 @@ impl OpeningPanel {
                 .wall
                 .and_then(|w| model::read_wall(document, w).ok())
                 .map_or(1, |w| w.segment_count().max(1));
-            ui.horizontal(|ui| {
-                ui.label("Segment");
-                changed |= ui
-                    .add(egui::DragValue::new(&mut self.segment).range(1..=segments))
-                    .changed();
-                ui.small(format!("of {segments}"));
-            });
+            let label = format!("Segment (of {segments})");
+            changed |= crate::numeric_field::NumericField::new(&label, "count")
+                .id(ui.make_persistent_id("opening-segment"))
+                .value(ui, &mut self.segment, 1..=segments)
+                .input
+                .changed();
             changed |= self.offset.show(
                 ui,
                 "Offset along segment",
@@ -1189,16 +1188,11 @@ impl OpeningPanel {
         changed |= self
             .plan_depth
             .show(ui, "Depth", "Size along the rotated Y direction");
-        ui.horizontal(|ui| {
-            ui.label("Rotation");
-            changed |= ui
-                .add(
-                    egui::DragValue::new(&mut self.plan_rotation_deg)
-                        .range(-360.0..=360.0)
-                        .suffix(" °"),
-                )
-                .changed();
-        });
+        changed |= crate::numeric_field::NumericField::new("Rotation", "deg")
+            .id(ui.make_persistent_id("opening-plan-rotation"))
+            .value(ui, &mut self.plan_rotation_deg, -360.0..=360.0)
+            .input
+            .changed();
         changed
     }
     fn show_type(&mut self, ui: &mut egui::Ui, document: &Document, kind: RoomOpening) -> bool {
