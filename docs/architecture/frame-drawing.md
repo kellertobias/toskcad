@@ -1,0 +1,510 @@
+# Frame drawing: profile and tube frames drawn as lines (CAD-435 design)
+
+Status: **design proposal, phase 1.** Nothing in this document is
+implemented yet. The open product decisions are PLAINER questions on
+CAD-435; the recommended answers are marked below. Phase 2 and later start
+only after the product owner has answered.
+
+Related: [weldments.md](weldments.md) (what exists today),
+[walls.md](walls.md) and CAD-427 (the wall drawing gesture this follows),
+[shared-materials.md](shared-materials.md) (stock is authored in Project),
+CAD-434 (the stock picker, which already follows the direction set here).
+
+## 1. Goal
+
+A user draws a metal frame the way they draw a wall: click, type a length,
+turn, type the next length, close the loop. Every line becomes a member of a
+chosen profile. They say where the profile sits on the line, and the joints
+at the nodes appear on their own: mitres where two equal tubes meet at a
+corner, a fish-mouth where a round tube meets another, a butt joint where a
+small tube meets a bigger one. Clicking a node badge changes its joint. The
+cut list, with lengths, both end angles and cope templates, is always
+current.
+
+What no other CAD does in one tool (see §8):
+
+- **No skeleton step.** Frame generators make you draw a sketch or 3D
+  sketch first and then "insert members" on it. Here the drawing *is* the
+  frame.
+- **Joints are node objects, decided automatically, visible and
+  overridable in place.** Elsewhere the corner treatment is a feature
+  option or an extra feature per pair of members.
+- **The cut list is a live, exact output** (overall length, both cut angles,
+  long-point side, cope pattern), not a table you export afterwards.
+- **One canonical document for the window and MCP**: an agent can draw,
+  inspect and change the same frame through the same typed transactions.
+
+## 2. What exists today and how this relates to it
+
+| Existing piece | Location | Decision |
+| --- | --- | --- |
+| Profile stock (`StockKind::Profile`, shapes rectangular, round, angle, item Line 8 40×40, sketch) | `crates/multicad-core/src/materials/source.rs` | **Reuse unchanged.** Stock stays authored in Project → Materials (CAD-224). Frame members select it. CAD-434 adds a corner radius and the visual picker. |
+| `ProfileSection`, `ResolvedMember`, member frame, anchor, rotation, extensions | `crates/multicad-core/src/model/weldment/resolve.rs` | **Reuse.** A frame member resolves to exactly the same `ResolvedMember`, so the native solid, provenance roles and measurement code do not change. |
+| `weldment.member` feature (one output Part per member), `MemberPath::{Points, SketchLine}` | `crates/multicad-core/src/model/weldment/mod.rs` | **Extend.** Add `MemberPath::FrameMember { frame, member }`. Frame members stay `weldment.member` features with their own Part, so BOM, drawings, materials and part properties keep working. |
+| `weldment.connection` (pairwise Miter, Butt, Cope with gap) | `crates/multicad-core/src/model/weldment/connection.rs` | **Reuse the geometry, not the entity.** Node joints in a frame are stored on the frame node. The evaluator calls the same miter, butt and cope cut builders per member pair. Standalone connections remain for existing members. |
+| Frame transaction: every solid line of a sketch becomes a member | `weldment` frame transaction | **Keep, and offer "Convert to frame"** later: an explicit, undoable command that makes a frame graph from a sketch-line frame and its connections. No automatic migration of files. |
+| Member cut list, `group_cuts`, weld schedule, weld plans | `crates/multicad-model/src/weldment.rs`, `weld_schedule.rs` | **Reuse and extend** with cope patterns, bar nesting and mass (§6). |
+| item Line 8 connectors (angle bracket, joining plate, universal end fasteners) on groove stations | `crates/multicad-core/src/model/profile_connections.rs` and `profile_connections/frames.rs` | **Reuse as the fastener joint for slot profiles.** A node joint of kind `SlotFastener` derives the two `ProfileAttachment` stations from the node geometry and creates the existing `model.profile_connection` recipe. The station, footprint and access-bore logic stays where it is. |
+| Linked diagrams (CAD-395) | `crates/multicad-ui/src/modeling/diagram.rs` | **Reuse** for the anchor picker (§4.3), the joint editor (§5) and the stock picker (CAD-434). |
+| Plan outline editor (walls, fences, slabs) | `crates/multicad-ui/src/modeling/outline.rs` | **Reuse the interaction, not the type.** Chaining, Backspace, Enter, closing on the first corner, live segment dimensions and checked clicks are the same gesture. Frames need a graph (branches, 3D), so the frame editor is a sibling that shares the snapping and value entry helpers. |
+
+Why **extend** rather than migrate: the member solid, its end cuts, the cut
+list and the weld schedule already compute exact results and are tested.
+A frame is a better *source* for members and joints; it does not need a new
+evaluator. Keeping `weldment.member` as the Part-producing feature means
+every downstream consumer (BOM rows, drawing references, weld marks, MCP
+tools) keeps working with frame-drawn members on day one.
+
+Why **not reuse `weldment.connection` entities** for frame joints: a node is
+one decision about several members (T, X, three-way corners). Storing it as
+N pairwise connection entities would duplicate state that the node already
+holds, and the two could disagree. The single canonical document rule says
+the node is the source; the pairwise cuts are derived.
+
+## 3. Model
+
+### 3.1 Entities
+
+```text
+weldment.frame  (extension entity, the canonical source)
+├── plane            base plane: sketch plane, work plane, level or face frame
+├── nodes[]          stable ids, each with a position definition
+├── members[]        stable ids, start node, end node, placement
+└── joints[]         per-node overrides only (auto joints are derived)
+
+weldment.member      (one per frame member, output Part)
+└── path = FrameMember { frame, member }
+```
+
+The frame entity holds intent only. Each member feature evaluates from the
+frame plus its stock, like today's sketch-line members evaluate from the
+sketch. Member feature and Part identities are created once, when a member
+is drawn, and stay through every later edit. Deleting a member deletes its
+feature and Part (CAD-426 cascade rules apply).
+
+### 3.2 Nodes
+
+A node is a point in the frame's plane coordinates `(u, v, w)`, `w` along
+the plane normal (0 for planar frames). Each node has one definition:
+
+| Definition | Meaning | Typical source |
+| --- | --- | --- |
+| `Absolute { u, v, w }` | coordinates as `Dimension`s (literals or `=$param`) | first click, typed coordinates |
+| `Polar { from, length, angle, rise }` | from another node: length along an in-plane angle, optional rise along the normal | chained drawing with typed length and angle |
+| `Along { member, distance, from_end }` | a station on an existing member | snapping onto a member to start a T branch |
+| `Bound { reference }` *(later)* | a model vertex or a point of another frame | snapping to model geometry |
+
+`Polar` keeps what the user typed: change `$rail` and every node after it
+moves. Dragging a node rewrites its own definition (a literal `Polar`
+length or absolute coordinate) and never the definitions it depends on;
+nodes that depend on it follow. Dependency cycles are refused at the
+transaction. This is deliberately not a general constraint solver; see
+question Q1.
+
+### 3.3 Members
+
+```text
+Member {
+    id, start: NodeId, end: NodeId,
+    stock: EntityId,              // Project profile stock
+    placement: Placement,
+    extension: [Dimension; 2],    // start / end, negative trims (as today)
+}
+Placement {
+    anchor: SectionAnchor,        // which point of the section is on the line
+    offset: [Dimension; 2],       // section x / y shift after anchoring
+    roll: Dimension,              // degrees about the member axis
+    up: UpRule,                   // section height reference
+}
+SectionAnchor = Grid([AxisAnchor; 2])      // today's 3×3 bounding-box points
+              | Centroid                   // area centroid (angles, custom)
+              | Side(FrameSide)            // inner / outer / left / right edge
+```
+
+- **Grid** is today's anchor and stays the stored form for the nine
+  bounding-box points.
+- **Side** is resolved per member at evaluation: for a closed planar loop,
+  *inner* is the side toward the loop interior; for an open chain, *left* and
+  *right* look along the drawing direction (the wall rule). The section face
+  on that side lies on the line. This is what makes "draw the outside
+  dimensions of a table top, profiles inside" one choice instead of
+  per-member anchors. Reversing a member keeps its side.
+- **UpRule** gives the section height direction: the plane normal for
+  in-plane members (today's sketch-line rule); for off-plane members the
+  in-plane direction toward the frame centroid, overridable. Roll turns the
+  section from there.
+- **Defaults** come from the frame: the draw tool sets a frame default
+  placement and stock; a member stores only what differs (serde
+  `skip_serializing_if` default), so changing the frame default changes all
+  members that never overrode it.
+
+### 3.4 Joints
+
+A node with two or more member ends or stations has a joint. The evaluator
+derives an **automatic joint** from the node geometry and sections (§5.4).
+An **override** is stored only when the user changes it:
+
+```text
+Joint { node, kind: JointKind, through: Option<MemberId>,
+        gap: Dimension, prep: WeldPrep, fasteners: Option<SlotFastener> }
+```
+
+The derived joint is not stored, so it follows every edit; the override
+says "auto" until the user picks something. An override that no longer
+applies (a member was deleted, an angle became impossible) is reported on
+the node, drawn red, and never silently replaced.
+
+### 3.5 Capability and files
+
+Files with frames require a new capability, `weldment.frame.1`. Existing
+weldment files are unchanged. Stock gains only what CAD-434 adds (corner
+radius with its own capability).
+
+## 4. Interaction
+
+The tool is **Model → Frame → Draw frame** (question Q7 covers placement).
+It opens a form on the right, like walls: profile, placement, plane, then
+the node and member lists. The viewport is where most of the work happens.
+
+### 4.1 Drawing
+
+```text
+  click ──► node 1 ──► move: rubber-band member with live length + angle
+                     ──► type "600" Tab "90" Enter  (or click)
+                     ──► node 2 … repeat
+  click node 1 again ──► loop closed, tool keeps chaining from a new click
+  Enter ──► finish chain     Esc ──► cancel the pending segment
+  Backspace ──► remove the last node
+```
+
+- **Chaining.** Each click ends a member and starts the next one at the
+  same node. The pending member shows its real section (not a line), placed
+  with the current anchor, so the user sees which side the tube goes.
+- **Typed entry.** While moving, typing starts a length field; Tab moves
+  to the angle field. Units follow the shared value entry (`mm`, `cm`, `m`,
+  `in`, `ft`, expressions, `=$param`). A typed value locks that quantity;
+  the mouse only chooses the rest. The values are stored as typed
+  (`Polar` definition).
+- **Angles.** Relative to the previous member by default (so "90" means a
+  right-angle turn); holding Shift or typing `@` switches to absolute plane
+  angle. Snaps at 15° steps and to parallel / perpendicular with existing
+  members, with the same guide lines as sketch snapping (CAD-422).
+- **Closing loops.** Clicking the first node of the chain, or pressing `C`,
+  closes the loop. A closed loop gets *inner/outer* side meaning (§3.3).
+- **Snapping.**
+  - to nodes (joins the members at that node);
+  - to a member's line or a station on it (creates an `Along` node: the
+    member keeps running through, a T joint is derived);
+  - to member ends extended (inference lines), mid points and to model
+    geometry (vertices, edges, faces) using the shared drag-snapping
+    (CAD-401/403) infrastructure.
+- **Branching.** Starting a chain on an existing node or member continues
+  the same frame. Starting on empty space starts a new chain in the same
+  frame. A frame is a graph, not a polyline.
+
+### 4.2 3D frames
+
+The frame plane is chosen at start: a sketch plane, a work plane, a level,
+or a clicked planar face (as Add Sketch does).
+
+- **Off-plane members.** From a node, pressing `Z` (or the "Up" button)
+  locks the pending member to the plane normal; typing a length gives a
+  vertical leg. `Polar.rise` stores it.
+- **Other planes.** Picking two existing members that share a node sets a
+  temporary drawing plane through them, so the side of a cube can be drawn
+  after its base. Nodes always live in the frame coordinates.
+- **Copy up.** A selected closed loop can be copied along the normal by a
+  typed distance, with connecting legs at every node: the common "rack /
+  table" frame in two steps. *(Slice 3.)*
+- Clicks never project silently: a click that hits no valid plane is
+  refused with the reason, like the wall editor's checked clicks.
+
+### 4.3 Placement
+
+The form shows a small section diagram (the CAD-434 linked diagram) with
+the nine grid anchors, centroid and the four side choices as clickable
+points on the drawn section, plus offset and roll fields linked to their
+dimensions. The viewport previews the placed section on the pending and
+selected members. Changing the frame default re-places every member that
+did not override it; a member's own placement is in its row.
+
+### 4.4 Editing an existing frame
+
+Opening a frame (from the tree or by double-clicking a member) reopens the
+same tool:
+
+- **Drag a node**: the node moves with live lengths of every attached
+  member; snapping applies; the joints recompute live.
+- **Click a member**: select it; its row shows stock, placement, length
+  (read-only when the length comes from its nodes); Delete removes it.
+- **Click a node badge**: opens the joint editor (§5).
+- **Split / insert node** on a member, **merge** two collinear members,
+  **reverse** a member.
+- All edits are drafts until Apply; Discard Edit, Undo and Redo work as for
+  walls. MCP has the same edits as typed transactions.
+
+## 5. Connections at nodes
+
+### 5.1 Joint kinds
+
+| Kind | Members | What is cut | Exists today |
+| --- | --- | --- | --- |
+| **Mitre** | 2 ends | both on the bisector plane | yes, mirrored sections only |
+| **Butt, A through** / **B through** | 2 ends or end + station | the terminating member square (or angled, later) to the through member's face; the through member's end covers it | square, rectangular through only |
+| **Overlap** | 2 ends | none; members run past each other by their section size, side by side (flats, angles, bolted frames) | no |
+| **Cope / saddle** | branch end + through | branch fitted to the through member's actual outside (fish-mouth for round) | yes |
+| **Notch** | angle or channel end | one leg removed over the partner's width so the other leg runs on (bent-angle corner) | no |
+| **Tab and slot** | 2 | a tab on the branch end, a matching slot through the receiving wall (tube-laser style) | no |
+| **Gusset** | any, added to a joint | a plate Part from sheet stock, triangle with legs along both members, optional chamfer | no |
+| **End cap** | 1 end | a plate Part closing an open tube end | no |
+| **Slot fastener** | slot profiles | butt cut plus an item Line 8 recipe (universal end fastener, angle bracket, joining plate) | recipes yes, auto placement no |
+
+**T joint:** one member runs through the node (an `Along` station or two
+collinear members merged), the branch is butted or coped onto it.
+**X joint:** one member runs through, the two halves of the other are each
+butted or coped on it (they stay two members, two Parts); for slot profiles
+an X is usually two fasteners.
+
+**Three or more members at a corner** (cube corner, table leg under two
+rails): the joint picks an order: one member through (the leg, by default),
+the others cut against it and against each other (two mitres plus a butt
+onto the leg top, or two butts). The editor lists the order explicitly.
+
+### 5.2 Gap and weld preparation
+
+- **Gap** moves each cut back by the gap (half per side for a mitre), as
+  today. It changes the cut list lengths. (Q9)
+- **Preparation**: none, bevel (angle, land) or V on the cut edge. Modelled
+  as an exact chamfer on the cut faces in a later slice; until then it is
+  carried to the weld schedule and the cutting sheet as an annotation.
+- A joint can create its **weld** record (the existing `weldment.weld`)
+  with a default symbol from the joint kind: fillet for butt and cope,
+  V-groove for mitre with V prep.
+
+### 5.3 Fasteners for slot profiles
+
+For item Line 8 (and later other slot systems) the joint uses
+`profile_connections.rs`: the node gives each member its groove side and
+station (end, or `Along` distance); the recipe validates the footprint
+(`validate_station`), and the existing `model.profile_connection` creates
+the connector, screw and nut Parts with their exact mounting frames and
+access bores. No welding records are made for slot profiles.
+
+### 5.4 Automatic defaults
+
+Evaluated per node from current geometry; shown as a badge in the viewport
+(`M` mitre, `B→` butt with the arrow on the through member, `C` cope,
+`F` fastener, red `!` refused). Rules, in order:
+
+1. Members meeting below 15°, or not meeting (paths pass each other):
+   **refused**, shown red with the reason.
+2. Collinear pair at a node with no other member: **one member through**
+   (Q5); the node becomes a station.
+3. Slot profiles: **butt, the longer member through, plus universal end
+   fastener** if the footprint fits, else angle bracket (Q10).
+4. Two round tubes, or a round branch onto anything: **cope**, larger
+   diameter through; equal diameters at an L corner: mitre.
+5. Two ends with mirroring sections at a corner (same stock, mirrored
+   placement): **mitre** (Q4).
+6. Two ends with different sections: **butt, larger section through**.
+7. End on a station (T): **butt** for flat faces, **cope** otherwise.
+8. Three or more: the member along the plane normal (a leg) runs through;
+   in-plane members mitre or butt with each other by rules 4–6.
+
+The user changes any node in the joint editor: a linked diagram of the two
+(or more) sections at the node, with the kind as picture tiles, the through
+member as a toggle, and gap and prep fields linked to the diagram.
+
+## 6. Outputs
+
+### 6.1 Cut list (exact, live)
+
+Built on the existing `member_cut_list` and `group_cuts`, which already
+measure the final solid and give overall length, both end treatments with
+cut angle and long-point face, quantity per group, and whether a member
+fits one stock bar. Additions:
+
+- **Cope pattern** per coped end: the intersection curve unrolled around
+  the branch tube, sampled exactly from the cut solid, as a 1:1 printable
+  wrap template (PDF) and as a table of cut depth per angle. This is what a
+  workshop without a tube laser actually needs.
+- **Bar nesting**: a 1D cutting-stock plan per stock with saw kerf
+  (default 3 mm, a Project stock setting), so the list says "3 bars of
+  6 m: bar 1 = A×2 + B, offcut 412 mm".
+- **Mass and material**: section area (exact, including CAD-434 corner
+  radii) × length × Material density per member and per group, totals per
+  stock and per frame.
+
+### 6.2 Cutting sheet
+
+A drawing page generated from the cut list: one row per cut group with a
+small dimensioned elevation of the member showing both end angles, the
+long-point side, the length, quantity and mark; cope templates on following
+pages. It uses the existing drawing tables and annotations and follows
+geometry edits like other generated drawing content.
+
+### 6.3 Tube laser export (feasibility)
+
+- **Per-member STEP**: feasible now; tube laser CAM (for example
+  TruTops Tube, Lantek Flex3d Tubes, BLM ArtTube) imports a single straight
+  member solid and derives its own cut paths. The export puts each member
+  in its member frame (axis along +X), named with its cut-group mark.
+- **DSTV NC1** (steel structures standard): feasible for rectangular,
+  round and angle sections with plane cuts and holes; copes are not
+  representable in plain NC1 and need the STEP route. Later slice.
+- Machine-specific formats are out of scope.
+
+## 7. Diagrams
+
+Placement choices on a rectangular tube, looking along the member:
+
+```text
+  Grid anchors (today)          Side anchors (new, per loop)
+  ┌───────────────┐                outer
+  │●      ●      ●│             ┌─────────┐
+  │               │       ──────┤ line on ├────── outer edge on line
+  │●      ●      ●│             │  outer  │
+  │               │             └─────────┘
+  │●      ●      ●│                inner
+  └───────────────┘
+```
+
+A rectangle drawn by its outside dimensions with profiles inside:
+
+```text
+   node 1 ●━━━━━━━━━━━━━━━━━━━━━━━━━● node 2      ━ drawn lines
+          ┃▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓┃           ▓ profile, side = inner
+          ┃▓                       ▓┃           M mitre badges at nodes
+          ┃▓                       ▓┃
+   node 4 ●━━━━━━━━━━━━━━━━━━━━━━━━━● node 3
+```
+
+## 8. Prior art
+
+| Tool | How frames are made | Joints | Cut list | Weak points this design fixes |
+| --- | --- | --- | --- | --- |
+| SOLIDWORKS Weldments | Structural Member feature on 2D/3D sketch segments; profile library sketches; pierce point and rotation per group | Corner treatment per group (end miter, end butt 1/2), Trim/Extend feature, gussets and end caps as features | Cut list folder with length and angle properties | Skeleton sketch first; corner treatment is per group, not per node; T joints need a separate Trim/Extend; one multibody part |
+| Autodesk Inventor Frame Generator | Insert members on skeleton edges or points; Content Center profiles; offsets and rotation | Miter, Notch, Trim/Extend, Lengthen/Shorten as separate commands | Frame member BOM; cut lengths | Skeleton part required; many files; edits re-run commands |
+| Onshape Frames | Frame feature on sketch/3D paths; standard content profiles; trim per corner override | Per-vertex corner overrides (miter, butt, coped); Trim feature; Gusset and End cap features | Cut list table with angles | Still skeleton first; no drawing gesture; no cope templates |
+| Fusion | No native frame tool (add-ins, sweeps) | manual | manual | — |
+| FreeCAD | Frame workbench / BIM structure on sketch edges | limited, add-on dependent | add-on | fragmented |
+| Tekla Structures | Steel members placed by points; connection components with rules | Rich automatic connections (structural steel) | NC/DSTV, drawings | Building-steel scale and cost, not for workshop frames |
+| SketchUp + plugins | draw lines, extrude profiles | none or plugin | plugin | not parametric |
+
+How this is clearly better:
+
+1. **Draw, do not prepare.** The wall-style gesture with typed length and
+   angle creates nodes, members and joints in one pass.
+2. **Per-node joints with automatic, visible defaults**, overridable with a
+   click on the badge; Tekla-like intelligence at workshop scale.
+3. **Side alignment relative to a loop** (inner/outer), so outside
+   dimensions are what you draw.
+4. **Exact, live cut list with cope wrap templates and bar nesting**, from
+   the final solids, not from nominal lengths.
+5. **Slot profiles and welded tubes in one tool**: the same frame can be
+   item Line 8 with real fasteners or welded steel.
+6. **Separate Parts per member** with stable identity, so drawings, BOM
+   and MCP keep their references through edits.
+
+## 9. Phasing
+
+### Slice 1: planar frames, two-member joints (the first useful slice)
+
+Scope: draw a planar frame, get exact members and corners, edit by
+dragging, read the cut list. Enough for a gate, a table top frame, a
+picture frame, a bracket.
+
+1. **Core model**: `weldment.frame` entity with nodes (`Absolute`, `Polar`),
+   members (stock, placement with grid and side anchors, offset, roll,
+   extensions), joint overrides; `MemberPath::FrameMember`; capability
+   `weldment.frame.1`; typed transactions (create frame, add chain, move
+   node, set member placement, set joint, delete member/node) shared by UI
+   and MCP.
+2. **Evaluation**: frame members evaluate through the existing
+   `ResolvedMember` and native solid; joints at two-member nodes derive cuts
+   with the existing miter, butt and cope builders; automatic defaults
+   rules 1, 4, 5, 6; refusals are reported per node.
+3. **Draw frame tool**: plane pick, chained drawing with live section
+   preview, typed length and relative angle with units, closing loops,
+   snapping to nodes and to angle steps, Backspace, Enter, Esc, Apply and
+   Discard; node dragging; joint badges and a joint editor with kind,
+   through member and gap.
+4. **Placement**: frame default stock and placement; per-member override;
+   inner/outer for closed loops and left/right for open chains.
+5. **Cut list**: the existing cut list and groups shown in the form and via
+   MCP for frame members, plus mass per member and total.
+
+Acceptance criteria for slice 1 (proposed follow-up item):
+
+- A user draws a closed 4-node rectangle 1000 × 600 mm of SHS 40×40×2 with
+  side = inner, by typing lengths and angles, and gets four member Parts
+  whose outside is exactly 1000 × 600 mm and four mitred corners;
+  `member_cut_list` reports 2 × 1000 mm and 2 × 600 mm, 45° at both ends,
+  long points on the outer face.
+- Changing a `Polar` length to `=$width` and editing `$width` resizes the
+  frame; member feature and Part ids are unchanged.
+- Dragging a node updates both member lengths and their mitres live;
+  Discard restores the source; Undo/Redo restore exactly.
+- A round tube branch drawn onto a larger round tube gets a cope by
+  default; a 30×30 member ending on a 40×40 gets a butt with the 40×40
+  through; overriding to "A through" is stored and survives edits;
+  deleting a member reports the override as no longer valid.
+- Angles below 15° and non-meeting members are refused at the node with
+  the reason, never built.
+- MCP creates the same frame with the same transactions and returns the
+  same cut list.
+- The frame and its members save, reopen and round-trip through files
+  requiring `weldment.frame.1`; files without frames are byte-identical.
+- UI tests drive the tool by real input (clicks, typed entry) and wait on
+  readiness conditions; model tests measure the native solids.
+
+### Slice 2: T and X joints, multi-member nodes
+
+`Along` nodes (snap onto a member), T and X joints, joints with three or
+more members and their order, member split/merge/reverse, collinear
+through members (rule 2), angled butt joints and butt against round.
+
+### Slice 3: 3D frames
+
+Off-plane members (`Polar.rise`, `Z` lock), temporary planes through two
+members, "copy loop up with legs", up-rule for off-plane members, leg-through
+corners (rule 8).
+
+### Slice 4: more joints and parts
+
+Overlap, notch, tab and slot, gussets and end caps as Parts from Project
+sheet stock, weld preparation as exact chamfers, joint-created weld
+records.
+
+### Slice 5: fabrication outputs
+
+Cope wrap templates (PDF), bar nesting with kerf, generated cutting sheet
+page, per-member STEP export for tube lasers; DSTV NC1 later.
+
+### Slice 6: slot profile fasteners
+
+Automatic item Line 8 fasteners at slot-profile nodes (rule 3) using
+`profile_connections.rs`; further slot systems as stock and recipes.
+
+## 10. Open questions (PLAINER, CAD-435)
+
+| # | Question | Recommended |
+| --- | --- | --- |
+| Q1 | Source of truth for node positions | Own node graph with absolute / polar / along definitions |
+| Q2 | Relationship to existing members and connections | Extend: frame-owned `weldment.member` features, joints on nodes |
+| Q3 | Scope of the first slice | Planar frames with two-member joints |
+| Q4 | Default at an L corner of equal profiles | Mitre |
+| Q5 | Drawing straight through a node | One member runs through; the node is a station |
+| Q6 | Meaning of "inner/outer" alignment | Relative to the closed loop; left/right for open chains |
+| Q7 | Where the tool lives and how the profile is chosen | Model → Frame → Draw frame, choosing Project stock with an inline "New profile stock…" |
+| Q8 | First fabrication output after slice 1 | Cope templates and cutting sheet |
+| Q9 | Weld gap semantics | Gap shortens the members (real cut lengths) |
+| Q10 | Slot profile fasteners at nodes | Added automatically as an overridable default |
+| Q11 | Channels, T and I/H beams | Separate item with parametric standard shapes after slice 1 |
+
+## 11. Spike
+
+None was needed: every geometric operation of slice 1 (sweeping a placed
+section, plane and cope cuts, measuring cut lists) already exists and is
+tested in the weldment evaluator. The new work is the source model, the
+derivation of joints from nodes and the drawing tool.
