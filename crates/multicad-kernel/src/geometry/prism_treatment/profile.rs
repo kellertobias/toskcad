@@ -323,32 +323,53 @@ pub(super) fn inset_corner_rate(a: Seg, b: Seg, p: P2, [ra, rb]: [f64; 2]) -> Op
     })
 }
 
-/// Twice the area enclosed by consecutive corners along their carriers.
-pub(super) fn twice_area(ring: &[Seg], deltas: &[f64], corners: &[P2]) -> f64 {
-    let n = ring.len();
-    (0..n)
+/// Where the offsets meet at the vertex between `a` and `b`: the end of
+/// the offset of `a` and the start of the offset of `b`. They differ only
+/// at a tangent vertex where one edge is offset and the other is not; a
+/// straight step on the common normal then joins them.
+pub(super) fn joint_ends(a: Seg, b: Seg, kind: Corner, [da, db]: [f64; 2]) -> Option<[P2; 2]> {
+    if kind == Corner::Smooth {
+        let (v, m) = (b.start(), b.inward(b.start()));
+        return Some([add(v, scale(m, da)), add(v, scale(m, db))]);
+    }
+    inset_corner(a, b, kind, [da, db]).map(|p| [p, p])
+}
+
+/// Twice the area enclosed by the rings of offset edges. Edge `k` runs
+/// along its carrier from `starts[k]` to `ends[k]`, and a straight chord
+/// joins `ends[k]` to `starts[next[k]]`.
+pub(super) fn twice_area(
+    ring: &[Seg],
+    deltas: &[f64],
+    starts: &[P2],
+    ends: &[P2],
+    next: &[usize],
+) -> f64 {
+    (0..ring.len())
         .map(|k| {
-            let [p, q] = [corners[k], corners[(k + 1) % n]];
-            match ring[k].carrier(deltas[k]) {
-                Carrier::Circle { center: c, radius } => {
-                    let Seg::Arc { cw, .. } = ring[k] else {
-                        unreachable!("circle carrier")
-                    };
-                    let turn = if radius == 0. {
-                        0.
-                    } else {
-                        let (from, to) = (sub(p, c), sub(q, c));
-                        let angle = cross(from, to).portable_atan2(dot(from, to));
-                        if cw {
-                            -(-angle).rem_euclid(TAU)
+            let [p, q] = [starts[k], ends[k]];
+            let chord = cross(q, starts[next[k]]);
+            chord
+                + match ring[k].carrier(deltas[k]) {
+                    Carrier::Circle { center: c, radius } => {
+                        let Seg::Arc { cw, .. } = ring[k] else {
+                            unreachable!("circle carrier")
+                        };
+                        let turn = if radius == 0. {
+                            0.
                         } else {
-                            angle.rem_euclid(TAU)
-                        }
-                    };
-                    radius * radius * turn + c[0] * (q[1] - p[1]) - c[1] * (q[0] - p[0])
+                            let (from, to) = (sub(p, c), sub(q, c));
+                            let angle = cross(from, to).portable_atan2(dot(from, to));
+                            if cw {
+                                -(-angle).rem_euclid(TAU)
+                            } else {
+                                angle.rem_euclid(TAU)
+                            }
+                        };
+                        radius * radius * turn + c[0] * (q[1] - p[1]) - c[1] * (q[0] - p[0])
+                    }
+                    Carrier::Line { .. } => cross(p, q),
                 }
-                Carrier::Line { .. } => cross(p, q),
-            }
         })
         .sum()
 }
