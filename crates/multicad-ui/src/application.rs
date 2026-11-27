@@ -21,6 +21,7 @@ mod global_actions;
 mod library;
 mod mechanical_imports;
 mod native_picker;
+mod parameter_leave;
 mod print;
 mod print_plate;
 mod project;
@@ -206,6 +207,7 @@ pub struct Application {
     import_open: bool,
     close_confirm: bool,
     close_project_confirm: Option<EntityId>,
+    parameter_leave: Option<parameter_leave::ParameterLeave>,
     close_allowed: bool,
     close_after_recents: bool,
     close_save: Option<closing::CloseSave>,
@@ -285,6 +287,7 @@ impl Application {
             import_open: false,
             close_confirm: false,
             close_project_confirm: None,
+            parameter_leave: None,
             close_allowed: false,
             close_after_recents: false,
             close_save: None,
@@ -632,6 +635,12 @@ impl Application {
         args: &[&str],
         channel: Channel,
     ) -> Result<(), String> {
+        if channel == Channel::Ui
+            && let Some(target) = self.parameter_leave_target(command)
+            && self.guard_parameter_leave(target)
+        {
+            return Ok(());
+        }
         if command == Command::CloseProject {
             return self.request_close_project();
         }
@@ -1638,7 +1647,9 @@ impl Application {
         };
         match command {
             Command::Mode(Mode::Export) => {
-                self.mode == Mode::Export || !pending_before_metadata_commit()
+                self.mode == Mode::Export
+                    || !pending_before_metadata_commit()
+                    || self.only_parameter_rows_pending()
             }
             Command::External(_) => {
                 self.mode == Mode::Sketch
@@ -2137,7 +2148,7 @@ impl Application {
                     });
                     for mode in Mode::ALL.into_iter().rev() {
                         let color = mode.color().gamma_multiply(1.6);
-                        if controls::tab(
+                        let mut tab = controls::tab(
                             ui,
                             mode.title(),
                             self.mode.top_level() == mode,
@@ -2147,16 +2158,23 @@ impl Application {
                                 active_text: color,
                                 active_background: Color32::from_rgb(37, 45, 56),
                             },
-                        )
-                        .clicked()
-                        {
+                        );
+                        if mode == Mode::Parameters && self.project_tab_pending() {
+                            self.paint_project_pending_marker(ui, &tab);
+                            tab = tab.on_hover_text(
+                                "Unapplied parameter edits · Apply and Rebuild or Discard Edit",
+                            );
+                        }
+                        if tab.clicked() {
                             action = Some(Command::Mode(mode));
                         }
                     }
                 });
             },
         );
-        if let Some(index) = switch {
+        if let Some(index) = switch
+            && !self.guard_parameter_leave(parameter_leave::ParameterLeave::Project(index))
+        {
             self.activate_project(index);
         }
         if let Some(path) = recent
@@ -2464,6 +2482,7 @@ impl Application {
                 || self.find_open
                 || self.close_confirm
                 || self.close_project_confirm.is_some()
+                || self.parameter_leave.is_some()
                 || self.history_open
                 || self.import_open
                 || self.settings_open
@@ -2505,7 +2524,8 @@ impl Application {
             || self.settings_open
             || self.library_management_open
             || self.close_confirm
-            || self.close_project_confirm.is_some();
+            || self.close_project_confirm.is_some()
+            || self.parameter_leave.is_some();
         let shell_interaction = shell_interaction || self.current().exchange.drawing_pdf_open();
         // egui clears keyboard focus for Escape before this application pass.
         // Remember text ownership so that same key cannot also cancel a tool.
@@ -2547,6 +2567,12 @@ impl Application {
                 self.cancel_close();
             } else if self.close_project_confirm.is_some() {
                 self.close_project_confirm = None;
+            } else if self.parameter_leave.is_some() {
+                if let Err(error) = self.resolve_parameter_leave(parameter_leave::LeaveChoice::Stay)
+                {
+                    self.message = error;
+                    self.message_error = true;
+                }
             } else if self.current().sketch.primitive_corner_input_focused()
                 && !egui::Popup::is_any_open(ctx)
             {
@@ -2845,6 +2871,7 @@ impl Application {
             ui,
             self.close_confirm
                 || self.close_project_confirm.is_some()
+                || self.parameter_leave.is_some()
                 || self.import_open
                 || self.file_action.is_some()
                 || self.replacement.is_some()
@@ -3150,6 +3177,7 @@ impl Application {
             self.tab = tab;
             ctx.request_repaint();
         }
+        self.show_parameter_leave_dialog(&ctx);
         self.show_close_project_dialog(&ctx);
         self.show_close_dialog(&ctx);
         self.remember_current_view();
@@ -5258,11 +5286,11 @@ const RIBBON_BOTTOM_PAD: f32 = 2.0;
 #[path = "application/model_add_sketch_tests.rs"]
 mod model_add_sketch_tests;
 #[cfg(test)]
-#[path = "application/view_roll_tests.rs"]
-mod view_roll_tests;
-#[cfg(test)]
 #[path = "application/open_fit_tests.rs"]
 mod open_fit_tests;
+#[cfg(test)]
+#[path = "application/view_roll_tests.rs"]
+mod view_roll_tests;
 #[cfg(test)]
 #[path = "application/viewport_focus_tests.rs"]
 mod viewport_focus_tests;
