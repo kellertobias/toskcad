@@ -17,6 +17,8 @@ fn resolved(start: Point, end: Point) -> ResolvedMember {
             wall_mm: None,
             shape: ProfileShape::ItemLine8_40x40,
             section: None,
+            corner_radius_mm: None,
+            web_mm: None,
         },
     };
     let delta = std::array::from_fn::<_, 3, _>(|i| end[i] - start[i]);

@@ -11,6 +11,7 @@ use crate::{
         common::{error, revision},
     },
 };
+use std::collections::BTreeMap;
 
 fn check_name(name: &str, what: &str) -> Result<(), CommandError> {
     if name.trim().is_empty() || name.len() > 1000 {
@@ -57,6 +58,10 @@ fn check_member(
     read_profile_stock(document, member.stock)?;
     match &member.path {
         MemberPath::SketchLine { sketch, line } => check_sketch_line(document, *sketch, *line)?,
+        MemberPath::FrameMember { frame, member: id } => {
+            let segment = frame_member_path(document, parameters, *frame, *id)?;
+            resolve_member(document, parameters, member, segment)?;
+        }
         path => {
             if let Some(segment) = point_path(path, parameters)? {
                 resolve_member(document, parameters, member, segment)?;
@@ -446,4 +451,151 @@ pub fn prepare_sequence(
         edits: vec![edit],
     })?;
     Ok((id, prepared))
+}
+
+/// The member feature and Part of one new frame member. `member` names the
+/// frame member; the rest is the member feature's own placement.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FrameMemberRequest {
+    pub member: EntityId,
+    pub feature: EntityId,
+    pub body: EntityId,
+    pub name: String,
+    pub stock: EntityId,
+    pub anchor: [AxisAnchor; 2],
+    pub rotation: Option<Dimension>,
+    pub extend: [Option<Dimension>; 2],
+}
+impl FrameMemberRequest {
+    pub fn new(member: EntityId, name: impl Into<String>, stock: EntityId) -> Self {
+        Self {
+            member,
+            feature: EntityId::new(),
+            body: EntityId::new(),
+            name: name.into(),
+            stock,
+            anchor: [AxisAnchor::Center; 2],
+            rotation: None,
+            extend: [None, None],
+        }
+    }
+    fn definition(&self, frame: EntityId) -> MemberDefinition {
+        MemberDefinition {
+            output: BodyOutput { body: self.body },
+            stock: self.stock,
+            path: MemberPath::FrameMember {
+                frame,
+                member: self.member,
+            },
+            anchor: self.anchor,
+            rotation: self.rotation.clone(),
+            extend_start: self.extend[0].clone(),
+            extend_end: self.extend[1].clone(),
+        }
+    }
+}
+/// Create a frame, or replace an existing frame's definition, as one
+/// transaction (CAD-439). Members new to the definition get the features
+/// and Parts in `members`; members removed from it lose theirs. Members
+/// kept keep their feature and Part ids, so references to them survive.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FrameRequest {
+    pub frame: EntityId,
+    pub name: String,
+    pub definition: FrameDefinition,
+    pub members: Vec<FrameMemberRequest>,
+}
+pub fn prepare_frame(
+    session: &Session,
+    expected_revision: u64,
+    actor: Actor,
+    request: &FrameRequest,
+) -> Result<ModelPrepared, CommandError> {
+    revision(session, expected_revision)?;
+    check_name(&request.name, "Frame")?;
+    let document = session.document();
+    let parameters = session.parameters();
+    let definition = &request.definition;
+    definition.evaluate(parameters)?;
+    let existing = match document.get(request.frame) {
+        Some(_) => Some(read_frame(document, request.frame)?),
+        None if request.frame.is_nil() => return Err(error("A frame needs a non-nil id")),
+        None => None,
+    };
+    let carried: BTreeMap<EntityId, EntityId> = frame_member_features(document, request.frame)
+        .into_iter()
+        .collect();
+    let mut edits = vec![];
+    let mut frame = Entity::new(request.name.clone(), definition.entity_data()?);
+    frame.id = request.frame;
+    edits.push(if existing.is_some() {
+        Mutation::Replace(frame)
+    } else {
+        Mutation::Insert(frame)
+    });
+    // Members removed from the frame: their feature, Part and properties go.
+    for (member, feature) in &carried {
+        if definition.member(*member).is_none() {
+            let body = read_member(document, *feature)?.output.body;
+            edits.extend([Mutation::Remove(body), Mutation::Remove(*feature)]);
+            if let Some((id, _)) = materials::part_properties(document, body)? {
+                edits.push(Mutation::Remove(id));
+            }
+        }
+    }
+    let mut outputs = vec![];
+    let mut requested = BTreeSet::new();
+    for r in &request.members {
+        if definition.member(r.member).is_none() {
+            return Err(error("A new member request names no member of the frame"));
+        }
+        if carried.contains_key(&r.member) || !requested.insert(r.member) {
+            return Err(error("A frame member already has its member feature"));
+        }
+        let member = r.definition(request.frame);
+        member.validate()?;
+        read_profile_stock(document, member.stock)?;
+        edits.extend(member_entities(
+            document,
+            &MemberRequest {
+                feature: r.feature,
+                body: r.body,
+                name: r.name.clone(),
+                member,
+            },
+        )?);
+        outputs.push(CreatedBody {
+            feature: r.feature,
+            body: r.body,
+        });
+    }
+    for m in &definition.members {
+        if !carried.contains_key(&m.id) && !requested.contains(&m.id) {
+            return Err(error(
+                "Every new frame member needs a member request with its stock",
+            ));
+        }
+    }
+    let label = if existing.is_some() {
+        "Edit frame"
+    } else {
+        "Create frame"
+    };
+    let prepared = session.prepare_scoped(Request {
+        expected_revision,
+        actor,
+        label: label.into(),
+        edits,
+    })?;
+    // The candidate must resolve: node cycles, stations and side rules are
+    // checked on the document that will be committed.
+    let candidate = prepared.document();
+    for m in &definition.members {
+        let feature = frame_member_feature(candidate, request.frame, m.id)
+            .ok_or_else(|| error("A frame member lost its member feature"))?;
+        let member = read_member(candidate, feature)?;
+        let segment = frame_member_path(candidate, parameters, request.frame, m.id)?;
+        resolve_member(candidate, parameters, &member, segment)?;
+    }
+    Ok(ModelPrepared { prepared, outputs })
 }

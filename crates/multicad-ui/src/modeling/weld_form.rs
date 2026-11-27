@@ -373,6 +373,8 @@ mod tests {
                 wall_mm: Some(2.),
                 shape: ProfileShape::Rectangular,
                 section: None,
+                corner_radius_mm: None,
+                web_mm: None,
             },
         })
         .entity(EntityId::new(), "SHS 30")

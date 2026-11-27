@@ -389,6 +389,11 @@ pub fn resolve_connection(
         ConnectionKind::Butt => {
             let et = at_end(a, p, "terminating")?;
             let ut = away(a, et);
+            if let Some(name) = b.section.shape.open_section_name() {
+                return Err(invalid(format!(
+                    "Butt joints with {name} running through are not supported yet; end {name} on the joint, or butt onto a tube or bar"
+                )));
+            }
             if b.section.shape != crate::materials::ProfileShape::Rectangular {
                 return Err(invalid(
                     "Butt joints need a rectangular continuing member with flat faces; use a cope against round or angle members",
@@ -443,6 +448,16 @@ pub fn resolve_connection(
             })
         }
         ConnectionKind::Cope => {
+            if let Some(name) = b.section.shape.open_section_name() {
+                return Err(invalid(format!(
+                    "Copes against {name} are not supported yet; use a butt joint onto a flat face"
+                )));
+            }
+            if let Some(name) = a.section.shape.open_section_name() {
+                return Err(invalid(format!(
+                    "Coping {name} is not supported yet; end it with a butt joint onto a flat face, or mitre it to a matching member"
+                )));
+            }
             if b.section.is_sketch() {
                 // A cope follows the receiving outside grown by the gap; a
                 // custom section has no exact offset outline to cut with.

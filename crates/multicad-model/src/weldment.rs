@@ -44,6 +44,15 @@ impl<'a> Paths<'a> {
     ) -> Result<PathSegment, ModelError> {
         let (sketch, line) = match &member.path {
             MemberPath::SketchLine { sketch, line } => (*sketch, *line),
+            MemberPath::FrameMember { frame, member } => {
+                return model::frame_member_path(
+                    self.context.document(),
+                    self.context.parameters(),
+                    *frame,
+                    *member,
+                )
+                .map_err(|e| error(Some(owner), e));
+            }
             path => {
                 return model::point_path(path, self.context.parameters())
                     .map_err(|e| error(Some(owner), e))?
@@ -265,7 +274,144 @@ pub(crate) fn joints(
             treatment,
         });
     }
+    frame_joints(document, parameters, part, member, other, &mut out)?;
     Ok(out)
+}
+/// Joints derived at the nodes of the member's frame (CAD-439). Each node's
+/// pair goes through the same builders as a stored connection; the frame
+/// is the joint's source. Where two derived joints cut the same end, the
+/// cut that keeps more of the member wins: at a corner holding a through
+/// leg, every rail's butt asks the leg to cover it, and the farthest cover
+/// covers them all.
+fn frame_joints(
+    document: &Document,
+    parameters: &EvaluatedParameters,
+    part: EntityId,
+    member: &ResolvedMember,
+    other: &mut dyn FnMut(EntityId) -> Result<ResolvedMember, ModelError>,
+    out: &mut Vec<Joint>,
+) -> Result<(), ModelError> {
+    let Some(feature) = model::member_feature(document, part) else {
+        return Ok(());
+    };
+    let source = model::read_member(document, feature).map_err(|e| error(Some(part), e))?;
+    let MemberPath::FrameMember {
+        frame,
+        member: this,
+    } = source.path
+    else {
+        return Ok(());
+    };
+    let e = |e: DocumentError| error(Some(frame), e);
+    let definition = model::read_frame(document, frame).map_err(e)?;
+    // Resolve every member meeting this member's nodes.
+    let m = definition
+        .member(this)
+        .ok_or_else(|| error(Some(frame), "This member was removed from its frame"))?;
+    let nodes = [m.start, m.end];
+    let mut resolved: BTreeMap<EntityId, ResolvedMember> = BTreeMap::new();
+    let mut parts: BTreeMap<EntityId, EntityId> = BTreeMap::new();
+    let stations: Vec<EntityId> = definition
+        .nodes
+        .iter()
+        .filter_map(|n| match n.position {
+            model::NodePosition::Along { member: on, .. } if on == this => Some(n.id),
+            _ => None,
+        })
+        .collect();
+    for (id, feature) in model::frame_member_features(document, frame) {
+        let Some(fm) = definition.member(id) else {
+            continue;
+        };
+        let touches = [fm.start, fm.end]
+            .iter()
+            .any(|n| nodes.contains(n) || stations.contains(n))
+            || definition.nodes.iter().any(|n| {
+                matches!(n.position, model::NodePosition::Along { member: on, .. } if on == id)
+                    && nodes.contains(&n.id)
+            });
+        if !touches && id != this {
+            continue;
+        }
+        let r = if id == this {
+            member.clone()
+        } else {
+            other(feature)?
+        };
+        let body = model::read_member(document, feature)
+            .map_err(e)?
+            .output
+            .body;
+        parts.insert(id, body);
+        resolved.insert(id, r);
+    }
+    let pairs =
+        model::frame_pairs(document, &definition, parameters, &resolved, Some(this)).map_err(e)?;
+    for pair in pairs {
+        let Some(index) = pair.members.iter().position(|m| *m == this) else {
+            continue;
+        };
+        let partner_id = pair.members[1 - index];
+        let (a, b) = (&resolved[&pair.members[0]], &resolved[&pair.members[1]]);
+        if a.section.is_item_line_8_40x40() || b.section.is_item_line_8_40x40() {
+            return Err(error(
+                Some(frame),
+                "Slotted extrusion frame nodes use Mechanical profile connectors; welded end cuts are unavailable",
+            ));
+        }
+        let joined = model::resolve_connection(pair.kind, a, b, pair.gap_mm).map_err(|err| {
+            error(
+                Some(frame),
+                format!(
+                    "At a frame node ({} joint): {}",
+                    pair.kind.label(),
+                    match err {
+                        DocumentError::Invalid(m) => m,
+                        other => other.to_string(),
+                    }
+                ),
+            )
+        })?;
+        let Some(treatment) = joined.treatments[index] else {
+            continue;
+        };
+        let joint = Joint {
+            connection: frame,
+            partner: parts[&partner_id],
+            partner_member: resolved[&partner_id].clone(),
+            resolved: joined,
+            treatment,
+        };
+        match out.iter().position(|j| j.treatment.end == treatment.end) {
+            None => out.push(joint),
+            Some(i) => {
+                let reach = |j: &Joint| match j.treatment.cut {
+                    model::EndCut::Plane { point, .. } => Some(member.axial(point)),
+                    model::EndCut::Cope { .. } => None,
+                };
+                let longer = match (reach(&out[i]), reach(&joint), treatment.end) {
+                    (Some(old), Some(new), model::MemberEnd::End) => new > old,
+                    (Some(old), Some(new), model::MemberEnd::Start) => new < old,
+                    _ => {
+                        return Err(error(
+                            Some(frame),
+                            "Two frame joints cope the same member end; choose which member runs through",
+                        ));
+                    }
+                };
+                if out[i].connection != frame {
+                    return Err(error(
+                        Some(frame),
+                        "A stored connection and a frame node both cut the same member end; remove the connection",
+                    ));
+                }
+                if longer {
+                    out[i] = joint;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 fn diagonal(m: &ResolvedMember) -> f64 {
     m.section.width_mm.portable_hypot(m.section.height_mm)
@@ -836,6 +982,9 @@ pub struct MemberRecord {
     pub frame: MemberFrame,
     pub path_start: [f64; 3],
     pub volume_mm3: f64,
+    /// Mass from the measured volume and the Part material's density, when
+    /// the material has one (CAD-439).
+    pub mass_kg: Option<f64>,
     /// Whether the overall length fits one stock bar.
     pub fits_stock: bool,
     /// Review findings: section or stock assignment that disagree.
@@ -919,6 +1068,14 @@ impl Model {
             else {
                 continue;
             };
+            let volume_mm3 = solid.volume_mm3().map_err(|e| error(Some(id), e))?;
+            let mass_kg = material.and_then(|m| match document.get(m).map(|e| &e.data) {
+                Some(EntityData::Material {
+                    density_kg_m3: Some(density),
+                    ..
+                }) => Some(volume_mm3 * 1e-9 * density),
+                _ => None,
+            });
             out.push(MemberRecord {
                 part,
                 feature: id,
@@ -946,7 +1103,8 @@ impl Model {
                 anchor: source.anchor,
                 frame: member.frame,
                 path_start: member.path.start,
-                volume_mm3: solid.volume_mm3().map_err(|e| error(Some(id), e))?,
+                volume_mm3,
+                mass_kg,
                 fits_stock: length <= section.stock_length_mm + TOLERANCE_MM,
                 issues,
             });

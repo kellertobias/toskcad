@@ -433,6 +433,12 @@ impl ProjectFile {
         if crate::materials::requires_sketch_profile(&self.document) {
             required.insert(crate::materials::SKETCH_PROFILE_CAPABILITY.into());
         }
+        if crate::materials::requires_open_section_profile(&self.document) {
+            required.insert(crate::materials::OPEN_SECTION_PROFILE_CAPABILITY.into());
+        }
+        if crate::materials::requires_profile_corner_radius(&self.document) {
+            required.insert(crate::materials::CORNER_RADIUS_PROFILE_CAPABILITY.into());
+        }
         if self.document.entities().any(|entity| matches!(&entity.data,EntityData::Extension{definition,..} if matches!(definition.type_id.as_str(),crate::symbols::DEFINITION_TYPE|crate::symbols::INSTANCE_TYPE))) {
             required.insert(crate::symbols::CAPABILITY.into());
         }
@@ -535,6 +541,8 @@ pub fn supported_capabilities() -> BTreeSet<String> {
         crate::materials::CAPABILITY.into(),
         crate::materials::ITEM_LINE_8_PROFILE_CAPABILITY.into(),
         crate::materials::SKETCH_PROFILE_CAPABILITY.into(),
+        crate::materials::CORNER_RADIUS_PROFILE_CAPABILITY.into(),
+        crate::materials::OPEN_SECTION_PROFILE_CAPABILITY.into(),
         crate::inspection::CAPABILITY.into(),
         crate::constraint_sketch::source::V4_CAPABILITY.into(),
         crate::constraint_sketch::source::SHAPES_CAPABILITY.into(),
@@ -656,6 +664,7 @@ pub fn supported_capabilities() -> BTreeSet<String> {
         crate::model::CONNECTION_CAPABILITY.into(),
         crate::model::WELD_CAPABILITY.into(),
         crate::model::SEQUENCE_CAPABILITY.into(),
+        crate::model::FRAME_CAPABILITY.into(),
         crate::model::SHEET_CAPABILITY.into(),
         crate::model::SHEET_PROFILE_CUT_CAPABILITY.into(),
         crate::model::DEVELOPED_SHEET_SKETCH_CAPABILITY.into(),

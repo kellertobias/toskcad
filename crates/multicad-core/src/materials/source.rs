@@ -92,7 +92,9 @@ pub enum Grain {
     AcrossLength,
 }
 /// Cross-section family of profile stock. Width and height are the section
-/// bounding box; `wall_mm` is the tube wall, or the leg thickness of an angle.
+/// bounding box; `wall_mm` is the tube wall, the leg thickness of an angle,
+/// or the flange thickness of a channel, T or I/H section, whose web
+/// thickness is `web_mm`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProfileShape {
@@ -111,6 +113,15 @@ pub enum ProfileShape {
     /// A custom cross-section drawn as a constraint sketch (CAD-385). Width
     /// and height are its exact bounding box; the stock owns the sketch.
     Sketch,
+    /// Channel (U/C) section, sharp corners (CAD-434): a web of `web_mm`
+    /// along the height on the −x side, flanges of `wall_mm` along the width.
+    Channel,
+    /// T section, sharp corners: a flange of `wall_mm` across the full width
+    /// at +y, a centred web of `web_mm` below it.
+    Tee,
+    /// I/H section, sharp corners: flanges of `wall_mm` across the full width
+    /// at both ends of the height, a centred web of `web_mm` between them.
+    Beam,
 }
 
 pub const SKETCH_PROFILE_CAPABILITY: &str = "materials.profile.sketch_section.1";
@@ -127,9 +138,107 @@ pub struct ProfileSketch {
 pub const SKETCH_PROFILE_SIZE_TOLERANCE_MM: f64 = 1e-9;
 
 pub const ITEM_LINE_8_PROFILE_CAPABILITY: &str = "materials.profile.item_line_8_40x40.1";
+/// Required by files with parametric channel, T or I/H profile stock.
+pub const OPEN_SECTION_PROFILE_CAPABILITY: &str = "materials.profile.channel_tee_beam.1";
+/// Required by files whose rectangular profile stock has rounded corners.
+pub const CORNER_RADIUS_PROFILE_CAPABILITY: &str = "materials.profile.corner_radius.1";
+
+/// Why an outside corner radius cannot be used on this section, if it cannot.
+/// The radius must be positive and fit the smaller side; for a tube the
+/// derived inside radius (outside radius less the wall) then always fits the
+/// bore, so the wall needs no separate limit beyond `2 × wall < side`.
+pub fn corner_radius_problem(
+    shape: ProfileShape,
+    width_mm: f64,
+    height_mm: f64,
+    wall_mm: Option<f64>,
+    radius_mm: f64,
+) -> Option<String> {
+    if shape != ProfileShape::Rectangular {
+        return Some("Only rectangular tubes and bars have a corner radius".into());
+    }
+    if !radius_mm.is_finite() || radius_mm <= 0. {
+        return Some("Enter a corner radius above 0 mm, or leave the corners sharp".into());
+    }
+    let limit = width_mm.min(height_mm) / 2.;
+    if radius_mm > limit {
+        return Some(format!(
+            "The corner radius can be at most half the smaller side ({limit} mm)"
+        ));
+    }
+    if let Some(t) =
+        wall_mm.filter(|t| t.is_finite() && *t > 0. && t * 2. <= width_mm.min(height_mm))
+    {
+        let inner = radius_mm - t;
+        if inner > (width_mm.min(height_mm) - 2. * t) / 2. {
+            return Some(format!(
+                "The inside radius ({inner} mm = radius − wall) does not fit the bore"
+            ));
+        }
+    }
+    None
+}
+/// The inside corner radius of a hollow rectangular section: the outside
+/// radius less the wall, or none (a sharp inside corner) when not positive.
+pub fn inner_corner_radius(radius_mm: Option<f64>, wall_mm: Option<f64>) -> Option<f64> {
+    let (r, t) = (radius_mm?, wall_mm?);
+    (r - t > 0.).then_some(r - t)
+}
+/// Why a flange/web pair cannot shape this section, if it cannot. Channel,
+/// T and I/H sections need both thicknesses; every other shape has no web.
+pub fn web_problem(
+    shape: ProfileShape,
+    width_mm: f64,
+    height_mm: f64,
+    flange_mm: Option<f64>,
+    web_mm: Option<f64>,
+) -> Option<String> {
+    if !shape.has_web() {
+        return web_mm.map(|_| "Only channel, T and I/H sections have a web thickness".into());
+    }
+    let name = shape.open_section_name().unwrap_or("section");
+    let (Some(tf), Some(tw)) = (flange_mm, web_mm) else {
+        return Some(format!("Give a flange and a web thickness for {name}"));
+    };
+    if ![tf, tw].into_iter().all(|v| v.is_finite() && v > 0.) {
+        return Some("Enter flange and web thicknesses above 0 mm".into());
+    }
+    if tw >= width_mm {
+        return Some(format!(
+            "The web must be thinner than the width ({width_mm} mm)"
+        ));
+    }
+    let flanges = if shape == ProfileShape::Tee { 1. } else { 2. };
+    if flanges * tf >= height_mm {
+        return Some(if flanges == 1. {
+            format!("The flange must be thinner than the height ({height_mm} mm)")
+        } else {
+            format!(
+                "Both flanges must fit the height: flange thickness under {} mm",
+                height_mm / 2.
+            )
+        });
+    }
+    None
+}
 impl ProfileShape {
     pub fn is_rectangular(&self) -> bool {
         *self == Self::Rectangular
+    }
+    /// Channel, T and I/H sections: a flange thickness (`wall_mm`) and a web
+    /// thickness (`web_mm`).
+    pub fn has_web(&self) -> bool {
+        matches!(self, Self::Channel | Self::Tee | Self::Beam)
+    }
+    /// The plain name of a channel, T or I/H section with its article, as
+    /// used in refusals: "a channel", "a T section", "an I/H beam".
+    pub fn open_section_name(&self) -> Option<&'static str> {
+        match self {
+            Self::Channel => Some("a channel"),
+            Self::Tee => Some("a T section"),
+            Self::Beam => Some("an I/H beam"),
+            _ => None,
+        }
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -159,6 +268,15 @@ pub enum StockKind {
         /// The owned section sketch of `ProfileShape::Sketch`; none otherwise.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         section: Option<Box<ProfileSketch>>,
+        /// Outside corner radius of a rectangular section (CAD-434); none
+        /// for sharp corners. A hollow section's inside radius is derived:
+        /// the outside radius less the wall, sharp when that is not positive.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        corner_radius_mm: Option<f64>,
+        /// Web thickness of a channel, T or I/H section (CAD-434), whose
+        /// `wall_mm` is the flange thickness; none for every other shape.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        web_mm: Option<f64>,
     },
     Print {
         process: String,
@@ -326,8 +444,17 @@ impl LibraryDefinition {
                             wall_mm,
                             shape,
                             section,
+                            corner_radius_mm,
+                            web_mm,
                         } => {
-                            !designation.trim().is_empty()
+                            web_problem(*shape, *width_mm, *height_mm, *wall_mm, *web_mm).is_none()
+                                && corner_radius_mm.is_none_or(|r| {
+                                    corner_radius_problem(
+                                        *shape, *width_mm, *height_mm, *wall_mm, r,
+                                    )
+                                    .is_none()
+                                })
+                                && !designation.trim().is_empty()
                                 && designation.len() <= 256
                                 && [*length_mm, *width_mm, *height_mm]
                                     .into_iter()
@@ -346,6 +473,9 @@ impl LibraryDefinition {
                                             && *length_mm <= 6000.
                                     }
                                     ProfileShape::Sketch => wall_mm.is_none(),
+                                    ProfileShape::Channel
+                                    | ProfileShape::Tee
+                                    | ProfileShape::Beam => true,
                                 }
                                 && (section.is_some() == (*shape == ProfileShape::Sketch))
                         }
@@ -364,6 +494,39 @@ impl LibraryDefinition {
             Self::MaterialStyle(s) => !s.material.is_nil(),
             Self::PartProperties(s) => !s.part.is_nil(),
         };
+        if let Self::Stock(Stock {
+            specification:
+                StockKind::Profile {
+                    width_mm,
+                    height_mm,
+                    wall_mm,
+                    shape,
+                    corner_radius_mm: Some(r),
+                    ..
+                },
+            ..
+        }) = self
+            && let Some(problem) =
+                corner_radius_problem(*shape, *width_mm, *height_mm, *wall_mm, *r)
+        {
+            return Err(DocumentError::Invalid(problem));
+        }
+        if let Self::Stock(Stock {
+            specification:
+                StockKind::Profile {
+                    width_mm,
+                    height_mm,
+                    wall_mm,
+                    shape,
+                    web_mm,
+                    ..
+                },
+            ..
+        }) = self
+            && let Some(problem) = web_problem(*shape, *width_mm, *height_mm, *wall_mm, *web_mm)
+        {
+            return Err(DocumentError::Invalid(problem));
+        }
         if !valid || self.links().iter().any(|l| l.target.is_nil()) {
             return Err(DocumentError::Invalid(format!(
                 "Invalid {} definition",
@@ -472,6 +635,54 @@ pub fn required_capability(document: &Document) -> bool {
     )
 }
 
+/// Whether any profile stock, including stock inside a library symbol, has
+/// an outside corner radius.
+pub fn requires_profile_corner_radius(document: &Document) -> bool {
+    any_stock_data(document, |data| {
+        data.pointer("/value/specification/corner_radius_mm")
+            .is_some_and(|v| !v.is_null())
+    })
+}
+/// Whether any stock, including stock inside symbol templates, is a
+/// parametric channel, T or I/H section.
+pub fn requires_open_section_profile(document: &Document) -> bool {
+    any_stock_data(document, |data| {
+        matches!(
+            data.pointer("/value/specification/shape")
+                .and_then(serde_json::Value::as_str),
+            Some("channel" | "tee" | "beam")
+        )
+    })
+}
+/// Whether the stored data of any stock definition, direct or in a symbol
+/// template, matches.
+fn any_stock_data(document: &Document, matches: impl Fn(&serde_json::Value) -> bool) -> bool {
+    document.entities().any(|entity| match &entity.data {
+        EntityData::Extension { definition, .. } if definition.type_id == "materials.stock" => {
+            matches(&definition.data)
+        }
+        EntityData::Extension { definition, .. }
+            if definition.type_id == crate::symbols::DEFINITION_TYPE =>
+        {
+            definition
+                .data
+                .pointer("/template/entities")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|entities| {
+                    entities.values().any(|entity| {
+                        entity
+                            .pointer("/data/definition/type_id")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("materials.stock")
+                            && entity
+                                .pointer("/data/definition/data")
+                                .is_some_and(&matches)
+                    })
+                })
+        }
+        _ => false,
+    })
+}
 pub fn requires_item_line_8_profile(document: &Document) -> bool {
     let slotted_stock = |data: &serde_json::Value| {
         data.pointer("/value/specification/shape")
@@ -558,3 +769,8 @@ pub(crate) fn invalidation_edges(
     }
     Ok(edges)
 }
+
+#[cfg(test)]
+mod corner_radius_tests;
+#[cfg(test)]
+mod open_section_tests;

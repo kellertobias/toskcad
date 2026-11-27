@@ -163,6 +163,44 @@ fn item_line_8_outer() -> Vec<SectionEdge> {
     edges
 }
 
+/// A counterclockwise rectangle from `min` to `max` with circular corners of
+/// `radius`. A full-round side (radius = half that side) leaves out its
+/// zero-length straight edge; a full round square is a circle.
+fn rounded_rect(min: [f64; 2], max: [f64; 2], radius: f64) -> SectionLoop {
+    let ([x0, y0], [x1, y1], r) = (min, max, radius);
+    if r <= 0. {
+        return SectionLoop::Polygon(vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
+    }
+    let (w, h) = (x1 - x0, y1 - y0);
+    if (w - 2. * r).abs() <= 1e-12 && (h - 2. * r).abs() <= 1e-12 {
+        return SectionLoop::Circle {
+            center: [x0 + r, y0 + r],
+            radius_mm: r,
+        };
+    }
+    let mut edges = vec![];
+    let line = |a: [f64; 2], b: [f64; 2], edges: &mut Vec<SectionEdge>| {
+        if (b[0] - a[0]).abs() + (b[1] - a[1]).abs() > 1e-12 {
+            edges.push(SectionEdge::Line { a, b });
+        }
+    };
+    let arc = |center: [f64; 2], a: [f64; 2], b: [f64; 2]| SectionEdge::Arc {
+        center,
+        a,
+        b,
+        clockwise: false,
+    };
+    line([x0 + r, y0], [x1 - r, y0], &mut edges);
+    edges.push(arc([x1 - r, y0 + r], [x1 - r, y0], [x1, y0 + r]));
+    line([x1, y0 + r], [x1, y1 - r], &mut edges);
+    edges.push(arc([x1 - r, y1 - r], [x1, y1 - r], [x1 - r, y1]));
+    line([x1 - r, y1], [x0 + r, y1], &mut edges);
+    edges.push(arc([x0 + r, y1 - r], [x0 + r, y1], [x0, y1 - r]));
+    line([x0, y1 - r], [x0, y0 + r], &mut edges);
+    edges.push(arc([x0 + r, y0 + r], [x0, y0 + r], [x0 + r, y0]));
+    SectionLoop::Curved(edges)
+}
+
 fn item_line_8_area() -> f64 {
     let r = ITEM_LINE_8_CORNER_RADIUS_MM;
     let core = ITEM_LINE_8_CORE_DIAMETER_MM / 2.;
@@ -192,6 +230,11 @@ pub struct ProfileSection {
     pub stock_length_mm: f64,
     /// The resolved sketch section of `ProfileShape::Sketch` stock.
     pub custom: Option<super::SketchSection>,
+    /// Outside corner radius of a rectangular section; none when sharp.
+    pub corner_radius_mm: Option<f64>,
+    /// Web thickness of a channel, T or I/H section (`wall_mm` is then the
+    /// flange thickness); none for every other shape.
+    pub web_mm: Option<f64>,
 }
 impl ProfileSection {
     pub fn from_stock(stock: &Stock) -> Result<Self, DocumentError> {
@@ -203,6 +246,8 @@ impl ProfileSection {
             wall_mm,
             shape,
             section,
+            corner_radius_mm,
+            web_mm,
         } = &stock.specification
         else {
             return Err(invalid("Members need profile stock"));
@@ -224,6 +269,8 @@ impl ProfileSection {
             wall_mm: *wall_mm,
             stock_length_mm: *length_mm,
             custom,
+            corner_radius_mm: corner_radius_mm.filter(|_| *shape == ProfileShape::Rectangular),
+            web_mm: web_mm.filter(|_| shape.has_web()),
         })
     }
     pub fn is_sketch(&self) -> bool {
@@ -245,7 +292,60 @@ impl ProfileSection {
         if let Some(custom) = &self.custom {
             return !custom.holes.is_empty();
         }
-        self.is_item_line_8_40x40() || (self.wall_mm.is_some() && self.shape != ProfileShape::Angle)
+        self.is_item_line_8_40x40()
+            || (self.wall_mm.is_some()
+                && matches!(self.shape, ProfileShape::Rectangular | ProfileShape::Round))
+    }
+    /// A parametric channel, T or I/H section: straight-sided and open, so
+    /// it mitres and butts as the terminating member, but has no exact
+    /// grown outside for copes or running-through butts yet.
+    pub fn is_open_section(&self) -> bool {
+        self.shape.has_web()
+    }
+    /// The straight-sided outline of a channel, T or I/H section,
+    /// counterclockwise, with flanges of `wall_mm` and a web of `web_mm`.
+    fn open_section_outline(&self) -> Vec<[f64; 2]> {
+        let (w, h) = (self.width_mm, self.height_mm);
+        let (tf, tw) = (self.wall_mm.unwrap_or(0.), self.web_mm.unwrap_or(0.));
+        let (a, b) = ((w - tw) / 2., (w + tw) / 2.);
+        match self.shape {
+            // Web on the −x side, flanges reaching toward +x.
+            ProfileShape::Channel => vec![
+                [0., 0.],
+                [w, 0.],
+                [w, tf],
+                [tw, tf],
+                [tw, h - tf],
+                [w, h - tf],
+                [w, h],
+                [0., h],
+            ],
+            // Flange on top, centred web below it.
+            ProfileShape::Tee => vec![
+                [a, 0.],
+                [b, 0.],
+                [b, h - tf],
+                [w, h - tf],
+                [w, h],
+                [0., h],
+                [0., h - tf],
+                [a, h - tf],
+            ],
+            _ => vec![
+                [0., 0.],
+                [w, 0.],
+                [w, tf],
+                [b, tf],
+                [b, h - tf],
+                [w, h - tf],
+                [w, h],
+                [0., h],
+                [0., h - tf],
+                [a, h - tf],
+                [a, tf],
+                [0., tf],
+            ],
+        }
     }
     /// The outside boundary, grown outward by `grow_mm` (0 for the section
     /// itself; a positive value for a clearance envelope).
@@ -261,9 +361,12 @@ impl ProfileSection {
             };
         }
         match self.shape {
-            ProfileShape::Rectangular => {
-                SectionLoop::Polygon(vec![[-g, -g], [w + g, -g], [w + g, h + g], [-g, h + g]])
-            }
+            ProfileShape::Rectangular => match self.corner_radius_mm {
+                Some(r) => rounded_rect([-g, -g], [w + g, h + g], r + g),
+                None => {
+                    SectionLoop::Polygon(vec![[-g, -g], [w + g, -g], [w + g, h + g], [-g, h + g]])
+                }
+            },
             ProfileShape::Round => SectionLoop::Circle {
                 center: [w / 2., h / 2.],
                 radius_mm: w / 2. + g,
@@ -280,6 +383,14 @@ impl ProfileSection {
                 ])
             }
             ProfileShape::ItemLine8_40x40 if g == 0. => SectionLoop::Curved(item_line_8_outer()),
+            ProfileShape::Channel | ProfileShape::Tee | ProfileShape::Beam if g == 0. => {
+                SectionLoop::Polygon(self.open_section_outline())
+            }
+            // A conservative outside cover. Copes against these sections
+            // are refused, so this never shapes a cut.
+            ProfileShape::Channel | ProfileShape::Tee | ProfileShape::Beam => {
+                SectionLoop::Polygon(vec![[-g, -g], [w + g, -g], [w + g, h + g], [-g, h + g]])
+            }
             // A conservative outside cover. The native evaluator refuses
             // weld/cope operations on the slotted mounting section.
             ProfileShape::ItemLine8_40x40 | ProfileShape::Sketch => {
@@ -327,17 +438,29 @@ impl ProfileSection {
         };
         let (w, h) = (self.width_mm, self.height_mm);
         match self.shape {
-            ProfileShape::Rectangular => vec![SectionLoop::Polygon(vec![
-                [t, t],
-                [w - t, t],
-                [w - t, h - t],
-                [t, h - t],
-            ])],
+            ProfileShape::Rectangular => {
+                vec![
+                    match crate::materials::inner_corner_radius(self.corner_radius_mm, Some(t)) {
+                        Some(r) => rounded_rect([t, t], [w - t, h - t], r),
+                        None => SectionLoop::Polygon(vec![
+                            [t, t],
+                            [w - t, t],
+                            [w - t, h - t],
+                            [t, h - t],
+                        ]),
+                    },
+                ]
+            }
             ProfileShape::Round => vec![SectionLoop::Circle {
                 center: [w / 2., h / 2.],
                 radius_mm: w / 2. - t,
             }],
-            ProfileShape::Angle | ProfileShape::ItemLine8_40x40 | ProfileShape::Sketch => vec![],
+            ProfileShape::Angle
+            | ProfileShape::ItemLine8_40x40
+            | ProfileShape::Sketch
+            | ProfileShape::Channel
+            | ProfileShape::Tee
+            | ProfileShape::Beam => vec![],
         }
     }
     /// Exact cross-section area of the modeled section.
@@ -346,9 +469,19 @@ impl ProfileSection {
             return custom.area_mm2;
         }
         let (w, h) = (self.width_mm, self.height_mm);
+        // A rounded corner removes (4 − π)·r² from its rectangle.
+        let corners = |r: Option<f64>| (4. - std::f64::consts::PI) * r.map_or(0., |r| r * r);
+        let outer = w * h - corners(self.corner_radius_mm);
         match (self.shape, self.wall_mm) {
-            (ProfileShape::Rectangular, None) => w * h,
-            (ProfileShape::Rectangular, Some(t)) => w * h - (w - 2. * t) * (h - 2. * t),
+            (ProfileShape::Rectangular, None) => outer,
+            (ProfileShape::Rectangular, Some(t)) => {
+                outer
+                    - ((w - 2. * t) * (h - 2. * t)
+                        - corners(crate::materials::inner_corner_radius(
+                            self.corner_radius_mm,
+                            Some(t),
+                        )))
+            }
             (ProfileShape::Round, None) => std::f64::consts::PI * w * w / 4.,
             (ProfileShape::Round, Some(t)) => {
                 let r = w / 2.;
@@ -361,6 +494,14 @@ impl ProfileSection {
             (ProfileShape::ItemLine8_40x40, _) => item_line_8_area(),
             // A sketch section without its resolved geometry has no area.
             (ProfileShape::Sketch, _) => 0.,
+            (ProfileShape::Channel | ProfileShape::Tee | ProfileShape::Beam, tf) => {
+                let (tf, tw) = (tf.unwrap_or(0.), self.web_mm.unwrap_or(0.));
+                match self.shape {
+                    ProfileShape::Channel => w * h - (w - tw) * (h - 2. * tf),
+                    ProfileShape::Tee => w * tf + tw * (h - tf),
+                    _ => 2. * w * tf + tw * (h - 2. * tf),
+                }
+            }
         }
     }
     /// Points describing the outside shape: polygon vertices, or the four
@@ -369,6 +510,11 @@ impl ProfileSection {
     pub fn outline_points(&self) -> Vec<[f64; 2]> {
         if let Some(custom) = &self.custom {
             return super::sketch_section::sampled(&custom.outer);
+        }
+        if self.corner_radius_mm.is_some() {
+            // Rounded corners are sampled at most 1° apart, so perimeters
+            // and extents measured on these points include the arcs.
+            return super::sketch_section::sampled(&self.outer(0.));
         }
         match self.outer(0.) {
             SectionLoop::Polygon(points) => points,
@@ -389,11 +535,20 @@ impl ProfileSection {
     }
     pub fn label(&self) -> String {
         let shape = match (self.shape, self.wall_mm) {
+            (ProfileShape::Rectangular, Some(_)) if self.corner_radius_mm.is_some() => {
+                "rectangular tube, rounded corners"
+            }
             (ProfileShape::Rectangular, Some(_)) => "rectangular tube",
+            (ProfileShape::Rectangular, None) if self.corner_radius_mm.is_some() => {
+                "bar, rounded corners"
+            }
             (ProfileShape::Rectangular, None) => "bar",
             (ProfileShape::Round, Some(_)) => "round tube",
             (ProfileShape::Round, None) => "round bar",
             (ProfileShape::Angle, _) => "angle",
+            (ProfileShape::Channel, _) => "channel",
+            (ProfileShape::Tee, _) => "T section",
+            (ProfileShape::Beam, _) => "I/H beam",
             (ProfileShape::ItemLine8_40x40, _) => "item Line 8 40×40 · four open grooves",
             (ProfileShape::Sketch, _) if self.is_hollow() => "custom hollow sketch section",
             (ProfileShape::Sketch, _) => "custom sketch section",
@@ -546,7 +701,8 @@ fn mm(d: &Dimension, p: &EvaluatedParameters) -> Result<f64, DocumentError> {
     number(d, Unit::Millimeter, p)
 }
 /// Resolve a point-pair path. Sketch-line paths are solved by the native
-/// evaluator, which passes the segment to [`resolve_member`].
+/// evaluator, which passes the segment to [`resolve_member`]; frame member
+/// paths use [`frame_member_path`].
 pub fn point_path(
     path: &MemberPath,
     parameters: &EvaluatedParameters,
@@ -608,14 +764,30 @@ pub fn resolve_member(
             "The item Line 8 member exceeds the selected stock length",
         ));
     }
-    let anchor_mm = [
+    let mut anchor_mm = [
         member.anchor[0].fraction() * section.width_mm,
         member.anchor[1].fraction() * section.height_mm,
     ];
+    let frame = member_frame(axis, path.reference, rotation_rad);
+    if let MemberPath::FrameMember {
+        frame: frame_id,
+        member: frame_member,
+    } = &member.path
+    {
+        anchor_mm = super::frame_anchor(
+            document,
+            parameters,
+            *frame_id,
+            *frame_member,
+            &frame,
+            &section,
+            anchor_mm,
+        )?;
+    }
     Ok(ResolvedMember {
         stock: member.stock,
         stock_spec,
-        frame: member_frame(axis, path.reference, rotation_rad),
+        frame,
         section,
         path,
         path_length_mm,
@@ -660,6 +832,8 @@ mod tests {
             wall_mm: wall,
             stock_length_mm: 6000.,
             custom: None,
+            corner_radius_mm: None,
+            web_mm: None,
         };
         near(
             s(ProfileShape::Rectangular, 40., 20., Some(2.)).area_mm2(),

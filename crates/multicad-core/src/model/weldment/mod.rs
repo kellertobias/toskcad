@@ -12,11 +12,13 @@
 //! about the axis. The native evaluator builds the solids and measures cut
 //! records from them.
 mod connection;
+mod frame;
 mod prepare;
 mod resolve;
 mod sketch_section;
 mod weld;
 pub use connection::*;
+pub use frame::*;
 pub use prepare::*;
 pub use resolve::*;
 pub use sketch_section::*;
@@ -54,6 +56,10 @@ pub enum MemberPath {
     /// One non-construction line of a constrained sketch, by its stable
     /// curve identity. The sketch normal is the section height reference.
     SketchLine { sketch: EntityId, line: EntityId },
+    /// One member of a `weldment.frame` (CAD-439), by its stable frame
+    /// member id. The frame's nodes give the segment and its side rule the
+    /// section placement.
+    FrameMember { frame: EntityId, member: EntityId },
 }
 /// Which point of the section bounding box lies on the path, along one
 /// section axis: the minimum edge, the middle or the maximum edge.
@@ -126,6 +132,11 @@ impl MemberDefinition {
         {
             return Err(invalid("A sketch-line member needs its sketch and line"));
         }
+        if let MemberPath::FrameMember { frame, member } = &self.path
+            && (frame.is_nil() || member.is_nil())
+        {
+            return Err(invalid("A frame member needs its frame and member"));
+        }
         for d in self.lengths() {
             check_dimension(d, Unit::Millimeter)?;
         }
@@ -157,8 +168,10 @@ impl MemberDefinition {
         dims.extend(&self.rotation);
         let mut links = parameter_links(dims);
         links.push(Link::new(self.stock, "stock"));
-        if let MemberPath::SketchLine { sketch, .. } = &self.path {
-            links.push(Link::new(*sketch, "path"));
+        match &self.path {
+            MemberPath::SketchLine { sketch, .. } => links.push(Link::new(*sketch, "path")),
+            MemberPath::FrameMember { frame, .. } => links.push(Link::new(*frame, "path")),
+            MemberPath::Points { .. } => {}
         }
         links
     }
@@ -271,5 +284,6 @@ pub(super) fn validate_document(document: &Document) -> Result<(), DocumentError
         }
     }
     validate_connections(document)?;
+    validate_frames(document)?;
     validate_welds(document)
 }

@@ -45,6 +45,8 @@ fn prepare_members(paths: [([f64; 3], [f64; 3]); 2]) -> (Session, [MemberRequest
             wall_mm: None,
             shape: ProfileShape::ItemLine8_40x40,
             section: None,
+            corner_radius_mm: None,
+            web_mm: None,
         },
     })
     .entity(stock, "Line 8 section")
@@ -317,6 +319,8 @@ fn joining_plate_uses_exact_rust_bores_and_countersinks_on_rotated_profile_stock
         wall_mm: None,
         stock_length_mm: 6000.,
         custom: None,
+        corner_radius_mm: None,
+        web_mm: None,
     };
     for member in members {
         let stock = rust.solid(member.feature).unwrap();

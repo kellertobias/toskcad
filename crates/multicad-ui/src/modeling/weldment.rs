@@ -144,19 +144,24 @@ fn field(value: f64, unit: &'static str) -> DimensionField {
 fn of(d: &Dimension, unit: &'static str) -> Result<DimensionField, String> {
     DimensionField::from_dimension(d, unit)
 }
-/// Profile stock entries: (stock, label).
+/// Profile stock entries: (stock, plain description). The stock's own name
+/// is secondary text in the dropdown rows (CAD-434).
 fn profile_stocks(document: &Document, batten: bool) -> Vec<(EntityId, String)> {
+    profile_stock_specs(document, batten)
+        .into_iter()
+        .map(|(id, spec, name)| (id, materials::profile_description(&spec).unwrap_or(name)))
+        .collect()
+}
+/// Profile stock entries with their specification and name.
+fn profile_stock_specs(document: &Document, batten: bool) -> Vec<(EntityId, StockKind, String)> {
     document
         .entities()
         .filter_map(|e| match materials::read(e).ok().flatten() {
-            Some(LibraryDefinition::Stock(s)) => match s.specification {
+            Some(LibraryDefinition::Stock(s)) => match &s.specification {
                 StockKind::Profile { shape, wall_mm, .. }
-                    if !batten || (shape == ProfileShape::Rectangular && wall_mm.is_none()) =>
+                    if !batten || (*shape == ProfileShape::Rectangular && wall_mm.is_none()) =>
                 {
-                    Some((
-                        e.id,
-                        format!("{} · {}", e.name, format!("{shape:?}").to_lowercase()),
-                    ))
+                    Some((e.id, s.specification.clone(), e.name.clone()))
                 }
                 _ => None,
             },
@@ -266,6 +271,12 @@ impl WeldmentPanel {
                 form.path_kind = PathKind::Sketch;
                 form.sketch = Some(*sketch);
                 form.path = Some(member.path.clone());
+            }
+            MemberPath::FrameMember { .. } => {
+                return Err(
+                    "This member belongs to a frame; its path, placement and joints are edited with the frame"
+                        .into(),
+                );
             }
         }
         form.anchor = member.anchor;
@@ -430,10 +441,16 @@ impl WeldmentPanel {
         let create = controls::inspector_combo(ui, "weld-stock")
             .selected_text(selected)
             .show_ui(ui, |ui| {
-                for (id, name) in &stocks {
-                    changed |= ui
-                        .selectable_value(&mut self.stock, Some(*id), name)
-                        .changed();
+                ui.set_min_width(260.);
+                for (id, spec, name) in profile_stock_specs(document, self.batten) {
+                    let selected = self.stock == Some(id);
+                    if crate::materials::profile_picker::stock_row(ui, selected, &spec, &name)
+                        .clicked()
+                        && !selected
+                    {
+                        self.stock = Some(id);
+                        changed = true;
+                    }
                 }
                 ui.button(kind.label()).clicked()
             })
@@ -560,6 +577,8 @@ mod tests {
                 wall_mm: Some(2.),
                 shape: ProfileShape::Rectangular,
                 section: None,
+                corner_radius_mm: None,
+                web_mm: None,
             },
         })
         .entity(EntityId::new(), "SHS 30")
@@ -625,6 +644,8 @@ mod tests {
                 wall_mm: None,
                 shape: ProfileShape::Rectangular,
                 section: None,
+                corner_radius_mm: None,
+                web_mm: None,
             },
         })
         .entity(EntityId::new(), "Timber 20 × 40")

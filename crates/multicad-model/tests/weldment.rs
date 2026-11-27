@@ -87,6 +87,8 @@ fn profile(
             wall_mm: wall,
             shape,
             section: None,
+            corner_radius_mm: None,
+            web_mm: None,
         },
     })
     .entity(EntityId::new(), name)
@@ -556,6 +558,8 @@ fn invalid_paths_and_stock_are_diagnosed() {
             wall_mm: Some(2.),
             shape: ProfileShape::Round,
             section: None,
+            corner_radius_mm: None,
+            web_mm: None,
         },
     });
     assert!(oval.entity(EntityId::new(), "Oval").is_err());

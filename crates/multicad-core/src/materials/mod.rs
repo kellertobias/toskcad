@@ -1,9 +1,11 @@
 //! Manufacturing metadata. Stock is an authored specification, not a geometry or
 //! manufacturability assertion. Library IDs, never display names, bind assignments.
 mod commands;
+mod profile_names;
 mod resolve;
 mod source;
 pub use commands::*;
+pub use profile_names::*;
 pub use resolve::*;
 pub use source::*;
 

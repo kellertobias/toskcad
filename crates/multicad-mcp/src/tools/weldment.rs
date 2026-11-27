@@ -29,6 +29,17 @@ pub enum ProfileShapeArg {
     Angle,
     /// A custom cross-section drawn with `section` or given as `section_sketch`.
     Sketch,
+    /// Channel (U/C): web of `web_mm` along the height, flanges of `wall_mm`.
+    Channel,
+    /// T section: a flange of `wall_mm` across the width, a centred web below.
+    Tee,
+    /// I/H beam: flanges of `wall_mm` at both ends, a centred web between.
+    Beam,
+}
+impl ProfileShapeArg {
+    fn has_web(self) -> bool {
+        matches!(self, Self::Channel | Self::Tee | Self::Beam)
+    }
 }
 /// One element of a custom profile section, in section-plane millimeters.
 /// Endpoints at the same coordinates join; together the elements must
@@ -89,7 +100,8 @@ pub struct ProfileStockArgs {
     #[serde(default)]
     pub material_name: Option<String>,
     /// rectangular (SHS/RHS tube or flat bar), round (CHS tube or round bar),
-    /// angle, or sketch (a custom section from `section` or `section_sketch`).
+    /// angle, channel, tee, beam (I/H), or sketch (a custom section from
+    /// `section` or `section_sketch`).
     pub shape: ProfileShapeArg,
     /// Section width; for round stock the outside diameter. Derived from the
     /// section for sketch stock.
@@ -105,12 +117,21 @@ pub struct ProfileStockArgs {
     /// Sketch stock: a canonical constraint sketch instead of `section`.
     #[serde(default)]
     pub section_sketch: Option<Value>,
-    /// Tube wall or angle leg thickness. Omit for a solid bar; required for an angle.
+    /// Tube wall or angle leg thickness. Omit for a solid bar; required for an
+    /// angle. For channel, tee and beam: the flange thickness (required).
     #[serde(default)]
     pub wall_mm: Option<f64>,
+    /// Channel, tee and beam only: the web thickness (required for them).
+    #[serde(default)]
+    pub web_mm: Option<f64>,
     /// Bar length the stock is supplied in (default 6000).
     #[serde(default)]
     pub bar_length_mm: Option<f64>,
+    /// Rectangular stock only: outside corner radius, above 0 and at most
+    /// half the smaller side. A tube's inside radius is this radius less the
+    /// wall (sharp when not positive). Omit for sharp corners.
+    #[serde(default)]
+    pub corner_radius_mm: Option<f64>,
 }
 #[derive(Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -388,6 +409,16 @@ pub(super) fn create_profile_stock(
             }
         };
         let specification = if matches!(args.shape, ProfileShapeArg::Sketch) {
+            if args.corner_radius_mm.is_some() {
+                return Err(ToolError::invalid(
+                    "Sketch stock has no corner_radius_mm; draw the arcs in the section instead",
+                ));
+            }
+            if args.web_mm.is_some() {
+                return Err(ToolError::invalid(
+                    "Sketch stock has no web_mm; draw the section instead",
+                ));
+            }
             if args.wall_mm.is_some() {
                 return Err(ToolError::invalid(
                     "Sketch stock has no wall_mm; draw holes in the section instead",
@@ -420,7 +451,7 @@ pub(super) fn create_profile_stock(
             }
             let (Some(width_mm), Some(height_mm)) = (args.width_mm, args.height_mm) else {
                 return Err(ToolError::invalid(
-                    "Give width_mm and height_mm for rectangular, round and angle stock",
+                    "Give width_mm and height_mm for rectangular, round, angle, channel, tee and beam stock",
                 ));
             };
             StockKind::Profile {
@@ -433,8 +464,13 @@ pub(super) fn create_profile_stock(
                     ProfileShapeArg::Rectangular => ProfileShape::Rectangular,
                     ProfileShapeArg::Round => ProfileShape::Round,
                     ProfileShapeArg::Angle | ProfileShapeArg::Sketch => ProfileShape::Angle,
+                    ProfileShapeArg::Channel => ProfileShape::Channel,
+                    ProfileShapeArg::Tee => ProfileShape::Tee,
+                    ProfileShapeArg::Beam => ProfileShape::Beam,
                 },
                 section: None,
+                corner_radius_mm: args.corner_radius_mm,
+                web_mm: args.web_mm,
             }
         };
         let stock = LibraryDefinition::Stock(Stock {
@@ -445,6 +481,8 @@ pub(super) fn create_profile_stock(
         .map_err(|e| {
             if matches!(args.shape, ProfileShapeArg::Sketch) {
                 ToolError::invalid(format!("Invalid sketch profile stock: {e}"))
+            } else if args.shape.has_web() || args.web_mm.is_some() {
+                ToolError::invalid(format!("Invalid profile stock: {e}"))
             } else {
                 ToolError::invalid(
                     "Invalid profile stock: sizes must be positive, round stock needs width = height, an angle needs wall_mm, and twice the wall must fit the section",
@@ -827,7 +865,7 @@ pub(super) fn weldment_cut_list(host: &dyn Host, call: &Request, _: super::NoArg
     let records = model.member_cut_list(&document)?;
     Ok(json!({
         "revision": revision,
-        "scope": "Lengths measured from the evaluated member solids along each member axis (overall length, farthest point to farthest point; span is the measured axial range from the path start). End angles: plane cuts from square (0 = square, 45 = right-angle miter); copes give the branch angle to the receiving axis. Sections are modeled with sharp corners. A geometric record, not a nesting plan, certified procedure or structural check.",
+        "scope": "Lengths measured from the evaluated member solids along each member axis (overall length, farthest point to farthest point; span is the measured axial range from the path start). End angles: plane cuts from square (0 = square, 45 = right-angle miter); copes give the branch angle to the receiving axis. Rectangular sections use their stock's outside corner radius (inside radius = radius less wall); round sections are exact; angle root radii are not modeled. A geometric record, not a nesting plan, certified procedure or structural check.",
         "members": records.iter().map(|r| json!({
             "part": r.part, "feature": r.feature, "name": r.name,
             "material": r.material, "stock": r.stock, "stock_name": r.stock_name,
@@ -836,6 +874,7 @@ pub(super) fn weldment_cut_list(host: &dyn Host, call: &Request, _: super::NoArg
             "path": match &r.path {
                 MemberPath::SketchLine { sketch, line } => json!({ "sketch": sketch, "line": line }),
                 MemberPath::Points { .. } => json!({ "points": true }),
+                MemberPath::FrameMember { frame, member } => json!({ "frame": frame, "member": member }),
             },
             "length_mm": r.length_mm, "nominal_length_mm": r.nominal_length_mm,
             "rotation_deg": r.rotation_deg,
@@ -843,7 +882,7 @@ pub(super) fn weldment_cut_list(host: &dyn Host, call: &Request, _: super::NoArg
             "axis": r.frame.axis, "width_direction": r.frame.x, "height_direction": r.frame.y,
             "span_mm": r.span_mm,
             "start": end_json(&r.ends[0]), "end": end_json(&r.ends[1]),
-            "volume_mm3": r.volume_mm3, "fits_stock": r.fits_stock, "issues": r.issues,
+            "volume_mm3": r.volume_mm3, "mass_kg": r.mass_kg, "fits_stock": r.fits_stock, "issues": r.issues,
         })).collect::<Vec<_>>(),
     }))
 }
@@ -948,6 +987,8 @@ fn sketch_spec(
         section: Some(Box::new(materials::ProfileSketch {
             sketch: solved.sketch,
         })),
+        corner_radius_mm: None,
+        web_mm: None,
     }
 }
 

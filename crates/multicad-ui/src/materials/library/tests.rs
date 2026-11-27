@@ -3,7 +3,7 @@ use multicad_core::{document::Document, project_file::ProjectResources};
 use std::time::{Duration, Instant};
 #[allow(dead_code)]
 #[path = "../../../../multicad-app/examples/shared_materials_review.rs"]
-mod shared_fixture;
+pub(super) mod shared_fixture;
 
 #[test]
 fn hex_color_editor_keeps_valid_rgb_when_switching_modes_or_typing_a_partial_value() {

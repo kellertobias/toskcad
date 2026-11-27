@@ -315,6 +315,8 @@ impl LibraryEditor {
                     wall_mm: None,
                     shape: ProfileShape::Rectangular,
                     section: None,
+                    corner_radius_mm: None,
+                    web_mm: None,
                 },
             ),
         }
@@ -792,6 +794,23 @@ fn definition_row(
                 )
             })
             .inner;
+        // Profile stock says what it is in plain words, with its section
+        // picture, so catalogue names never stand alone (CAD-434).
+        if let Ok(Some(LibraryDefinition::Stock(stock))) = read(entry)
+            && let Some(text) = super::profile_picker::description(&stock.specification)
+        {
+            ui.horizontal(|ui| {
+                ui.add_space(22.);
+                if let Some(section) = super::profile_picker::section(&stock.specification) {
+                    super::profile_picker::picture(
+                        ui,
+                        egui::vec2(24., 18.),
+                        &super::profile_picker::art(&section),
+                    );
+                }
+                ui.label(egui::RichText::new(text).small());
+            });
+        }
         if let Some(detail) = &detail {
             ui.horizontal_wrapped(|ui| {
                 ui.add_space(22.);
@@ -1291,6 +1310,8 @@ fn stock_default(i: usize) -> StockKind {
             wall_mm: Some(2.),
             shape: ProfileShape::Rectangular,
             section: None,
+            corner_radius_mm: None,
+            web_mm: None,
         },
         _ => StockKind::Print {
             process: "FDM".into(),
@@ -1349,119 +1370,7 @@ fn stock_controls(
             number(ui, "Inside bend radius", inside_bend_radius_mm, " mm");
             number(ui, "K factor", k_factor, "");
         }
-        StockKind::Profile {
-            designation,
-            length_mm,
-            width_mm,
-            height_mm,
-            wall_mm,
-            shape,
-            section,
-        } => {
-            let designation_label = ui.label("Designation");
-            ui.text_edit_singleline(designation)
-                .labelled_by(designation_label.id);
-            let previous_shape = *shape;
-            let shape_label = |shape: ProfileShape| match shape {
-                ProfileShape::Rectangular => "Rectangular",
-                ProfileShape::Round => "Round",
-                ProfileShape::Angle => "Angle",
-                ProfileShape::ItemLine8_40x40 => "item Line 8 40×40",
-                ProfileShape::Sketch => "Based on sketch",
-            };
-            if !solid_rectangular {
-                egui::ComboBox::from_id_salt("profile-shape")
-                    .selected_text(shape_label(*shape))
-                    .show_ui(ui, |ui| {
-                        for s in [
-                            ProfileShape::Rectangular,
-                            ProfileShape::Round,
-                            ProfileShape::Angle,
-                            ProfileShape::ItemLine8_40x40,
-                            ProfileShape::Sketch,
-                        ] {
-                            ui.selectable_value(shape, s, shape_label(s)).on_hover_text(
-                                if s == ProfileShape::Sketch {
-                                    "Draw a custom cross-section in a sketch"
-                                } else {
-                                    ""
-                                },
-                            );
-                        }
-                    });
-            }
-            if previous_shape != *shape && *shape == ProfileShape::Sketch {
-                // The section modal decides: Finish makes this sketch stock,
-                // Cancel leaves the preset untouched.
-                *shape = previous_shape;
-                *section_request = Some(SectionRequest::Fresh);
-            }
-            if previous_shape == ProfileShape::Sketch && *shape != ProfileShape::Sketch {
-                *section = None;
-            }
-            if previous_shape != *shape {
-                if *shape == ProfileShape::ItemLine8_40x40 {
-                    *width_mm = 40.;
-                    *height_mm = 40.;
-                    *wall_mm = None;
-                }
-                if *shape == ProfileShape::Round {
-                    *height_mm = *width_mm;
-                }
-                if *shape == ProfileShape::Angle && wall_mm.is_none() {
-                    *wall_mm = Some(2.);
-                }
-            }
-            number(ui, "Stock length", length_mm, " mm");
-            if *shape == ProfileShape::Sketch {
-                ui.label(format!(
-                    "Custom section · {width_mm} × {height_mm} mm · {} sketch elements",
-                    section.as_ref().map_or(0, |s| s.sketch.curves.len())
-                ));
-                ui.small("Width and height follow the section sketch.");
-                if ui
-                    .button("Edit section sketch…")
-                    .on_hover_text("Open the section's sketch elements and dimensions")
-                    .clicked()
-                {
-                    *section_request = Some(SectionRequest::Edit);
-                }
-                return;
-            }
-            if *shape == ProfileShape::ItemLine8_40x40 {
-                ui.label("40 × 40 mm · four open 8 mm grooves · Ø6.8 mm core");
-                ui.label("item 0.0.026.03 mounting dimensions with simplified groove flanks");
-                return;
-            }
-            if *shape == ProfileShape::Round {
-                let previous_diameter = *width_mm;
-                number(ui, "Outside diameter", width_mm, " mm");
-                if previous_diameter != *width_mm {
-                    *height_mm = *width_mm;
-                }
-            } else {
-                number(ui, "Width", width_mm, " mm");
-                number(ui, "Height", height_mm, " mm");
-            }
-            if *shape != ProfileShape::Angle && !solid_rectangular {
-                let mut hollow = wall_mm.is_some();
-                if ui.checkbox(&mut hollow, "Hollow section").changed() {
-                    *wall_mm = if hollow { Some(2.) } else { None };
-                }
-            }
-            if let Some(v) = wall_mm {
-                number(
-                    ui,
-                    if *shape == ProfileShape::Angle {
-                        "Leg thickness"
-                    } else {
-                        "Wall"
-                    },
-                    v,
-                    " mm",
-                );
-            }
-        }
+        StockKind::Profile { .. } => profile_controls(ui, s, solid_rectangular, section_request),
         StockKind::Print {
             process,
             nozzle_mm,
@@ -1476,5 +1385,239 @@ fn stock_controls(
     }
 }
 
+/// Profile stock in the order a user decides it (CAD-434): the section type
+/// with its picture, the dimensioned section with linked fields, the
+/// designation, and last the bar length it is bought in. Member lengths come
+/// from the drawn path or placement, never from this form.
+fn profile_controls(
+    ui: &mut egui::Ui,
+    spec: &mut StockKind,
+    solid_rectangular: bool,
+    section_request: &mut Option<SectionRequest>,
+) {
+    use super::profile_picker as picker;
+    let mut link = picker::link_state(ui);
+    let snapshot = spec.clone();
+    {
+        let StockKind::Profile {
+            width_mm,
+            height_mm,
+            wall_mm,
+            shape,
+            section,
+            corner_radius_mm,
+            web_mm,
+            ..
+        } = spec
+        else {
+            return;
+        };
+        let previous_shape = *shape;
+        if !solid_rectangular {
+            picker::type_picker(ui, &snapshot, shape);
+        }
+        if previous_shape != *shape && *shape == ProfileShape::Sketch {
+            // The section modal decides: Finish makes this sketch stock,
+            // Cancel leaves the preset untouched.
+            *shape = previous_shape;
+            *section_request = Some(SectionRequest::Fresh);
+        }
+        if previous_shape == ProfileShape::Sketch && *shape != ProfileShape::Sketch {
+            *section = None;
+        }
+        if previous_shape != *shape {
+            if *shape == ProfileShape::ItemLine8_40x40 {
+                *width_mm = 40.;
+                *height_mm = 40.;
+                *wall_mm = None;
+            }
+            if *shape == ProfileShape::Round {
+                *height_mm = *width_mm;
+            }
+            if *shape == ProfileShape::Angle && wall_mm.is_none() {
+                *wall_mm = Some(2.);
+            }
+            if *shape != ProfileShape::Rectangular {
+                *corner_radius_mm = None;
+            }
+            if shape.has_web() {
+                // Start from a section that validates: flanges and web of a
+                // tenth of the smaller side.
+                let t = (width_mm.min(*height_mm) / 10.).max(1.);
+                wall_mm.get_or_insert(t);
+                web_mm.get_or_insert(t);
+            } else {
+                *web_mm = None;
+            }
+        }
+        if matches!(*shape, ProfileShape::Rectangular | ProfileShape::Round) && !solid_rectangular {
+            let mut hollow = wall_mm.is_some();
+            if ui.checkbox(&mut hollow, "Hollow section").changed() {
+                *wall_mm = if hollow { Some(2.) } else { None };
+            }
+        }
+    }
+    let current = spec.clone();
+    if let Some(text) = picker::description(&current) {
+        ui.label(egui::RichText::new(text).strong());
+    }
+    let StockKind::Profile {
+        designation,
+        length_mm,
+        width_mm,
+        height_mm,
+        wall_mm,
+        shape,
+        section,
+        corner_radius_mm,
+        web_mm,
+    } = spec
+    else {
+        return;
+    };
+    match *shape {
+        ProfileShape::Sketch => {
+            if let Some(section) = picker::section(&current) {
+                picker::picture(ui, egui::vec2(120., 80.), &picker::art(&section));
+            }
+            ui.label(format!(
+                "Custom section · {width_mm} × {height_mm} mm · {} sketch elements",
+                section.as_ref().map_or(0, |s| s.sketch.curves.len())
+            ));
+            ui.small("Width and height follow the section sketch.");
+            if ui
+                .button("Edit section sketch…")
+                .on_hover_text("Open the section's sketch elements and dimensions")
+                .clicked()
+            {
+                *section_request = Some(SectionRequest::Edit);
+            }
+        }
+        ProfileShape::ItemLine8_40x40 => {
+            crate::modeling::diagram::show(
+                ui,
+                "profile-stock-diagram",
+                &picker::diagram(&current),
+                180.,
+                Default::default(),
+                &|key| picker::callout_value(&current, key),
+            );
+            ui.label("40 × 40 mm · four open 8 mm grooves · Ø6.8 mm core");
+            ui.label("item 0.0.026.03 mounting dimensions with simplified groove flanks");
+        }
+        _ => {
+            link.invalid = picker::invalid_key(&current);
+            link.diagram(
+                ui,
+                "profile-stock-diagram",
+                &picker::diagram(&current),
+                200.,
+                &|key| picker::callout_value(&current, key),
+            );
+            if *shape == ProfileShape::Round {
+                let previous_diameter = *width_mm;
+                picker::linked_number(
+                    ui,
+                    &mut link,
+                    picker::DIAMETER,
+                    "Outside diameter",
+                    width_mm,
+                    "Outside diameter of the round section",
+                );
+                if previous_diameter != *width_mm {
+                    *height_mm = *width_mm;
+                }
+            } else {
+                picker::linked_number(
+                    ui,
+                    &mut link,
+                    picker::WIDTH,
+                    "Width",
+                    width_mm,
+                    "Section width across the bottom",
+                );
+                picker::linked_number(
+                    ui,
+                    &mut link,
+                    picker::HEIGHT,
+                    "Height",
+                    height_mm,
+                    "Section height",
+                );
+            }
+            if let Some(v) = wall_mm {
+                let (label, help) = match *shape {
+                    ProfileShape::Angle => ("Leg thickness", "Thickness of both legs"),
+                    _ if shape.has_web() => ("Flange thickness", "Thickness of the flanges"),
+                    _ => ("Wall", "Tube wall thickness"),
+                };
+                picker::linked_number(ui, &mut link, picker::WALL, label, v, help);
+            }
+            if let Some(v) = web_mm.as_mut().filter(|_| shape.has_web()) {
+                picker::linked_number(
+                    ui,
+                    &mut link,
+                    picker::WEB,
+                    "Web thickness",
+                    v,
+                    "Thickness of the web between or below the flanges",
+                );
+            }
+            if let Some(problem) = multicad_core::materials::web_problem(
+                *shape, *width_mm, *height_mm, *wall_mm, *web_mm,
+            ) {
+                ui.colored_label(ui.visuals().error_fg_color, problem);
+            }
+            if *shape == ProfileShape::Rectangular && !solid_rectangular {
+                let mut radius = corner_radius_mm.unwrap_or(0.);
+                if picker::linked_number(
+                    ui,
+                    &mut link,
+                    picker::RADIUS,
+                    "Corner radius",
+                    &mut radius,
+                    "Outside corner radius; 0 for sharp corners. A tube's inside radius is this radius less the wall.",
+                ) {
+                    *corner_radius_mm = (radius > 0.).then_some(radius);
+                }
+                let edited = StockKind::Profile {
+                    designation: String::new(),
+                    length_mm: *length_mm,
+                    width_mm: *width_mm,
+                    height_mm: *height_mm,
+                    wall_mm: *wall_mm,
+                    shape: *shape,
+                    section: None,
+                    corner_radius_mm: *corner_radius_mm,
+                    web_mm: *web_mm,
+                };
+                match corner_radius_mm.and_then(|r| {
+                    multicad_core::materials::corner_radius_problem(
+                        *shape, *width_mm, *height_mm, *wall_mm, r,
+                    )
+                }) {
+                    Some(problem) => {
+                        ui.colored_label(ui.visuals().error_fg_color, problem);
+                    }
+                    None => {
+                        if let Some(note) = picker::inside_radius_note(&edited) {
+                            ui.small(note);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let designation_label = ui.label("Designation");
+    ui.text_edit_singleline(designation)
+        .labelled_by(designation_label.id)
+        .on_hover_text("Your or your supplier's name for this stock, for example SHS 40×40×2");
+    number(ui, "Stock length", length_mm, " mm");
+    ui.small("The bar length you buy, for the cut list. Each member's length comes from its drawn path or placement.");
+    picker::store_link(ui, link);
+}
+
+#[cfg(test)]
+mod cad434_tests;
 #[cfg(test)]
 mod tests;

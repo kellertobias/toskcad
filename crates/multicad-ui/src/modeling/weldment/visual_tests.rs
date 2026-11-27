@@ -21,6 +21,8 @@ fn profile(name: &str, w: f64, h: f64, wall: Option<f64>, shape: ProfileShape) -
             wall_mm: wall,
             shape,
             section: None,
+            corner_radius_mm: None,
+            web_mm: None,
         },
     })
     .entity(EntityId::new(), name)
