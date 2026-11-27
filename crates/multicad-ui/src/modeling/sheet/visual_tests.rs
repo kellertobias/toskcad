@@ -130,7 +130,7 @@ fn bend_overrides_and_position_are_collapsed_retained_and_revealed() {
         "overrides start collapsed"
     );
     assert!(painted.has_prefix("Bend overrides · R stock 3 mm · K stock 0.4"));
-    assert!(!painted.has("Origin X (mm)"), "position starts collapsed");
+    assert!(!painted.has("Origin X"), "position starts collapsed");
     // The stock radius callout opens the overrides at its checkbox.
     let callout = painted.find("R Stock radius 3 mm").expect("radius callout");
     harness::frame(
@@ -150,7 +150,7 @@ fn bend_overrides_and_position_are_collapsed_retained_and_revealed() {
     p.k_factor.text = "0.45".into();
     p.origin[1].text = "20".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
-    assert!(!painted.has("K-factor (ratio)"));
+    assert!(!painted.has("K-factor"));
     assert!(painted.has_prefix("Base position · 0, 20, 0 mm"));
     let sheet = p.definition(d).unwrap();
     assert_eq!(sheet.k_factor, p.k_factor.resolve(d).ok());
@@ -158,13 +158,10 @@ fn bend_overrides_and_position_are_collapsed_retained_and_revealed() {
     p.k_factor.text = "=".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
     assert_eq!(p.link.invalid, Some(visual::K_FACTOR));
-    assert!(
-        painted.has("K-factor (ratio)"),
-        "validation reveals the override"
-    );
+    assert!(painted.has("K-factor"), "validation reveals the override");
     p.k_factor.text = "0.45".into();
     p.origin[2].text = "=".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
     assert_eq!(p.link.invalid, Some(visual::ORIGIN[2]));
-    assert!(painted.has("Origin Z (mm)"));
+    assert!(painted.has("Origin Z"));
 }

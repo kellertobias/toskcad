@@ -250,7 +250,7 @@ fn painted_shared_and_duplicate_controls_keep_update_scope_explicit() {
     );
     assert!(panel.shared);
     let output = frame(&mut panel, &ctx, &s, vec![]);
-    let label = text_rect(&output, "Post height (", true);
+    let label = text_rect(&output, "Post height", true);
     let input = output
         .shapes
         .iter()

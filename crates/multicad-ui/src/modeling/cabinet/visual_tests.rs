@@ -189,10 +189,10 @@ fn essentials_first_advanced_groups_collapsed_with_retained_values() {
         let request = form.request(s.document(), true).unwrap();
         let painted = settle(&ctx, &mut form, &s, width);
         for essential in [
-            "Width (mm)",
-            "Floor-to-top height (mm)",
-            "Depth (mm)",
-            "Toe-kick clearance (mm)",
+            "Width",
+            "Floor-to-top height",
+            "Depth",
+            "Toe-kick clearance",
             "Full-height sides",
             "Inset back",
             "Add shelf",
@@ -204,11 +204,7 @@ fn essentials_first_advanced_groups_collapsed_with_retained_values() {
                 "{essential} unclipped at {width}"
             );
         }
-        for advanced in [
-            "Edge strip thickness (mm)",
-            "Origin X (mm)",
-            "Shelf setback (mm)",
-        ] {
+        for advanced in ["Edge strip thickness", "Origin X", "Shelf setback"] {
             assert!(
                 find(&painted, advanced).is_none(),
                 "{advanced} starts collapsed"
@@ -270,7 +266,7 @@ fn callouts_edit_the_same_fields_and_reveal_collapsed_groups() {
     frame(&ctx, &mut form, &s, 320., click(setback.center()));
     let painted = settle(&ctx, &mut form, &s, 320.);
     assert!(
-        find(&painted, "Shelf setback (mm)").is_some(),
+        find(&painted, "Shelf setback").is_some(),
         "callout reveals its group"
     );
     frame(&ctx, &mut form, &s, 320., replace_text("35"));
@@ -296,13 +292,13 @@ fn validation_identifies_and_reveals_the_affected_group() {
     form.band.text = "=".into();
     let painted = settle(&ctx, &mut form, &s, 320.);
     assert_eq!(form.link.invalid, Some(visual::BAND[0]));
-    assert!(find(&painted, "Edge strip thickness (mm)").is_some());
+    assert!(find(&painted, "Edge strip thickness").is_some());
     assert!(form.request(s.document(), true).is_err());
     form.band.text = "2".into();
     form.origin[1].text = "=".into();
     let painted = settle(&ctx, &mut form, &s, 320.);
     assert_eq!(form.link.invalid, Some(visual::PLACEMENT[1]));
-    assert!(find(&painted, "Origin Y (mm)").is_some());
+    assert!(find(&painted, "Origin Y").is_some());
     form.origin[1].text = "0".into();
     assert!(form.request(s.document(), true).is_ok());
     settle(&ctx, &mut form, &s, 320.);

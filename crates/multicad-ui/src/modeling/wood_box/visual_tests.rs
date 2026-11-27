@@ -82,7 +82,7 @@ fn placement_is_collapsed_retained_and_revealed() {
     p.origin[0].text = "100".into();
     p.rotation.text = "15".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
-    assert!(!painted.has("X (mm)"), "placement starts collapsed");
+    assert!(!painted.has("X"), "placement starts collapsed");
     assert!(painted.has_prefix("Placement · 100, 0, 0 mm · 15°"));
     let WoodBoxChange::Set(request) = p.request(d, true).unwrap() else {
         panic!("set")
@@ -96,7 +96,7 @@ fn placement_is_collapsed_retained_and_revealed() {
         &mut show(&mut p, d),
     );
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
-    assert!(painted.has("X (mm)"), "the origin callout opens placement");
+    assert!(painted.has("X"), "the origin callout opens placement");
     assert_eq!(p.link.active(), Some(visual::ORIGIN[0]));
 
     let ctx = egui::Context::default();
@@ -104,8 +104,5 @@ fn placement_is_collapsed_retained_and_revealed() {
     p.rotation.text = "=".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
     assert_eq!(p.link.invalid, Some(visual::ROTATION));
-    assert!(
-        painted.has("Rotation (deg)"),
-        "validation reveals placement"
-    );
+    assert!(painted.has("Rotation"), "validation reveals placement");
 }

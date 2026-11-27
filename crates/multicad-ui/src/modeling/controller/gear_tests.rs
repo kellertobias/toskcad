@@ -343,7 +343,7 @@ fn painted_pair_drive(
         .shapes
         .iter()
         .find_map(|shape| match &shape.shape {
-            egui::Shape::Text(text) if text.galley.text() == "Pinion drive angle (deg)" => {
+            egui::Shape::Text(text) if text.galley.text() == "Pinion drive angle" => {
                 Some(text.pos.y)
             }
             _ => None,
@@ -594,9 +594,9 @@ fn painted_bevel_typing_preview_cancel_apply_history_and_reopen_use_native_gate(
         ring_frame(&ctx, &mut controller, &mut session, vec![]).drop_without_applying_deltas();
         let output = ring_frame(&ctx, &mut controller, &mut session, vec![]);
         let label = if paired {
-            "Wheel teeth (count)"
+            "Wheel teeth"
         } else {
-            "Mating gear teeth (count)"
+            "Mating gear teeth"
         };
         let label_y = output
             .shapes
@@ -1050,7 +1050,7 @@ fn shifted_hub_pair_workflow(
         .shapes
         .iter()
         .find_map(|shape| match &shape.shape {
-            egui::Shape::Text(t) if t.galley.text() == "Hub axial end (mm)" => Some(t.pos.y),
+            egui::Shape::Text(t) if t.galley.text() == "Hub axial end" => Some(t.pos.y),
             _ => None,
         })
         .expect("visible hub extent");

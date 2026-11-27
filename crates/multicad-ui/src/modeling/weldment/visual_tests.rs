@@ -155,17 +155,14 @@ fn extensions_and_points_are_collapsed_retained_and_revealed() {
     let mut p = panel(&s, shs);
     p.extend_end.text = "25".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
-    assert!(
-        !painted.has("Extend start (mm)"),
-        "extensions start collapsed"
-    );
+    assert!(!painted.has("Extend start"), "extensions start collapsed");
     assert!(painted.has_prefix("End extensions · 0 mm / 25 mm"));
-    assert!(!painted.has("End X (mm)"), "path points start collapsed");
+    assert!(!painted.has("End X"), "path points start collapsed");
     assert_eq!(member(&p, d).extend_end, Some(length(25.)));
     p.extend_start.text = "=".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
     assert_eq!(p.link.invalid, Some(visual::EXTEND_START));
-    assert!(painted.has("Extend start (mm)"), "validation reveals it");
+    assert!(painted.has("Extend start"), "validation reveals it");
     p.extend_start.text = "0".into();
     let end = painted.find("End 1000, 0, 0 mm").expect("end callout");
     harness::frame(
@@ -175,9 +172,6 @@ fn extensions_and_points_are_collapsed_retained_and_revealed() {
         &mut show(&mut p, d),
     );
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
-    assert!(
-        painted.has("End X (mm)"),
-        "the End callout opens the points"
-    );
+    assert!(painted.has("End X"), "the End callout opens the points");
     assert_eq!(p.link.active(), Some(visual::END[0]));
 }

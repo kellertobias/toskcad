@@ -144,7 +144,7 @@ fn position_sections_are_collapsed_retained_and_revealed_by_callouts_and_validat
     p.origin[0].text = "5".into();
     p.angle.text = "90".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
-    assert!(!painted.has("Contact X (mm)"), "contact starts collapsed");
+    assert!(!painted.has("Contact X"), "contact starts collapsed");
     assert!(painted.has_prefix("Contact and direction · 5, 0, 0 mm · 90°"));
     let AidShape::Tab {
         origin, angle: a, ..
@@ -157,16 +157,13 @@ fn position_sections_are_collapsed_retained_and_revealed_by_callouts_and_validat
     p.origin[2].text = "=".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
     assert_eq!(p.link.invalid, Some(visual::ORIGIN[2]));
-    assert!(
-        painted.has("Contact Z (mm)"),
-        "validation reveals the contact"
-    );
+    assert!(painted.has("Contact Z"), "validation reveals the contact");
 
     // A bridge's End callout opens its anchors and focuses End X.
     let ctx = egui::Context::default();
     let mut p = panel(&s, AidKind::Bridge);
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
-    assert!(!painted.has("End X (mm)"));
+    assert!(!painted.has("End X"));
     let end = painted.find("End 20, 0, 0 mm").expect("end callout");
     harness::frame(
         &ctx,
@@ -175,7 +172,7 @@ fn position_sections_are_collapsed_retained_and_revealed_by_callouts_and_validat
         &mut show(&mut p, d),
     );
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, d));
-    assert!(painted.has("End X (mm)"));
+    assert!(painted.has("End X"));
     assert_eq!(p.link.active(), Some(visual::END[0]));
 }
 

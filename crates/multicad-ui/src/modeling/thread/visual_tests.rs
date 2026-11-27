@@ -232,7 +232,7 @@ fn fabrication_allowance_is_collapsed_retained_and_revealed_by_validation() {
     let painted = frame(&ctx, &mut p, &document, 360., vec![]);
     let has = |painted: &Painted, text: &str| painted.texts.iter().any(|(t, _)| t == text);
     assert!(
-        !has(&painted, "Radial clearance (mm)"),
+        !has(&painted, "Radial clearance"),
         "advanced allowance starts collapsed"
     );
     assert!(
@@ -242,7 +242,7 @@ fn fabrication_allowance_is_collapsed_retained_and_revealed_by_validation() {
             .any(|(t, _)| t.starts_with("Fabrication allowance") && t.contains("0.05 mm"))
     );
     assert!(
-        !has(&painted, "Base center X (mm)"),
+        !has(&painted, "Base center X"),
         "axis placement starts collapsed"
     );
     assert_eq!(
@@ -256,7 +256,7 @@ fn fabrication_allowance_is_collapsed_retained_and_revealed_by_validation() {
     let painted = frame(&ctx, &mut p, &document, 360., vec![]);
     assert_eq!(p.link.invalid, Some(visual::ALLOWANCE[0]));
     assert!(
-        has(&painted, "Radial clearance (mm)"),
+        has(&painted, "Radial clearance"),
         "validation reveals its section"
     );
     p.origin[2].text = "=".into();
@@ -267,5 +267,5 @@ fn fabrication_allowance_is_collapsed_retained_and_revealed_by_validation() {
     }
     let painted = frame(&ctx, &mut p, &document, 360., vec![]);
     assert_eq!(p.link.invalid, Some(visual::ORIGIN[2]));
-    assert!(has(&painted, "Base center Z (mm)"));
+    assert!(has(&painted, "Base center Z"));
 }

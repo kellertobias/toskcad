@@ -642,7 +642,7 @@ fn painted_phillips_pan_retains_overall_expression_through_native_preview_cancel
         assert!(
             text.contains("Pan head")
                 && text.contains("Phillips H recess")
-                && text.contains("Outer corner included angle (deg)")
+                && text.contains("Outer corner included angle")
         );
         output.drop_without_applying_deltas();
         screw_click(&ctx, &mut c, &mut s, "Preview");
