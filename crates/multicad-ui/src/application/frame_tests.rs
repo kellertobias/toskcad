@@ -610,3 +610,45 @@ fn dragging_a_node_updates_members_live_and_apply_keeps_member_ids() {
         "both members rebuild with their new joint"
     );
 }
+
+#[test]
+fn a_frame_drawn_on_a_level_sits_at_its_elevation() {
+    let mut session = Session::new(document()).unwrap();
+    let (_, prepared) = model::prepare_level(
+        &session,
+        session.revision(),
+        Actor::local(Channel::Ui),
+        "First floor",
+        &model::LevelDefinition {
+            elevation: model::length(3000.),
+            height: model::length(2800.),
+            slab_thickness: model::length(200.),
+        },
+    )
+    .unwrap();
+    session.commit(prepared).unwrap();
+    let choices = crate::modeling::frame_plane_choices(session.document());
+    assert!(
+        choices
+            .iter()
+            .any(|(label, plane)| label == "Level First floor"
+                && plane.origin[2] == model::length(3000.))
+    );
+    let mut h = Harness::new(session.document().clone());
+    open_tool(&mut h);
+    h.click_label("Top (XY)");
+    h.click_label("Level First floor");
+    h.type_into_field_and_enter(LENGTH, "500");
+    apply(&mut h);
+    let document = h.app.current().session.document().clone();
+    let model = multicad_model::Compiler::default()
+        .compile(&document, 0)
+        .unwrap();
+    let r = &model.member_cut_list(&document).unwrap()[0];
+    let b = model
+        .solid(model.snapshot().bodies[&r.part])
+        .unwrap()
+        .bounds()
+        .unwrap();
+    near((b.min[2] + b.max[2]) / 2., 3000.);
+}

@@ -24,6 +24,8 @@ pub(crate) use fence::fence_target;
 pub(crate) use outline::OutlineKey;
 mod form;
 mod frame;
+#[cfg(test)]
+pub(crate) use frame::plane_choices as frame_plane_choices;
 mod gear;
 pub(crate) mod gizmo;
 mod group_edit;

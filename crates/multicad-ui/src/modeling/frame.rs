@@ -76,11 +76,53 @@ impl DrawPlane {
         };
         plane
     }
-    fn of(plane: &FramePlane) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|p| p.plane().u == plane.u && p.plane().normal == plane.normal)
+}
+/// Planes a frame can be drawn on: the three datum planes, each level at
+/// its elevation (kept as its own dimension, so a parameter-driven level
+/// moves the frame), and every work or sketch plane of the document.
+pub(crate) fn plane_choices(document: &Document) -> Vec<(String, FramePlane)> {
+    let mut out: Vec<(String, FramePlane)> = DrawPlane::ALL
+        .into_iter()
+        .map(|p| (p.label().to_owned(), p.plane()))
+        .collect();
+    for level in model::levels(document) {
+        if let Ok(definition) = model::read_level(document, level.id) {
+            let mut plane = DrawPlane::Top.plane();
+            plane.origin[2] = definition.elevation.clone();
+            out.push((format!("Level {}", level.name), plane));
+        }
     }
+    for entity in document.entities() {
+        if let multicad_core::document::EntityData::Plane {
+            origin_mm, normal, ..
+        } = &entity.data
+        {
+            let n = *normal;
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            if len < 1e-12 {
+                continue;
+            }
+            let n = n.map(|c| c / len);
+            // u: world X square to the normal, or world Y for planes facing X.
+            let seed = if n[0].abs() > 0.9 {
+                [0., 1., 0.]
+            } else {
+                [1., 0., 0.]
+            };
+            let d = seed[0] * n[0] + seed[1] * n[1] + seed[2] * n[2];
+            let u = [seed[0] - d * n[0], seed[1] - d * n[1], seed[2] - d * n[2]];
+            let ul = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt();
+            out.push((
+                format!("Plane {}", entity.name),
+                FramePlane {
+                    origin: origin_mm.map(length),
+                    u: u.map(|c| c / ul),
+                    normal: n,
+                },
+            ));
+        }
+    }
+    out
 }
 const SIDES: [(FrameSide, &str); 5] = [
     (FrameSide::Inner, "Inner edge on the line"),
@@ -901,15 +943,22 @@ impl FramePanel {
             .changed();
         // Plane: chosen before the first node.
         ui.label("Drawing plane");
-        let current = DrawPlane::of(&self.definition.plane);
+        let choices = plane_choices(document);
+        let current = choices
+            .iter()
+            .find(|(_, p)| *p == self.definition.plane)
+            .map(|(label, _)| label.clone());
         let empty = self.definition.nodes.is_empty();
         ui.add_enabled_ui(empty, |ui| {
             controls::inspector_combo(ui, "frame-plane")
-                .selected_text(current.map_or("Custom plane", DrawPlane::label))
+                .selected_text(current.clone().unwrap_or_else(|| "Custom plane".into()))
                 .show_ui(ui, |ui| {
-                    for p in DrawPlane::ALL {
-                        if ui.selectable_label(current == Some(p), p.label()).clicked() {
-                            self.definition.plane = p.plane();
+                    for (label, plane) in &choices {
+                        if ui
+                            .selectable_label(current.as_ref() == Some(label), label)
+                            .clicked()
+                        {
+                            self.definition.plane = plane.clone();
                             changed = true;
                         }
                     }
