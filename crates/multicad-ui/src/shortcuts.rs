@@ -478,6 +478,15 @@ impl ShortcutMap {
             "Revolve selected profiles",
             false,
         );
+        add(
+            Scope::Mode(Mode::Model),
+            Chord::plain(Key::M),
+            Command(crate::registry::Command::Modeling(
+                crate::modeling::ModelingTool::Move,
+            )),
+            "Move / Copy selected Parts or Instances",
+            false,
+        );
         map
     }
 }
@@ -488,6 +497,8 @@ pub struct Runtime {
 #[derive(Default)]
 pub struct FrameActions {
     pub actions: Vec<Action>,
+    /// The binding that produced each action, index for index.
+    pub bindings: Vec<Binding>,
     pub pan: Vec2,
 }
 impl Runtime {
@@ -530,6 +541,7 @@ impl Runtime {
                         }
                     } else {
                         result.actions.push(binding.action);
+                        result.bindings.push(binding);
                     }
                     return false;
                 }
