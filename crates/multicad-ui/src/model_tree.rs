@@ -10,6 +10,8 @@ use multicad_core::{
     hierarchy::{self, Action, ContainerKind, Index},
 };
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+mod cascade_delete_tests;
 mod presentation;
 #[cfg(test)]
 mod rename_tests;
@@ -483,6 +485,16 @@ pub struct ModelTree {
     selected_references: BTreeSet<EntityId>,
     scroll_to_source: Option<EntityId>,
     inline: Option<InlineRename>,
+    delete: Option<PendingDelete>,
+    delete_pass: Option<u64>,
+}
+/// A Delete that removes dependents waits for this confirmation (CAD-426).
+#[derive(Clone)]
+struct PendingDelete {
+    document: EntityId,
+    revision: u64,
+    id: EntityId,
+    question: String,
 }
 /// In-place name editing of one tree row (CAD-376).
 #[derive(Clone)]
@@ -551,6 +563,8 @@ impl Default for ModelTree {
             selected_references: BTreeSet::new(),
             scroll_to_source: None,
             inline: None,
+            delete: None,
+            delete_pass: None,
         }
     }
 }
@@ -698,9 +712,91 @@ impl ModelTree {
         self.expansion.insert(id, expanded);
         self.view = None;
     }
+    /// The pending delete confirmation, e.g. "Delete Extrude 1 and 2
+    /// dependent features (Fillet 1, Chamfer 1)?".
+    pub fn delete_question(&self) -> Option<&str> {
+        self.delete
+            .as_ref()
+            .map(|pending| pending.question.as_str())
+    }
     fn execute(&mut self, session: &mut Session, revision: u64, action: Action) -> TreeEvents {
+        // A delete that would also remove dependents first names all of them.
+        if let Action::DeleteWithDependents { id } = action {
+            return match hierarchy::deletion_plan(session, id) {
+                Ok(plan) => {
+                    self.delete = Some(PendingDelete {
+                        document: session.document().id(),
+                        revision,
+                        id,
+                        question: plan.question(),
+                    });
+                    TreeEvents::default()
+                }
+                Err(error) => TreeEvents {
+                    error: Some(error),
+                    ..Default::default()
+                },
+            };
+        }
+        self.commit_action(session, revision, action)
+    }
+    /// Show the pending delete confirmation once per pass. Confirming deletes
+    /// the entry and its dependents in one transaction; Cancel, Escape or a
+    /// changed document leave everything unchanged.
+    fn delete_confirmation(&mut self, ui: &egui::Ui, session: &mut Session) -> Option<TreeEvents> {
+        let pass = ui.ctx().cumulative_pass_nr();
+        if self.delete_pass == Some(pass) {
+            return None;
+        }
+        let pending = self.delete.clone()?;
+        if pending.document != session.document().id() || pending.revision != session.revision() {
+            self.delete = None;
+            return None;
+        }
+        self.delete_pass = Some(pass);
+        let mut confirm = false;
+        let mut cancel = false;
+        let response = crate::controls::modal(
+            ui.ctx(),
+            "model-tree-delete-confirmation",
+            "Delete with dependents",
+            |ui| {
+                ui.label(&pending.question);
+                ui.small("Undo restores everything this removes.");
+                ui.add_space(8.);
+                ui.horizontal(|ui| {
+                    confirm = ui.button("Delete all").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            },
+        );
+        if response.should_close() {
+            cancel = true;
+        }
+        if confirm {
+            self.delete = None;
+            return Some(self.commit_action(
+                session,
+                pending.revision,
+                Action::DeleteWithDependents { id: pending.id },
+            ));
+        }
+        if cancel {
+            self.delete = None;
+        }
+        None
+    }
+    fn commit_action(
+        &mut self,
+        session: &mut Session,
+        revision: u64,
+        action: Action,
+    ) -> TreeEvents {
         let mut events = TreeEvents::default();
-        let deleting = matches!(&action, Action::Delete { .. });
+        let deleting = matches!(
+            &action,
+            Action::Delete { .. } | Action::DeleteWithDependents { .. }
+        );
         match hierarchy::prepare(session, revision, Actor::local(Channel::Ui), action) {
             Ok(pending) => {
                 let created = pending.created;
@@ -765,6 +861,9 @@ impl ModelTree {
                 error: Some(error),
                 ..Default::default()
             };
+        }
+        if !targets_only && let Some(events) = self.delete_confirmation(ui, session) {
+            return events;
         }
         let mut events = TreeEvents::default();
         let mut action = None;
@@ -956,7 +1055,9 @@ impl ModelTree {
                                 if row.history_of.is_some() {
                                     ui.label("Feature used by part");
                                     ui.small("Feature history refers to the operation that produced this body.");
-                                    let _ = delete_menu(ui, session, row.id, false, Some("Select the body to delete it, or reopen the feature to edit its controls."));
+                                    if let Some(delete) = delete_menu(ui, session, row.id, mutations_enabled && row.available, None) {
+                                        action = Some(delete);
+                                    }
                                     return;
                                 }
                                 ui.add_enabled_ui(mutations_enabled && row.available, |ui| {
@@ -1127,6 +1228,9 @@ impl ModelTree {
                 ..Default::default()
             };
         }
+        if let Some(events) = self.delete_confirmation(ui, session) {
+            return events;
+        }
         let mut events = TreeEvents::default();
         if let Some(tool) = self.tool.as_mut() {
             let current =
@@ -1285,11 +1389,7 @@ impl ModelTree {
             .id(self.salt.with(("inspector-delete", id)))
             .open_memory(secondary_click.then(|| true.into()))
             .show(|ui| {
-                let reason = if history_body.is_some() {
-                    Some(
-                        "Select the body to delete it, or reopen the feature to edit its controls.",
-                    )
-                } else if selected.len() > 1 {
+                let reason = if selected.len() > 1 {
                     Some("Select one entity to delete it.")
                 } else {
                     None
@@ -1420,14 +1520,23 @@ fn delete_menu(
     let availability = match reason {
         Some(reason) => Err(reason.to_owned()),
         None if !enabled => Err("Finish the current tool before deleting an entity.".into()),
-        None => hierarchy::deletion_available(session, id),
+        None => hierarchy::deletion_plan(session, id),
     };
-    if ui
-        .add_enabled(availability.is_ok(), egui::Button::new("Delete"))
-        .clicked()
-    {
+    let hint = match &availability {
+        Ok(plan) if !plan.dependents.is_empty() => Some(plan.question()),
+        _ => None,
+    };
+    let mut button = ui.add_enabled(availability.is_ok(), egui::Button::new("Delete"));
+    if let Some(hint) = hint {
+        button = button.on_hover_text(hint);
+    }
+    if button.clicked() {
         ui.close();
-        return Some(Action::Delete { id });
+        // Entries without dependents keep the immediate delete; others ask.
+        return Some(match availability {
+            Ok(plan) if !plan.dependents.is_empty() => Action::DeleteWithDependents { id },
+            _ => Action::Delete { id },
+        });
     }
     if let Err(reason) = availability {
         ui.small(reason);

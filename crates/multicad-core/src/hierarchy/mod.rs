@@ -1,8 +1,12 @@
 //! Persistent source ownership and organizational containment, separate from
 //! feature dependencies and reusable instance placement.
+mod cascade;
 mod index;
 mod operations;
 use crate::document::{Document, EntityData, EntityId};
+pub use cascade::DeletionPlan;
+pub use cascade::Dependent;
+use cascade::closure;
 pub use index::*;
 pub use operations::*;
 use serde::{Deserialize, Serialize};
