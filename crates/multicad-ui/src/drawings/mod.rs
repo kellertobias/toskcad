@@ -638,10 +638,10 @@ impl DrawingEditor {
                 if let Some(hint) = self.next_step_hint() {
                     hint_strip(ui, &hint);
                 }
-            } else if let Some(tool) = self.empty_state(ui) {
-                if let Err(error) = self.invoke(session, tool, Channel::Ui) {
-                    self.error = Some(error);
-                }
+            } else if let Some(tool) = self.empty_state(ui)
+                && let Err(error) = self.invoke(session, tool, Channel::Ui)
+            {
+                self.error = Some(error);
             }
         });
         if self.placing() || self.section_pick.is_some() || self.view_placement.is_some() {

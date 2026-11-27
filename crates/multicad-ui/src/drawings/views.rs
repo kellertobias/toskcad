@@ -752,6 +752,18 @@ fn section_controls(
     });
 }
 
+/// Views with their sheet anchors cleared: what generates their geometry.
+fn unplaced(views: &[DrawingView]) -> Vec<DrawingView> {
+    views
+        .iter()
+        .cloned()
+        .map(|mut view| {
+            view.position_mm = [0.; 2];
+            view
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod direction_tests {
     use super::frame_for_direction;
@@ -783,16 +795,4 @@ mod direction_tests {
         assert!((u[0] * v[0] + u[1] * v[1] + u[2] * v[2]).abs() < 1e-12);
         assert!(frame_for_direction([0.; 3]).is_none());
     }
-}
-
-/// Views with their sheet anchors cleared: what generates their geometry.
-fn unplaced(views: &[DrawingView]) -> Vec<DrawingView> {
-    views
-        .iter()
-        .cloned()
-        .map(|mut view| {
-            view.position_mm = [0.; 2];
-            view
-        })
-        .collect()
 }

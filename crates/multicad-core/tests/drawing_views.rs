@@ -444,7 +444,7 @@ fn projection_links_validate_roundtrip_with_their_capability_and_survive_duplica
         assert!(DrawingBook { pages: vec![p] }.validate().is_err());
     }
     let mut same_direction = page.clone();
-    same_direction.views[1].frame = same_direction.views[0].frame.clone();
+    same_direction.views[1].frame = same_direction.views[0].frame;
     assert!(
         DrawingBook {
             pages: vec![same_direction]
