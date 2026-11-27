@@ -19,7 +19,11 @@ multicad-solver = { path = "crates/multicad-solver" }
 multicad-model = { path = "crates/multicad-model", default-features = false }
 multicad-ui = { path = "crates/multicad-ui" }
 multicad-mcp = { path = "crates/multicad-mcp", default-features = false }
-eframe = { version = "=0.36.2", default-features = false, features = ["wgpu", "default_fonts", "accesskit", "wayland", "x11"] }
+# `wgpu_no_default_features`, not `wgpu`: eframe's `wgpu` feature turns on
+# egui-wgpu's `macos-window-resize-jitter-fix`, whose transactional presents
+# stall resizes for the 1 s drawable timeout on macOS (CAD-420). multicad-ui
+# names egui-wgpu's remaining default features itself.
+eframe = { version = "=0.36.2", default-features = false, features = ["wgpu_no_default_features", "default_fonts", "accesskit", "wayland", "x11"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

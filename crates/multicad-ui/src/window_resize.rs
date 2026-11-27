@@ -192,3 +192,41 @@ fn resize_macos(response: &Response) {
         ctx.data_mut(|data| data.remove::<Drag>(id));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// The `[dependencies]`-style line that declares `name` in `manifest`.
+    fn dependency<'a>(manifest: &'a str, name: &str) -> &'a str {
+        manifest
+            .lines()
+            .find(|line| line.trim_start().starts_with(&format!("{name} = ")))
+            .unwrap_or_else(|| panic!("{name} is not declared"))
+    }
+
+    /// CAD-420: egui-wgpu's `macos-window-resize-jitter-fix` presents inside
+    /// Core Animation transactions during resize. A frame drawn inside that
+    /// commit waited the full 1 s `nextDrawable` timeout, measured on the
+    /// app's own resize grip and on programmatic resizes. eframe's `wgpu`
+    /// feature re-enables it through `egui-wgpu/default`, so both manifests
+    /// must keep it out.
+    #[test]
+    fn transactional_resize_presents_stay_disabled() {
+        let workspace = include_str!("../../../Cargo.toml");
+        let eframe = dependency(workspace, "eframe");
+        assert!(eframe.contains("default-features = false"), "{eframe}");
+        assert!(eframe.contains("\"wgpu_no_default_features\""), "{eframe}");
+        assert!(!eframe.contains("\"wgpu\""), "{eframe}");
+
+        let ui = include_str!("../Cargo.toml");
+        let egui_wgpu = dependency(ui, "egui-wgpu");
+        assert!(
+            egui_wgpu.contains("default-features = false"),
+            "{egui_wgpu}"
+        );
+        assert!(!egui_wgpu.contains("macos-window-resize-jitter-fix"));
+        for manifest in [workspace, ui] {
+            assert!(!manifest.contains("egui-wgpu/default"));
+            assert!(!manifest.contains("\"macos-window-resize-jitter-fix\""));
+        }
+    }
+}
