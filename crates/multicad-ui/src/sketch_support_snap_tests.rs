@@ -1126,3 +1126,387 @@ fn a_refusal_after_the_tool_changed_does_not_restore_a_stale_gesture() {
         host.editor.message
     );
 }
+
+/// Opens a sketch on the top face (z = SIZE[2]) of `producer`.
+fn top_sketch(session: &mut Session, producer: EntityId) -> (EntityId, Frame) {
+    let native = Compiler::default()
+        .compile(session.document(), session.revision())
+        .unwrap();
+    let topology = &native.snapshot().shapes[&producer].topology;
+    let top = topology
+        .elements
+        .iter()
+        .find(|e| {
+            e.key.kind == TopologyKind::Face
+                && matches!(e.geometry, Some(AnalyticGeometry::Plane { frame })
+                    if frame.normal()[2] > 0.999 && (frame.origin_mm[2] - SIZE[2]).abs() < 1e-7)
+        })
+        .expect("the top face");
+    let created = sketch::prepare_new(
+        session,
+        session.revision(),
+        actor(),
+        "Face sketch",
+        CreationPlane::Face {
+            snapshot: topology,
+            key: top.key,
+            anchor: Some(&top.frames[0].origin),
+        },
+        PlaneOptions::default(),
+    )
+    .unwrap();
+    let (sketch, frame) = (created.sketch, created.frame);
+    session.commit(created.prepared).unwrap();
+    (sketch, frame)
+}
+fn commit_primitive(session: &mut Session, request: &PrimitiveRequest) {
+    session
+        .commit(
+            model::prepare_primitive(session, session.revision(), actor(), request)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+}
+fn plain_box() -> PrimitiveRequest {
+    PrimitiveRequest::new(
+        "Box",
+        PrimitiveParameters::Box {
+            size: SIZE.map(length),
+            frame: PrimitiveFrame::default(),
+        },
+    )
+}
+
+/// The reported model of CAD-422: a 30 x 20 x 10 box whose four vertical
+/// (outer) edges are filleted with radius 4, and a sketch on its top face,
+/// whose outline is four lines and four corner arcs.
+fn filleted_box_face_sketch() -> (Session, EntityId, Frame) {
+    let mut session = Session::new(Document::new("Filleted box").unwrap()).unwrap();
+    let block = plain_box();
+    commit_primitive(&mut session, &block);
+    let native = Compiler::default()
+        .compile(session.document(), session.revision())
+        .unwrap();
+    let topology = &native.snapshot().shapes[&block.feature].topology;
+    let vertical: Vec<_> = topology
+        .elements
+        .iter()
+        .filter(|e| {
+            e.key.kind == TopologyKind::Edge
+                && matches!(e.geometry, Some(AnalyticGeometry::Line { a_mm, b_mm })
+                    if (a_mm[2] - b_mm[2]).abs() > 1.)
+        })
+        .map(|e| multicad_core::references::GeometryIntent::capture(topology, e.key).unwrap())
+        .collect();
+    assert_eq!(vertical.len(), 4, "the four vertical outer edges");
+    let fillet = model::EdgeTreatmentRequest::new(
+        model::BodyInput {
+            body: block.body,
+            producer: block.feature,
+        },
+        model::EdgeTreatmentParameters {
+            profile: model::EdgeTreatmentProfile::Fillet,
+            size: length(4.),
+        },
+        vertical,
+    );
+    session
+        .commit(
+            model::prepare_edge_treatment(&session, session.revision(), actor(), &fillet)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let (sketch, frame) = top_sketch(&mut session, fillet.feature);
+    (session, sketch, frame)
+}
+
+/// A 30 x 20 x 10 box with a radius 3 through hole at (15, 10), and a
+/// sketch on its top face, whose outline includes the hole's full circle.
+fn drilled_box_face_sketch() -> (Session, EntityId, Frame) {
+    let mut session = Session::new(Document::new("Drilled box").unwrap()).unwrap();
+    let block = plain_box();
+    let drill = PrimitiveRequest::new(
+        "Hole",
+        PrimitiveParameters::Cylinder {
+            radius: length(3.),
+            height: length(SIZE[2]),
+            frame: PrimitiveFrame {
+                origin: [length(15.), length(10.), length(0.)],
+                ..Default::default()
+            },
+        },
+    );
+    commit_primitive(&mut session, &block);
+    commit_primitive(&mut session, &drill);
+    let cut = model::BooleanRequest::new(
+        model::Operation::Cut,
+        model::BodyInput {
+            body: block.body,
+            producer: block.feature,
+        },
+        vec![model::BodyInput {
+            body: drill.body,
+            producer: drill.feature,
+        }],
+    );
+    session
+        .commit(
+            model::prepare_boolean(&session, session.revision(), actor(), &cut)
+                .unwrap()
+                .prepared,
+        )
+        .unwrap();
+    let (sketch, frame) = top_sketch(&mut session, cut.feature);
+    (session, sketch, frame)
+}
+
+/// The circular-edge references of a sketch and their projected centres.
+fn centre_outputs(document: &Document, sketch: EntityId) -> Vec<EntityId> {
+    sketch_external::bindings(document, sketch)
+        .unwrap()
+        .iter()
+        .map(|b| {
+            assert_eq!(b.intent.kind, TopologyKind::Edge);
+            assert_eq!(
+                b.definition.behavior,
+                sketch_external::Behavior::ReferenceOnly
+            );
+            match b.definition.output {
+                sketch_external::OutputIds::Arc { center, .. }
+                | sketch_external::OutputIds::Circle { center, .. } => center,
+                ref other => panic!("a circular edge reference: {other:?}"),
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn a_line_between_filleted_box_face_centres_reuses_both_projected_centres_in_one_undo() {
+    let (session, sketch, frame) = filleted_box_face_sketch();
+    let mut host = Host::new(session, sketch);
+    host.editor.set_tool(DrawTool::Line).unwrap();
+    let before = host.session.document().clone();
+    let revision = host.session.revision();
+    let r = 4.;
+    // Every corner arc of the face outline offers its centre.
+    let centres = [
+        [r, r],
+        [SIZE[0] - r, r],
+        [SIZE[0] - r, SIZE[1] - r],
+        [r, SIZE[1] - r],
+    ];
+    for [x, y] in centres {
+        host.hover_support([x, y, SIZE[2]], TargetKind::FaceCenter);
+        let shown = host.editor.snap_assist.shown().unwrap().clone();
+        assert!(
+            close(shown.position, frame.coordinates([x, y, SIZE[2]])),
+            "{shown:?}"
+        );
+        assert_eq!(shown.kind.label(), "Face centre");
+        assert_eq!(shown.kind.marker(), snap::Marker::Center);
+        assert_eq!(
+            snap_host::snap_cursor(shown.kind),
+            Some(egui::CursorIcon::Crosshair)
+        );
+    }
+    assert_eq!(host.session.document(), &before, "hovering changes nothing");
+
+    let a = [r, r, SIZE[2]];
+    let b = [SIZE[0] - r, SIZE[1] - r, SIZE[2]];
+    host.hover_support(a, TargetKind::FaceCenter);
+    host.click(a);
+    assert_eq!(
+        host.session.revision(),
+        revision,
+        "the start only begins the line"
+    );
+    host.hover_support(b, TargetKind::FaceCenter);
+    host.click(b);
+    host.settle_support();
+    assert!(
+        host.editor.message.starts_with("Face reference projected"),
+        "{}",
+        host.editor.message
+    );
+    assert_eq!(
+        host.session.revision(),
+        revision + 1,
+        "both references and the line are one transaction"
+    );
+    let document = host.session.document().clone();
+    let centres = centre_outputs(&document, sketch);
+    assert_eq!(centres.len(), 2);
+    let (start, end) = drawn_lines(&document, sketch)[0];
+    assert_eq!(
+        BTreeSet::from([start, end]),
+        centres.iter().copied().collect(),
+        "the line reuses both projected centre points by identity"
+    );
+    let positions = solved(&document, host.session.revision(), sketch);
+    assert!(
+        close(positions[&start], frame.coordinates(a)),
+        "{positions:?}"
+    );
+    assert!(
+        close(positions[&end], frame.coordinates(b)),
+        "{positions:?}"
+    );
+    // The bindings survive save and reopen.
+    let bindings = sketch_external::bindings(&document, sketch).unwrap();
+    assert_eq!(
+        sketch_external::bindings(&reopened(&document), sketch).unwrap(),
+        bindings
+    );
+    // One Undo removes both references and the line.
+    host.session.undo(host.session.revision(), actor()).unwrap();
+    assert_eq!(host.session.document(), &before);
+}
+
+#[test]
+fn a_circle_centred_on_a_face_hole_reuses_its_projected_centre_in_one_undo() {
+    let (session, sketch, frame) = drilled_box_face_sketch();
+    let mut host = Host::new(session, sketch);
+    host.editor.set_tool(DrawTool::Circle).unwrap();
+    let before = host.session.document().clone();
+    let revision = host.session.revision();
+    let hole = [15., 10., SIZE[2]];
+    host.hover_support(hole, TargetKind::FaceCenter);
+    assert_eq!(
+        host.editor.snap_assist.shown().unwrap().kind.label(),
+        "Face centre"
+    );
+    host.click(hole);
+    host.click([22., 10., SIZE[2]]);
+    host.settle_support();
+    assert_eq!(
+        host.session.revision(),
+        revision + 1,
+        "{}",
+        host.editor.message
+    );
+    let document = host.session.document().clone();
+    let centres = centre_outputs(&document, sketch);
+    assert_eq!(centres.len(), 1, "one reference for the hole");
+    let circle = authored(&document, sketch)
+        .sketch
+        .curves
+        .iter()
+        .find_map(|c| match c.kind {
+            CurveKind::Circle { center, .. } if !c.construction => Some(center),
+            _ => None,
+        })
+        .expect("a circle");
+    assert_eq!(circle, centres[0], "the circle reuses the projected centre");
+    let positions = solved(&document, host.session.revision(), sketch);
+    assert!(close(positions[&circle], frame.coordinates(hole)));
+    host.session.undo(host.session.revision(), actor()).unwrap();
+    assert_eq!(host.session.document(), &before);
+}
+
+impl Host {
+    /// Hovers the face target at `world` until dwelling acquires it.
+    fn dwell_support(&mut self, world: [f64; 3], kind: TargetKind) {
+        self.hover_support(world, kind);
+        let held = self.editor.snap_assist.references().len();
+        self.wait("the dwell to acquire the face target", |h| {
+            let at = h.screen(world);
+            h.frame(vec![egui::Event::PointerMoved(at)]);
+            h.editor.snap_assist.references().len() > held
+        });
+    }
+}
+
+#[test]
+fn dwelling_on_both_ends_of_a_filleted_corner_snaps_the_exact_virtual_corner() {
+    let (session, sketch, frame) = filleted_box_face_sketch();
+    let mut host = Host::new(session, sketch);
+    host.editor.set_tool(DrawTool::Line).unwrap();
+    let before = host.session.document().clone();
+    let revision = host.session.revision();
+    let z = SIZE[2];
+    // The corner arc about (4, 4) ends at (0, 4) and (4, 0). The camera is
+    // not framed on the part, so this corner keeps every target on canvas.
+    let (a, c) = ([0., 4., z], [4., 0., z]);
+    host.dwell_support(a, TargetKind::FaceCorner);
+    host.dwell_support(c, TargetKind::FaceCorner);
+    assert_eq!(
+        host.session.document(),
+        &before,
+        "acquiring changes nothing"
+    );
+    let parallel = |u: [f64; 2], v: [f64; 2]| {
+        (u[0] * v[1] - u[1] * v[0]).abs()
+            <= 1e-9 * u[0].portable_hypot(u[1]) * v[0].portable_hypot(v[1])
+    };
+    let sketch_dir = |from: [f64; 3], to: [f64; 3]| {
+        let (p, q) = (frame.coordinates(from), frame.coordinates(to));
+        [q[0] - p[0], q[1] - p[1]]
+    };
+    // Each end offers X, Y and the extension of its adjacent straight side.
+    let sides = [
+        sketch_dir([0., SIZE[1] - 4., z], a),
+        sketch_dir([SIZE[0] - 4., 0., z], c),
+    ];
+    for (reference, side) in host.editor.snap_assist.references().iter().zip(sides) {
+        assert_eq!(reference.kind, TargetKind::FaceCorner);
+        let guides = reference.guides();
+        assert!(
+            guides.iter().any(|(_, d)| parallel(*d, side)),
+            "the side extension is a guide: {guides:?}"
+        );
+        assert!(guides.len() >= 2 && guides.len() <= 3, "{guides:?}");
+    }
+    // The two extensions cross at the virtual sharp corner (0, 0).
+    let corner = [0., 0., z];
+    let expected = frame.coordinates(corner);
+    host.wait("the virtual corner snap", |h| {
+        let at = h.screen(corner);
+        h.frame(vec![egui::Event::PointerMoved(at)]);
+        h.editor
+            .snap_assist
+            .shown()
+            .is_some_and(|t| t.kind == TargetKind::GuideIntersection)
+    });
+    let shown = host.editor.snap_assist.shown().unwrap().clone();
+    assert!(
+        (shown.position[0] - expected[0]).abs() <= 1e-9
+            && (shown.position[1] - expected[1]).abs() <= 1e-9,
+        "{:?} vs {expected:?}",
+        shown.position
+    );
+    assert_eq!(shown.guides.len(), 2, "{shown:?}");
+    assert_eq!(
+        snap_host::snap_cursor(shown.kind),
+        Some(egui::CursorIcon::Crosshair)
+    );
+    host.click(corner);
+    assert_eq!(
+        host.session.revision(),
+        revision,
+        "the start only begins the line"
+    );
+    host.click([12., 8., z]);
+    host.wait("the line to commit", |h| h.session.revision() > revision);
+    assert_eq!(
+        host.session.revision(),
+        revision + 1,
+        "{}",
+        host.editor.message
+    );
+    let document = host.session.document().clone();
+    assert!(
+        sketch_external::bindings(&document, sketch)
+            .unwrap()
+            .is_empty(),
+        "a guide crossing projects nothing"
+    );
+    let (start, _) = drawn_lines(&document, sketch)[0];
+    let positions = solved(&document, host.session.revision(), sketch);
+    let p = positions[&start];
+    assert!(
+        (p[0] - expected[0]).abs() <= 1e-9 && (p[1] - expected[1]).abs() <= 1e-9,
+        "the line starts exactly at the virtual corner: {p:?} vs {expected:?}"
+    );
+}
