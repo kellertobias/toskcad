@@ -694,7 +694,7 @@ impl SectionEditor {
                 _ => "Distance",
             };
             let highlighted = selected.is_some_and(|s| constraint.kind.references().contains(&s));
-            ui.horizontal(|ui| {
+            ui.vertical(|ui| {
                 let response = field.show_linked(
                     ui,
                     ("section-dimension", *id),

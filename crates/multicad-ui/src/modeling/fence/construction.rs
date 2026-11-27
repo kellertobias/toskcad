@@ -463,35 +463,30 @@ impl ConstructionEditor {
             });
         ui.label("Post material");
         changed |= Self::material(ui, &self.materials, &mut self.post_material);
-        egui::Grid::new("post-dimensions")
-            .num_columns(2)
-            .show(ui, |ui| match self.post {
-                PostKind::Rectangular => {
-                    changed |= self.post_width.show_compact(
-                        ui,
-                        ("fence-construction", "post-width"),
-                        "Along-run width",
-                        "Width along the local path direction",
-                    );
-                    ui.end_row();
-                    changed |= self.post_depth.show_compact(
-                        ui,
-                        ("fence-construction", "post-depth"),
-                        "Across-run depth",
-                        "Depth across the local path direction",
-                    );
-                    ui.end_row();
-                }
-                PostKind::Round => {
-                    changed |= self.diameter.show_compact(
-                        ui,
-                        ("fence-construction", "post-diameter"),
-                        "Diameter",
-                        "Physical circular post diameter",
-                    );
-                    ui.end_row();
-                }
-            });
+        ui.vertical(|ui| match self.post {
+            PostKind::Rectangular => {
+                changed |= self.post_width.show_compact(
+                    ui,
+                    ("fence-construction", "post-width"),
+                    "Along-run width",
+                    "Width along the local path direction",
+                );
+                changed |= self.post_depth.show_compact(
+                    ui,
+                    ("fence-construction", "post-depth"),
+                    "Across-run depth",
+                    "Depth across the local path direction",
+                );
+            }
+            PostKind::Round => {
+                changed |= self.diameter.show_compact(
+                    ui,
+                    ("fence-construction", "post-diameter"),
+                    "Diameter",
+                    "Physical circular post diameter",
+                );
+            }
+        });
         changed
     }
 
@@ -513,20 +508,14 @@ impl ConstructionEditor {
         changed |= ui.text_edit_singleline(&mut row.name).changed();
         ui.label("Infill material");
         changed |= Self::material(ui, &self.materials, &mut row.material);
-        egui::Grid::new("infill-dimensions").num_columns(2).show(ui, |ui| {
+        ui.vertical(|ui| {
             changed |= row.bottom.show_compact(ui, ("fence-infill", row.id, "bottom"), "Bottom above base", "Physical bottom measured from the run base");
-            ui.end_row();
             changed |= row.height.show_compact(ui, ("fence-infill", row.id, "height"), "Height", "Physical height of this panel, rail or picket");
-            ui.end_row();
             changed |= row.normal.show_compact(ui, ("fence-infill", row.id, "normal"), "Across-run offset", "Positive moves left of the drawn direction. Place rail faces against picket faces to avoid overlap.");
-            ui.end_row();
             changed |= row.depth.show_compact(ui, ("fence-infill", row.id, "depth"), if row.kind == InfillKind::Panel { "Thickness" } else { "Depth" }, "Physical material depth across the path");
-            ui.end_row();
             if row.kind == InfillKind::Pickets {
                 changed |= row.width.show_compact(ui, ("fence-infill", row.id, "width"), "Picket width", "Repeated members retain this width");
-                ui.end_row();
                 changed |= row.maximum_gap.show_compact(ui, ("fence-infill", row.id, "maximum_gap"), "Maximum clear gap", "Equal end and interior gaps stay within this limit");
-                ui.end_row();
             }
         });
         if row.kind == InfillKind::Panel {
@@ -534,17 +523,14 @@ impl ConstructionEditor {
                 .checkbox(&mut row.purchased, "Purchased fixed-width panel")
                 .changed();
             if row.purchased {
-                egui::Grid::new("purchased-panel")
-                    .num_columns(2)
-                    .show(ui, |ui| {
-                        changed |= row.panel_width.show_compact(
-                            ui,
-                            ("fence-infill", row.id, "panel_width"),
-                            "Purchased width",
-                            "Choose post spacing that fits this physical panel",
-                        );
-                        ui.end_row();
-                    });
+                ui.vertical(|ui| {
+                    changed |= row.panel_width.show_compact(
+                        ui,
+                        ("fence-infill", row.id, "panel_width"),
+                        "Purchased width",
+                        "Choose post spacing that fits this physical panel",
+                    );
+                });
                 changed |= ui
                     .checkbox(&mut row.cut, "Permit cutting down for shorter bays")
                     .changed();
@@ -616,24 +602,20 @@ impl ConstructionEditor {
         });
         let mut changed = false;
         ui.add_enabled_ui(editable, |ui| {
-            egui::Grid::new("construction-global")
-                .num_columns(2)
-                .show(ui, |ui| {
-                    changed |= self.height.show_compact(
-                        ui,
-                        ("fence-construction", "post-height"),
-                        "Post height",
-                        "Infill keeps its own height when post height changes",
-                    );
-                    ui.end_row();
-                    changed |= self.spacing.show_compact(
-                        ui,
-                        ("fence-construction", "post-spacing"),
-                        "Preferred spacing",
-                        "Center-to-center pitch; the run preview shows actual bay widths",
-                    );
-                    ui.end_row();
-                });
+            ui.vertical(|ui| {
+                changed |= self.height.show_compact(
+                    ui,
+                    ("fence-construction", "post-height"),
+                    "Post height",
+                    "Infill keeps its own height when post height changes",
+                );
+                changed |= self.spacing.show_compact(
+                    ui,
+                    ("fence-construction", "post-spacing"),
+                    "Preferred spacing",
+                    "Center-to-center pitch; the run preview shows actual bay widths",
+                );
+            });
             egui::ComboBox::from_id_salt("end-bay-layout")
                 .selected_text(match self.layout {
                     FenceBayLayout::Equal => "Equal bays per segment",
@@ -857,10 +839,10 @@ mod tests {
             }
             let output = inspector_frame(&mut editor, &ctx, session.document(), width, vec![]);
             for label in [
-                "Post height (mm)",
-                "Preferred spacing (mm)",
-                "Along-run width (mm)",
-                "Across-run depth (mm)",
+                "Post height",
+                "Preferred spacing",
+                "Along-run width",
+                "Across-run depth",
             ] {
                 let galley = output
                     .shapes
