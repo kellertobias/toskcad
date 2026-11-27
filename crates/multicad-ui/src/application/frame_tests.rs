@@ -225,6 +225,7 @@ fn a_reopened_frame_shows_joint_badges_and_the_joint_editor_overrides_a_corner()
     h.until("the reopened frame", |app| {
         app.current().sketch.model_active()
     });
+    settle_view(&mut h);
     assert_eq!(h.texts().iter().filter(|t| *t == "M").count(), 4);
     // Click the first corner on the plane: its joint editor opens.
     let frame = model::read_frame(&document, frame_id).unwrap();
@@ -296,6 +297,29 @@ fn reopen(h: &mut Harness) {
     h.until("the reopened frame", |app| {
         app.current().sketch.model_active()
     });
+    settle_view(h);
+}
+/// Run frames until the camera and viewport stop changing (reopening may
+/// fit the view), so clicks land where the test projects them.
+fn settle_view(h: &mut Harness) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut previous = None;
+    let mut still = 0;
+    while still < 3 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for the view to settle"
+        );
+        h.frame(vec![]);
+        let sketch = &h.app.current().sketch;
+        let now = (sketch.camera, sketch.viewport_rect);
+        if previous == Some(now) {
+            still += 1;
+        } else {
+            still = 0;
+        }
+        previous = Some(now);
+    }
 }
 
 #[test]
