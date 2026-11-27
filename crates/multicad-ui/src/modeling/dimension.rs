@@ -30,9 +30,9 @@ pub(crate) struct DimensionField {
 }
 const HINT: &str = "Value or =$parameter";
 /// Interior slot so `resolve(&self)` callers need not change; a clone copies
-/// the message rather than sharing it.
+/// the message rather than sharing it. One pointer keeps the field small.
 #[derive(Debug, Default)]
-struct LastError(std::sync::Mutex<Option<String>>);
+struct LastError(std::sync::Arc<std::sync::Mutex<Option<String>>>);
 impl LastError {
     fn get(&self) -> Option<String> {
         self.0.lock().map(|error| error.clone()).unwrap_or_default()
@@ -45,7 +45,7 @@ impl LastError {
 }
 impl Clone for LastError {
     fn clone(&self) -> Self {
-        Self(std::sync::Mutex::new(self.get()))
+        Self(std::sync::Arc::new(std::sync::Mutex::new(self.get())))
     }
 }
 impl DimensionField {

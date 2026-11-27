@@ -3886,15 +3886,14 @@ impl SketchEditor {
                                     if self.moving {
                                         ui.separator();
                                         ui.strong("Move sketch");
-                                        if matches!(self.coordinates, Coordinates::Custom(_)) {
-                                            if crate::numeric_field::NumericField::new("Custom axis angle", "deg")
+                                        if matches!(self.coordinates, Coordinates::Custom(_))
+                                            && crate::numeric_field::NumericField::new("Custom axis angle", "deg")
                                                 .id(ui.make_persistent_id("sketch-move-axis-angle"))
                                                 .value(ui, &mut self.custom_angle_deg, -360.0..=360.0)
                                                 .input
                                                 .changed()
-                                            {
-                                                self.cancel_move();
-                                            }
+                                        {
+                                            self.cancel_move();
                                         }
                                         ui.label(format!(
                                             "{} coordinates · mm",
