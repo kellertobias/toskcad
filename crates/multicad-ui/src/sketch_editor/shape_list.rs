@@ -367,17 +367,13 @@ impl SketchEditor {
                        field: ShapeField,
                        label: &str,
                        hover: &str| {
-            ui.horizontal(|ui| {
-                ui.label(label);
+            ui.add_enabled_ui(ready, |ui| {
                 let text = fields.text.entry(field).or_default();
-                let response = ui.add_enabled(
-                    ready,
-                    egui::TextEdit::singleline(text)
-                        .id(field_id(field))
-                        .desired_width(90.),
-                );
-                ui.label("mm");
-                let response = response.on_hover_text(hover);
+                let response = crate::numeric_field::NumericField::new(label, "mm")
+                    .id(field_id(field))
+                    .help(hover)
+                    .show(ui, text)
+                    .input;
                 if response.lost_focus() {
                     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {

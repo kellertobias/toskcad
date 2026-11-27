@@ -55,6 +55,8 @@ mod mechanical_import_host;
 #[path = "model_target_selection.rs"]
 mod model_target_selection;
 #[cfg(test)]
+mod numeric_field_tests;
+#[cfg(test)]
 mod overlap_profile_extrude_tests;
 #[path = "sketch_profile_connection_host.rs"]
 mod profile_connection_host;
@@ -3885,21 +3887,14 @@ impl SketchEditor {
                                         ui.separator();
                                         ui.strong("Move sketch");
                                         if matches!(self.coordinates, Coordinates::Custom(_)) {
-                                            ui.horizontal(|ui| {
-                                                ui.label("Custom axis angle");
-                                                if ui
-                                                    .add(
-                                                        egui::DragValue::new(
-                                                            &mut self.custom_angle_deg,
-                                                        )
-                                                        .suffix("°")
-                                                        .range(-360.0..=360.0),
-                                                    )
-                                                    .changed()
-                                                {
-                                                    self.cancel_move();
-                                                }
-                                            });
+                                            if crate::numeric_field::NumericField::new("Custom axis angle", "deg")
+                                                .id(ui.make_persistent_id("sketch-move-axis-angle"))
+                                                .value(ui, &mut self.custom_angle_deg, -360.0..=360.0)
+                                                .input
+                                                .changed()
+                                            {
+                                                self.cancel_move();
+                                            }
                                         }
                                         ui.label(format!(
                                             "{} coordinates · mm",
@@ -3909,15 +3904,11 @@ impl SketchEditor {
                                         for (i, label) in
                                             ["X / U", "Y / V", "Z / N"].into_iter().enumerate()
                                         {
-                                            ui.horizontal(|ui| {
-                                                ui.label(label);
-                                                changed |= ui
-                                                    .add(
-                                                        egui::DragValue::new(&mut self.delta[i])
-                                                            .speed(0.5),
-                                                    )
-                                                    .changed();
-                                            });
+                                            changed |= crate::numeric_field::NumericField::new(label, "mm")
+                                                .id(ui.make_persistent_id(("sketch-move-delta", i)))
+                                                .value(ui, &mut self.delta[i], f64::NEG_INFINITY..=f64::INFINITY)
+                                                .input
+                                                .changed();
                                         }
                                         if changed && let Err(e) = self.prepare_move(session) {
                                             self.preview = None;

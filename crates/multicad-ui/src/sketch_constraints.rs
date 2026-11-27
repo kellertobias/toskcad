@@ -686,14 +686,13 @@ impl ConstraintEditor {
             });
         }
         let fields = self.point_position.as_mut()?;
-        ui.horizontal(|ui| {
-            for (axis, value) in ["X", "Y"].into_iter().zip(&mut fields.coordinates) {
-                ui.label(axis);
-                ui.add(egui::TextEdit::singleline(value).desired_width(85.))
-                    .on_hover_text(format!("{axis} coordinate in sketch-local millimetres"));
-            }
-            ui.label("mm");
-        });
+        for (axis, value) in ["X", "Y"].into_iter().zip(&mut fields.coordinates) {
+            let help = format!("{axis} coordinate in sketch-local millimetres");
+            crate::numeric_field::NumericField::new(axis, "mm")
+                .id(ui.make_persistent_id(("point-position", axis)))
+                .help(&help)
+                .show(ui, value);
+        }
         if !ui
             .button("Preview position")
             .on_hover_text("Preview this point or spline pole at the requested coordinates. Existing constraints stay in place; conflicting positions are rejected.")
