@@ -27,6 +27,29 @@ pub fn requires_shapes(document: &Document) -> bool {
                     .is_some_and(|a| !a.is_empty()))
     })
 }
+/// Fillet and chamfer shapes and their `modifies` link (CAD-414). Readers
+/// without it would reject the new shape kinds, so a project that records any
+/// declares this capability.
+pub const CORNER_SHAPES_CAPABILITY: &str = "core.constrained_sketch.corner_shapes";
+/// Any constrained sketch that records a fillet or chamfer shape.
+pub fn requires_corner_shapes(document: &Document) -> bool {
+    document.entities().any(|e| {
+        matches!(&e.data, EntityData::Sketch { definition, .. }
+        if definition.type_id == TYPE
+            && definition
+                .data
+                .get("sketch")
+                .and_then(|s| s.get("shapes"))
+                .and_then(|t| t.as_array())
+                .is_some_and(|shapes| shapes.iter().any(|shape| {
+                    shape.get("modifies").is_some()
+                        || matches!(
+                            shape.get("kind").and_then(|k| k.as_str()),
+                            Some("fillet" | "chamfer")
+                        )
+                })))
+    })
+}
 /// Any constrained sketch with parametric text needs the text capability.
 pub fn requires_text(document: &Document) -> bool {
     document.entities().any(|e| {
@@ -364,6 +387,18 @@ impl Source {
             // curve belongs to two shapes.
             if shape.curves.iter().any(|id| !owned.insert(*id)) {
                 return Err(invalid("A sketch curve belongs to at most one shape"));
+            }
+            // CAD-414: a fillet or chamfer is one curve and may name the shape
+            // it modifies; no other kind links to a shape.
+            if shape.kind.corner() && shape.curves.len() != 1 {
+                return Err(invalid("A fillet or chamfer shape has exactly one curve"));
+            }
+            if let Some(parent) = shape.modifies
+                && (!shape.kind.corner() || parent == shape.id)
+            {
+                return Err(invalid(
+                    "Only a fillet or chamfer modifies another shape, and never itself",
+                ));
             }
         }
         let points: BTreeSet<_> = self.sketch.points.iter().map(|p| p.id).collect();
