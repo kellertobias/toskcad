@@ -526,3 +526,32 @@ fn toggling_keeps_the_element_list_on_the_remaining_selection() {
     assert_eq!(selection.element, None);
     assert!(selection.highlight.is_empty());
 }
+
+/// The product owner's sequence (CAD-412 answers): a sketch opens in Select;
+/// draw a rectangle, then a line, and click an edge without pressing Esc. The
+/// drawing tool has already ended, so the edge selects. With a tool that keeps
+/// going active, the status line names it, so a click that draws is explained.
+#[test]
+fn after_drawing_without_esc_a_click_on_an_edge_selects_it() {
+    let mut s = SketchHarness::new();
+    assert!(
+        s.h.app.current().sketch.select_active(),
+        "a new sketch opens in Select"
+    );
+    s.tool(DrawTool::Rectangle);
+    s.click([0., 0.], egui::Vec2::ZERO);
+    s.click([60., 40.], egui::Vec2::ZERO);
+    let rectangle = s.source().sketch.shapes[0].clone();
+    s.click([30., 0.], ON_LINE);
+    edge_selected(&s, rectangle.curves[0], "rectangle edge after drawing");
+    assert!(s.highlighted_at([30., 0.]));
+    s.tool(DrawTool::Line);
+    s.click([0., 60.], egui::Vec2::ZERO);
+    s.click([60., 60.], egui::Vec2::ZERO);
+    let line = s.source().sketch.shapes[1].clone();
+    s.click([30., 60.], ON_LINE);
+    edge_selected(&s, line.curves[0], "line after drawing");
+    // Polyline keeps going: the status line names it.
+    s.tool(DrawTool::Polyline);
+    assert!(s.message().starts_with("Polyline · "), "{}", s.message());
+}
