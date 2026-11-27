@@ -124,12 +124,13 @@ pub(crate) fn plane_choices(document: &Document) -> Vec<(String, FramePlane)> {
     }
     out
 }
-const SIDES: [(FrameSide, &str); 5] = [
+const SIDES: [(FrameSide, &str); 6] = [
     (FrameSide::Inner, "Inner edge on the line"),
     (FrameSide::Outer, "Outer edge on the line"),
     (FrameSide::Center, "Centered on the line"),
     (FrameSide::Left, "Left of the line"),
     (FrameSide::Right, "Right of the line"),
+    (FrameSide::Centroid, "Centroid on the line"),
 ];
 fn side_label(side: FrameSide) -> &'static str {
     SIDES
@@ -917,6 +918,130 @@ impl FramePanel {
 
     // --- Inspector ---------------------------------------------------------------
 
+    /// The stock a frame member is made of: requested, or its feature's.
+    fn member_stock(&self, document: &Document, member: EntityId) -> Option<EntityId> {
+        if let Some(r) = self.new_members.get(&member) {
+            return Some(r.stock);
+        }
+        let feature = model::frame_member_feature(document, self.frame, member)?;
+        model::read_member(document, feature).ok().map(|m| m.stock)
+    }
+    /// The selected member's section with its offset and roll as callouts
+    /// linked to their fields (CAD-395).
+    fn placement_diagram(
+        &mut self,
+        ui: &mut egui::Ui,
+        document: &Document,
+        parameters: &EvaluatedParameters,
+        member: EntityId,
+    ) -> bool {
+        use super::diagram::{DiagramLink, Notation};
+        use crate::materials::profile_picker as picker;
+        const ACROSS: &str = "frame.offset.across";
+        const UP: &str = "frame.offset.up";
+        const ROLL: &str = "frame.roll";
+        let Some(spec) = self
+            .member_stock(document, member)
+            .and_then(|id| document.get(id))
+            .and_then(|e| multicad_core::materials::read(e).ok().flatten())
+            .and_then(|d| match d {
+                multicad_core::materials::LibraryDefinition::Stock(s) => Some(s.specification),
+                _ => None,
+            })
+        else {
+            return false;
+        };
+        let Some(section) = picker::section(&spec) else {
+            return false;
+        };
+        let Some(m) = self.definition.member(member).cloned() else {
+            return false;
+        };
+        let mm = |d: &multicad_core::constraint_sketch::Dimension, unit| {
+            d.value_in(unit, Some(parameters)).unwrap_or(0.)
+        };
+        let mut across = m
+            .offset
+            .as_ref()
+            .map_or(0., |o| mm(&o[0], Unit::Millimeter));
+        let mut up = m
+            .offset
+            .as_ref()
+            .map_or(0., |o| mm(&o[1], Unit::Millimeter));
+        let mut roll = m.roll.as_ref().map_or(0., |r| mm(r, Unit::Degree));
+        let (w, h) = (section.width_mm as f32, section.height_mm as f32);
+        let size = w.max(h);
+        let diagram = picker::art(&section)
+            .leader(
+                ACROSS,
+                [w, h / 2.],
+                [w + 0.35 * size, h * 0.2],
+                Notation::Length,
+                "Offset across",
+            )
+            .leader(
+                UP,
+                [w / 2., h],
+                [-0.45 * size, h + 0.25 * size],
+                Notation::Length,
+                "Offset up",
+            )
+            .leader(
+                ROLL,
+                [w * 0.85, h * 0.85],
+                [w + 0.3 * size, h + 0.3 * size],
+                Notation::Angle,
+                "Roll",
+            );
+        let id = ui.make_persistent_id("frame-placement-link");
+        let mut link: DiagramLink = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+        let value = |key| match key {
+            ACROSS => format!("{} mm", format_number(across)),
+            UP => format!("{} mm", format_number(up)),
+            _ => format!("{}°", format_number(roll)),
+        };
+        link.diagram(ui, "frame-placement-diagram", &diagram, 160., &value);
+        let mut changed = false;
+        let signed = -1e6..=1e6;
+        changed |= picker::linked_value(
+            ui,
+            &mut link,
+            ACROSS,
+            "Offset across",
+            &mut across,
+            "Shift the section along its width after placing it",
+            signed.clone(),
+            " mm",
+        );
+        changed |= picker::linked_value(
+            ui,
+            &mut link,
+            UP,
+            "Offset up",
+            &mut up,
+            "Shift the section along its height after placing it",
+            signed,
+            " mm",
+        );
+        changed |= picker::linked_value(
+            ui,
+            &mut link,
+            ROLL,
+            "Roll",
+            &mut roll,
+            "Turn the section about the member axis",
+            -360.0..=360.0,
+            "°",
+        );
+        ui.data_mut(|d| d.insert_temp(id, link));
+        if changed && let Some(target) = self.definition.members.iter_mut().find(|x| x.id == member)
+        {
+            target.offset = (across != 0. || up != 0.).then(|| [length(across), length(up)]);
+            target.roll = (roll != 0.).then(|| angle(roll));
+        }
+        changed
+    }
+
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -1057,6 +1182,7 @@ impl FramePanel {
                     }
                 }
             });
+            changed |= self.placement_diagram(ui, document, parameters, member);
         }
         // Joint editor for the selected node.
         if let Some(node) = self.selected_node
@@ -1258,6 +1384,72 @@ impl FramePanel {
                 Some(ModelEvent::Apply)
             }
             _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modeling::diagram::harness::{self, WIDTHS};
+    use multicad_core::{
+        commands::Channel,
+        document::{Entity, EntityData},
+        materials::{LibraryDefinition, ProfileShape, Stock, StockKind, prepare_library},
+    };
+
+    fn session() -> Session {
+        let mut s = Session::new(Document::new("Frame panel").unwrap()).unwrap();
+        let steel = Entity::new(
+            "Steel",
+            EntityData::Material {
+                density_kg_m3: Some(7850.),
+                color_rgba: [120, 124, 130, 255],
+                section_hatch: None,
+            },
+        );
+        let stock = LibraryDefinition::Stock(Stock {
+            material: steel.id,
+            specification: StockKind::Profile {
+                designation: "L 40×40×4".into(),
+                length_mm: 6000.,
+                width_mm: 40.,
+                height_mm: 40.,
+                wall_mm: Some(4.),
+                shape: ProfileShape::Angle,
+                section: None,
+                corner_radius_mm: None,
+                web_mm: None,
+            },
+        })
+        .entity(EntityId::new(), "L 40×40×4")
+        .unwrap();
+        s.commit(prepare_library(&s, 0, Actor::local(Channel::Ui), &[steel, stock]).unwrap())
+            .unwrap();
+        s
+    }
+
+    #[test]
+    fn the_placement_diagram_links_offset_and_roll_callouts_to_their_fields() {
+        let session = session();
+        let document = session.document().clone();
+        for width in WIDTHS {
+            let mut panel = FramePanel::new(&document, "Frame".into()).unwrap();
+            panel.add_segment(&document, session.parameters()).unwrap();
+            panel.selected_member = Some(panel.definition.members[0].id);
+            let ctx = egui::Context::default();
+            let mut show = |ui: &mut egui::Ui| {
+                panel.show(ui, &document, true, PreviewState::Idle);
+            };
+            harness::edit_through_callout(&ctx, width, "Offset across 0 mm", "-15", &mut show);
+            harness::edit_through_callout(&ctx, width, "∠ Roll 0°", "90", &mut show);
+            let m = &panel.definition.members[0];
+            assert_eq!(
+                m.offset.as_ref().map(|o| o[0].clone()),
+                Some(length(-15.)),
+                "{width}"
+            );
+            assert_eq!(m.roll, Some(angle(90.)), "{width}");
         }
     }
 }
