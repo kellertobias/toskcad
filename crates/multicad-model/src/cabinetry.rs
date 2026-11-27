@@ -432,19 +432,14 @@ pub(crate) fn build_joint_cut(
 ) -> Result<Solid, ModelError> {
     let e = |e: DocumentError| error(Some(id), e);
     let cut = model::read_panel_joint_cut(document, id).map_err(e)?;
-    let joint = model::read_panel_joint(document, cut.joint).map_err(e)?;
-    let corner = model::resolve_panel_joint_pair(document, parameters, &joint, cut.pair as usize)
-        .map_err(e)?;
+    // Resolved where both panels are now, in this cut's own Part frame.
+    let prisms = model::panel_joint_cut_prisms(document, parameters, id).map_err(e)?;
     let base = solids
         .get(&cut.input.producer)
         .ok_or_else(|| error(Some(id), "The panel before this joint has no solid"))?;
-    let prisms = match cut.side {
-        model::PanelJointSide::A => &corner.cut_a,
-        model::PanelJointSide::B => &corner.cut_b,
-    };
     subtract(
         base,
-        prisms,
+        &prisms,
         id,
         &format!("joint.{}", cut.joint),
         policy,

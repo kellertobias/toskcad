@@ -9,7 +9,7 @@ use crate::{
     commands::{Actor, CommandError, Request, Session},
     document::Mutation,
     model::{
-        BodyInput, CreatedBody, ModelPrepared,
+        BodyInput, CreatedBody, ModelPrepared, RigidPose,
         common::{error, number, revision},
     },
     parameters::EvaluatedParameters,
@@ -277,7 +277,9 @@ pub struct PanelJointCorner {
     pub cut_b: Vec<CutPrism>,
 }
 
-pub(super) fn panel_box(
+/// The panel's finished box from its panel feature alone, before any
+/// Move / rotate feature later in its Part history.
+pub(super) fn unplaced_panel_box(
     document: &Document,
     parameters: &EvaluatedParameters,
     part: EntityId,
@@ -293,6 +295,133 @@ pub(super) fn panel_box(
             "{name} is a sketch-region panel; joints need rectangular panels"
         ))),
     }
+}
+/// The panel's finished box where its Part now is: the panel feature's box
+/// carried by every Move / rotate feature in its history. Joints resolve
+/// against this, so they follow their panels (CAD-431).
+pub(super) fn panel_box(
+    document: &Document,
+    parameters: &EvaluatedParameters,
+    part: EntityId,
+) -> Result<PanelBox, DocumentError> {
+    let b = unplaced_panel_box(document, parameters, part)?;
+    let feature = panel_feature(document, part).expect("checked panel");
+    let pose = panel_pose_after(document, parameters, part, feature)?;
+    Ok(PanelBox {
+        origin: pose.point(b.origin),
+        u: pose.vector(b.u),
+        v: pose.vector(b.v),
+        ..b
+    })
+}
+/// The Part's rigid movement after `feature`: every unsuppressed Move /
+/// rotate feature later in its history, composed in order. A later
+/// alignment or scale cannot be followed by a joint and is refused by name.
+pub fn panel_pose_after(
+    document: &Document,
+    parameters: &EvaluatedParameters,
+    part: EntityId,
+    feature: EntityId,
+) -> Result<RigidPose, DocumentError> {
+    let Some(EntityData::Part { features, .. }) = document.get(part).map(|e| &e.data) else {
+        return Err(invalid("A joint panel must be a Part"));
+    };
+    let mut pose = RigidPose::default();
+    let Some(start) = features.iter().position(|f| *f == feature) else {
+        return Ok(pose);
+    };
+    for id in &features[start + 1..] {
+        let Some(entity) = document.get(*id) else {
+            continue;
+        };
+        let EntityData::Feature {
+            definition,
+            suppressed: false,
+            ..
+        } = &entity.data
+        else {
+            continue;
+        };
+        match definition.type_id.as_str() {
+            crate::model::TRANSFORM_TYPE => {
+                let t = crate::model::read_transform(document, *id)?;
+                pose = pose.then(t.parameters.resolve(parameters)?)?;
+            }
+            crate::model::ALIGN_TYPE | crate::model::SCALE_TYPE => {
+                let part = document.get(part).map_or("A panel", |e| e.name.as_str());
+                return Err(invalid(format!(
+                    "{part} is placed by {}; a joint follows Move / rotate only, so replace it with a Move / rotate",
+                    entity.name
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(pose)
+}
+/// Every Move / rotate, alignment or scale feature after the panel feature
+/// in a panel Part's history: the features a joint between it and another
+/// panel reads besides the panels themselves.
+pub fn panel_placements(document: &Document, part: EntityId) -> Vec<EntityId> {
+    let Some(EntityData::Part { features, .. }) = document.get(part).map(|e| &e.data) else {
+        return vec![];
+    };
+    let Some(panel) = panel_feature(document, part) else {
+        return vec![];
+    };
+    let start = features.iter().position(|f| *f == panel).unwrap_or(0);
+    features[start + 1..]
+        .iter()
+        .copied()
+        .filter(|f| {
+            matches!(document.get(*f).map(|e| &e.data), Some(EntityData::Feature { definition, .. })
+                if [crate::model::TRANSFORM_TYPE, crate::model::ALIGN_TYPE, crate::model::SCALE_TYPE]
+                    .contains(&definition.type_id.as_str()))
+        })
+        .collect()
+}
+impl CutPrism {
+    /// The same prism carried by a rigid pose.
+    pub fn transformed(&self, pose: RigidPose) -> Self {
+        Self {
+            origin: pose.point(self.origin),
+            u: pose.vector(self.u),
+            v: pose.vector(self.v),
+            sweep: pose.vector(self.sweep),
+            ..self.clone()
+        }
+    }
+}
+/// The prisms one joint cut removes, in the frame of the solid it cuts:
+/// the pair is resolved where both panels now are, then carried back by
+/// any Move / rotate that follows this cut in its own Part.
+pub fn panel_joint_cut_prisms(
+    document: &Document,
+    parameters: &EvaluatedParameters,
+    cut_feature: EntityId,
+) -> Result<Vec<CutPrism>, DocumentError> {
+    let cut = read_panel_joint_cut(document, cut_feature)?;
+    let joint = read_panel_joint(document, cut.joint)?;
+    let corner = resolve_panel_joint_pair(document, parameters, &joint, cut.pair as usize)
+        .map_err(|e| {
+            let name = document.get(cut.joint).map_or("", |e| e.name.as_str());
+            invalid(format!(
+                "{} “{name}” no longer fits its panels: {e}",
+                capitalized(joint.kind.label())
+            ))
+        })?;
+    let prisms = match cut.side {
+        PanelJointSide::A => corner.cut_a,
+        PanelJointSide::B => corner.cut_b,
+    };
+    let back = panel_pose_after(document, parameters, cut.output.body, cut_feature)?.inverse()?;
+    Ok(prisms.iter().map(|p| p.transformed(back)).collect())
+}
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
 }
 fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]

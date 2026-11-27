@@ -1113,10 +1113,23 @@ fn hidden_inputs(document: &Document, feature: EntityId, type_id: &str) -> Optio
         let pair = joint.pairs.get(source.pair as usize)?;
         // The provider resolves each Part's current base panel from its
         // feature list. Include those definitions even for older joint links.
-        return Some(vec![
+        let mut inputs = vec![
             model::panel_feature(document, pair.a)?,
             model::panel_feature(document, pair.b)?,
-        ]);
+        ];
+        inputs.extend(model::panel_placements(document, pair.a));
+        inputs.extend(model::panel_placements(document, pair.b));
+        return Some(inputs);
+    }
+    if type_id == model::PANEL_JOINT_CUT_TYPE {
+        // The cut is resolved where both panels are now, so every Move /
+        // rotate of either panel changes it (CAD-431).
+        let cut = model::read_panel_joint_cut(document, feature).ok()?;
+        let joint = model::read_panel_joint(document, cut.joint).ok()?;
+        let pair = joint.pairs.get(cut.pair as usize)?;
+        let mut inputs = model::panel_placements(document, pair.a);
+        inputs.extend(model::panel_placements(document, pair.b));
+        return Some(inputs);
     }
     if type_id != model::MEMBER_TYPE {
         return Some(vec![]);
