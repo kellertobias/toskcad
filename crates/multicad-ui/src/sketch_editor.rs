@@ -65,6 +65,8 @@ mod scale_host_tests;
 mod screw_connection_host;
 mod shape_list;
 #[cfg(test)]
+pub(crate) use shape_list::SelectionSnapshot;
+#[cfg(test)]
 mod shape_list_tests;
 #[cfg(test)]
 mod sketch_entry_tests;
@@ -2021,6 +2023,38 @@ impl SketchEditor {
         self.model_workspace = mode == crate::registry::Mode::Model;
         self.motion_workspace = mode == crate::registry::Mode::Motion;
     }
+    /// The canonical source of a sketch, face sketches included.
+    #[cfg(test)]
+    pub(crate) fn canonical_source(
+        &self,
+        document: &Document,
+        sketch: EntityId,
+    ) -> multicad_core::constraint_sketch::source::Source {
+        shape_list::canonical(document, sketch).expect("a canonical sketch source")
+    }
+    /// The canvas status line.
+    #[cfg(test)]
+    pub(crate) fn status_message(&self) -> &str {
+        &self.message
+    }
+    /// Whether the sketch worker still owes the open sketch's solution.
+    #[cfg(test)]
+    pub(crate) fn sketch_evaluation_pending(&self) -> bool {
+        self.sketch_evaluation.pending()
+    }
+    /// Screen position of an open-sketch plane point in the last viewport.
+    #[cfg(test)]
+    pub(crate) fn sketch_screen(&self, session: &Session, p: [f64; 2]) -> Pos2 {
+        let sketch = self.selected.expect("an open sketch");
+        let (_, frame, _) = self
+            .read_sketch(session.document(), sketch, session.revision())
+            .expect("a readable sketch");
+        let s = self.camera.project(
+            frame.point(p).map(|v| v as f32),
+            self.viewport_rect.expect("a painted viewport"),
+        );
+        Pos2::new(s[0], s[1])
+    }
     pub fn has_pending_edits(&self) -> bool {
         if self.materials.pending() {
             return true;
@@ -2872,6 +2906,27 @@ impl SketchEditor {
             }
         };
         Ok(())
+    }
+    /// The Select tool (CAD-412): end the active drawing or sketch edit tool,
+    /// discarding only its uncommitted gesture, so canvas clicks select.
+    pub fn select_tool(&mut self) {
+        if !self.editing {
+            return;
+        }
+        self.tool = None;
+        self.clear_drawing_progress();
+        self.inline_fields_ui_hidden();
+        self.snap_assist.clear();
+        if self.operations.tool().is_some() && !self.has_pending_edits() {
+            self.cancel_operation();
+        }
+        self.message =
+            "Select · click curves or points · Shift/Cmd-click adds or removes · empty space clears"
+                .into();
+    }
+    /// Whether the open sketch is in the Select tool: no drawing or edit tool.
+    pub fn select_active(&self) -> bool {
+        self.editing && self.tool.is_none() && self.operations.tool().is_none()
     }
     pub fn set_tool(&mut self, tool: DrawTool) -> Result<(), String> {
         if self.has_pending_edits() {
@@ -5862,6 +5917,17 @@ impl SketchEditor {
                     self.reset_profile_clicks();
                     self.element = None;
                     self.constraints.select_geometry(point, None, extend);
+                    if extend {
+                        // Adding a point keeps the list on the last curve.
+                        let remaining = self
+                            .constraints
+                            .selection()
+                            .iter()
+                            .rev()
+                            .copied()
+                            .find(|entity| presentation.geometry.iter().any(|g| g.id() == *entity));
+                        self.select_element_of_curve(session.document(), id, remaining);
+                    }
                     self.profiles.clear();
                     self.message = format!(
                         "{} selected sketch entities · Shift-click adds or removes",
@@ -5873,6 +5939,16 @@ impl SketchEditor {
                     self.element = Some(curve);
                     if !self.constraints.select_geometry(curve, Some(curve), extend) {
                         self.element = None;
+                        // A toggled-off curve leaves the list on the last
+                        // curve still selected, never on the removed one.
+                        let remaining = self
+                            .constraints
+                            .selection()
+                            .iter()
+                            .rev()
+                            .copied()
+                            .find(|entity| presentation.geometry.iter().any(|g| g.id() == *entity));
+                        self.select_element_of_curve(session.document(), id, remaining);
                     }
                     self.profiles.clear();
                     self.message = format!(
@@ -5892,6 +5968,12 @@ impl SketchEditor {
                     );
                 }
                 None => {
+                    // Empty space clears picked curves and points (CAD-412);
+                    // the queued area pick then chooses or clears profiles.
+                    if !extend {
+                        self.element = None;
+                        self.constraints.clear_geometry_selection();
+                    }
                     if let Some(point) = self.camera.on_plane(pointer, rect, frame) {
                         if let Err(error) = self.enqueue_profile_click(
                             session.document(),

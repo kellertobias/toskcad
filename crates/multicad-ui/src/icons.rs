@@ -34,6 +34,8 @@ pub enum Icon {
     Polyline,
     Spline,
     Construction,
+    /// Pointer arrow of the sketch Select tool (CAD-412).
+    Select,
     Box,
     Cylinder,
     Sphere,
@@ -905,6 +907,18 @@ pub(crate) fn paint_sized(ui: &egui::Ui, icon: Icon, center: Pos2, color: Color3
             line([15., 23.], [21., 6.]);
             circle(8., 1., 1.);
             circle(15., 23., 1.);
+        }
+        Icon::Select => {
+            path(&[
+                [6., 3.],
+                [6., 19.],
+                [10., 15.],
+                [13., 21.],
+                [16., 19.5],
+                [13., 14.],
+                [18., 14.],
+                [6., 3.],
+            ]);
         }
         Icon::Construction => {
             for x in [2., 8., 14., 20.] {

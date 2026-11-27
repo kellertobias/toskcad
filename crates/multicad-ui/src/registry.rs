@@ -101,6 +101,8 @@ pub enum Command {
     SheetFasteners,
     SheetView,
     Construction,
+    /// End the active sketch drawing or edit tool and select geometry (CAD-412).
+    SketchSelect,
     Dimension,
     FinishSketch,
     AbortSketch,
@@ -340,6 +342,13 @@ impl Default for Registry {
                 icon: Icon::Page,
                 action: Command::ImportArtwork,
                 aliases: &["import-artwork", "dxf", "svg"],
+            },
+            Tool {
+                id: "sketch-select",
+                label: "Select",
+                icon: Icon::Select,
+                action: Command::SketchSelect,
+                aliases: &["select"],
             },
             Tool {
                 id: "construction",
@@ -608,6 +617,7 @@ impl Default for Registry {
                     tab(
                         "Common",
                         &[
+                            "sketch-select",
                             "rectangle",
                             "line",
                             "circle",

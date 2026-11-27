@@ -50,7 +50,7 @@ pub(crate) fn sketch_split_focused(ctx: &egui::Context) -> bool {
 /// at the position of its first member.
 fn sketch_entries(tab: &RibbonTab) -> Vec<Entry> {
     use crate::sketch_editor::DrawTool;
-    let families: [(&'static str, Icon, Vec<&'static str>); 2] = [
+    let families: [(&'static str, Icon, Vec<&'static str>); 3] = [
         (
             "Rectangle",
             Icon::Rectangle,
@@ -60,6 +60,15 @@ fn sketch_entries(tab: &RibbonTab) -> Vec<Entry> {
             "Circle",
             Icon::Circle,
             DrawTool::CIRCLE_MODES.map(DrawTool::id).to_vec(),
+        ),
+        // Fillet first: the split button's main part starts it (CAD-412
+        // frees this tile for the Select tool).
+        (
+            "Corner",
+            Icon::Edge,
+            [DrawTool::Fillet, DrawTool::Chamfer]
+                .map(DrawTool::id)
+                .to_vec(),
         ),
     ];
     let mut entries = vec![];
@@ -1611,6 +1620,29 @@ mod tests {
                     Some(Command::Draw(tool))
                 );
             }
+        }
+    }
+    #[test]
+    fn sketch_common_leads_with_select_and_groups_fillet_and_chamfer_under_corner() {
+        let registry = Registry::default();
+        let tab = &registry.workspace(Mode::Sketch).tabs[0];
+        let entries = &groups(Mode::Sketch, tab)[0].entries;
+        assert!(matches!(entries[0], Entry::Tool("sketch-select")));
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            Entry::Menu { label: "Corner", tools, split: true, .. }
+                if *tools == vec!["sketch-fillet", "sketch-chamfer"]
+        )));
+        for width in [1024., 1360.] {
+            assert_eq!(
+                click(&registry, Mode::Sketch, tab, true, width, "Select"),
+                Some(Command::SketchSelect)
+            );
+            assert_eq!(
+                click(&registry, Mode::Sketch, tab, true, width, "Corner"),
+                Some(Command::Draw(crate::sketch_editor::DrawTool::Fillet)),
+                "the Corner split button starts Fillet"
+            );
         }
     }
     #[test]

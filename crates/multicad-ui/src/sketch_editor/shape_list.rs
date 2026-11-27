@@ -21,6 +21,14 @@ pub(crate) enum ElementKey {
     Curve(EntityId),
     Text(EntityId),
 }
+/// See [`SketchEditor::selection_snapshot`].
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SelectionSnapshot {
+    pub entities: Vec<EntityId>,
+    pub element: Option<EntityId>,
+    pub highlight: BTreeSet<EntityId>,
+}
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ListedElement {
     pub key: ElementKey,
@@ -206,6 +214,18 @@ impl SketchEditor {
                 .map(|e| e.key)
         });
         self.shape_fields.error = None;
+    }
+    /// Test view of the canvas selection: the selected sketch entities, the
+    /// listed element and the curves highlighted for it (CAD-412).
+    #[cfg(test)]
+    pub(crate) fn selection_snapshot(&self, document: &Document) -> SelectionSnapshot {
+        SelectionSnapshot {
+            entities: self.constraints.selection().to_vec(),
+            element: self.shape.map(|key| match key {
+                ElementKey::Shape(id) | ElementKey::Curve(id) | ElementKey::Text(id) => id,
+            }),
+            highlight: self.element_highlight(document),
+        }
     }
     /// Curves of the selected element, for canvas highlighting.
     pub(crate) fn element_highlight(&self, document: &Document) -> BTreeSet<EntityId> {

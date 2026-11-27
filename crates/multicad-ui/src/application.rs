@@ -1337,6 +1337,12 @@ impl Application {
                     p.sketch.draw(&mut p.session, &request, channel)?;
                 }
             }
+            Command::SketchSelect => {
+                if self.mode != Mode::Sketch || !self.current().sketch.editing {
+                    return Err("Open a sketch to select its geometry".into());
+                }
+                self.current_mut().sketch.select_tool();
+            }
             Command::Construction => {
                 if !self.enabled(command) {
                     return Err("Open a sketch and apply or cancel pending edits before changing construction geometry".into());
@@ -1792,6 +1798,7 @@ impl Application {
             Command::SketchOperation(_) => {
                 self.mode == Mode::Sketch && !pending() && self.current().sketch.operation_ready()
             }
+            Command::SketchSelect => self.mode == Mode::Sketch && self.current().sketch.editing,
             Command::Draw(_)
             | Command::Construction
             | Command::Dimension
@@ -2310,6 +2317,7 @@ impl Application {
                     |command| match command {
                         Command::Draw(tool) => sketch.editing && sketch.tool == Some(tool),
                         Command::Construction => sketch.editing && sketch.construction(),
+                        Command::SketchSelect => sketch.select_active(),
                         command => tool_active(command),
                     },
                     category,
@@ -5239,6 +5247,9 @@ mod inspector_tests;
 #[cfg(test)]
 #[path = "application/ribbon_fit_tests.rs"]
 mod ribbon_fit_tests;
+#[cfg(test)]
+#[path = "application/sketch_select_tests.rs"]
+mod sketch_select_tests;
 #[cfg(test)]
 #[path = "application/tool_enter_tests.rs"]
 mod tool_enter_tests;
