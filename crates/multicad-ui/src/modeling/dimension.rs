@@ -298,11 +298,13 @@ mod tests {
                 })
                 .collect();
             out.textures_delta.clear();
-            let inside: Vec<&str> = texts
+            // Left to right, independent of paint order.
+            let mut inside: Vec<&(String, egui::Rect)> = texts
                 .iter()
                 .filter(|(_, r)| input.expand(0.5).contains_rect(*r))
-                .map(|(t, _)| t.as_str())
                 .collect();
+            inside.sort_by(|a, b| a.1.left().total_cmp(&b.1.left()));
+            let inside: Vec<&str> = inside.iter().map(|(t, _)| t.as_str()).collect();
             assert!(texts.iter().any(|(t, _)| t == "Size"), "{unit}: label");
             assert_eq!(field.text, value.to_string(), "{unit}: value text only");
             match symbol {
