@@ -180,4 +180,5 @@ pub fn move_view(
 pub fn remove_view(page: &mut Page, id: EntityId) {
     page.views.retain(|v| v.id != id);
     page.projections.retain(|l| l.view != id && l.base != id);
+    page.part_filters.retain(|f| f.view != id);
 }

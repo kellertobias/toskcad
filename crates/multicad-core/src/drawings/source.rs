@@ -141,6 +141,9 @@ pub struct Page {
     /// Views projected from a base view on this page, kept aligned with it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub projections: Vec<super::ProjectedView>,
+    /// Which parts each view shows; views without one show everything.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub part_filters: Vec<super::ViewPartFilter>,
 }
 impl Page {
     pub fn new(number: impl Into<String>) -> Self {
@@ -153,6 +156,7 @@ impl Page {
             views: vec![],
             annotations: vec![],
             projections: vec![],
+            part_filters: vec![],
         }
     }
 }
@@ -250,6 +254,7 @@ impl DrawingBook {
                 }
             }
             super::projections::validate_projections(page)?;
+            super::part_filters::validate_part_filters(page)?;
             if page.annotations.len() > super::MAX_ANNOTATIONS {
                 return Err(invalid("Too many annotations on a drawing page"));
             }

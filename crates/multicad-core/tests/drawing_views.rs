@@ -621,3 +621,124 @@ fn single_view_default_scale_is_the_largest_standard_scale_fitting_the_sheet() {
         );
     }
 }
+
+/// CAD-438: a view shows every part until its page stores a filter; tags
+/// and per-part toggles decide, invalid filters are refused, a duplicated
+/// page keeps its filters and pages without filters keep their wire form.
+#[test]
+fn view_part_filters_follow_tags_and_toggles_and_validate() {
+    let mut doc = Document::new("Filters").unwrap();
+    let part = |name: &str, tags: &[&str]| {
+        Entity::new(
+            name,
+            EntityData::Part {
+                features: vec![],
+                material: None,
+                tags: tags.iter().map(|t| t.to_string()).collect(),
+            },
+        )
+    };
+    let (frame, bolt) = (part("Frame", &["frame"]), part("Bolt", &["hardware"]));
+    let (f, b) = (frame.id, bolt.id);
+    doc.insert(frame).unwrap();
+    doc.insert(bolt).unwrap();
+    let mut page = Page::new("1");
+    let mut v = view(f);
+    v.source = ViewSource::Model {
+        entities: vec![f, b],
+    };
+    let id = v.id;
+    page.views.push(v);
+    assert_eq!(view_parts(&doc, &page.views[0]), [f, b]);
+    assert!(page.part_filter(id).is_none(), "everything by default");
+    let shows = |page: &Page, part| page.part_filter(id).is_none_or(|x| x.shows(&doc, part));
+    page.set_tag_filter(id, ["frame".into()].into(), Default::default())
+        .unwrap();
+    assert!(shows(&page, f) && !shows(&page, b));
+    page.set_tag_filter(id, Default::default(), ["frame".into()].into())
+        .unwrap();
+    assert!(!shows(&page, f) && shows(&page, b));
+    page.set_part_shown(&doc, id, f, true).unwrap();
+    assert!(shows(&page, f), "a toggle overrides the tag rule");
+    page.set_part_shown(&doc, id, b, false).unwrap();
+    assert!(!shows(&page, b));
+    DrawingBook {
+        pages: vec![page.clone()],
+    }
+    .validate()
+    .unwrap();
+    // Clearing everything removes the stored filter.
+    page.set_tag_filter(id, Default::default(), Default::default())
+        .unwrap();
+    page.set_part_shown(&doc, id, f, true).unwrap();
+    page.set_part_shown(&doc, id, b, true).unwrap();
+    assert!(page.part_filters.is_empty());
+    assert!(
+        page.set_part_shown(&doc, EntityId::new(), f, false)
+            .is_err()
+    );
+    assert!(
+        page.set_tag_filter(id, [" padded".into()].into(), Default::default())
+            .is_err()
+    );
+    for bad in [
+        ViewPartFilter {
+            view: EntityId::new(),
+            hidden: [f].into(),
+            ..Default::default()
+        },
+        ViewPartFilter {
+            view: id,
+            ..Default::default()
+        },
+        ViewPartFilter {
+            view: id,
+            hidden: [f].into(),
+            shown: [f].into(),
+            ..Default::default()
+        },
+    ] {
+        let mut p = page.clone();
+        p.part_filters = vec![bad];
+        assert!(DrawingBook { pages: vec![p] }.validate().is_err());
+    }
+    // Stored, duplicated with the page and required by readers.
+    page.set_part_shown(&doc, id, b, false).unwrap();
+    let book = DrawingBook {
+        pages: vec![page.clone()],
+    }
+    .entity("Drawing")
+    .unwrap();
+    let book_id = book.id;
+    doc.insert(book).unwrap();
+    let mut session = Session::new(doc).unwrap();
+    let copy = EntityId::new();
+    let prepared = prepare(
+        &session,
+        session.revision(),
+        actor(),
+        book_id,
+        PageAction::Duplicate {
+            page: page.id,
+            new_page: copy,
+        },
+    )
+    .unwrap();
+    session.commit(prepared).unwrap();
+    let book = read(session.document(), book_id).unwrap();
+    let duplicate = &book.pages[1];
+    assert_eq!(duplicate.part_filters.len(), 1);
+    assert_eq!(duplicate.part_filters[0].view, duplicate.views[0].id);
+    let project = ProjectFile::new(session.document().clone()).unwrap();
+    assert!(project.capabilities().contains(PART_FILTER_CAPABILITY));
+    let mut bytes = vec![];
+    project_file::write(&project, &mut bytes, Default::default()).unwrap();
+    let mut older = project_file::supported_capabilities();
+    older.remove(PART_FILTER_CAPABILITY);
+    assert!(project_file::read(&mut bytes.as_slice(), Default::default(), &older).is_err());
+    assert!(
+        !serde_json::to_string(&Page::new("x"))
+            .unwrap()
+            .contains("part_filters")
+    );
+}

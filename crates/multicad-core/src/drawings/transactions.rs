@@ -56,6 +56,9 @@ pub fn prepare(
                 link.view = ids[&link.view];
                 link.base = ids[&link.base];
             }
+            for filter in &mut copy.part_filters {
+                filter.view = ids[&filter.view];
+            }
             book.pages.insert(i + 1, copy);
             "Duplicate drawing page"
         }
