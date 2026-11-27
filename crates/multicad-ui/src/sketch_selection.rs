@@ -50,14 +50,11 @@ pub fn pick_geometry(
         let screen = camera.project(frame.point(p).map(|v| v as f32), rect);
         Pos2::new(screen[0], screen[1])
     };
-    if let Some((_, id)) = points
+    let point = points
         .iter()
         .map(|point| (pointer.distance(project(point.position_mm)), point.id))
-        .filter(|(distance, _)| *distance <= 7.)
-        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
-    {
-        return Some(Hit::Point(id));
-    }
+        .filter(|(distance, _)| *distance <= PICK_RADIUS)
+        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
     let mut nearest: Option<(f32, EntityId)> = None;
     for curve in geometry {
         for [a, b] in curve.segments() {
@@ -68,7 +65,7 @@ pub fn pick_geometry(
             let t =
                 ((pointer - a).dot(vector) / vector.length_sq().max(f32::EPSILON)).clamp(0., 1.);
             let distance = pointer.distance(a + vector * t);
-            if distance <= 7.
+            if distance <= PICK_RADIUS
                 && nearest.is_none_or(|(best, id)| {
                     distance < best || (distance == best && curve.id() < id)
                 })
@@ -77,11 +74,24 @@ pub fn pick_geometry(
             }
         }
     }
-    if let Some((_, id)) = nearest {
-        return Some(Hit::Curve(id));
+    // CAD-412: a point wins when the pointer is on it or nearer to it than to
+    // every curve. Otherwise a short curve, such as a small fillet arc between
+    // its tangent points and the virtual sharp, could never be picked.
+    match (point, nearest) {
+        (Some((distance, id)), curve)
+            if distance <= POINT_PRIORITY_RADIUS
+                || curve.is_none_or(|(curve, _)| distance <= curve) =>
+        {
+            Some(Hit::Point(id))
+        }
+        (_, Some((_, id))) => Some(Hit::Curve(id)),
+        (point, None) => point.map(|(_, id)| Hit::Point(id)),
     }
-    None
 }
+/// Screen distance within which sketch points and curves are picked.
+const PICK_RADIUS: f32 = 7.;
+/// Screen distance within which a point beats any curve under the pointer.
+const POINT_PRIORITY_RADIUS: f32 = 3.;
 
 #[derive(Default)]
 pub struct ProfileSelection {
@@ -372,6 +382,51 @@ mod tests {
         );
         assert_eq!(selection.selected(), &[b]);
         assert_eq!(source, before);
+    }
+    #[test]
+    fn a_curve_under_the_pointer_beats_a_nearby_point_outside_its_priority_radius() {
+        use multicad_core::constraint_sketch::source::Source;
+        let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 700.));
+        let camera = Camera {
+            yaw: 0.,
+            pitch: std::f32::consts::FRAC_PI_2,
+            target: [0., 0., 0.],
+            scale: 1.,
+            ..Default::default()
+        };
+        let frame = multicad_core::sketch::Datum::Xy.frame();
+        let origin = camera.project([0., 0., 0.], rect);
+        let one_mm = camera.project([1., 0., 0.], rect)[0] - origin[0];
+        let px = |pixels: f32| f64::from(pixels / one_mm);
+        // A line 100 px long from a: offsets below are screen distances.
+        let mut source = Source {
+            u: [1., 0., 0.],
+            sketch: Default::default(),
+        };
+        let a = source.add_point([0., 0.]);
+        let b = source.add_point([px(100.), 0.]);
+        let line = source.add_line(a, b);
+        let geometry = source.display_geometry().unwrap();
+        let hit = |x: f64, y: f64| {
+            let p = camera.project(frame.point([x, y]).map(|v| v as f32), rect);
+            pick_geometry(
+                Pos2::new(p[0], p[1]),
+                camera,
+                rect,
+                frame,
+                &source.sketch.points,
+                &geometry,
+            )
+        };
+        // On the point, or within its priority radius: the point.
+        assert_eq!(hit(0., 0.), Some(Hit::Point(a)));
+        assert_eq!(hit(px(2.5), 0.), Some(Hit::Point(a)));
+        // On the curve, 5 px from the point: the curve.
+        assert_eq!(hit(px(5.), 0.), Some(Hit::Curve(line)));
+        // Off the curve but nearer to the point than to the curve: the point.
+        assert_eq!(hit(-px(4.), px(1.)), Some(Hit::Point(a)));
+        // Nothing within the pick radius.
+        assert_eq!(hit(px(5.), px(8.)), None);
     }
     #[test]
     fn picking_prioritizes_points_and_curves_then_distinct_exact_nested_regions() {
