@@ -673,3 +673,118 @@ fn a_face_corner_offered_beside_a_far_sketch_point_uses_a_relative_tolerance() {
     let target = resolve(&geometry, &[], &query([far + 0.5, far]), None).unwrap();
     assert_eq!(target.kind, TargetKind::FaceCorner, "{target:?}");
 }
+
+/// The top face outline of a 30 x 20 box whose vertical edges are filleted
+/// with radius 4, plus a through hole of radius 3 split at a seam into two
+/// half arcs, as the face's edges in sketch coordinates.
+fn rounded_face(r: f64) -> Vec<(TopologyKey, SupportEdge)> {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let (w, h) = (30., 20.);
+    let edge = |ordinal| support_key(TopologyKind::Edge, ordinal);
+    let arc = |center, start| SupportEdge::Arc {
+        center,
+        radius: r,
+        start,
+        sweep: FRAC_PI_2,
+    };
+    vec![
+        (edge(0), SupportEdge::Line([r, 0.], [w - r, 0.])),
+        (edge(1), SupportEdge::Line([w, r], [w, h - r])),
+        (edge(2), SupportEdge::Line([w - r, h], [r, h])),
+        (edge(3), SupportEdge::Line([0., h - r], [0., r])),
+        (edge(4), arc([w - r, r], -FRAC_PI_2)),
+        (edge(5), arc([w - r, h - r], 0.)),
+        (edge(6), arc([r, h - r], FRAC_PI_2)),
+        (edge(7), arc([r, r], PI)),
+        (
+            edge(8),
+            SupportEdge::Arc {
+                center: [15., 10.],
+                radius: 3.,
+                start: 0.,
+                sweep: PI,
+            },
+        ),
+        (
+            edge(9),
+            SupportEdge::Arc {
+                center: [15., 10.],
+                radius: 3.,
+                start: PI,
+                sweep: PI,
+            },
+        ),
+    ]
+}
+
+#[test]
+fn every_circular_face_edge_offers_its_exact_centre_as_a_face_centre_target() {
+    let r = 4.;
+    let geometry = SnapGeometry::default().with_support_edges(rounded_face(r));
+    let corners = [[26., 4.], [26., 16.], [4., 16.], [4., 4.]];
+    for (i, centre) in corners.into_iter().enumerate() {
+        let target = resolve(&geometry, &[], &query_px(centre, 3., -2.), None).unwrap();
+        assert_eq!(
+            target.key,
+            TargetKey::SupportCenter(support_key(TopologyKind::Edge, 4 + i as u32)),
+            "{target:?}"
+        );
+        assert_eq!(target.kind, TargetKind::FaceCenter);
+        assert_eq!(target.kind.label(), "Face centre");
+        assert_eq!(target.kind.marker(), Marker::Center);
+        assert_eq!(target.position, centre, "exactly the arc centre");
+        assert_eq!(
+            target.anchor, None,
+            "the projected centre does not exist yet"
+        );
+    }
+    // The hole's two half arcs share one centre target.
+    let centres: Vec<_> = candidates(&geometry, &[], &query([0., 0.]))
+        .into_iter()
+        .filter(|c| c.target.kind == TargetKind::FaceCenter)
+        .map(|c| c.target.position)
+        .collect();
+    assert_eq!(
+        centres.len(),
+        5,
+        "four corner arcs and one hole: {centres:?}"
+    );
+    let hole = resolve(&geometry, &[], &query_px([15., 10.], -2., 2.), None).unwrap();
+    assert_eq!(
+        hole.key,
+        TargetKey::SupportCenter(support_key(TopologyKind::Edge, 8))
+    );
+    assert_eq!(hole.position, [15., 10.]);
+    // Straight edges have no centre: away from every centre there is none.
+    let target = resolve(&geometry, &[], &query([15., 0.3]), None).unwrap();
+    assert_eq!(target.kind, TargetKind::FaceEdge, "{target:?}");
+}
+
+#[test]
+fn a_sketch_point_on_a_face_centre_keeps_it_and_a_centre_beats_a_nearby_edge() {
+    let mut b = Builder::default();
+    let existing = b.point([4., 4.]);
+    let geometry = b.geometry().with_support_edges(rounded_face(4.));
+    let target = resolve(&geometry, &[], &query([4., 4.]), None).unwrap();
+    assert_eq!(target.anchor, Some(existing), "{target:?}");
+    assert!(
+        candidates(&geometry, &[], &query([0., 0.]))
+            .iter()
+            .all(|c| c.target.position != [4., 4.] || c.target.kind != TargetKind::FaceCenter),
+        "the occupied centre is not offered twice"
+    );
+    // A small hole: its centre lies within the edge snap distance of the
+    // circle, and the centre (a point class) wins.
+    let small = support_key(TopologyKind::Edge, 1);
+    let geometry = SnapGeometry::default().with_support_edges(vec![(
+        small,
+        SupportEdge::Arc {
+            center: [0., 0.],
+            radius: 1.,
+            start: 0.,
+            sweep: TAU,
+        },
+    )]);
+    let target = resolve(&geometry, &[], &query_px([0., 0.], 2., 0.), None).unwrap();
+    assert_eq!(target.key, TargetKey::SupportCenter(small), "{target:?}");
+}

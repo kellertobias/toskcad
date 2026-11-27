@@ -103,7 +103,7 @@ impl SketchEditor {
             None => {}
         }
         self.support_snap = outcome.target.as_ref().and_then(|t| match t.key {
-            snap::TargetKey::Support(key) => Some(key),
+            snap::TargetKey::Support(key) | snap::TargetKey::SupportCenter(key) => Some(key),
             _ => None,
         });
         if let Some(icon) = outcome.target.as_ref().and_then(|t| snap_cursor(t.kind)) {

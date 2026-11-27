@@ -50,6 +50,10 @@ pub enum TargetKey {
     /// Committing a placement here first captures it as a canonical
     /// projected reference (CAD-383).
     Support(TopologyKey),
+    /// The centre of a circular edge of the supporting face (CAD-422), keyed
+    /// by that edge. Committing a placement here captures the edge as a
+    /// projected reference and reuses its centre point.
+    SupportCenter(TopologyKey),
     LineMidpoint(EntityId),
     /// Sorted ids of the lines that form the recognized shape.
     ShapeCenter(Vec<EntityId>),
@@ -81,7 +85,7 @@ impl TargetKey {
     /// within a class the nearest target (in screen pixels) wins.
     pub fn class(&self) -> u8 {
         match self {
-            Self::Point(_) => 0,
+            Self::Point(_) | Self::SupportCenter(_) => 0,
             Self::Support(key) if key.kind == multicad_core::references::TopologyKind::Vertex => 0,
             Self::Support(_) => 3,
             Self::LineMidpoint(_)
@@ -122,6 +126,8 @@ pub enum TargetKind {
     FaceCorner,
     /// A point exactly on an edge of the supporting face.
     FaceEdge,
+    /// The centre of a circular edge of the supporting face.
+    FaceCenter,
     /// A circle or arc center point.
     Center,
     LineMidpoint,
@@ -141,6 +147,7 @@ impl TargetKind {
             Self::Endpoint => "Endpoint",
             Self::FaceCorner => "Face corner",
             Self::FaceEdge => "Face edge",
+            Self::FaceCenter => "Face centre",
             Self::Center => "Center",
             Self::LineMidpoint => "Midpoint",
             Self::ShapeCenter(ShapeKind::Rectangle) => "Rectangle center",
@@ -180,7 +187,7 @@ impl TargetKind {
     pub fn marker(self) -> Marker {
         match self {
             Self::Endpoint | Self::FaceCorner | Self::Reference => Marker::Vertex,
-            Self::Center | Self::ShapeCenter(_) => Marker::Center,
+            Self::Center | Self::FaceCenter | Self::ShapeCenter(_) => Marker::Center,
             Self::LineMidpoint | Self::ReferenceMidpoint => Marker::Midpoint,
             Self::GuideIntersection | Self::GuideOnLine | Self::Perpendicular | Self::Tangent => {
                 Marker::Construction
@@ -242,6 +249,7 @@ pub struct SnapGeometry {
     centers: Vec<(Vec<EntityId>, [f64; 2], ShapeKind)>,
     support: Vec<(TopologyKey, [f64; 2])>,
     support_edges: Vec<(TopologyKey, SupportEdge)>,
+    support_centers: Vec<(TopologyKey, [f64; 2])>,
 }
 
 /// Exact sketch-plane shape of a supporting-face edge (CAD-383).
@@ -370,8 +378,22 @@ impl SnapGeometry {
     /// Adds the supporting face's edges, in sketch coordinates. An edge
     /// that an existing sketch line, circle or arc already covers is left to
     /// that curve, so a projected edge is not offered twice.
+    ///
+    /// The centre of every circular edge is offered too (CAD-422), once per
+    /// position: a hole split into arcs at a seam has one centre target. A
+    /// centre that an existing sketch point already occupies is left to it.
     pub fn with_support_edges(mut self, edges: Vec<(TopologyKey, SupportEdge)>) -> Self {
         let same = |a: [f64; 2], b: [f64; 2]| len(sub(a, b)) <= 1e-9 * (1. + len(a));
+        let mut centers: Vec<(TopologyKey, [f64; 2])> = vec![];
+        for (key, edge) in &edges {
+            if let SupportEdge::Arc { center, .. } = *edge
+                && !centers.iter().any(|(_, at)| same(*at, center))
+                && !self.points.iter().any(|p| same(p.1, center))
+            {
+                centers.push((*key, center));
+            }
+        }
+        self.support_centers = centers;
         self.support_edges = edges
             .into_iter()
             .filter(|(_, edge)| match *edge {
@@ -603,6 +625,16 @@ fn candidates(geometry: &SnapGeometry, references: &[Reference], q: &Query) -> V
         push(
             TargetKey::Support(key),
             TargetKind::FaceCorner,
+            position,
+            None,
+            vec![],
+            POINT_SNAP_PX,
+        );
+    }
+    for &(key, position) in &geometry.support_centers {
+        push(
+            TargetKey::SupportCenter(key),
+            TargetKind::FaceCenter,
             position,
             None,
             vec![],
