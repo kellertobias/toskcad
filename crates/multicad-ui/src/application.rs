@@ -2653,11 +2653,19 @@ impl Application {
         let frame = self
             .shortcut_runtime
             .collect(ctx, &self.shortcuts, &context);
-        for action in frame.actions {
+        for (action, binding) in frame.actions.into_iter().zip(frame.bindings) {
             match action {
                 ShortcutAction::Command(command) => {
                     if self.enabled(command) {
                         self.execute(command, &[], Channel::Ui);
+                    } else {
+                        // A consumed key must say why nothing started.
+                        self.message = format!(
+                            "{} ({}) is not available here",
+                            binding.label,
+                            binding.chord.label()
+                        );
+                        self.message_error = false;
                     }
                 }
                 ShortcutAction::FindTool => self.focus_search = true,
@@ -5239,6 +5247,9 @@ mod inspector_tests;
 #[cfg(test)]
 #[path = "application/ribbon_fit_tests.rs"]
 mod ribbon_fit_tests;
+#[cfg(test)]
+#[path = "application/shortcut_tests.rs"]
+mod shortcut_tests;
 #[cfg(test)]
 #[path = "application/tool_enter_tests.rs"]
 mod tool_enter_tests;
