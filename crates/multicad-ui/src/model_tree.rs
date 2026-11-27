@@ -10,6 +10,8 @@ use multicad_core::{
     hierarchy::{self, Action, ContainerKind, Index},
 };
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+mod joint_tests;
 mod presentation;
 #[cfg(test)]
 mod rename_tests;
@@ -45,6 +47,8 @@ pub enum NodeKind {
     Instance,
     Plane,
     Feature,
+    /// A panel joint placed in the component of its panels (CAD-432).
+    Joint,
 }
 impl NodeKind {
     fn label(self) -> &'static str {
@@ -57,6 +61,7 @@ impl NodeKind {
             Self::Instance => "Instance",
             Self::Plane => "Plane",
             Self::Feature => "Feature",
+            Self::Joint => "Joint",
         }
     }
     fn icon(self) -> Icon {
@@ -69,6 +74,7 @@ impl NodeKind {
             Self::Instance => Icon::Link,
             Self::Plane => Icon::Grid,
             Self::Feature => Icon::Cut,
+            Self::Joint => Icon::Joint,
         }
     }
     fn container(self) -> bool {
@@ -84,6 +90,7 @@ fn kind(data: &EntityData) -> Option<NodeKind> {
         EntityData::Instance { .. } => Some(NodeKind::Instance),
         EntityData::Plane { .. } => Some(NodeKind::Plane),
         EntityData::Feature { .. } => Some(NodeKind::Feature),
+        data if hierarchy::is_joint_entry(data) => Some(NodeKind::Joint),
         _ => None,
     }
 }
@@ -635,6 +642,37 @@ impl ModelTree {
         self.expansion.insert(id, expanded);
         self.view = None;
     }
+    /// Delete a joint through the shared joint API in one transaction.
+    fn delete_joint(
+        &mut self,
+        session: &mut Session,
+        joint: EntityId,
+        group: multicad_core::model::JointGroupOnDelete,
+    ) -> TreeEvents {
+        let mut events = TreeEvents::default();
+        let prepared = multicad_core::model::prepare_panel_joint_delete_with(
+            session,
+            session.revision(),
+            Actor::local(Channel::Ui),
+            joint,
+            group,
+        );
+        match prepared
+            .map_err(|e| e.to_string())
+            .and_then(|prepared| session.commit(prepared).map_err(|e| e.to_string()))
+        {
+            Ok(change) => {
+                events.message = Some("Deleted joint".into());
+                events.change = Some(change);
+                events.selection = Some(BTreeSet::new());
+                self.history_selection = None;
+                self.selected_references.clear();
+                self.view = None;
+            }
+            Err(error) => events.error = Some(error),
+        }
+        events
+    }
     fn execute(&mut self, session: &mut Session, revision: u64, action: Action) -> TreeEvents {
         let mut events = TreeEvents::default();
         let deleting = matches!(&action, Action::Delete { .. });
@@ -705,6 +743,7 @@ impl ModelTree {
         }
         let mut events = TreeEvents::default();
         let mut action = None;
+        let mut joint_delete = None;
         let mut create = None;
         let mut inline_start = None;
         let mut inline_commit = None;
@@ -870,9 +909,11 @@ impl ModelTree {
                                 ui.add_space(trailing);
                             } else {
                             let mut visible = row.local_visible;
-                            let visibility = ui.add_enabled(mutations_enabled && !matches!(row.kind, NodeKind::Plane | NodeKind::Feature),
+                            let visibility = ui.add_enabled(mutations_enabled && !matches!(row.kind, NodeKind::Plane | NodeKind::Feature | NodeKind::Joint),
                                 egui::Checkbox::new(&mut visible, "").indeterminate(row.local_visible && !row.effective_visible));
-                            let hint = if matches!(row.kind, NodeKind::Plane | NodeKind::Feature) {
+                            let hint = if row.kind == NodeKind::Joint {
+                                "A joint is shown through the cuts in its panels; show or hide the panels"
+                            } else if matches!(row.kind, NodeKind::Plane | NodeKind::Feature) {
                                 "This source is evaluated through its sketch or body; standalone visibility is unavailable"
                             } else if row.local_visible && !row.effective_visible {
                                 "Local visibility is on; an ancestor or the component definition is hidden"
@@ -919,7 +960,11 @@ impl ModelTree {
                                         action = Some(Action::NormalizeLegacy { component: row.id });
                                         ui.close();
                                     }
-                                    if let Some(delete) = delete_menu(ui, session, row.id, mutations_enabled, None) {
+                                    if row.kind == NodeKind::Joint {
+                                        if let Some(group) = joint_delete_menu(ui, mutations_enabled) {
+                                            joint_delete = Some((row.id, group));
+                                        }
+                                    } else if let Some(delete) = delete_menu(ui, session, row.id, mutations_enabled, None) {
                                         action = Some(delete);
                                     }
                                 });
@@ -967,6 +1012,13 @@ impl ModelTree {
         }
         if let Some((row, target, payload)) = drop {
             return self.drop_entries(session, &payload, row, target);
+        }
+        if let Some((joint, group)) = joint_delete {
+            let mut result = self.delete_joint(session, joint, group);
+            if result.selection.is_none() {
+                result.selection = events.selection;
+            }
+            return result;
         }
         if let Some(action) = action {
             let mut result = self.execute(session, session.revision(), action);
@@ -1341,6 +1393,39 @@ fn disclosure(ui: &mut egui::Ui, row: &TreeRow) -> egui::Response {
     response.on_hover_text(label)
 }
 
+/// Deleting a joint keeps its panels; the user chooses whether their
+/// component stays (CAD-432).
+fn joint_delete_menu(
+    ui: &mut egui::Ui,
+    enabled: bool,
+) -> Option<multicad_core::model::JointGroupOnDelete> {
+    use multicad_core::model::JointGroupOnDelete;
+    let mut chosen = None;
+    for (group, label, help) in [
+        (
+            JointGroupOnDelete::Keep,
+            JOINT_DELETE_KEEP,
+            "Remove the joint and its cuts; the panels stay in their component",
+        ),
+        (
+            JointGroupOnDelete::Ungroup,
+            JOINT_DELETE_UNGROUP,
+            "Remove the joint and its cuts, and dissolve the component when no other joint is left in it; the panels stay in place",
+        ),
+    ] {
+        if ui
+            .add_enabled(enabled, egui::Button::new(label))
+            .on_hover_text(help)
+            .clicked()
+        {
+            ui.close();
+            chosen = Some(group);
+        }
+    }
+    chosen
+}
+pub(crate) const JOINT_DELETE_KEEP: &str = "Delete joint, keep group";
+pub(crate) const JOINT_DELETE_UNGROUP: &str = "Delete joint and ungroup panels";
 fn delete_menu(
     ui: &mut egui::Ui,
     session: &Session,

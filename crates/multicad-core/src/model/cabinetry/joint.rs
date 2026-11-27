@@ -689,6 +689,9 @@ pub fn prepare_panel_joint(
             outputs.push(add_cut(&mut candidate, &mut edits, id, i, side, part)?);
         }
     }
+    // The panels and the joint form one component (CAD-432); loose tenons
+    // below are placed beside panel A, inside it.
+    super::joint_group::group_joined_panels(&mut candidate, &mut edits, id, joint)?;
     if matches!(joint.kind, PanelJointKind::LooseTenon(_)) {
         for (i, p) in joint.pairs.iter().enumerate() {
             outputs.push(add_tenon(
@@ -776,12 +779,29 @@ pub fn prepare_panel_joint_edit(
 }
 /// Delete a joint and its cuts. A later joint cut on the same Part is
 /// re-attached to the feature before the removed cut; any other later
-/// feature must be removed first.
+/// feature must be removed first. The panels and their component stay.
 pub fn prepare_panel_joint_delete(
     session: &Session,
     expected_revision: u64,
     actor: Actor,
     id: EntityId,
+) -> Result<crate::commands::Prepared, CommandError> {
+    prepare_panel_joint_delete_with(
+        session,
+        expected_revision,
+        actor,
+        id,
+        super::JointGroupOnDelete::Keep,
+    )
+}
+/// Delete a joint and its cuts, keeping or dissolving the component that
+/// holds its panels (CAD-432). The panels always stay.
+pub fn prepare_panel_joint_delete_with(
+    session: &Session,
+    expected_revision: u64,
+    actor: Actor,
+    id: EntityId,
+    group: super::JointGroupOnDelete,
 ) -> Result<crate::commands::Prepared, CommandError> {
     if read_panel_joint(session.document(), id)?
         .generated_by
@@ -791,13 +811,28 @@ pub fn prepare_panel_joint_delete(
             "Remove this generated connection through its Cabinet inspector",
         ));
     }
-    prepare_owned_joint_delete(session, expected_revision, actor, id)
+    owned_joint_delete(session, expected_revision, actor, id, group)
 }
 pub(super) fn prepare_owned_joint_delete(
     session: &Session,
     expected_revision: u64,
     actor: Actor,
     id: EntityId,
+) -> Result<crate::commands::Prepared, CommandError> {
+    owned_joint_delete(
+        session,
+        expected_revision,
+        actor,
+        id,
+        super::JointGroupOnDelete::Keep,
+    )
+}
+fn owned_joint_delete(
+    session: &Session,
+    expected_revision: u64,
+    actor: Actor,
+    id: EntityId,
+    group: super::JointGroupOnDelete,
 ) -> Result<crate::commands::Prepared, CommandError> {
     revision(session, expected_revision)?;
     let document = session.document();
@@ -822,6 +857,7 @@ pub(super) fn prepare_owned_joint_delete(
         candidate = candidate.edited(&steps)?;
         edits.extend(steps);
     }
+    super::joint_group::ungroup_deleted_joint(&mut candidate, &mut edits, id, group)?;
     edits.push(Mutation::Remove(id));
     session.prepare(Request {
         expected_revision,
