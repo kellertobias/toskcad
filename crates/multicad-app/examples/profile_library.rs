@@ -56,6 +56,7 @@ fn build() -> Result<ProjectFile, Error> {
             shape: ProfileShape::ItemLine8_40x40,
             section: None,
             corner_radius_mm: None,
+            web_mm: None,
         },
     })
     .entity(identity(3)?, "Line 8 40 × 40 stock")?;

@@ -421,6 +421,9 @@ impl ProjectFile {
         if crate::materials::requires_sketch_profile(&self.document) {
             required.insert(crate::materials::SKETCH_PROFILE_CAPABILITY.into());
         }
+        if crate::materials::requires_open_section_profile(&self.document) {
+            required.insert(crate::materials::OPEN_SECTION_PROFILE_CAPABILITY.into());
+        }
         if crate::materials::requires_profile_corner_radius(&self.document) {
             required.insert(crate::materials::CORNER_RADIUS_PROFILE_CAPABILITY.into());
         }
@@ -525,6 +528,7 @@ pub fn supported_capabilities() -> BTreeSet<String> {
         crate::materials::ITEM_LINE_8_PROFILE_CAPABILITY.into(),
         crate::materials::SKETCH_PROFILE_CAPABILITY.into(),
         crate::materials::CORNER_RADIUS_PROFILE_CAPABILITY.into(),
+        crate::materials::OPEN_SECTION_PROFILE_CAPABILITY.into(),
         crate::inspection::CAPABILITY.into(),
         crate::constraint_sketch::source::V4_CAPABILITY.into(),
         crate::constraint_sketch::source::SHAPES_CAPABILITY.into(),

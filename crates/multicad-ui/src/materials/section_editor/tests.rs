@@ -109,6 +109,7 @@ fn presets_seed_a_dimensioned_editable_sketch_without_touching_it() {
         shape,
         section: None,
         corner_radius_mm: None,
+        web_mm: None,
     };
     let tube = SectionEditor::seeded(&spec(ProfileShape::Rectangular, 30., 20., Some(2.)));
     assert!(!tube.touched());

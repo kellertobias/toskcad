@@ -23,6 +23,7 @@ fn tube(
             shape,
             section: None,
             corner_radius_mm: r,
+            web_mm: None,
         },
     })
 }

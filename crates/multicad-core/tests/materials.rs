@@ -395,6 +395,7 @@ fn every_stock_family_is_reusable_and_changed_material_requires_acknowledgement(
             shape: ProfileShape::Rectangular,
             section: None,
             corner_radius_mm: None,
+            web_mm: None,
         },
         StockKind::Print {
             process: "Resin".into(),

@@ -251,6 +251,7 @@ fn stock(section: Option<Sketch>, shape: ProfileShape, size: [f64; 2]) -> Librar
             shape,
             section: section.map(|sketch| Box::new(ProfileSketch { sketch })),
             corner_radius_mm: None,
+            web_mm: None,
         },
     })
 }

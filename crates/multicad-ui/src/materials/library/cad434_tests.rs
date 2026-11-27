@@ -8,9 +8,8 @@ use crate::modeling::diagram::harness::{self, WIDTHS};
 use multicad_core::{document::Document, project_file::ProjectResources};
 use std::time::{Duration, Instant};
 
-#[allow(dead_code)]
-#[path = "../../../../multicad-app/examples/shared_materials_review.rs"]
-mod shared_fixture;
+// The shared fixture is loaded once, by the library tests.
+use super::tests::shared_fixture;
 
 const PI: f64 = std::f64::consts::PI;
 
@@ -24,6 +23,7 @@ fn profile(shape: ProfileShape, w: f64, h: f64, wall: Option<f64>, r: Option<f64
         shape,
         section: None,
         corner_radius_mm: r,
+        web_mm: None,
     }
 }
 
@@ -500,4 +500,146 @@ fn part_volume(s: &Session, part: EntityId) -> f64 {
         .unwrap()
         .volume_mm3()
         .unwrap()
+}
+
+fn open_profile(shape: ProfileShape, w: f64, h: f64, flange: f64, web: f64) -> StockKind {
+    let mut spec = profile(shape, w, h, Some(flange), None);
+    if let StockKind::Profile { web_mm, .. } = &mut spec {
+        *web_mm = Some(web);
+    }
+    spec
+}
+
+#[test]
+fn channel_tee_and_beam_have_pictures_linked_fields_and_plain_names() {
+    for (spec, name) in [
+        (
+            open_profile(ProfileShape::Channel, 55., 100., 7.5, 4.5),
+            "Channel 55×100 mm, flange 7.5 mm, web 4.5 mm",
+        ),
+        (
+            open_profile(ProfileShape::Tee, 50., 50., 6., 6.),
+            "T section 50×50 mm, flange 6 mm, web 6 mm",
+        ),
+        (
+            open_profile(ProfileShape::Beam, 100., 200., 8.5, 5.6),
+            "I/H beam 100×200 mm, flange 8.5 mm, web 5.6 mm",
+        ),
+    ] {
+        let StockKind::Profile { shape, .. } = spec else {
+            unreachable!()
+        };
+        // The family picture and this stock's picture are the canonical
+        // straight-sided outline, without bores.
+        let sample = picker::sample(shape, true);
+        assert_eq!(picker::loops(&sample).len(), 1, "{shape:?}");
+        assert!(!picker::family_art(shape, true).marks.is_empty());
+        let section = picker::section(&spec).unwrap();
+        assert_eq!(
+            picker::loops(&section)[0].len(),
+            section.outline_points().len(),
+            "{shape:?} picture is its outline"
+        );
+        // Width, height, flange and web are each a linked callout.
+        let diagram = picker::diagram(&spec);
+        let mut drawn = diagram.keys();
+        drawn.sort_unstable();
+        let mut fields = vec![picker::WIDTH, picker::HEIGHT, picker::WALL, picker::WEB];
+        fields.sort_unstable();
+        assert_eq!(drawn, fields, "{shape:?}");
+        assert!(
+            diagram
+                .callouts
+                .iter()
+                .any(|c| c.name == "Flange thickness")
+        );
+        assert!(diagram.callouts.iter().any(|c| c.name == "Web thickness"));
+        for width in WIDTHS {
+            harness::assert_callouts_apart(&diagram, width, 200., &|k| {
+                picker::callout_value(&spec, k)
+            });
+        }
+        // The form names it in plain words and labels every field.
+        let ctx = egui::Context::default();
+        let mut staged = spec.clone();
+        let painted = harness::frame(&ctx, 420., vec![], &mut stock_form(&mut staged));
+        for text in [name, "Width", "Height", "Flange thickness", "Web thickness"] {
+            assert!(painted.has(text), "{text} for {shape:?}");
+        }
+        let painted = harness::frame(&ctx, 420., vec![], &mut |ui| {
+            picker::stock_row(ui, false, &spec, "UPE 100");
+        });
+        assert!(painted.has(name) && painted.has("UPE 100"));
+    }
+}
+
+#[test]
+fn choosing_a_channel_starts_a_valid_section_and_its_web_is_edited_through_its_callout() {
+    // Pick "Channel" in the type dropdown by clicking it.
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut spec = profile(ProfileShape::Rectangular, 40., 40., Some(2.), Some(4.));
+    let size = egui::vec2(420., 1200.);
+    let output = run(&ctx, size, vec![], &mut stock_form(&mut spec));
+    let combo = node_center(&output, |n| n.value() == Some("Rectangular")).expect("type picker");
+    for events in harness::click(combo).chunks(2) {
+        run(&ctx, size, events.to_vec(), &mut stock_form(&mut spec));
+    }
+    let output = run(&ctx, size, vec![], &mut stock_form(&mut spec));
+    let channel = texts(&output)
+        .into_iter()
+        .find(|(t, _)| t == "Channel")
+        .expect("Channel listed")
+        .1
+        .center();
+    for events in harness::click(channel).chunks(2) {
+        run(&ctx, size, events.to_vec(), &mut stock_form(&mut spec));
+    }
+    let StockKind::Profile {
+        shape,
+        wall_mm,
+        web_mm,
+        corner_radius_mm,
+        ..
+    } = &spec
+    else {
+        unreachable!()
+    };
+    assert_eq!(*shape, ProfileShape::Channel);
+    assert_eq!(
+        (*wall_mm, *web_mm, *corner_radius_mm),
+        (Some(2.), Some(4.), None)
+    );
+    LibraryDefinition::Stock(Stock {
+        material: EntityId::new(),
+        specification: spec.clone(),
+    })
+    .validate()
+    .expect("the defaults are a valid channel");
+
+    // The web callout focuses the web field at both Inspector widths.
+    for width in WIDTHS {
+        let ctx = egui::Context::default();
+        let mut spec = open_profile(ProfileShape::Channel, 55., 100., 7.5, 4.5);
+        harness::edit_through_callout(
+            &ctx,
+            width,
+            "Web thickness 4.5 mm",
+            "6",
+            &mut stock_form(&mut spec),
+        );
+        assert!(
+            matches!(spec, StockKind::Profile { web_mm: Some(t), .. } if t == 6.),
+            "{width}: {spec:?}"
+        );
+    }
+
+    // A web as wide as the section is refused in plain words and its
+    // callout is the one marked.
+    let mut bad = open_profile(ProfileShape::Tee, 50., 50., 6., 50.);
+    assert_eq!(picker::invalid_key(&bad), Some(picker::WEB));
+    let painted = harness::frame(&ctx, 420., vec![], &mut stock_form(&mut bad));
+    assert!(painted.has("The web must be thinner than the width (50 mm)"));
+    let thick = open_profile(ProfileShape::Beam, 60., 30., 15., 5.);
+    assert_eq!(picker::invalid_key(&thick), Some(picker::WALL));
 }

@@ -909,6 +909,7 @@ pub fn build() -> Result<Scenario, Error> {
             shape: ProfileShape::Rectangular,
             section: None,
             corner_radius_mm: None,
+            web_mm: None,
         },
     })
     .entity(EntityId::new(), "SHS 40×40×2")?;

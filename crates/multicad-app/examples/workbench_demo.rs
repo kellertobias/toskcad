@@ -156,6 +156,7 @@ fn profile(
             shape: ProfileShape::Rectangular,
             section: None,
             corner_radius_mm: None,
+            web_mm: None,
         },
     })
     .entity(EntityId::new(), designation)?)

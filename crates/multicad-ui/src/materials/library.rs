@@ -316,6 +316,7 @@ impl LibraryEditor {
                     shape: ProfileShape::Rectangular,
                     section: None,
                     corner_radius_mm: None,
+                    web_mm: None,
                 },
             ),
         }
@@ -1310,6 +1311,7 @@ fn stock_default(i: usize) -> StockKind {
             shape: ProfileShape::Rectangular,
             section: None,
             corner_radius_mm: None,
+            web_mm: None,
         },
         _ => StockKind::Print {
             process: "FDM".into(),
@@ -1404,6 +1406,7 @@ fn profile_controls(
             shape,
             section,
             corner_radius_mm,
+            web_mm,
             ..
         } = spec
         else {
@@ -1437,6 +1440,15 @@ fn profile_controls(
             if *shape != ProfileShape::Rectangular {
                 *corner_radius_mm = None;
             }
+            if shape.has_web() {
+                // Start from a section that validates: flanges and web of a
+                // tenth of the smaller side.
+                let t = (width_mm.min(*height_mm) / 10.).max(1.);
+                wall_mm.get_or_insert(t);
+                web_mm.get_or_insert(t);
+            } else {
+                *web_mm = None;
+            }
         }
         if matches!(*shape, ProfileShape::Rectangular | ProfileShape::Round) && !solid_rectangular {
             let mut hollow = wall_mm.is_some();
@@ -1458,6 +1470,7 @@ fn profile_controls(
         shape,
         section,
         corner_radius_mm,
+        web_mm,
     } = spec
     else {
         return;
@@ -1533,19 +1546,27 @@ fn profile_controls(
                 );
             }
             if let Some(v) = wall_mm {
-                let angle = *shape == ProfileShape::Angle;
+                let (label, help) = match *shape {
+                    ProfileShape::Angle => ("Leg thickness", "Thickness of both legs"),
+                    _ if shape.has_web() => ("Flange thickness", "Thickness of the flanges"),
+                    _ => ("Wall", "Tube wall thickness"),
+                };
+                picker::linked_number(ui, &mut link, picker::WALL, label, v, help);
+            }
+            if let Some(v) = web_mm.as_mut().filter(|_| shape.has_web()) {
                 picker::linked_number(
                     ui,
                     &mut link,
-                    picker::WALL,
-                    if angle { "Leg thickness" } else { "Wall" },
+                    picker::WEB,
+                    "Web thickness",
                     v,
-                    if angle {
-                        "Thickness of both legs"
-                    } else {
-                        "Tube wall thickness"
-                    },
+                    "Thickness of the web between or below the flanges",
                 );
+            }
+            if let Some(problem) = multicad_core::materials::web_problem(
+                *shape, *width_mm, *height_mm, *wall_mm, *web_mm,
+            ) {
+                ui.colored_label(ui.visuals().error_fg_color, problem);
             }
             if *shape == ProfileShape::Rectangular && !solid_rectangular {
                 let mut radius = corner_radius_mm.unwrap_or(0.);
@@ -1568,6 +1589,7 @@ fn profile_controls(
                     shape: *shape,
                     section: None,
                     corner_radius_mm: *corner_radius_mm,
+                    web_mm: *web_mm,
                 };
                 match corner_radius_mm.and_then(|r| {
                     multicad_core::materials::corner_radius_problem(

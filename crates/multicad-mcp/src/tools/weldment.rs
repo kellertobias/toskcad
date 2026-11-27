@@ -29,6 +29,17 @@ pub enum ProfileShapeArg {
     Angle,
     /// A custom cross-section drawn with `section` or given as `section_sketch`.
     Sketch,
+    /// Channel (U/C): web of `web_mm` along the height, flanges of `wall_mm`.
+    Channel,
+    /// T section: a flange of `wall_mm` across the width, a centred web below.
+    Tee,
+    /// I/H beam: flanges of `wall_mm` at both ends, a centred web between.
+    Beam,
+}
+impl ProfileShapeArg {
+    fn has_web(self) -> bool {
+        matches!(self, Self::Channel | Self::Tee | Self::Beam)
+    }
 }
 /// One element of a custom profile section, in section-plane millimeters.
 /// Endpoints at the same coordinates join; together the elements must
@@ -89,7 +100,8 @@ pub struct ProfileStockArgs {
     #[serde(default)]
     pub material_name: Option<String>,
     /// rectangular (SHS/RHS tube or flat bar), round (CHS tube or round bar),
-    /// angle, or sketch (a custom section from `section` or `section_sketch`).
+    /// angle, channel, tee, beam (I/H), or sketch (a custom section from
+    /// `section` or `section_sketch`).
     pub shape: ProfileShapeArg,
     /// Section width; for round stock the outside diameter. Derived from the
     /// section for sketch stock.
@@ -105,9 +117,13 @@ pub struct ProfileStockArgs {
     /// Sketch stock: a canonical constraint sketch instead of `section`.
     #[serde(default)]
     pub section_sketch: Option<Value>,
-    /// Tube wall or angle leg thickness. Omit for a solid bar; required for an angle.
+    /// Tube wall or angle leg thickness. Omit for a solid bar; required for an
+    /// angle. For channel, tee and beam: the flange thickness (required).
     #[serde(default)]
     pub wall_mm: Option<f64>,
+    /// Channel, tee and beam only: the web thickness (required for them).
+    #[serde(default)]
+    pub web_mm: Option<f64>,
     /// Bar length the stock is supplied in (default 6000).
     #[serde(default)]
     pub bar_length_mm: Option<f64>,
@@ -398,6 +414,11 @@ pub(super) fn create_profile_stock(
                     "Sketch stock has no corner_radius_mm; draw the arcs in the section instead",
                 ));
             }
+            if args.web_mm.is_some() {
+                return Err(ToolError::invalid(
+                    "Sketch stock has no web_mm; draw the section instead",
+                ));
+            }
             if args.wall_mm.is_some() {
                 return Err(ToolError::invalid(
                     "Sketch stock has no wall_mm; draw holes in the section instead",
@@ -430,7 +451,7 @@ pub(super) fn create_profile_stock(
             }
             let (Some(width_mm), Some(height_mm)) = (args.width_mm, args.height_mm) else {
                 return Err(ToolError::invalid(
-                    "Give width_mm and height_mm for rectangular, round and angle stock",
+                    "Give width_mm and height_mm for rectangular, round, angle, channel, tee and beam stock",
                 ));
             };
             StockKind::Profile {
@@ -443,9 +464,13 @@ pub(super) fn create_profile_stock(
                     ProfileShapeArg::Rectangular => ProfileShape::Rectangular,
                     ProfileShapeArg::Round => ProfileShape::Round,
                     ProfileShapeArg::Angle | ProfileShapeArg::Sketch => ProfileShape::Angle,
+                    ProfileShapeArg::Channel => ProfileShape::Channel,
+                    ProfileShapeArg::Tee => ProfileShape::Tee,
+                    ProfileShapeArg::Beam => ProfileShape::Beam,
                 },
                 section: None,
                 corner_radius_mm: args.corner_radius_mm,
+                web_mm: args.web_mm,
             }
         };
         let stock = LibraryDefinition::Stock(Stock {
@@ -456,6 +481,8 @@ pub(super) fn create_profile_stock(
         .map_err(|e| {
             if matches!(args.shape, ProfileShapeArg::Sketch) {
                 ToolError::invalid(format!("Invalid sketch profile stock: {e}"))
+            } else if args.shape.has_web() || args.web_mm.is_some() {
+                ToolError::invalid(format!("Invalid profile stock: {e}"))
             } else {
                 ToolError::invalid(
                     "Invalid profile stock: sizes must be positive, round stock needs width = height, an angle needs wall_mm, and twice the wall must fit the section",
@@ -960,6 +987,7 @@ fn sketch_spec(
             sketch: solved.sketch,
         })),
         corner_radius_mm: None,
+        web_mm: None,
     }
 }
 

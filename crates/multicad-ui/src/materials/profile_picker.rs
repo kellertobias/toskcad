@@ -13,7 +13,7 @@ use crate::{
 use multicad_core::{
     materials::{
         ProfileShape, StockKind, corner_radius_problem, format_mm, inner_corner_radius,
-        profile_description,
+        profile_description, web_problem,
     },
     model::{ProfileSection, resolve_sketch_section, sample_section_loop},
 };
@@ -23,10 +23,11 @@ pub(crate) const HEIGHT: Key = "stock.height";
 pub(crate) const DIAMETER: Key = "stock.diameter";
 pub(crate) const WALL: Key = "stock.wall";
 pub(crate) const RADIUS: Key = "stock.corner_radius";
+pub(crate) const WEB: Key = "stock.web";
 
 /// Shape families in picker order, with their accessible label and the
 /// plain-language types each covers.
-pub(crate) const FAMILIES: [(ProfileShape, &str, &str); 5] = [
+pub(crate) const FAMILIES: [(ProfileShape, &str, &str); 8] = [
     (
         ProfileShape::Rectangular,
         "Rectangular",
@@ -38,6 +39,21 @@ pub(crate) const FAMILIES: [(ProfileShape, &str, &str); 5] = [
         "Round tube; round bar without a wall",
     ),
     (ProfileShape::Angle, "Angle", "L section with two legs"),
+    (
+        ProfileShape::Channel,
+        "Channel",
+        "U or C section: a web with two flanges",
+    ),
+    (
+        ProfileShape::Tee,
+        "T section",
+        "One flange with a centred web",
+    ),
+    (
+        ProfileShape::Beam,
+        "I/H beam",
+        "Two flanges joined by a centred web",
+    ),
     (
         ProfileShape::ItemLine8_40x40,
         "Slot profile 40×40 (item Line 8)",
@@ -69,6 +85,7 @@ pub(crate) fn section(spec: &StockKind) -> Option<ProfileSection> {
         shape,
         section,
         corner_radius_mm,
+        web_mm,
     } = spec
     else {
         return None;
@@ -84,7 +101,24 @@ pub(crate) fn section(spec: &StockKind) -> Option<ProfileSection> {
         (ProfileShape::Sketch, None) => return None,
         _ => None,
     };
-    let wall_mm = wall_mm.filter(|t| positive(*t) && t * 2. < width_mm.min(*height_mm));
+    let (wall_mm, web_mm) = if shape.has_web() {
+        // A draft with a missing or oversized thickness still gets a
+        // drawable picture; `invalid_key` marks the field to fix.
+        let flanges = if *shape == ProfileShape::Tee { 1. } else { 2. };
+        let fit = |v: Option<f64>, limit: f64| {
+            Some(
+                v.filter(|v| positive(*v))
+                    .unwrap_or(limit * 0.2)
+                    .min(limit * 0.9),
+            )
+        };
+        (fit(*wall_mm, height_mm / flanges), fit(*web_mm, *width_mm))
+    } else {
+        (
+            wall_mm.filter(|t| positive(*t) && t * 2. < width_mm.min(*height_mm)),
+            None,
+        )
+    };
     let corner_radius_mm = corner_radius_mm
         .filter(|r| corner_radius_problem(*shape, *width_mm, *height_mm, wall_mm, *r).is_none());
     Some(ProfileSection {
@@ -96,17 +130,25 @@ pub(crate) fn section(spec: &StockKind) -> Option<ProfileSection> {
         stock_length_mm: *length_mm,
         custom,
         corner_radius_mm,
+        web_mm,
     })
 }
 
 /// A representative section of a family, for the type picker.
 pub(crate) fn sample(shape: ProfileShape, hollow: bool) -> ProfileSection {
+    let web = match shape {
+        ProfileShape::Channel | ProfileShape::Beam => Some(4.),
+        ProfileShape::Tee => Some(5.),
+        _ => None,
+    };
     let (w, h, wall, r) = match (shape, hollow) {
         (ProfileShape::Rectangular, true) => (40., 30., Some(3.), Some(5.)),
         (ProfileShape::Rectangular, false) => (40., 12., None, None),
         (ProfileShape::Round, true) => (40., 40., Some(4.), None),
         (ProfileShape::Round, false) => (40., 40., None, None),
         (ProfileShape::Angle, _) => (40., 40., Some(6.), None),
+        (ProfileShape::Channel, _) => (24., 40., Some(5.), None),
+        (ProfileShape::Tee | ProfileShape::Beam, _) => (40., 40., Some(5.), None),
         (ProfileShape::ItemLine8_40x40 | ProfileShape::Sketch, _) => (40., 40., None, None),
     };
     ProfileSection {
@@ -122,6 +164,7 @@ pub(crate) fn sample(shape: ProfileShape, hollow: bool) -> ProfileSection {
         stock_length_mm: 6000.,
         custom: None,
         corner_radius_mm: r,
+        web_mm: web,
     }
 }
 
@@ -189,6 +232,9 @@ pub(crate) fn keys(spec: &StockKind) -> Vec<Key> {
         ProfileShape::Round if wall_mm.is_some() => vec![DIAMETER, WALL],
         ProfileShape::Round => vec![DIAMETER],
         ProfileShape::Angle => vec![WIDTH, HEIGHT, WALL],
+        ProfileShape::Channel | ProfileShape::Tee | ProfileShape::Beam => {
+            vec![WIDTH, HEIGHT, WALL, WEB]
+        }
         ProfileShape::ItemLine8_40x40 | ProfileShape::Sketch => vec![],
     }
 }
@@ -234,12 +280,30 @@ pub(crate) fn diagram(spec: &StockKind) -> Diagram {
     }
     if keys.contains(&WALL) {
         let t = wall_mm.unwrap_or(0.) as f32;
-        let (at, name) = if *shape == ProfileShape::Angle {
-            ([t / 2., h * 0.7], "Leg thickness")
-        } else {
-            ([t / 2., h * 0.55], "Wall")
+        let (at, name) = match shape {
+            ProfileShape::Angle => ([t / 2., h * 0.7], "Leg thickness"),
+            _ if shape.has_web() => {
+                let tf = section.wall_mm.unwrap_or(0.) as f32;
+                ([w * 0.15, h - tf / 2.], "Flange thickness")
+            }
+            _ => ([t / 2., h * 0.55], "Wall"),
         };
         d = d.leader(WALL, at, [-0.55 * s, h + 0.2 * s], Notation::Length, name);
+    }
+    if keys.contains(&WEB) {
+        let tw = section.web_mm.unwrap_or(0.) as f32;
+        let at = if *shape == ProfileShape::Channel {
+            [tw / 2., h * 0.4]
+        } else {
+            [w / 2., h * 0.4]
+        };
+        d = d.leader(
+            WEB,
+            at,
+            [w + 0.3 * s, -0.3 * s],
+            Notation::Length,
+            "Web thickness",
+        );
     }
     if keys.contains(&RADIUS) {
         let r = corner_radius_mm.unwrap_or(0.) as f32;
@@ -266,6 +330,7 @@ pub(crate) fn callout_value(spec: &StockKind, key: Key) -> String {
         height_mm,
         wall_mm,
         corner_radius_mm,
+        web_mm,
         ..
     } = spec
     else {
@@ -276,6 +341,7 @@ pub(crate) fn callout_value(spec: &StockKind, key: Key) -> String {
         HEIGHT => format!("{} mm", format_mm(*height_mm)),
         WALL => wall_mm.map_or("?".into(), |t| format!("{} mm", format_mm(t))),
         RADIUS => corner_radius_mm.map_or("sharp".into(), |r| format!("{} mm", format_mm(r))),
+        WEB => web_mm.map_or("?".into(), |t| format!("{} mm", format_mm(t))),
         _ => "?".into(),
     }
 }
@@ -288,6 +354,7 @@ pub(crate) fn invalid_key(spec: &StockKind) -> Option<Key> {
         wall_mm,
         shape,
         corner_radius_mm,
+        web_mm,
         ..
     } = spec
     else {
@@ -303,6 +370,16 @@ pub(crate) fn invalid_key(spec: &StockKind) -> Option<Key> {
     }
     if wall_mm.is_some_and(|t| !positive(t) || t * 2. > width_mm.min(*height_mm)) {
         return Some(WALL);
+    }
+    if web_problem(*shape, *width_mm, *height_mm, *wall_mm, *web_mm).is_some() {
+        // The web is checked against the width, the flanges against the
+        // height: name whichever of the two is out of range.
+        let web_bad = web_mm.is_none_or(|t| !positive(t) || t >= *width_mm);
+        return Some(if web_bad && shape.has_web() {
+            WEB
+        } else {
+            WALL
+        });
     }
     corner_radius_mm
         .filter(|r| corner_radius_problem(*shape, *width_mm, *height_mm, *wall_mm, *r).is_some())
@@ -362,6 +439,8 @@ pub(crate) fn type_picker(ui: &mut egui::Ui, spec: &StockKind, shape: &mut Profi
         egui::ComboBox::from_id_salt("profile-shape")
             .selected_text(family_label(*shape))
             .width((ui.available_width() - 8.).clamp(80., 260.))
+            // Every pictured type stays in view; the list never scrolls.
+            .height(f32::INFINITY)
             .show_ui(ui, |ui| {
                 ui.set_min_width(240.);
                 for (family, ..) in FAMILIES {

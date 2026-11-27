@@ -183,6 +183,14 @@ impl SectionEditor {
                     closed: true,
                 });
             }
+            ProfileShape::Channel | ProfileShape::Tee | ProfileShape::Beam => {
+                if let Some(section) = super::profile_picker::section(specification) {
+                    seed(DrawInput::Polyline {
+                        vertices: section.outline_points().into_iter().map(p).collect(),
+                        closed: true,
+                    });
+                }
+            }
             ProfileShape::ItemLine8_40x40 | ProfileShape::Sketch => {}
         }
         // Dimension each outside edge length and circle diameter once.

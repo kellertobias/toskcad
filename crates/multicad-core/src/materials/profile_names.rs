@@ -31,6 +31,9 @@ pub fn profile_family(shape: ProfileShape, wall_mm: Option<f64>, square: bool) -
         (ProfileShape::Angle, _, false) => "Unequal angle",
         (ProfileShape::ItemLine8_40x40, ..) => "Aluminium slot profile",
         (ProfileShape::Sketch, ..) => "Custom section",
+        (ProfileShape::Channel, ..) => "Channel",
+        (ProfileShape::Tee, ..) => "T section",
+        (ProfileShape::Beam, ..) => "I/H beam",
     }
 }
 
@@ -44,6 +47,7 @@ pub fn profile_description(specification: &StockKind) -> Option<String> {
         wall_mm,
         shape,
         corner_radius_mm,
+        web_mm,
         ..
     } = specification
     else {
@@ -66,6 +70,16 @@ pub fn profile_description(specification: &StockKind) -> Option<String> {
             return Some(format!("{family} 40×40, 8 mm slot (item Line 8 system)"));
         }
         ProfileShape::Sketch => format!("{family} {w}×{h} mm, drawn as a sketch"),
+        ProfileShape::Channel | ProfileShape::Tee | ProfileShape::Beam => {
+            let mut text = format!("{family} {w}×{h} mm");
+            if let Some(t) = &wall {
+                text.push_str(&format!(", flange {t} mm"));
+            }
+            if let Some(t) = web_mm {
+                text.push_str(&format!(", web {} mm", format_mm(*t)));
+            }
+            text
+        }
     };
     if let Some(r) = corner_radius_mm {
         text.push_str(&format!(", corner radius R{} mm", format_mm(*r)));
@@ -92,7 +106,15 @@ mod tests {
             shape,
             section: None,
             corner_radius_mm: r,
+            web_mm: None,
         }
+    }
+    fn open(shape: ProfileShape, w: f64, h: f64, flange: f64, web: f64) -> StockKind {
+        let mut spec = profile(shape, w, h, Some(flange), None);
+        if let StockKind::Profile { web_mm, .. } = &mut spec {
+            *web_mm = Some(web);
+        }
+        spec
     }
     #[test]
     fn every_profile_family_gets_a_plain_description_without_its_designation() {
@@ -130,6 +152,18 @@ mod tests {
             (
                 profile(ItemLine8_40x40, 40., 40., None, None),
                 "Aluminium slot profile 40×40, 8 mm slot (item Line 8 system)",
+            ),
+            (
+                open(Channel, 55., 100., 7.5, 4.),
+                "Channel 55×100 mm, flange 7.5 mm, web 4 mm",
+            ),
+            (
+                open(Tee, 50., 50., 6., 6.),
+                "T section 50×50 mm, flange 6 mm, web 6 mm",
+            ),
+            (
+                open(Beam, 100., 200., 8.5, 5.6),
+                "I/H beam 100×200 mm, flange 8.5 mm, web 5.6 mm",
             ),
         ] {
             let text = profile_description(&spec).unwrap();

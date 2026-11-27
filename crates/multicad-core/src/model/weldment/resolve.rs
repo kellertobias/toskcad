@@ -232,6 +232,9 @@ pub struct ProfileSection {
     pub custom: Option<super::SketchSection>,
     /// Outside corner radius of a rectangular section; none when sharp.
     pub corner_radius_mm: Option<f64>,
+    /// Web thickness of a channel, T or I/H section (`wall_mm` is then the
+    /// flange thickness); none for every other shape.
+    pub web_mm: Option<f64>,
 }
 impl ProfileSection {
     pub fn from_stock(stock: &Stock) -> Result<Self, DocumentError> {
@@ -244,6 +247,7 @@ impl ProfileSection {
             shape,
             section,
             corner_radius_mm,
+            web_mm,
         } = &stock.specification
         else {
             return Err(invalid("Members need profile stock"));
@@ -266,6 +270,7 @@ impl ProfileSection {
             stock_length_mm: *length_mm,
             custom,
             corner_radius_mm: corner_radius_mm.filter(|_| *shape == ProfileShape::Rectangular),
+            web_mm: web_mm.filter(|_| shape.has_web()),
         })
     }
     pub fn is_sketch(&self) -> bool {
@@ -287,7 +292,60 @@ impl ProfileSection {
         if let Some(custom) = &self.custom {
             return !custom.holes.is_empty();
         }
-        self.is_item_line_8_40x40() || (self.wall_mm.is_some() && self.shape != ProfileShape::Angle)
+        self.is_item_line_8_40x40()
+            || (self.wall_mm.is_some()
+                && matches!(self.shape, ProfileShape::Rectangular | ProfileShape::Round))
+    }
+    /// A parametric channel, T or I/H section: straight-sided and open, so
+    /// it mitres and butts as the terminating member, but has no exact
+    /// grown outside for copes or running-through butts yet.
+    pub fn is_open_section(&self) -> bool {
+        self.shape.has_web()
+    }
+    /// The straight-sided outline of a channel, T or I/H section,
+    /// counterclockwise, with flanges of `wall_mm` and a web of `web_mm`.
+    fn open_section_outline(&self) -> Vec<[f64; 2]> {
+        let (w, h) = (self.width_mm, self.height_mm);
+        let (tf, tw) = (self.wall_mm.unwrap_or(0.), self.web_mm.unwrap_or(0.));
+        let (a, b) = ((w - tw) / 2., (w + tw) / 2.);
+        match self.shape {
+            // Web on the −x side, flanges reaching toward +x.
+            ProfileShape::Channel => vec![
+                [0., 0.],
+                [w, 0.],
+                [w, tf],
+                [tw, tf],
+                [tw, h - tf],
+                [w, h - tf],
+                [w, h],
+                [0., h],
+            ],
+            // Flange on top, centred web below it.
+            ProfileShape::Tee => vec![
+                [a, 0.],
+                [b, 0.],
+                [b, h - tf],
+                [w, h - tf],
+                [w, h],
+                [0., h],
+                [0., h - tf],
+                [a, h - tf],
+            ],
+            _ => vec![
+                [0., 0.],
+                [w, 0.],
+                [w, tf],
+                [b, tf],
+                [b, h - tf],
+                [w, h - tf],
+                [w, h],
+                [0., h],
+                [0., h - tf],
+                [a, h - tf],
+                [a, tf],
+                [0., tf],
+            ],
+        }
     }
     /// The outside boundary, grown outward by `grow_mm` (0 for the section
     /// itself; a positive value for a clearance envelope).
@@ -325,6 +383,14 @@ impl ProfileSection {
                 ])
             }
             ProfileShape::ItemLine8_40x40 if g == 0. => SectionLoop::Curved(item_line_8_outer()),
+            ProfileShape::Channel | ProfileShape::Tee | ProfileShape::Beam if g == 0. => {
+                SectionLoop::Polygon(self.open_section_outline())
+            }
+            // A conservative outside cover. Copes against these sections
+            // are refused, so this never shapes a cut.
+            ProfileShape::Channel | ProfileShape::Tee | ProfileShape::Beam => {
+                SectionLoop::Polygon(vec![[-g, -g], [w + g, -g], [w + g, h + g], [-g, h + g]])
+            }
             // A conservative outside cover. The native evaluator refuses
             // weld/cope operations on the slotted mounting section.
             ProfileShape::ItemLine8_40x40 | ProfileShape::Sketch => {
@@ -389,7 +455,12 @@ impl ProfileSection {
                 center: [w / 2., h / 2.],
                 radius_mm: w / 2. - t,
             }],
-            ProfileShape::Angle | ProfileShape::ItemLine8_40x40 | ProfileShape::Sketch => vec![],
+            ProfileShape::Angle
+            | ProfileShape::ItemLine8_40x40
+            | ProfileShape::Sketch
+            | ProfileShape::Channel
+            | ProfileShape::Tee
+            | ProfileShape::Beam => vec![],
         }
     }
     /// Exact cross-section area of the modeled section.
@@ -423,6 +494,14 @@ impl ProfileSection {
             (ProfileShape::ItemLine8_40x40, _) => item_line_8_area(),
             // A sketch section without its resolved geometry has no area.
             (ProfileShape::Sketch, _) => 0.,
+            (ProfileShape::Channel | ProfileShape::Tee | ProfileShape::Beam, tf) => {
+                let (tf, tw) = (tf.unwrap_or(0.), self.web_mm.unwrap_or(0.));
+                match self.shape {
+                    ProfileShape::Channel => w * h - (w - tw) * (h - 2. * tf),
+                    ProfileShape::Tee => w * tf + tw * (h - tf),
+                    _ => 2. * w * tf + tw * (h - 2. * tf),
+                }
+            }
         }
     }
     /// Points describing the outside shape: polygon vertices, or the four
@@ -467,6 +546,9 @@ impl ProfileSection {
             (ProfileShape::Round, Some(_)) => "round tube",
             (ProfileShape::Round, None) => "round bar",
             (ProfileShape::Angle, _) => "angle",
+            (ProfileShape::Channel, _) => "channel",
+            (ProfileShape::Tee, _) => "T section",
+            (ProfileShape::Beam, _) => "I/H beam",
             (ProfileShape::ItemLine8_40x40, _) => "item Line 8 40×40 · four open grooves",
             (ProfileShape::Sketch, _) if self.is_hollow() => "custom hollow sketch section",
             (ProfileShape::Sketch, _) => "custom sketch section",
@@ -734,6 +816,7 @@ mod tests {
             stock_length_mm: 6000.,
             custom: None,
             corner_radius_mm: None,
+            web_mm: None,
         };
         near(
             s(ProfileShape::Rectangular, 40., 20., Some(2.)).area_mm2(),

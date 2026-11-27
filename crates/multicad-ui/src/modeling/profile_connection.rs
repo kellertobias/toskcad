@@ -607,6 +607,7 @@ mod tests {
                 shape: ProfileShape::ItemLine8_40x40,
                 section: None,
                 corner_radius_mm: None,
+                web_mm: None,
             },
         })
         .entity(stock, "Line 8 section")
@@ -775,6 +776,7 @@ mod tests {
                     shape: ProfileShape::ItemLine8_40x40,
                     section: None,
                     corner_radius_mm: None,
+                    web_mm: None,
                 },
             })
             .entity(EntityId::new(), "Line 8 stock")
