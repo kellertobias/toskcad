@@ -21,6 +21,8 @@ pub enum ShapeSize {
     Length,
     Diameter,
     Radius,
+    /// Chamfer setback from the original corner (CAD-414).
+    Distance,
 }
 impl ShapeSize {
     pub fn label(self) -> &'static str {
@@ -30,6 +32,7 @@ impl ShapeSize {
             Self::Length => "Length",
             Self::Diameter => "Diameter",
             Self::Radius => "Radius",
+            Self::Distance => "Distance",
         }
     }
 }
@@ -42,7 +45,8 @@ pub fn sizes(shape: &Shape) -> &'static [ShapeSize] {
         ShapeKind::Rectangle if shape.curves.len() == 4 => &[ShapeSize::Width, ShapeSize::Height],
         ShapeKind::Line => &[ShapeSize::Length],
         ShapeKind::Circle => &[ShapeSize::Diameter],
-        ShapeKind::Arc => &[ShapeSize::Radius],
+        ShapeKind::Arc | ShapeKind::Fillet => &[ShapeSize::Radius],
+        ShapeKind::Chamfer => &[ShapeSize::Distance],
         _ => &[],
     }
 }
@@ -67,12 +71,99 @@ fn matches_size(kind: &ConstraintKind, curve: EntityId, size: ShapeSize) -> bool
         _ => false,
     }
 }
+/// The driving dimension constraints that size a fillet or chamfer
+/// (CAD-414): a fillet's Radius on its arc; a chamfer's setback on each side,
+/// a Length on the construction line from a chamfer end to the virtual sharp
+/// (line sides) or a point Distance from a chamfer end (arc sides).
+pub fn corner_constraints(sketch: &Sketch, shape: &Shape) -> Vec<EntityId> {
+    let Some(curve) = shape.curves.first().copied() else {
+        return vec![];
+    };
+    match shape.kind {
+        ShapeKind::Fillet => sketch
+            .constraints
+            .iter()
+            .filter(|c| {
+                !c.reference
+                    && matches!(c.kind, ConstraintKind::Radius { curve: arc, .. } if arc == curve)
+            })
+            .map(|c| c.id)
+            .take(1)
+            .collect(),
+        ShapeKind::Chamfer => {
+            let Some(CurveKind::Line { start, end }) = sketch
+                .curves
+                .iter()
+                .find(|c| c.id == curve)
+                .map(|c| c.kind.clone())
+            else {
+                return vec![];
+            };
+            let ends = [start, end];
+            let helper_from_end = |line: EntityId| {
+                sketch.curves.iter().any(|c| {
+                    c.id == line
+                        && c.construction
+                        && matches!(c.kind, CurveKind::Line { start, .. } if ends.contains(&start))
+                })
+            };
+            sketch
+                .constraints
+                .iter()
+                .filter(|c| !c.reference)
+                .filter(|c| match c.kind {
+                    ConstraintKind::Length { line, .. } => helper_from_end(line),
+                    ConstraintKind::Distance { a, .. } => ends.contains(&a),
+                    _ => false,
+                })
+                .map(|c| c.id)
+                .collect()
+        }
+        _ => vec![],
+    }
+}
+/// The canonical radius or setback of a fillet or chamfer (CAD-414).
+pub fn corner_size(sketch: &Sketch, shape: &Shape) -> Option<Dimension> {
+    let id = corner_constraints(sketch, shape).into_iter().next()?;
+    sketch
+        .constraints
+        .iter()
+        .find(|c| c.id == id)
+        .and_then(|c| c.kind.dimension().cloned())
+}
+/// List label of a fillet or chamfer with its size, e.g. "Fillet R10" or
+/// "Chamfer 2.5" (millimetres, trailing zeros trimmed); an expression size is
+/// shown as written. Other shapes keep their name.
+pub fn corner_label(sketch: &Sketch, shape: &Shape) -> String {
+    let prefix = match shape.kind {
+        ShapeKind::Fillet => "Fillet R",
+        ShapeKind::Chamfer => "Chamfer ",
+        _ => return shape.name.clone(),
+    };
+    match corner_size(sketch, shape) {
+        Some(Dimension::Literal { value, unit }) => {
+            let text = format!("{value:.3}");
+            let text = text.trim_end_matches('0').trim_end_matches('.');
+            if unit == "mm" {
+                format!("{prefix}{text}")
+            } else {
+                format!("{prefix}{text} {unit}")
+            }
+        }
+        Some(Dimension::Expression { expression }) => format!("{prefix}{}", expression.text),
+        None => shape.kind.label().into(),
+    }
+}
 /// The driving (non-reference) dimension constraint for `size`, if any.
 pub fn size_constraint<'a>(
     sketch: &'a Sketch,
     shape: &Shape,
     size: ShapeSize,
 ) -> Option<&'a Constraint> {
+    if shape.kind.corner() {
+        let id = corner_constraints(sketch, shape).into_iter().next()?;
+        return sketch.constraints.iter().find(|c| c.id == id);
+    }
     let curve = size_curve(shape, size)?;
     sketch
         .constraints
@@ -143,6 +234,22 @@ pub fn set_size(
             size.label().to_lowercase()
         ))
     })?;
+    if found.kind.corner() {
+        // Every side of a chamfer keeps the same setback; one transaction.
+        let constraints = corner_constraints(&source.sketch, &found);
+        if constraints.is_empty() {
+            return Err(invalid(format!(
+                "{} has lost its {} dimension",
+                found.name,
+                size.label().to_lowercase()
+            )));
+        }
+        let mut draft = source.clone();
+        for constraint in constraints {
+            draft = draft_dimension(document, &draft, constraint, input, false)?;
+        }
+        return Ok(draft);
+    }
     let mut draft = source.clone();
     let constraint = match size_constraint(&draft.sketch, &found, size) {
         Some(existing) => existing.id,

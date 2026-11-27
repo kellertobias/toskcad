@@ -337,6 +337,9 @@ impl ProjectFile {
         if crate::constraint_sketch::source::requires_shapes(&self.document) {
             required.insert(crate::constraint_sketch::source::SHAPES_CAPABILITY.into());
         }
+        if crate::constraint_sketch::source::requires_corner_shapes(&self.document) {
+            required.insert(crate::constraint_sketch::source::CORNER_SHAPES_CAPABILITY.into());
+        }
         if crate::constraint_sketch::source::requires_text(&self.document) {
             required.insert(crate::constraint_sketch::text::CAPABILITY.into());
         }
@@ -524,6 +527,7 @@ pub fn supported_capabilities() -> BTreeSet<String> {
         crate::inspection::CAPABILITY.into(),
         crate::constraint_sketch::source::V4_CAPABILITY.into(),
         crate::constraint_sketch::source::SHAPES_CAPABILITY.into(),
+        crate::constraint_sketch::source::CORNER_SHAPES_CAPABILITY.into(),
         crate::constraint_sketch::text::CAPABILITY.into(),
         crate::constraint_sketch::text::LEGACY_CAPABILITY.into(),
         crate::sketch_external::CAPABILITY.into(),
