@@ -170,7 +170,7 @@ impl Tool {
         })
     }
 }
-fn label(kind: &Kind) -> &'static str {
+pub(crate) fn label(kind: &Kind) -> &'static str {
     match kind {
         Kind::Fix { .. } => "Fixed",
         Kind::Coincident { .. } => "Coincident",

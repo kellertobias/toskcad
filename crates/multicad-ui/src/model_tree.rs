@@ -1314,18 +1314,26 @@ impl DropPosition {
 }
 
 fn disclosure(ui: &mut egui::Ui, row: &TreeRow) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(16., 24.), egui::Sense::click());
     let verb = if row.expanded { "Collapse" } else { "Expand" };
     let label = if row.presentation.part.is_some() {
         format!("{verb} feature history for {}", row.name)
     } else {
         format!("{verb} {}", row.name)
     };
+    disclosure_chevron(ui, row.expanded, label)
+}
+/// The tree's expand/collapse chevron for a row named `name`.
+pub(crate) fn disclosure_button(ui: &mut egui::Ui, expanded: bool, name: &str) -> egui::Response {
+    let verb = if expanded { "Collapse" } else { "Expand" };
+    disclosure_chevron(ui, expanded, format!("{verb} {name}"))
+}
+fn disclosure_chevron(ui: &mut egui::Ui, expanded: bool, label: String) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(16., 24.), egui::Sense::click());
     let visuals = ui.style().interact(&response);
     if response.hovered() || response.has_focus() {
         ui.painter().rect_filled(rect, 3., visuals.weak_bg_fill);
     }
-    let chevron = if row.expanded {
+    let chevron = if expanded {
         [[-4., -2.], [0., 2.], [4., -2.]]
     } else {
         [[-2., -4.], [2., 0.], [-2., 4.]]
@@ -1388,7 +1396,7 @@ pub(super) fn feature_operation(document: &Document, feature: EntityId) -> Strin
     )
 }
 
-fn flat_row_label(
+pub(crate) fn flat_row_label(
     ui: &mut egui::Ui,
     width: f32,
     label: &str,
