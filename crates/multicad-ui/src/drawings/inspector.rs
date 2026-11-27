@@ -42,6 +42,10 @@ impl DrawingEditor {
             });
         self.note_inspector(ui);
         self.draft_placement_inspector(ui);
+        if self.view_placement_active() {
+            self.view_placement_inspector(ui);
+            return;
+        }
         if self.selected_view.is_some() {
             self.views_inspector(ui, session);
             return;

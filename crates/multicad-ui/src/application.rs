@@ -885,6 +885,14 @@ impl Application {
                     );
                 }
                 let p = self.current_mut();
+                if matches!(
+                    tool,
+                    crate::drawings::DrawingTool::AddView
+                        | crate::drawings::DrawingTool::StandardViews
+                ) {
+                    let selection = p.sketch.export_selection(p.session.document());
+                    p.drawings.set_model_selection(selection);
+                }
                 p.drawings.invoke(&mut p.session, tool, channel)?;
                 // Page Apply / Discard finish the current task in place.
                 let keep = self.mode == Mode::Drawings
@@ -5233,6 +5241,9 @@ mod ribbon_layout_tests {
 #[cfg(test)]
 #[path = "application/boolean_ux_tests.rs"]
 mod boolean_ux_tests;
+#[cfg(test)]
+#[path = "application/drawing_flow_tests.rs"]
+mod drawing_flow_tests;
 #[cfg(test)]
 #[path = "application/inspector_tests.rs"]
 mod inspector_tests;

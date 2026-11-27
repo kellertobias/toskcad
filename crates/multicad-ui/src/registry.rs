@@ -755,6 +755,8 @@ impl Default for Registry {
                             "page-setup",
                             "page-apply",
                             "page-discard",
+                            "drawing-add-view",
+                            "drawing-standard-views",
                             "drawing-projection",
                             "drawing-section",
                             "drawing-detail",

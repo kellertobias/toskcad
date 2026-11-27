@@ -43,6 +43,7 @@ impl DrawingEditor {
     pub(super) fn navigation_ready(&self) -> bool {
         !self.dirty()
             && self.placement.is_none()
+            && self.view_placement.is_none()
             && self.section_pick.is_none()
             && !self.schedules.chooser
             && !self.schedules.placing()
@@ -155,7 +156,8 @@ impl DrawingEditor {
                 )).inner.on_disabled_hover_text("Add or select a drawing sheet first").clicked() {
                     pdf_requested = true;
                 }
-                if ui.add_enabled_ui(ready, |ui| crate::icons::labeled_button_sized(
+                // With no drawing yet, the sheet area's New drawing is the one entry.
+                if !books.is_empty() && ui.add_enabled_ui(ready, |ui| crate::icons::labeled_button_sized(
                     ui, Icon::New, "New drawing", egui::vec2(ui.available_width(), 34.)
                 )).inner.on_disabled_hover_text("Apply/discard page edits or finish/cancel the current placement first").clicked() {
                     action = Some(Action::New);

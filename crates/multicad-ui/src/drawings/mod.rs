@@ -2,6 +2,7 @@
 mod annotations;
 mod canvas;
 mod evaluation;
+mod guided;
 mod inspector;
 mod loading;
 mod placement;
@@ -9,8 +10,11 @@ mod schedules;
 mod sidebar;
 mod views;
 pub use evaluation::{DrawingBackend, DrawingBackendFactory, DrawingReply};
+pub use guided::{StandardView, whole_model};
 pub use placement::Placement;
 pub use schedules::ScheduleStatus;
+#[cfg(test)]
+pub(crate) mod guided_tests;
 #[cfg(test)]
 mod loading_tests;
 #[cfg(test)]
@@ -38,6 +42,8 @@ pub enum DrawingTool {
     Apply,
     Discard,
     Text,
+    AddView,
+    StandardViews,
     Projection,
     Section,
     Detail,
@@ -64,7 +70,7 @@ impl DrawingTool {
         Self::Hatch,
         Self::DraftDimension,
     ];
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 25] = [
         Self::NewDocument,
         Self::AddPage,
         Self::Duplicate,
@@ -75,6 +81,8 @@ impl DrawingTool {
         Self::Apply,
         Self::Discard,
         Self::Text,
+        Self::AddView,
+        Self::StandardViews,
         Self::Projection,
         Self::Section,
         Self::Detail,
@@ -101,6 +109,8 @@ impl DrawingTool {
             Self::Apply => "page-apply",
             Self::Discard => "page-discard",
             Self::Text => "drawing-note",
+            Self::AddView => "drawing-add-view",
+            Self::StandardViews => "drawing-standard-views",
             Self::Projection => "drawing-projection",
             Self::Section => "drawing-section",
             Self::Detail => "drawing-detail",
@@ -128,6 +138,8 @@ impl DrawingTool {
             Self::Apply => "Apply page",
             Self::Discard => "Discard edits",
             Self::Text => "Text note",
+            Self::AddView => "Add view",
+            Self::StandardViews => "Standard views",
             Self::Projection => "Model view",
             Self::Section => "Section view",
             Self::Detail => "Detail view",
@@ -154,7 +166,8 @@ impl DrawingTool {
             Self::Discard => Icon::Undo,
             Self::Text => Icon::Sketch,
             Self::Duplicate => Icon::Page,
-            Self::Projection => Icon::Orthographic,
+            Self::Projection | Self::AddView => Icon::Orthographic,
+            Self::StandardViews => Icon::Grid,
             Self::Section => Icon::Section,
             Self::Detail => Icon::Fit,
             Self::Dimension | Self::DraftDimension => Icon::Measure,
@@ -178,6 +191,8 @@ impl DrawingTool {
             Self::Apply => &["applypage"],
             Self::Discard => &["discardpage"],
             Self::Text => &["pagenote"],
+            Self::AddView => &["addview"],
+            Self::StandardViews => &["standardviews", "threeviews"],
             Self::Projection => &["drawingview", "projection"],
             Self::Section => &["drawingsection"],
             Self::Detail => &["drawingdetail"],
@@ -227,6 +242,10 @@ pub struct DrawingEditor {
     /// The last current preview with its page and revision. A page that only
     /// moved views keeps showing it while the moved page regenerates.
     last_shown: Option<(Page, u64, std::sync::Arc<drawings::DrawingEvaluation>)>,
+    /// The model selection Add view shows instead of the whole model.
+    model_selection: Vec<EntityId>,
+    /// Add view or Standard views in progress.
+    view_placement: Option<guided::ViewPlacement>,
 }
 impl DrawingEditor {
     pub fn dirty(&self) -> bool {
@@ -303,7 +322,16 @@ impl DrawingEditor {
             DrawingTool::Projection | DrawingTool::Section | DrawingTool::Detail => {
                 self.selected.is_some() && self.has_backend_factory()
             }
-            DrawingTool::AddPage | DrawingTool::NewDocument => self.navigation_ready(),
+            DrawingTool::AddView | DrawingTool::StandardViews => {
+                self.selected.is_some()
+                    && self.has_backend_factory()
+                    && self.view_placement.is_none()
+                    && !self.placing()
+                    && self.section_pick.is_none()
+            }
+            // Without a drawing, New drawing is the one way to start.
+            DrawingTool::AddPage => self.book.is_some() && self.navigation_ready(),
+            DrawingTool::NewDocument => self.navigation_ready(),
             _ => self.selected.is_some() && self.navigation_ready(),
         }
     }
@@ -362,6 +390,12 @@ impl DrawingEditor {
             }),
             _ => None,
         };
+        if matches!(tool, DrawingTool::AddView | DrawingTool::StandardViews) {
+            if !self.has_backend_factory() {
+                return Err("Native drawing provider is unavailable".into());
+            }
+            return self.begin_view_placement(session, tool == DrawingTool::StandardViews);
+        }
         if let Some(kind) = view_kind {
             if !self.has_backend_factory() {
                 return Err("Native drawing provider is unavailable".into());
@@ -545,6 +579,7 @@ impl DrawingEditor {
                 });
             });
         self.tick_views(ui.ctx(), session);
+        self.tick_view_placement(session);
         self.tick_schedules(session);
         let mut event = canvas::CanvasEvent::default();
         egui::CentralPanel::default().show(ui, |ui| {
@@ -557,12 +592,22 @@ impl DrawingEditor {
                 }
                 ui.set_clip_rect(ui.clip_rect().intersect(ui.available_rect_before_wrap()));
                 let evaluation = self.shown_evaluation(session);
-                // A dragged view follows the pointer before the move is applied.
-                let moved = self.view_drag.and_then(|(id, delta)| {
-                    let mut page = page.clone();
-                    drawings::move_view(&mut page, id, delta).ok()?;
-                    Some(page)
+                // A dragged or added view follows the pointer before it is placed.
+                let pointer = ui.input(|i| i.pointer.hover_pos()).and_then(|p| {
+                    let (paper, scale) = self.last_paper?;
+                    paper.contains(p).then(|| {
+                        let mm = (p - paper.min) / scale;
+                        [mm.x as f64, mm.y as f64]
+                    })
                 });
+                let moved = self
+                    .view_drag
+                    .and_then(|(id, delta)| {
+                        let mut page = page.clone();
+                        drawings::move_view(&mut page, id, delta).ok()?;
+                        Some(page)
+                    })
+                    .or_else(|| self.following(pointer));
                 event = canvas::show(
                     ui,
                     &mut self.sheet_view,
@@ -588,25 +633,18 @@ impl DrawingEditor {
                 self.last_paper = event.paper;
                 if let Some((paper, scale)) = event.paper {
                     self.placement_overlay(ui, paper, scale);
+                    self.view_placement_overlay(ui, paper, scale);
                 }
-            } else {
-                ui.centered_and_justified(|ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.heading("No drawing pages");
-                        ui.label(
-                            "Add paper to configure a drawing. Model views are added separately.",
-                        );
-                        if ui.button("Add page").clicked()
-                            && let Err(error) =
-                                self.invoke(session, DrawingTool::AddPage, Channel::Ui)
-                        {
-                            self.error = Some(error);
-                        }
-                    });
-                });
+                if let Some(hint) = self.next_step_hint() {
+                    hint_strip(ui, &hint);
+                }
+            } else if let Some(tool) = self.empty_state(ui) {
+                if let Err(error) = self.invoke(session, tool, Channel::Ui) {
+                    self.error = Some(error);
+                }
             }
         });
-        if self.placing() || self.section_pick.is_some() {
+        if self.placing() || self.section_pick.is_some() || self.view_placement.is_some() {
             event.view = None;
             event.annotation = None;
             event.drag = None;
@@ -643,4 +681,97 @@ impl DrawingEditor {
             self.section_pick = None;
         }
     }
+}
+
+impl DrawingEditor {
+    /// The centred empty sheet area: one large primary action.
+    fn empty_state(&self, ui: &mut egui::Ui) -> Option<DrawingTool> {
+        let (heading, text, tool) = if self.book.is_some() {
+            (
+                "This drawing has no pages",
+                "Add a page, then add a model view.",
+                DrawingTool::AddPage,
+            )
+        } else {
+            (
+                "No drawing pages",
+                "Start a drawing, then add a front view of your model with Add view.",
+                DrawingTool::NewDocument,
+            )
+        };
+        let mut chosen = None;
+        let rect = ui.available_rect_before_wrap();
+        let block =
+            egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width().min(420.), 150.));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(block), |ui| {
+            ui.vertical_centered(|ui| {
+                ui.heading(heading);
+                ui.add_space(4.);
+                ui.label(text);
+                ui.add_space(14.);
+                let button =
+                    egui::Button::new(egui::RichText::new(tool.label()).size(17.).strong())
+                        .fill(egui::Color32::from_rgb(30, 110, 180))
+                        .min_size(egui::vec2(220., 46.));
+                if ui
+                    .add_enabled(self.navigation_ready(), button)
+                    .on_hover_text(match tool {
+                        DrawingTool::NewDocument => "Create a drawing with its first sheet",
+                        _ => "Add a sheet to this drawing",
+                    })
+                    .clicked()
+                {
+                    chosen = Some(tool);
+                }
+            });
+        });
+        chosen
+    }
+    /// Pointer placement of a pending Add view on the paper.
+    fn view_placement_overlay(&mut self, ui: &mut egui::Ui, paper: egui::Rect, scale: f32) {
+        if self.view_placement.is_none() {
+            return;
+        }
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            self.cancel_view_placement();
+            return;
+        }
+        let response = ui
+            .interact(
+                paper,
+                ui.id().with("drawing-view-placement"),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::Crosshair);
+        if response.clicked()
+            && let Some(at) = response.interact_pointer_pos()
+        {
+            let mm = (at - paper.min) / scale;
+            if let Err(error) = self.place_view([mm.x as f64, mm.y as f64]) {
+                self.error = Some(error);
+            }
+        }
+    }
+}
+/// A short next-step hint along the bottom of the sheet area.
+fn hint_strip(ui: &egui::Ui, hint: &str) {
+    let area = ui.clip_rect();
+    let painter = ui.painter().with_clip_rect(area);
+    let galley = painter.layout(
+        hint.to_owned(),
+        egui::FontId::proportional(13.),
+        egui::Color32::WHITE,
+        (area.width() - 32.).max(80.),
+    );
+    let size = galley.size() + egui::vec2(20., 10.);
+    let rect = egui::Rect::from_center_size(
+        egui::pos2(area.center().x, area.bottom() - size.y * 0.5 - 10.),
+        size,
+    );
+    painter.rect_filled(
+        rect,
+        6,
+        egui::Color32::from_rgba_unmultiplied(20, 30, 45, 230),
+    );
+    painter.galley(rect.min + egui::vec2(10., 5.), galley, egui::Color32::WHITE);
 }
