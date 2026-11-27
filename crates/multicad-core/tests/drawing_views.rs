@@ -501,3 +501,123 @@ fn projection_links_validate_roundtrip_with_their_capability_and_survive_duplica
     let wire = serde_json::to_string(&Page::new("x")).unwrap();
     assert!(!wire.contains("projections"));
 }
+
+/// CAD-436: the standard layout picks the largest standard scale that fits
+/// the sheet, aligns top with front's column and right with its row, and
+/// follows the page's projection angle.
+#[test]
+fn standard_layout_fits_the_sheet_and_aligns_projections() {
+    // A 400 × 200 × 100 mm block: front 400 × 100, top 400 × 200, right 200 × 100.
+    let extents = [[400., 100.], [400., 200.], [200., 100.], [420., 300.]];
+    let mut chosen = vec![];
+    for paper in [PaperSize::A4, PaperSize::A3, PaperSize::A1] {
+        let mut page = Page::new("1");
+        page.settings.paper = paper;
+        for projection in [Projection::ThirdAngle, Projection::FirstAngle] {
+            page.settings.projection = projection;
+            let layout = layout_page(&page, 1, 1).unwrap();
+            let arranged = standard_layout(&layout, projection, extents).unwrap();
+            let [front, top, right, iso] = arranged.positions;
+            assert_eq!(front[0], top[0], "top shares the front's column");
+            assert_eq!(front[1], right[1], "right shares the front's row");
+            assert!(iso[0] == right[0] && iso[1] == top[1]);
+            let third = projection == Projection::ThirdAngle;
+            assert_eq!(top[1] < front[1], third, "top above front in third angle");
+            assert_eq!(right[0] > front[0], third, "right of front in third angle");
+            // The chosen scale fits; the next larger standard scale does not.
+            let fits = |scale: Scale| {
+                let s = scale_factor(scale);
+                let w = (400. + 420.) * s + VIEW_GAP_MM;
+                let h = (100. + 300.) * s + VIEW_GAP_MM;
+                fit_regions(&layout)
+                    .iter()
+                    .any(|r| w <= r[2] - r[0] + 1e-9 && h <= r[3] - r[1] + 1e-9)
+            };
+            assert!(fits(arranged.scale));
+            let scales = standard_scales();
+            let index = scales.iter().position(|s| *s == arranged.scale).unwrap();
+            assert!(index == 0 || !fits(scales[index - 1]));
+            // Everything stays on the printable paper.
+            let [x0, y0, x1, y1] = layout.printable_mm;
+            for p in arranged.positions {
+                assert!(p[0] > x0 && p[0] < x1 && p[1] > y0 && p[1] < y1);
+            }
+        }
+        chosen.push(arranged_scale(paper, extents));
+    }
+    assert_eq!(
+        chosen,
+        [
+            Scale {
+                numerator: 1,
+                denominator: 5
+            },
+            Scale {
+                numerator: 1,
+                denominator: 5
+            },
+            Scale {
+                numerator: 1,
+                denominator: 2
+            },
+        ]
+    );
+    assert!(
+        standard_layout(
+            &layout_page(&Page::new("1"), 1, 1).unwrap(),
+            Projection::FirstAngle,
+            [[f64::NAN, 1.], [1., 1.], [1., 1.], [1., 1.]]
+        )
+        .is_err()
+    );
+}
+fn arranged_scale(paper: PaperSize, extents: [[f64; 2]; 4]) -> Scale {
+    let mut page = Page::new("1");
+    page.settings.paper = paper;
+    standard_layout(
+        &layout_page(&page, 1, 1).unwrap(),
+        Projection::FirstAngle,
+        extents,
+    )
+    .unwrap()
+    .scale
+}
+
+/// CAD-436: a single guided view takes the largest standard scale that fits
+/// the free sheet with margins, so a larger sheet never gets a smaller scale.
+#[test]
+fn single_view_default_scale_is_the_largest_standard_scale_fitting_the_sheet() {
+    let source = EntityId::new();
+    let mut previous = 0.;
+    for (paper, expected) in [
+        (PaperSize::A4, (1, 2)),
+        (PaperSize::A3, (1, 2)),
+        (PaperSize::A2, (1, 1)),
+        (PaperSize::A0, (2, 1)),
+    ] {
+        let mut page = Page::new("1");
+        page.settings.paper = paper;
+        let layout = layout_page(&page, 1, 1).unwrap();
+        let fit = fit_view(
+            &view(source),
+            &layout,
+            [-200., -50.],
+            [200., 50.],
+            FitMode::Standard,
+        )
+        .unwrap();
+        assert_eq!(
+            (fit.scale.numerator, fit.scale.denominator),
+            expected,
+            "{paper:?}"
+        );
+        let f = scale_factor(fit.scale);
+        assert!(f >= previous);
+        previous = f;
+        assert!(
+            fit_regions(&layout)
+                .iter()
+                .any(|r| 400. * f <= r[2] - r[0] && 100. * f <= r[3] - r[1])
+        );
+    }
+}

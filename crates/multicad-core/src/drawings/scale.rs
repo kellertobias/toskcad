@@ -326,3 +326,90 @@ pub fn fit_view(
         center_mm: [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5],
     })
 }
+/// Paper between the cells of a standard view layout, with caption room.
+pub const VIEW_GAP_MM: f64 = CAPTION_STRIP_MM + 2. * FIT_PAD_MM;
+/// A standard layout of front, top, right and isometric views (CAD-436).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StandardLayout {
+    pub scale: Scale,
+    /// Paper anchors of the front, top, right and iso views, in that order.
+    pub positions: [[f64; 2]; 4],
+}
+/// Arrange front, top, right and iso views whose model extents (view u × v)
+/// are `extents`, in that order, at the largest standard scale that fits the
+/// largest free region. Third-angle pages put the top view above the front
+/// and the right view to its right; first-angle pages mirror both. The iso
+/// view takes the remaining corner. Top shares the front's column and right
+/// its row, so views centered on a common model point stay aligned.
+pub fn standard_layout(
+    layout: &PageLayout,
+    projection: super::Projection,
+    extents: [[f64; 2]; 4],
+) -> Result<StandardLayout, String> {
+    if extents.iter().flatten().any(|v| !v.is_finite() || *v < 0.) {
+        return Err("Resolve the views before arranging them".into());
+    }
+    let [front, top, right, iso] = extents;
+    // Column 0 holds front and top; row 0 holds front and right.
+    let columns = [front[0].max(top[0]), right[0].max(iso[0])];
+    let rows = [front[1].max(right[1]), top[1].max(iso[1])];
+    let extent = [columns[0] + columns[1], rows[0] + rows[1]];
+    let mut best: Option<(Scale, [f64; 4])> = None;
+    for region in fit_regions(layout) {
+        let available = [
+            region[2] - region[0] - VIEW_GAP_MM,
+            region[3] - region[1] - VIEW_GAP_MM,
+        ];
+        let Ok(scale) = fit_scale(extent, available, FitMode::Standard) else {
+            continue;
+        };
+        if best.is_none_or(|(b, _)| scale_factor(scale) > scale_factor(b)) {
+            best = Some((scale, region));
+        }
+    }
+    let (scale, region) =
+        best.ok_or("The standard views need a larger sheet or a manually configured scale")?;
+    let s = scale_factor(scale);
+    let width = extent[0] * s + VIEW_GAP_MM;
+    let height = extent[1] * s + VIEW_GAP_MM;
+    let left = (region[0] + region[2] - width) * 0.5;
+    let top_edge = (region[1] + region[3] - height) * 0.5;
+    let third = projection == super::Projection::ThirdAngle;
+    // Paper columns left to right and rows top to bottom.
+    let (front_column, front_row) = if third { (0, 1) } else { (1, 0) };
+    let paper_columns = if third {
+        [columns[0], columns[1]]
+    } else {
+        [columns[1], columns[0]]
+    };
+    let paper_rows = if third {
+        [rows[1], rows[0]]
+    } else {
+        [rows[0], rows[1]]
+    };
+    let x = |c: usize| {
+        left + if c == 0 {
+            paper_columns[0] * s * 0.5
+        } else {
+            paper_columns[0] * s + VIEW_GAP_MM + paper_columns[1] * s * 0.5
+        }
+    };
+    let y = |r: usize| {
+        top_edge
+            + if r == 0 {
+                paper_rows[0] * s * 0.5
+            } else {
+                paper_rows[0] * s + VIEW_GAP_MM + paper_rows[1] * s * 0.5
+            }
+    };
+    let (other_column, other_row) = (1 - front_column, 1 - front_row);
+    Ok(StandardLayout {
+        scale,
+        positions: [
+            [x(front_column), y(front_row)],
+            [x(front_column), y(other_row)],
+            [x(other_column), y(front_row)],
+            [x(other_column), y(other_row)],
+        ],
+    })
+}
