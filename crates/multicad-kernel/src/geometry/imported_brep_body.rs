@@ -600,6 +600,47 @@ impl ImportedBrepBody {
         )
     }
 
+    /// The loops of a planar face as (edge ordinal, reversed) uses, the
+    /// outer loop first: the loop whose bounds contain every other loop's.
+    pub(crate) fn planar_loops(&self, face: u32) -> Vec<Vec<(u32, bool)>> {
+        let boundary = self.solid.boundary();
+        let Some(face) = boundary.faces.get(face as usize) else {
+            return vec![];
+        };
+        if !matches!(face.surface, brep::Surface::Plane(_)) {
+            return vec![];
+        }
+        let extent = |uses: &[(usize, bool)]| -> [[f64; 3]; 2] {
+            let mut bounds = [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]];
+            for &(e, _) in uses {
+                let edge = &boundary.edges[e];
+                for axis in 0..3 {
+                    let [low, high] = edge.curve.extent(edge.range[0], edge.range[1], axis);
+                    bounds[0][axis] = bounds[0][axis].min(low);
+                    bounds[1][axis] = bounds[1][axis].max(high);
+                }
+            }
+            bounds
+        };
+        let mut loops: Vec<_> = face
+            .loops
+            .iter()
+            .map(|l| {
+                let bounds = extent(&l.uses);
+                let size: f64 = (0..3).map(|i| bounds[1][i] - bounds[0][i]).sum();
+                (
+                    size,
+                    l.uses
+                        .iter()
+                        .map(|&(e, forward)| (e as u32, !forward))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        loops.sort_by(|a, b| b.0.total_cmp(&a.0));
+        loops.into_iter().map(|(_, uses)| uses).collect()
+    }
+
     pub(crate) fn topology(&self, owner: EntityId, revision: u64) -> TopologySnapshot {
         let boundary = self.solid.boundary();
         // Every name of a face, edge (kind 1) or vertex (kind 2). Authored
