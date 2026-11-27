@@ -55,6 +55,8 @@ mod mechanical_import_host;
 #[path = "model_target_selection.rs"]
 mod model_target_selection;
 #[cfg(test)]
+mod open_sketch_tests;
+#[cfg(test)]
 mod overlap_profile_extrude_tests;
 #[path = "sketch_profile_connection_host.rs"]
 mod profile_connection_host;
@@ -2762,6 +2764,20 @@ impl SketchEditor {
         }
         self.activate_sketch(id)
     }
+    /// Whether a viewport double-click on sketch geometry may open that
+    /// sketch (CAD-425): nothing else owns the pointer or has pending edits.
+    fn double_click_opens_sketch(&self) -> bool {
+        !self.editing
+            && !self.picking
+            && !self.moving
+            && !self.has_pending_edits()
+            && !self.measurement.active()
+            && !self.model.active()
+            && !self.assembly.active()
+            && !self.transfer.active()
+            && !self.external.active()
+            && self.acquisition.is_none()
+    }
     pub fn open_at(&mut self, doc: &Document, id: EntityId, revision: u64) -> Result<(), String> {
         if multicad_core::symbols::owned_entities(doc)
             .map_err(|e| e.to_string())?
@@ -3565,21 +3581,6 @@ impl SketchEditor {
                         self.tree.show(ui, session, &self.tree_selection, options)
                     };
                     self.handle_tree_events(session, scene.as_deref(), events);
-                    if self.selected.is_some()
-                        && !self.editing
-                        && ui
-                            .add_enabled(
-                                !self.has_pending_edits(),
-                                egui::Button::new("Open selected sketch"),
-                            )
-                            .clicked()
-                    {
-                        let id = self.selected.expect("selected");
-                        if let Err(error) = self.open_at(session.document(), id, session.revision())
-                        {
-                            self.message = error;
-                        }
-                    }
                 });
         }
         if !self.measurement.active() {
@@ -5303,6 +5304,11 @@ impl SketchEditor {
                 self.sketch_area_under_pointer(session, scene.as_deref(), rect, pointer)
             });
         let mut hovered_profile = None;
+        // CAD-425: double-clicking a finished sketch's geometry opens it.
+        let double_click = response
+            .interact_pointer_pos()
+            .filter(|_| response.double_clicked() && self.double_click_opens_sketch());
+        let mut double_clicked_sketch = None;
         for e in doc.entities().filter(|e| {
             !self.measurement.active()
                 && !self.repair.viewing_candidates()
@@ -5320,6 +5326,24 @@ impl SketchEditor {
             if let Ok((source, frame, _)) =
                 self.read_sketch_with_hash(doc, e.id, session.revision(), source_hash)
             {
+                if let Some(pointer) = double_click
+                    && double_clicked_sketch.is_none()
+                    && let Some(current) = self.sketch_evaluation.current(e.id)
+                    && current.stamp.document == session.document().id()
+                    && current.stamp.revision == session.revision()
+                    && let Some(solved) = current.evaluated.solved()
+                    && crate::sketch_selection::pick_geometry(
+                        pointer,
+                        self.camera,
+                        rect,
+                        frame,
+                        &solved.points,
+                        &current.geometry,
+                    )
+                    .is_some()
+                {
+                    double_clicked_sketch = Some(e.id);
+                }
                 let tool_first = tool_first_hover.filter(|(id, _)| *id == e.id);
                 if (self.selected == Some(e.id)
                     && (self.editing || self.acquiring_profiles() || face_preselection)
@@ -5468,6 +5492,12 @@ impl SketchEditor {
             }
         }
         self.hovered_profile = hovered_profile;
+        if let Some(id) = double_clicked_sketch {
+            self.solid.clear();
+            if let Err(error) = self.open_at(session.document(), id, session.revision()) {
+                self.message = error;
+            }
+        }
         // A face-corner drawing whose native check finished commits here,
         // where the canvas holds the session for writing (CAD-383).
         self.finish_projection(session);

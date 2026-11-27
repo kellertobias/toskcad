@@ -78,6 +78,26 @@ fn click(ctx: &egui::Context, app: &mut Application, label: &str) {
         .drop_without_applying_deltas();
     }
 }
+/// Two primary clicks on the same button, close enough to double-click.
+fn double_click(ctx: &egui::Context, app: &mut Application, label: &str) {
+    let out = frame(ctx, app, vec![]);
+    let pos = button(&out, label).center();
+    out.drop_without_applying_deltas();
+    frame(ctx, app, vec![egui::Event::PointerMoved(pos)]).drop_without_applying_deltas();
+    for pressed in [true, false, true, false] {
+        frame(
+            ctx,
+            app,
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            }],
+        )
+        .drop_without_applying_deltas();
+    }
+}
 fn context() -> egui::Context {
     let ctx = egui::Context::default();
     ctx.enable_accesskit();
@@ -299,7 +319,17 @@ fn an_existing_sketch_opens_from_model_into_contextual_editing_without_source_or
     for _ in 0..3 {
         frame(&ctx, &mut app, vec![]).drop_without_applying_deltas();
     }
-    click(&ctx, &mut app, "Open selected sketch");
+    // CAD-425 (approved by the user): double-click the sketch in the model
+    // tree instead of the removed "Open selected sketch" button.
+    let name = app
+        .current()
+        .session
+        .document()
+        .get(id)
+        .unwrap()
+        .name
+        .clone();
+    double_click(&ctx, &mut app, &name);
     assert_eq!(app.mode, Mode::Sketch);
     assert_eq!(app.mode.top_level(), Mode::Model);
     assert!(app.current().sketch.editing);

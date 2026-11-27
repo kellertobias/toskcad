@@ -908,7 +908,7 @@ impl ModelTree {
                                         inline_start = Some(row.id);
                                         ui.close();
                                     }
-                                    if row.kind == NodeKind::Sketch && options.allow_open_sketch && ui.button("Open sketch").clicked() {
+                                    if row.kind == NodeKind::Sketch && options.allow_open_sketch && ui.button("Edit sketch").on_hover_text("Open this sketch for editing; double-clicking it does the same").clicked() {
                                         events.open_sketch = Some(row.id);
                                         ui.close();
                                     }
@@ -1197,15 +1197,6 @@ impl ModelTree {
                     }
                     if inline_renamable(node_kind) {
                         rename = ui.button("Rename…").clicked();
-                    }
-                    if node_kind == NodeKind::Sketch
-                        && options.allow_open_sketch
-                        && ui
-                            .button("Open selected sketch")
-                            .on_hover_text("Open this sketch in the Sketch workspace")
-                            .clicked()
-                    {
-                        events.open_sketch = Some(id);
                     }
                 });
             })
