@@ -392,4 +392,104 @@ mod tests {
         assert!(controller.edge_treatment_active());
         assert_eq!(controller.edge_treatment_edges(), Some(edges.as_slice()));
     }
+
+    /// The top cap line edges of `body` from `a` to `b` in either direction.
+    fn top_line(
+        session: &Session,
+        body: &model::BodyInput,
+        z: f64,
+        a: [f64; 2],
+        b: [f64; 2],
+    ) -> GeometryIntent {
+        use multicad_core::references::AnalyticGeometry;
+        let compiled = Compiler::default()
+            .compile(session.document(), session.revision())
+            .unwrap();
+        let scene = native_fixture::scene(session.document(), compiled.snapshot(), 0).unwrap();
+        let topology = scene.geometry_snapshot(body.producer).unwrap();
+        let at = |p: [f64; 3], q: [f64; 2]| {
+            (p[0] - q[0]).abs() < 1e-9 && (p[1] - q[1]).abs() < 1e-9 && (p[2] - z).abs() < 1e-9
+        };
+        let edge = topology
+            .elements
+            .iter()
+            .find(|e| {
+                e.key.kind == TopologyKind::Edge
+                    && matches!(e.geometry, Some(AnalyticGeometry::Line { a_mm, b_mm })
+                        if (at(a_mm, a) && at(b_mm, b)) || (at(a_mm, b) && at(b_mm, a)))
+            })
+            .expect("top line edge");
+        GeometryIntent::capture(&topology, edge.key).unwrap()
+    }
+
+    fn body_volume(session: &Session, body: &model::BodyInput) -> f64 {
+        Compiler::default()
+            .compile(session.document(), session.revision())
+            .unwrap()
+            .snapshot()
+            .shapes[&body.producer]
+            .volume_mm3
+    }
+
+    /// CAD-421: one straight edge of a tangent chain previews, applies as
+    /// one Undo step and undoes back to the sharp body.
+    fn partial_chain_applies_as_one_undo_step(
+        loops: &[native_fixture::SketchLoop],
+        edge: ([f64; 2], [f64; 2]),
+    ) {
+        let height = 5.;
+        let (mut session, body) =
+            native_fixture::extruded_loops_session("Partial chain", loops, height);
+        let resources = ProjectResources::default();
+        let edges = vec![top_line(&session, &body, height, edge.0, edge.1)];
+        let sharp = body_volume(&session, &body);
+        let mut controller = previewed(&session, &body, &edges);
+        assert_eq!(controller.error(), None);
+        assert!(controller.can_apply(&session, &resources));
+        let before = session.revision();
+        controller.apply(&mut session, &resources).unwrap();
+        assert_eq!(session.revision(), before + 1, "one Undo step");
+        let compiled = Compiler::default()
+            .compile(session.document(), session.revision())
+            .unwrap();
+        let treated: Vec<f64> = compiled
+            .snapshot()
+            .shapes
+            .values()
+            .map(|shape| shape.volume_mm3)
+            .filter(|&volume| volume > 0. && volume < sharp)
+            .collect();
+        assert_eq!(treated.len(), 1, "the filleted body compiles");
+        session
+            .undo(session.revision(), Actor::local(Channel::Ui))
+            .unwrap();
+        assert_eq!(body_volume(&session, &body), sharp);
+        let compiled = Compiler::default()
+            .compile(session.document(), session.revision())
+            .unwrap();
+        assert!(
+            compiled
+                .snapshot()
+                .shapes
+                .values()
+                .all(|shape| shape.volume_mm3 >= sharp),
+            "Undo removes the whole fillet"
+        );
+    }
+
+    #[test]
+    fn rounded_l_single_inner_edge_fillet_previews_and_applies_as_one_undo_step() {
+        partial_chain_applies_as_one_undo_step(
+            &native_fixture::rounded_l_loops(),
+            ([20., 8.], [11., 8.]),
+        );
+    }
+
+    #[test]
+    fn pocket_single_inner_side_fillet_previews_and_applies_as_one_undo_step() {
+        partial_chain_applies_as_one_undo_step(
+            &native_fixture::pocket_plate_loops(),
+            ([12., 6.], [18., 6.]),
+        );
+    }
 }

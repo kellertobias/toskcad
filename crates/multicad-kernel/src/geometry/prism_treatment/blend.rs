@@ -14,7 +14,16 @@
 //!   a plane or a cone at 45 degrees;
 //! - two blends meet at a convex vertex along the curve where both offsets
 //!   agree, and a blend ends against the unchanged side surface of an
-//!   untreated neighbour along the curve where its offset meets that side.
+//!   untreated neighbour along the curve where its offset meets that side;
+//! - where a treated edge continues tangentially into an untreated one,
+//!   the blend stops at the end of the selected edge. A flat step face
+//!   through the vertex, perpendicular to both edges, closes the blend's
+//!   cross-section there, and the untreated neighbour keeps its sharp edge
+//!   (CAD-421). In section, the offset edge ends on the common normal and
+//!   a straight chord leads back to the vertex.
+//!
+//! Hole rings run clockwise so that every ring keeps the material on its
+//! left; each cap is one face with a loop per ring.
 //!
 //! End curves are exact conics where they are planar: the bisector ellipse
 //! between two line blends, the section ellipse of a line blend by a flat
@@ -49,7 +58,15 @@ pub(super) enum Kind {
 /// A cap-treated prism in its local chart.
 pub(super) struct Plan {
     pub(super) frame: PlaneFrame,
+    /// The edges of every profile ring, outer ring first. Each ring keeps
+    /// the material on its left: the outer ring runs counterclockwise and
+    /// hole rings clockwise.
     pub(super) ring: Vec<Seg>,
+    /// The edge after and before each edge in its own ring.
+    pub(super) next: Vec<usize>,
+    pub(super) prev: Vec<usize>,
+    /// The edge range of each ring.
+    pub(super) loops: Vec<std::ops::Range<usize>>,
     pub(super) span: [f64; 2],
     pub(super) kind: Kind,
     pub(super) size: f64,
@@ -57,6 +74,23 @@ pub(super) struct Plan {
     pub(super) caps: [Vec<Option<Vec<Origin>>>; 2],
     pub(super) cap_names: [FaceName; 2],
     pub(super) side_names: Vec<FaceName>,
+}
+
+/// Successor and predecessor indices of rings stored one after another.
+pub(super) fn ring_links(
+    lengths: &[usize],
+) -> (Vec<usize>, Vec<usize>, Vec<std::ops::Range<usize>>) {
+    let (mut next, mut prev, mut loops) = (vec![], vec![], vec![]);
+    let mut first = 0;
+    for &len in lengths {
+        for i in 0..len {
+            next.push(first + (i + 1) % len);
+            prev.push(first + (i + len - 1) % len);
+        }
+        loops.push(first..first + len);
+        first += len;
+    }
+    (next, prev, loops)
 }
 
 pub(super) fn refused(message: impl Into<String>) -> GeometryError {
@@ -150,14 +184,13 @@ impl Chart {
 
 impl Plan {
     fn flag(&self, level: usize, k: usize) -> bool {
-        self.caps[level][k % self.ring.len()].is_some()
+        self.caps[level][k].is_some()
     }
     fn seg(&self, k: usize) -> Seg {
-        let n = self.ring.len();
-        self.ring[(k + n) % n]
+        self.ring[k]
     }
     fn previous(&self, k: usize) -> Seg {
-        self.seg(k + self.ring.len() - 1)
+        self.ring[self.prev[k]]
     }
     /// Height of the cap at `level` and the direction into the material.
     fn level(&self, level: usize) -> (f64, f64) {
@@ -180,15 +213,28 @@ impl Plan {
     fn inset_of(&self, level: usize, k: usize) -> f64 {
         if self.flag(level, k) { self.size } else { 0. }
     }
+    /// Either edge at vertex `k` is treated at `level`.
+    fn touched(&self, level: usize, k: usize) -> bool {
+        self.flag(level, self.prev[k]) || self.flag(level, k)
+    }
 }
 
-/// One vertex of the ring at one cap: where its side edge ends (`low`) and
-/// where the cap face begins (`cap`). They coincide when neither edge at
-/// the vertex is treated.
+/// One vertex of the ring at one cap: where its side edge ends (`low`),
+/// where the cap edge before it ends and where the cap edge after it
+/// begins (`rim`). They coincide when neither edge at the vertex is
+/// treated. The two rim vertices differ only at a step: a tangent vertex
+/// with one treated edge, where a flat face perpendicular to the edges
+/// closes the end of the blend.
 #[derive(Clone, Copy)]
 struct Joint {
     low: usize,
-    cap: usize,
+    rim: [usize; 2],
+}
+
+impl Joint {
+    fn step(self) -> bool {
+        self.rim[0] != self.rim[1]
+    }
 }
 
 pub(super) fn build(
@@ -218,7 +264,7 @@ pub(super) fn build(
         .collect::<Result<_, _>>()?;
     for level in 0..2 {
         for (k, &corner) in corners.iter().enumerate() {
-            let (a, b) = (plan.flag(level, k + n - 1), plan.flag(level, k));
+            let (a, b) = (plan.flag(level, plan.prev[k]), plan.flag(level, k));
             match corner {
                 _ if !(a || b) => {}
                 Corner::Concave => {
@@ -226,9 +272,12 @@ pub(super) fn build(
                         "Edge treatments cannot yet meet at a concave corner of the cap; select edges that end at convex corners",
                     ));
                 }
-                Corner::Smooth if a != b => {
+                Corner::Smooth
+                    if a != b
+                        && (plan.collapsed(level, plan.prev[k]) || plan.collapsed(level, k)) =>
+                {
                     return Err(refused(
-                        "The treated edge continues tangentially into an unselected edge; select the whole tangent chain",
+                        "A fully rounded corner cannot end beside an unselected tangent edge; select the whole tangent chain or reduce the edge treatment",
                     ));
                 }
                 _ => {}
@@ -248,12 +297,13 @@ pub(super) fn build(
             }
         }
     }
-    // Section corners at the cap of each level.
-    let mut caps = [vec![[0.; 2]; n], vec![[0.; 2]; n]];
+    // Section corners at the cap of each level: where the edge before each
+    // vertex ends and where the edge after it begins.
+    let mut caps = [vec![[[0.; 2]; 2]; n], vec![[[0.; 2]; 2]; n]];
     for (level, cap) in caps.iter_mut().enumerate() {
         for k in 0..n {
-            let deltas = [plan.inset_of(level, k + n - 1), plan.inset_of(level, k)];
-            cap[k] = profile::inset_corner(plan.previous(k), plan.seg(k), corners[k], deltas)
+            let deltas = [plan.inset_of(level, plan.prev[k]), plan.inset_of(level, k)];
+            cap[k] = profile::joint_ends(plan.previous(k), plan.seg(k), corners[k], deltas)
                 .ok_or_else(|| refused("The edge treatment is too large for the faces it joins"))?;
         }
         for k in 0..n {
@@ -261,13 +311,13 @@ pub(super) fn build(
                 let Seg::Arc { c, .. } = plan.seg(k) else {
                     unreachable!("collapsed arc")
                 };
-                if plan.collapsed(level, k + n - 1) || plan.collapsed(level, k + 1) {
+                if plan.collapsed(level, plan.prev[k]) || plan.collapsed(level, plan.next[k]) {
                     return Err(refused(
                         "Two fully rounded corners meet; reduce the edge treatment",
                     ));
                 }
-                cap[k] = c;
-                cap[(k + 1) % n] = c;
+                cap[k] = [c, c];
+                cap[plan.next[k]] = [c, c];
             }
         }
         // Each cap curve keeps a positive length in its own direction.
@@ -276,7 +326,7 @@ pub(super) fn build(
                 continue;
             }
             let seg = plan.seg(k);
-            let [from, to] = [cap[k], cap[(k + 1) % n]];
+            let [from, to] = [cap[k][1], cap[plan.next[k]][0]];
             let carried = match seg.carrier(plan.inset_of(level, k)) {
                 Carrier::Line { direction, .. } => profile::dot(profile::sub(to, from), direction),
                 Carrier::Circle { center, radius } => {
@@ -301,7 +351,8 @@ pub(super) fn build(
         }
     }
 
-    // Vertices.
+    // Vertices. The ends of a fully rounded corner share the vertex at its
+    // center.
     let mut vertices: Vec<P3> = Vec::new();
     let mut vertex = |p: P3| {
         vertices.push(chart.point(p));
@@ -309,32 +360,33 @@ pub(super) fn build(
     };
     let mut joints: [Vec<Joint>; 2] = [Vec::with_capacity(n), Vec::with_capacity(n)];
     for level in 0..2 {
-        for k in 0..n {
+        for (k, &[p, q]) in caps[level].iter().enumerate() {
             let v = plan.seg(k).start();
-            let any = plan.flag(level, k + n - 1) || plan.flag(level, k);
+            let any = plan.touched(level, k);
             let low = vertex(plan.at(level, v, if any { size } else { 0. }));
-            let cap = if !any {
-                low
-            } else if k > 0 && plan.collapsed(level, k - 1) {
-                joints[level][k - 1].cap
+            let rim = if !any || plan.collapsed(level, plan.prev[k]) {
+                [low; 2]
+            } else if p == q {
+                [vertex(plan.at(level, p, 0.)); 2]
             } else {
-                vertex(plan.at(level, caps[level][k], 0.))
+                [vertex(plan.at(level, p, 0.)), vertex(plan.at(level, q, 0.))]
             };
-            joints[level].push(Joint { low, cap });
+            joints[level].push(Joint { low, rim });
         }
-        if plan.collapsed(level, n - 1) {
-            joints[level][0].cap = joints[level][n - 1].cap;
+        for k in 0..n {
+            if plan.collapsed(level, plan.prev[k]) {
+                joints[level][k].rim = joints[level][plan.prev[k]].rim;
+            }
         }
     }
-    let local = |level: usize, k: usize, which: bool| -> P3 {
-        let v = plan.seg(k).start();
-        let any = plan.flag(level, k + n - 1) || plan.flag(level, k);
-        if which {
-            plan.at(level, caps[level][k % n], 0.)
-        } else {
-            plan.at(level, v, if any { size } else { 0. })
-        }
+    let rim_point = |level: usize, k: usize, side: usize| plan.at(level, caps[level][k][side], 0.);
+    let low_point = |level: usize, k: usize| {
+        let depth = if plan.touched(level, k) { size } else { 0. };
+        plan.at(level, plan.seg(k).start(), depth)
     };
+    // The rim side of a treated vertex where the blend ends: the treated
+    // edge's side of a step.
+    let blend_side = |level: usize, k: usize| usize::from(!plan.flag(level, plan.prev[k]));
 
     let mut edges: Vec<Edge> = Vec::new();
     let mut add = |curve: Curve, ends: [usize; 2], vertices: &[P3]| {
@@ -366,95 +418,126 @@ pub(super) fn build(
     let vertical: Vec<usize> = (0..n)
         .map(|k| {
             let ends = [joints[0][k].low, joints[1][k].low];
-            add(
-                line(local(0, k, false), local(1, k, false)),
-                ends,
-                &vertices,
-            )
+            add(line(low_point(0, k), low_point(1, k)), ends, &vertices)
         })
         .collect::<Result<_, _>>()?;
     let mut ends = [vec![None; n], vec![None; n]];
+    // At a step: the side edge up to the cap (`risers`) and the cap edge
+    // across the end of the blend (`steps`).
+    let mut risers = [vec![None; n], vec![None; n]];
+    let mut steps = [vec![None; n], vec![None; n]];
     let mut rims = [vec![None; n], vec![None; n]];
     let mut tangents = [vec![None; n], vec![None; n]];
     for level in 0..2 {
         let (z, inward) = plan.level(level);
         for k in 0..n {
-            let Joint { low, cap } = joints[level][k];
-            if low != cap {
+            let joint = joints[level][k];
+            if plan.touched(level, k) {
+                let side = blend_side(level, k);
                 let curve = end_curve(
                     plan,
                     &chart,
                     level,
                     k,
                     corners[k],
-                    caps[level][k],
+                    caps[level][k][side],
                     tolerance,
                 )?;
-                ends[level][k] = Some(add(curve, [low, cap], &vertices)?);
+                ends[level][k] = Some(add(curve, [joint.low, joint.rim[side]], &vertices)?);
+                if joint.step() {
+                    let (cap, corner) = (joint.rim[side], joint.rim[1 - side]);
+                    let corner_point = rim_point(level, k, 1 - side);
+                    risers[level][k] = Some(add(
+                        line(low_point(level, k), corner_point),
+                        [joint.low, corner],
+                        &vertices,
+                    )?);
+                    steps[level][k] = Some(add(
+                        line(rim_point(level, k, side), corner_point),
+                        [cap, corner],
+                        &vertices,
+                    )?);
+                }
             }
-            let next = (k + 1) % n;
+            let next = plan.next[k];
             if !plan.collapsed(level, k) {
-                let (from, to) = (local(level, k, true), local(level, next, true));
+                let (from, to) = (rim_point(level, k, 1), rim_point(level, next, 0));
                 let curve = carried(k, plan.inset_of(level, k), z, from, to);
                 rims[level][k] = Some(add(
                     curve,
-                    [joints[level][k].cap, joints[level][next].cap],
+                    [joint.rim[1], joints[level][next].rim[0]],
                     &vertices,
                 )?);
             }
             if plan.flag(level, k) {
-                let (from, to) = (local(level, k, false), local(level, next, false));
+                let (from, to) = (low_point(level, k), low_point(level, next));
                 let curve = carried(k, 0., z + inward * size, from, to);
-                tangents[level][k] = Some(add(
-                    curve,
-                    [joints[level][k].low, joints[level][next].low],
-                    &vertices,
-                )?);
+                tangents[level][k] =
+                    Some(add(curve, [joint.low, joints[level][next].low], &vertices)?);
             }
         }
     }
+    // The edge an untreated side face takes up to the cap beside a treated
+    // neighbour: the riser of a step, otherwise the blend's end curve.
+    let side_end = |level: usize, k: usize| -> usize {
+        risers[level][k]
+            .or(ends[level][k])
+            .expect("side end at a treated vertex")
+    };
 
-    let mut faces = Vec::with_capacity(2 + 3 * n);
+    let mut faces = Vec::with_capacity(2 + 4 * n);
     let mut names = Vec::with_capacity(faces.capacity());
     let plane = |origin: P3, x: P3, y: P3| Surface::Plane(chart.frame(origin, x, y));
-    // Caps: counterclockwise about the outward normal.
-    for (level, level_rims) in rims.iter().enumerate() {
+    // Caps: each ring keeps the material on its left, so its rims run
+    // counterclockwise about the outward normal of the top.
+    for level in 0..2 {
         let (z, _) = plan.level(level);
-        let mut uses: Vec<(usize, bool)> = level_rims
+        let loops = plan
+            .loops
             .iter()
-            .flatten()
-            .map(|&edge| (edge, true))
+            .map(|range| {
+                let mut uses = Vec::new();
+                for k in range.clone() {
+                    if let Some(step) = steps[level][k] {
+                        uses.push((step, plan.flag(level, plan.prev[k])));
+                    }
+                    if let Some(rim) = rims[level][k] {
+                        uses.push((rim, true));
+                    }
+                }
+                if level == 0 {
+                    uses.reverse();
+                    uses.iter_mut().for_each(|use_| use_.1 = !use_.1);
+                }
+                Loop { uses, vertex: None }
+            })
             .collect();
         let y = if level == 1 {
             [0., 1., 0.]
         } else {
             [0., -1., 0.]
         };
-        if level == 0 {
-            uses.reverse();
-            uses.iter_mut().for_each(|use_| use_.1 = false);
-        }
         faces.push(Face {
             surface: plane([0., 0., z], [1., 0., 0.], y),
             same_sense: true,
-            loops: vec![Loop { uses, vertex: None }],
+            loops,
         });
         names.push(plan.cap_names[level].clone());
     }
     // Sides.
     for k in 0..n {
-        let next = (k + 1) % n;
-        let previous = (k + n - 1) % n;
+        let next = plan.next[k];
+        let previous = plan.prev[k];
         let mut uses = Vec::new();
         if let Some(edge) = tangents[0][k] {
             uses.push((edge, true));
         } else {
             if plan.flag(0, previous) {
-                uses.push((ends[0][k].expect("bottom end"), true));
+                uses.push((side_end(0, k), true));
             }
             uses.push((rims[0][k].expect("bottom rim"), true));
             if plan.flag(0, next) {
-                uses.push((ends[0][next].expect("bottom end"), false));
+                uses.push((side_end(0, next), false));
             }
         }
         uses.push((vertical[next], true));
@@ -462,11 +545,11 @@ pub(super) fn build(
             uses.push((edge, false));
         } else {
             if plan.flag(1, next) {
-                uses.push((ends[1][next].expect("top end"), true));
+                uses.push((side_end(1, next), true));
             }
             uses.push((rims[1][k].expect("top rim"), false));
             if plan.flag(1, previous) {
-                uses.push((ends[1][k].expect("top end"), false));
+                uses.push((side_end(1, k), false));
             }
         }
         uses.push((vertical[k], false));
@@ -488,6 +571,42 @@ pub(super) fn build(
         });
         names.push(plan.side_names[k].clone());
     }
+    // Steps: the flat end of a blend at a tangent vertex, perpendicular to
+    // the edges there. Its outward normal points along the treated edge.
+    for level in 0..2 {
+        for k in 0..n {
+            let (Some(end), Some(riser), Some(step)) =
+                (ends[level][k], risers[level][k], steps[level][k])
+            else {
+                continue;
+            };
+            let v = plan.seg(k).start();
+            let inward = flat(plan.seg(k).inward(v));
+            let ahead = plan.flag(level, k);
+            let uses = if ahead == (level == 1) {
+                vec![(end, true), (step, true), (riser, false)]
+            } else {
+                vec![(riser, true), (step, false), (end, false)]
+            };
+            faces.push(Face {
+                surface: plane(plan.at(level, v, 0.), inward, [0., 0., 1.]),
+                same_sense: ahead,
+                loops: vec![Loop { uses, vertex: None }],
+            });
+            let (treated, kept) = if ahead {
+                (k, plan.prev[k])
+            } else {
+                (plan.prev[k], k)
+            };
+            let mut origins = plan.caps[level][treated].clone().expect("treated edge");
+            origins.extend(plan.side_names[kept].origins.iter().cloned());
+            names.push(FaceName {
+                origins,
+                support: None,
+                anchor: None,
+            });
+        }
+    }
     // Blends.
     for (level, level_tangents) in tangents.iter().enumerate() {
         let (z, inward) = plan.level(level);
@@ -496,7 +615,7 @@ pub(super) fn build(
             let Some(origins) = &plan.caps[level][k] else {
                 continue;
             };
-            let next = (k + 1) % n;
+            let next = plan.next[k];
             let tangent = level_tangents[k].expect("blend tangent");
             let mut uses = Vec::with_capacity(4);
             if level == 1 {
@@ -640,18 +759,20 @@ fn section_volume(plan: &Plan) -> f64 {
         let deltas: Vec<f64> = (0..n)
             .map(|k| if plan.flag(level, k) { delta } else { 0. })
             .collect();
-        let points: Vec<P2> = (0..n)
+        let joints: Vec<[P2; 2]> = (0..n)
             .map(|k| {
-                profile::inset_corner(
+                profile::joint_ends(
                     plan.previous(k),
                     plan.seg(k),
                     corners[k],
-                    [deltas[(k + n - 1) % n], deltas[k]],
+                    [deltas[plan.prev[k]], deltas[k]],
                 )
                 .expect("checked corner")
             })
             .collect();
-        profile::twice_area(&plan.ring, &deltas, &points) / 2.
+        let starts: Vec<P2> = joints.iter().map(|joint| joint[1]).collect();
+        let ends: Vec<P2> = (0..n).map(|k| joints[plan.next[k]][0]).collect();
+        profile::twice_area(&plan.ring, &deltas, &starts, &ends, &plan.next) / 2.
     };
     let base = area(0, 0.);
     let nodes = profile::gauss_legendre(VOLUME_NODES);
@@ -682,10 +803,9 @@ fn end_curve(
     cap: P2,
     tolerance: f64,
 ) -> Result<Curve, GeometryError> {
-    let n = plan.ring.len();
     let size = plan.size;
     let (a, b) = (plan.previous(k), plan.seg(k));
-    let (sa, sb) = (plan.flag(level, k + n - 1), plan.flag(level, k));
+    let (sa, sb) = (plan.flag(level, plan.prev[k]), plan.flag(level, k));
     let v = b.start();
     let (z, inward) = plan.level(level);
     let up = [0., 0., -inward];

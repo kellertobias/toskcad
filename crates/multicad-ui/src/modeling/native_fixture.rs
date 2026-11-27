@@ -364,3 +364,143 @@ pub(crate) fn corner_segment_session(
     };
     (session, stock, body)
 }
+
+/// One closed sketch loop: corner points, and for each edge from point `i`
+/// to point `i + 1` an optional arc center with its direction.
+pub(crate) type SketchLoop = (Vec<[f64; 2]>, Vec<Option<([f64; 2], bool)>>);
+
+/// CAD-421: a top-plane sketch of `loops` (outer first), whose region with
+/// every inner loop as a hole is extruded `height` as a new body.
+pub(crate) fn extruded_loops_session(
+    name: &str,
+    loops: &[SketchLoop],
+    height: f64,
+) -> (
+    multicad_core::commands::Session,
+    multicad_core::model::BodyInput,
+) {
+    use multicad_core::{
+        commands::{Actor, Channel, Session},
+        constraint_sketch::{Curve, CurveKind, source::Source},
+        document::EntityId,
+        model,
+        sketch::Datum,
+        sketch_regions,
+    };
+    let (sketch, edits) = Source::create(Datum::Xy, name).unwrap();
+    let document = Document::new(name).unwrap().edited(&edits).unwrap();
+    let mut profile = Source::read(&document, sketch).unwrap().0;
+    for (points, arcs) in loops {
+        let ids: Vec<_> = points.iter().map(|&p| profile.add_point(p)).collect();
+        for (i, arc) in arcs.iter().enumerate() {
+            let (a, b) = (ids[i], ids[(i + 1) % ids.len()]);
+            match *arc {
+                None => {
+                    profile.add_line(a, b);
+                }
+                Some((center, clockwise)) => {
+                    let center = profile.add_point(center);
+                    profile.sketch.curves.push(Curve {
+                        id: EntityId::new(),
+                        construction: false,
+                        kind: CurveKind::Arc {
+                            center,
+                            start: a,
+                            end: b,
+                            clockwise,
+                        },
+                    });
+                }
+            }
+        }
+    }
+    let region = sketch_regions::extract(&profile)
+        .regions
+        .into_iter()
+        .find(|r| r.holes.len() == loops.len() - 1)
+        .unwrap()
+        .intent();
+    let document = document
+        .edited(&profile.replace(&document, sketch).unwrap())
+        .unwrap();
+    let mut session = Session::new(document).unwrap();
+    let request = model::ExtrudeRequest::new(
+        sketch,
+        vec![region],
+        model::ExtrudeParameters {
+            extent: model::Extent::OneSided {
+                end: model::Termination::Distance {
+                    distance: model::length(height),
+                },
+            },
+            ..Default::default()
+        },
+    );
+    let body = model::BodyInput {
+        body: request.outputs[0].body,
+        producer: request.outputs[0].feature,
+    };
+    session
+        .commit(
+            model::prepare_extrude(
+                &session,
+                session.revision(),
+                Actor::local(Channel::Ui),
+                &request,
+            )
+            .unwrap()
+            .prepared,
+        )
+        .unwrap();
+    (session, body)
+}
+
+/// CAD-421: the 20 × 20 L with 8 mm arms whose inner corner is rounded
+/// with radius 3; its inner chain runs from (20, 8) to (11, 8), around
+/// (11, 11) and from (8, 11) to (8, 20).
+pub(crate) fn rounded_l_loops() -> Vec<SketchLoop> {
+    vec![(
+        vec![
+            [0., 0.],
+            [20., 0.],
+            [20., 8.],
+            [11., 8.],
+            [8., 11.],
+            [8., 20.],
+            [0., 20.],
+        ],
+        vec![None, None, None, Some(([11., 11.], true)), None, None, None],
+    )]
+}
+
+/// CAD-421: a 30 × 20 plate with a pocket from (10, 6) to (20, 14) whose
+/// corners are rounded with radius 2.
+pub(crate) fn pocket_plate_loops() -> Vec<SketchLoop> {
+    let outer = (
+        vec![[0., 0.], [30., 0.], [30., 20.], [0., 20.]],
+        vec![None; 4],
+    );
+    let pocket = (
+        vec![
+            [12., 6.],
+            [18., 6.],
+            [20., 8.],
+            [20., 12.],
+            [18., 14.],
+            [12., 14.],
+            [10., 12.],
+            [10., 8.],
+        ],
+        vec![
+            None,
+            Some(([18., 8.], false)),
+            None,
+            Some(([18., 12.], false)),
+            None,
+            Some(([12., 12.], false)),
+            None,
+            Some(([12., 8.], false)),
+        ],
+    );
+    vec![outer, pocket]
+}
