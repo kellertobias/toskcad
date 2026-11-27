@@ -205,8 +205,9 @@ fn essentials_first_advanced_groups_collapsed_with_retained_values() {
             );
         }
         for advanced in ["Edge strip thickness", "Origin X", "Shelf setback"] {
+            // Exact: the visible group headers start with the same words.
             assert!(
-                find(&painted, advanced).is_none(),
+                !painted.texts.iter().any(|(t, _)| t == advanced),
                 "{advanced} starts collapsed"
             );
         }

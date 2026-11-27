@@ -788,6 +788,11 @@ mod tests {
             .unwrap_or_else(|| panic!("Missing control {label}"))
     }
 
+    /// Inspector content width of the latest `inspector_frame`.
+    fn content_width_id() -> egui::Id {
+        egui::Id::new("fence-inspector-content-width")
+    }
+
     fn inspector_frame(
         editor: &mut ConstructionEditor,
         ctx: &egui::Context,
@@ -810,6 +815,7 @@ mod tests {
                         controls::inspector_layout(ui);
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             let available = ui.available_width();
+                            ui.data_mut(|d| d.insert_temp(content_width_id(), available));
                             editor.show(ui, document, true);
                             fits &= ui.min_rect().width() <= available + 1.;
                         });
@@ -898,7 +904,14 @@ mod tests {
             }
             let focused = ctx.memory(|m| m.focused()).expect("height field focused");
             let field_rect = ctx.read_response(focused).unwrap().rect;
-            assert!(field_rect.width() <= 130.);
+            let content = ctx
+                .data(|d| d.get_temp::<f32>(content_width_id()))
+                .expect("content width");
+            assert!(
+                (field_rect.width() - content).abs() < 0.5,
+                "{width}px: field {} spans the content width {content}",
+                field_rect.width()
+            );
             for digits in ["1600", "1800"] {
                 let command = egui::Modifiers {
                     command: true,

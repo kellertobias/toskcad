@@ -256,9 +256,10 @@ fn painted_shared_and_duplicate_controls_keep_update_scope_explicit() {
         .iter()
         .filter_map(|shape| {
             if let egui::epaint::Shape::Rect(rect) = &shape.shape {
-                (rect.rect.left() >= label.right() - 2.
-                    && rect.rect.top() <= label.center().y
-                    && rect.rect.bottom() >= label.center().y
+                // The input sits directly below its label.
+                (rect.rect.left() <= label.left() + 2.
+                    && rect.rect.top() >= label.bottom() - 2.
+                    && rect.rect.top() <= label.bottom() + 12.
                     && rect.rect.width() > 40.
                     && rect.rect.height() < 50.)
                     .then_some(rect.rect)
