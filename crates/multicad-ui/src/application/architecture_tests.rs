@@ -234,6 +234,32 @@ fn pending_model_keeps_its_level_when_the_user_views_another_floor() {
     assert_eq!(app.current().sketch.camera.target[2], 3000.);
     assert!(app.current().sketch.model_active());
     assert_eq!(app.current().session.document(), &source);
+    // Wall is a drawing tool (CAD-427): click its two corners, then Enter.
+    let viewport = app
+        .current()
+        .sketch
+        .viewport_rect
+        .expect("painted viewport");
+    for at in [
+        viewport.center() + egui::vec2(-150., 40.),
+        viewport.center() + egui::vec2(150., 40.),
+    ] {
+        click(&mut app, &ctx, size, at).drop_without_applying_deltas();
+    }
+    paint(
+        &mut app,
+        &ctx,
+        size,
+        vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    )
+    .drop_without_applying_deltas();
+    assert_eq!(app.current().session.document(), &source);
     app.invoke(Command::Preview, &[], Channel::Ui).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while !app
@@ -771,13 +797,9 @@ fn enter_and_escape_finish_or_cancel_the_wall_path_before_they_apply_or_discard_
     paint(&mut app, &ctx, size, vec![]).drop_without_applying_deltas();
     app.invoke(Command::Modeling(ModelingTool::Wall), &[], Channel::Ui)
         .unwrap();
+    // Wall starts drawing at once (CAD-427): no seeded wall, the path's
+    // Finish control is shown before any click.
     let out = paint(&mut app, &ctx, size, vec![]);
-    let out = click(
-        &mut app,
-        &ctx,
-        size,
-        bounds(&out, "Draw in viewport").center(),
-    );
     assert!(control_bounds(&out, "Finish").is_some());
     out.drop_without_applying_deltas();
     // Two viewport clicks place the corners of a new path.
@@ -835,19 +857,14 @@ fn enter_and_escape_finish_or_cancel_the_wall_path_before_they_apply_or_discard_
         ],
         "the clicked corners replaced the seeded path"
     );
-    // Escape while drawing cancels only the drawing and keeps the form.
+    // Escape while drawing ends the chain (CAD-427): the placed segment is
+    // kept, the form stays open and nothing is applied.
     app.invoke(Command::Modeling(ModelingTool::Wall), &[], Channel::Ui)
         .unwrap();
-    let out = paint(&mut app, &ctx, size, vec![]);
-    click(
-        &mut app,
-        &ctx,
-        size,
-        bounds(&out, "Draw in viewport").center(),
-    )
-    .drop_without_applying_deltas();
-    out.drop_without_applying_deltas();
-    click(&mut app, &ctx, size, points[0]).drop_without_applying_deltas();
+    paint(&mut app, &ctx, size, vec![]).drop_without_applying_deltas();
+    for at in points {
+        click(&mut app, &ctx, size, at).drop_without_applying_deltas();
+    }
     let out = key(&mut app, egui::Key::Escape);
     assert!(
         app.current().sketch.model_active(),
@@ -855,6 +872,19 @@ fn enter_and_escape_finish_or_cancel_the_wall_path_before_they_apply_or_discard_
     );
     assert!(control_bounds(&out, "Draw in viewport").is_some());
     out.drop_without_applying_deltas();
+    let Some(crate::modeling::ModelRequest::Wall(kept)) = app
+        .current()
+        .sketch
+        .model_for_tests()
+        .request_for_tests(&app.current().session)
+    else {
+        panic!("wall request")
+    };
+    // Applying the first wall refits the view, so compare corner counts:
+    // both clicked corners of the new chain are kept.
+    assert_eq!(kept.wall.path.len(), 2, "Escape kept the placed segment");
+    assert_ne!(kept.wall.path[0], kept.wall.path[1]);
+    assert_eq!(app.current().session.document(), &document);
     // Idle, Escape is no longer the path's; the form's own cancel then
     // discards the open form without touching the document.
     assert_eq!(

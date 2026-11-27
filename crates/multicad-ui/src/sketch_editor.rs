@@ -1180,8 +1180,12 @@ impl SketchEditor {
         &mut self,
         key: crate::modeling::OutlineKey,
     ) -> Option<&'static str> {
+        let chains = self.model.outline_chains();
         self.model.outline_key(key)?;
         let message = match key {
+            crate::modeling::OutlineKey::Finish | crate::modeling::OutlineKey::Cancel if chains => {
+                "Wall chain ended · placed segments kept · Apply builds them as one wall"
+            }
             crate::modeling::OutlineKey::Finish => "Path finished · Preview or Apply builds it",
             crate::modeling::OutlineKey::Cancel => "Path drawing cancelled · previous path kept",
             crate::modeling::OutlineKey::RemoveLast => "Last corner removed",

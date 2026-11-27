@@ -202,6 +202,7 @@ impl WallPanel {
         }
         panel.outline.start_on_empty_click = true;
         panel.outline.inline_entry = true;
+        panel.outline.chain_drawing = true;
         panel.load_type(document)?;
         if panel.wall_type.is_none()
             && let Some(id) = panel.symbol.first()
@@ -322,6 +323,7 @@ impl WallPanel {
         panel.outline = OutlineEditor::new(OutlineKind::WallPath, &wall.path, wall.closed)?;
         panel.outline.start_on_empty_click = false;
         panel.outline.inline_entry = true;
+        panel.outline.chain_drawing = true;
         panel.level = wall.level;
         panel.base_z = DimensionField::from_dimension(&wall.base_z, "mm")?;
         panel.cutouts = wall.cutouts.clone();
@@ -427,6 +429,13 @@ impl WallPanel {
             self.error = None;
         }
         Some(changed)
+    }
+    /// The Wall tool: nothing is placed until corners are clicked or typed;
+    /// the first click sets the start (CAD-427).
+    pub(super) fn start_new_path(&mut self) {
+        self.outline.set_points(&[], false);
+        self.outline.start_drawing();
+        self.stamp.changed();
     }
     /// The inline Length/Angle fields beside the pending segment.
     pub(super) fn outline_mut(&mut self) -> &mut OutlineEditor {

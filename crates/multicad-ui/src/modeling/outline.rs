@@ -115,6 +115,18 @@ const PICK_PX: f32 = 9.;
 /// Angular window for orthogonal snapping.
 const ORTHO_DEG: f64 = 8.;
 
+/// The tool-ending right-click over the plan. Local seam until the shared
+/// CAD-413 tool lifecycle ("Enter or right-click ends a tool") lands; then
+/// this delegates to it.
+fn tool_end_click(view: &TerminationViewport<'_>) -> bool {
+    view.painter.ctx().input(|i| {
+        i.pointer.button_clicked(egui::PointerButton::Secondary)
+            && i.pointer
+                .interact_pos()
+                .or(view.pointer)
+                .is_some_and(|p| view.rect.contains(p))
+    })
+}
 fn mm(value: f64) -> DimensionField {
     DimensionField::from_dimension(&length(value), "mm").expect("millimeters are a length unit")
 }
@@ -337,6 +349,9 @@ pub(super) struct OutlineEditor {
     pub start_on_empty_click: bool,
     /// Offer Length/Angle fields beside the pending segment (walls, CAD-427).
     pub inline_entry: bool,
+    /// Drawing is a chain that Enter, Escape or a right-click ends while
+    /// keeping its corners (walls, CAD-427); otherwise Escape cancels it.
+    pub chain_drawing: bool,
     inline: inline::InlineSegment,
     pub(super) message: Option<String>,
 }
@@ -381,6 +396,7 @@ impl OutlineEditor {
             drawn: 0,
             start_on_empty_click: false,
             inline_entry: false,
+            chain_drawing: false,
             inline: Default::default(),
             message: None,
         })
@@ -600,6 +616,11 @@ impl OutlineEditor {
     pub fn key(&mut self, key: OutlineKey) -> Option<bool> {
         match key {
             OutlineKey::Finish if self.drawing() => {
+                self.finish();
+                Some(true)
+            }
+            // A chained wall keeps what was placed: Escape ends the chain.
+            OutlineKey::Cancel if self.chain_drawing && self.drawing() => {
                 self.finish();
                 Some(true)
             }
@@ -1078,6 +1099,11 @@ impl OutlineEditor {
             }
         });
         match self.mode {
+            Mode::Drawing if self.chain_drawing => {
+                ui.small(format!(
+                    "Click corners on {plane_label}, or type each segment's length beside it (3.5 m, 350cm; Tab for an exact angle) and press Enter. Each segment chains from the last; click the start corner to close the room. Enter, right-click or Esc ends the chain and keeps the placed segments; Backspace removes the last corner."
+                ));
+            }
             Mode::Drawing => {
                 ui.small(format!(
                     "Click corners on {plane_label}; the dashed segment follows the pointer until the next click. Click the first corner to close, Enter to finish an open path, Backspace to remove the last corner, Esc to cancel and keep the previous outline."
@@ -1347,9 +1373,11 @@ impl OutlineEditor {
                 i.key_pressed(egui::Key::Backspace),
             )
         });
+        // A right-click in the plan ends a chained drawing like Enter.
+        let end_click = self.chain_drawing && tool_end_click(view);
         for (pressed, key) in [
             (escape, OutlineKey::Cancel),
-            (enter, OutlineKey::Finish),
+            (enter || end_click, OutlineKey::Finish),
             (backspace, OutlineKey::RemoveLast),
         ] {
             if pressed && let Some(edited) = self.key(key) {
@@ -1433,6 +1461,11 @@ impl OutlineEditor {
         points: &[[f64; 2]],
         check: PathCheck<'_>,
     ) -> bool {
+        // Enter in empty fields ends a chained drawing, as Enter on the plan does.
+        if self.chain_drawing && self.inline.texts.iter().all(|t| t.trim().is_empty()) {
+            self.finish();
+            return true;
+        }
         let typed = self.typed_hover(document, points);
         if let Some(error) = self.inline_invalid() {
             self.message = Some(format!("Corner not added: {error}"));
@@ -1609,6 +1642,12 @@ impl OutlineEditor {
             );
         }
         let hint = match self.mode {
+            Mode::Drawing if self.chain_drawing && n == 0 => {
+                Some("Click where the wall starts · snaps to wall ends, grid and geometry")
+            }
+            Mode::Drawing if self.chain_drawing => Some(
+                "Click the next corner or type a length (Tab: angle) · click the start to close · Enter, right-click or Esc ends the chain",
+            ),
             Mode::Drawing if n == 0 => {
                 Some("Click the first corner · Esc cancels and keeps the previous path")
             }

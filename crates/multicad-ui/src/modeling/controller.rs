@@ -847,14 +847,15 @@ impl ModelToolController {
         channel: Channel,
     ) -> Result<(), String> {
         let name = GeneratedNames::new(session.document()).numbered("Wall", " feature");
+        // Wall is a drawing tool: nothing exists until segments are clicked
+        // or typed, and the whole chain is one wall feature (CAD-427).
+        let mut panel = super::wall::WallPanel::new(session.document(), name)?;
+        panel.start_new_path();
         self.begin_form(
             session,
             resources,
             channel,
-            ModelForm::Wall(Box::new(super::wall::WallPanel::new(
-                session.document(),
-                name,
-            )?)),
+            ModelForm::Wall(Box::new(panel)),
         )
     }
     /// Room door, window or vertical-cutout tool on `wall` (or the first
@@ -975,6 +976,10 @@ impl ModelToolController {
             Some(ModelForm::Architecture(panel)) => panel.outlines(),
             _ => false,
         }
+    }
+    /// Whether the active path ends as a chain that keeps its corners.
+    pub(crate) fn outline_chains(&self) -> bool {
+        matches!(&self.form, Some(ModelForm::Wall(_)))
     }
     /// Whether the wall path's inline Length/Angle fields are shown (CAD-427).
     pub(crate) fn outline_inline_visible(&self) -> bool {
