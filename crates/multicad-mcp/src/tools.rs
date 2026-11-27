@@ -130,6 +130,9 @@ pub use text::{
 use text::{sketch_add_text, sketch_edit_text, sketch_remove_text};
 pub use threads::{InspectThreadArgs, ThreadArgs};
 use threads::{inspect_thread, set_thread, thread_profiles};
+mod frame;
+pub use frame::{CreateFrameArgs, EditFrameArgs};
+use frame::{create_frame, edit_frame};
 mod weldment;
 use guides::set_drawing_guide;
 pub use guides::{GuideArgs, GuideKindArg};
@@ -659,6 +662,12 @@ tools! {
     "weldment_cut_list" => NoArgs, "Weldment cut list", true,
         "Every weldment member measured from its evaluated solid: section, material and stock, overall length along the axis, rotation, anchor and world orientation, volume and whether it fits one stock bar.",
         weldment_cut_list;
+    "create_frame" => CreateFrameArgs, "Create metal frame", false,
+        "Draw a frame of profile stock as lines (CAD-439): a first node, then a chain of segments by length, in-plane angle and rise along the plane normal, optionally closed. Each member is its own Part; the section lies centered, inner, outer, left or right of the line; joints are derived at every node (equal sections mitre, different sections butt with the larger through, round branches cope, a leg runs through a corner) with a frame weld gap (default 0, it shortens the members). Built natively before one transaction commits; joints a section cannot take are refused with the reason.",
+        create_frame;
+    "edit_frame" => EditFrameArgs, "Edit metal frame", false,
+        "Edit a frame by operations, in order: add a chain from a node, add a station on a member (T or X), move a node (absolute or polar from another node), override a node's joint (kind, through member, gap) or make it automatic again, change a member's or the frame's side, or remove a member with its Part. Member Parts keep their ids; overrides that no longer apply are reported, never replaced. Built natively before one transaction commits.",
+        edit_frame;
     "set_weld" => WeldArgs, "Add or edit weld", false,
         "Attach a weld to a member connection, or edit one by ID: unique mark (its ID on drawings), symbol and side, size, length, all-around and field flags, process and access/orientation notes. Documentation only, not a welding procedure.",
         set_weld;

@@ -874,6 +874,7 @@ pub(super) fn weldment_cut_list(host: &dyn Host, call: &Request, _: super::NoArg
             "path": match &r.path {
                 MemberPath::SketchLine { sketch, line } => json!({ "sketch": sketch, "line": line }),
                 MemberPath::Points { .. } => json!({ "points": true }),
+                MemberPath::FrameMember { frame, member } => json!({ "frame": frame, "member": member }),
             },
             "length_mm": r.length_mm, "nominal_length_mm": r.nominal_length_mm,
             "rotation_deg": r.rotation_deg,
@@ -881,7 +882,7 @@ pub(super) fn weldment_cut_list(host: &dyn Host, call: &Request, _: super::NoArg
             "axis": r.frame.axis, "width_direction": r.frame.x, "height_direction": r.frame.y,
             "span_mm": r.span_mm,
             "start": end_json(&r.ends[0]), "end": end_json(&r.ends[1]),
-            "volume_mm3": r.volume_mm3, "fits_stock": r.fits_stock, "issues": r.issues,
+            "volume_mm3": r.volume_mm3, "mass_kg": r.mass_kg, "fits_stock": r.fits_stock, "issues": r.issues,
         })).collect::<Vec<_>>(),
     }))
 }
