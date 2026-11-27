@@ -935,12 +935,16 @@ fn both_ends_of_a_rounded_corner_extend_their_sides_and_cross_at_the_virtual_cor
 
 #[test]
 fn face_corners_and_face_centres_are_acquired_with_their_face_edge_guides() {
+    use multicad_precision::PortableMath as _;
     use std::f64::consts::FRAC_PI_3;
     let corner = support_key(TopologyKind::Vertex, 0);
     let arc_end = support_key(TopologyKind::Vertex, 1);
     let arc = support_key(TopologyKind::Edge, 3);
     // The arc's end, at 60 degrees about its centre (40, 0).
-    let end = [40. + 10. * FRAC_PI_3.cos(), 10. * FRAC_PI_3.sin()];
+    let end = [
+        40. + 10. * FRAC_PI_3.portable_cos(),
+        10. * FRAC_PI_3.portable_sin(),
+    ];
     let g = SnapGeometry::default()
         .with_support(vec![(corner, [0., 0.]), (arc_end, end)])
         .with_support_edges(vec![
@@ -973,7 +977,7 @@ fn face_corners_and_face_centres_are_acquired_with_their_face_edge_guides() {
     let r = &assist.references()[1];
     assert_eq!(r.source, TargetKey::Support(arc_end));
     assert_eq!(r.directions.len(), 1);
-    let tangent = [-FRAC_PI_3.sin(), FRAC_PI_3.cos()];
+    let tangent = [-FRAC_PI_3.portable_sin(), FRAC_PI_3.portable_cos()];
     assert!(
         dot(r.directions[0], tangent) > 1. - 1e-12,
         "{:?}",
