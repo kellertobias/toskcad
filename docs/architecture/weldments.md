@@ -146,8 +146,10 @@ between nodes and per-node joint overrides only. Files with frames require
   created with the member and kept through every frame edit; removing a
   member from the frame removes its feature, Part and properties.
 - **Side.** A member's section lies centered on its line (its own grid
-  anchor), or inner/outer (toward or away from the in-plane centroid of the
-  nodes) or left/right looking along it with the plane normal up. The frame
+  anchor), with its area centroid on the line, or inner/outer (toward or
+  away from the in-plane centroid of the nodes) or left/right looking along
+  it with the plane normal up. An offset then shifts the placed section
+  along its width and height, and a roll turns it about the axis. The frame
   default applies unless a member sets its own. In-plane members take the
   plane normal as section height; members along the normal (legs) take the
   plane u axis.
@@ -175,10 +177,17 @@ Frame limits in this slice:
 - The Rust kernel copes a round branch only onto a receiving tube that runs
   past the joint (a T), so two different round tubes meeting at an L corner
   are refused there.
-- Centroid anchors, section offsets, an overridable off-plane up rule,
-  frame-default stock that follows later changes, model-bound nodes and
-  split/merge of drawn members are not implemented yet; the Frame tool is
-  CAD-440.
+- An overridable off-plane up rule, frame-default stock that follows
+  later changes, model-bound nodes and split/merge of drawn members are not
+  implemented yet.
+
+The Frame tool (Model → Metal → Frame, CAD-440) draws frames on a datum
+plane, a level or a work or sketch plane: clicks snap to nodes, 15° steps
+and the directions of drawn members; typed segments keep units and
+`=$parameter` lengths at a turn from the previous member. Joint badges
+(M, B→, C, red !, * for an override) open a joint editor; nodes are
+dragged with live members, badges and section outlines; a selected member
+takes its own side, offset and roll in a linked section diagram.
 
 ## What the planner refuses
 
