@@ -17,6 +17,10 @@ use multicad_core::{
     sketch::Frame,
 };
 use multicad_precision::PortableMath as _;
+#[path = "outline_inline.rs"]
+mod inline;
+#[cfg(test)]
+pub(crate) use inline::SegmentField;
 
 /// What the outline becomes. A wall path may stay open; a slab outline is
 /// always a closed polygon.
@@ -331,6 +335,9 @@ pub(super) struct OutlineEditor {
     drawn: usize,
     /// A click on empty plan space starts drawing a new path (new walls).
     pub start_on_empty_click: bool,
+    /// Offer Length/Angle fields beside the pending segment (walls, CAD-427).
+    pub inline_entry: bool,
+    inline: inline::InlineSegment,
     pub(super) message: Option<String>,
 }
 
@@ -373,6 +380,8 @@ impl OutlineEditor {
             hover_refusal: None,
             drawn: 0,
             start_on_empty_click: false,
+            inline_entry: false,
+            inline: Default::default(),
             message: None,
         })
     }
@@ -536,6 +545,7 @@ impl OutlineEditor {
         self.drawn = 0;
         self.start_on_empty_click = false;
         self.message = None;
+        self.clear_inline();
     }
     /// Keep the current open path and append corners after its last one.
     pub fn continue_drawing(&mut self) {
@@ -549,6 +559,7 @@ impl OutlineEditor {
         self.drawn = 0;
         self.start_on_empty_click = false;
         self.message = None;
+        self.clear_inline();
     }
     /// Finish drawing (slabs always close) and keep the drawn corners. An
     /// open path with fewer than two corners cannot exist, so finishing it
@@ -571,6 +582,7 @@ impl OutlineEditor {
         self.before = None;
         self.hover = None;
         self.hover_refusal = None;
+        self.clear_inline();
     }
     /// Remove the last corner placed during this draw. Returns whether the
     /// corners changed.
@@ -626,6 +638,7 @@ impl OutlineEditor {
     /// Abandon the current draw or move and restore the previous corners.
     /// Returns whether the corners changed back.
     pub fn cancel(&mut self) -> bool {
+        self.clear_inline();
         self.mode = Mode::Idle;
         self.hover = None;
         self.hover_refusal = None;
@@ -751,48 +764,7 @@ impl OutlineEditor {
             enough.then(|| check(path, closed).err()).flatten()
         };
         match self.mode {
-            Mode::Drawing => {
-                let candidate = if snapped.kind == SnapKind::Close {
-                    (points.to_vec(), true)
-                } else {
-                    let mut path = points.to_vec();
-                    path.push(snapped.point);
-                    (path, false)
-                };
-                if let Some(reason) = refused(&candidate.0, candidate.1) {
-                    self.message = Some(format!("Corner not added: {reason}"));
-                    return false;
-                }
-                if snapped.kind == SnapKind::Close {
-                    self.closed = true;
-                    self.finish();
-                    self.message = Some(format!(
-                        "Outline closed with {} corners",
-                        self.corners.len()
-                    ));
-                    return true;
-                }
-                if points
-                    .last()
-                    .is_some_and(|last| dist(*last, snapped.point) < 1e-6)
-                {
-                    return false;
-                }
-                if self.corners.len() >= corner_limit(self.kind) {
-                    self.message = Some(format!(
-                        "This path supports at most {} corners",
-                        corner_limit(self.kind)
-                    ));
-                    return false;
-                }
-                self.corners.push([mm(0.), mm(0.)]);
-                self.ids.push(EntityId::new());
-                let last = self.corners.len() - 1;
-                self.set_corner(last, snapped.point);
-                self.drawn += 1;
-                self.message = None;
-                true
-            }
+            Mode::Drawing => self.place_drawn(snapped, points, check),
             Mode::Moving(i) => {
                 let mut path = points.to_vec();
                 if let Some(p) = path.get_mut(i) {
@@ -842,6 +814,54 @@ impl OutlineEditor {
                 false
             }
         }
+    }
+    /// Place the next drawn corner at `snapped` if the resulting path passes
+    /// `check`; a snap onto the first corner closes the outline.
+    fn place_drawn(&mut self, snapped: Snapped, points: &[[f64; 2]], check: PathCheck<'_>) -> bool {
+        let refused = |path: &[[f64; 2]], closed: bool| {
+            let enough = path.len() >= if closed { 3 } else { 2 };
+            enough.then(|| check(path, closed).err()).flatten()
+        };
+        let candidate = if snapped.kind == SnapKind::Close {
+            (points.to_vec(), true)
+        } else {
+            let mut path = points.to_vec();
+            path.push(snapped.point);
+            (path, false)
+        };
+        if let Some(reason) = refused(&candidate.0, candidate.1) {
+            self.message = Some(format!("Corner not added: {reason}"));
+            return false;
+        }
+        if snapped.kind == SnapKind::Close {
+            self.closed = true;
+            self.finish();
+            self.message = Some(format!(
+                "Outline closed with {} corners",
+                self.corners.len()
+            ));
+            return true;
+        }
+        if points
+            .last()
+            .is_some_and(|last| dist(*last, snapped.point) < 1e-6)
+        {
+            return false;
+        }
+        if self.corners.len() >= corner_limit(self.kind) {
+            self.message = Some(format!(
+                "This path supports at most {} corners",
+                corner_limit(self.kind)
+            ));
+            return false;
+        }
+        self.corners.push([mm(0.), mm(0.)]);
+        self.ids.push(EntityId::new());
+        let last = self.corners.len() - 1;
+        self.set_corner(last, snapped.point);
+        self.drawn += 1;
+        self.message = None;
+        true
     }
     pub fn select(&mut self, selection: Selection, points: &[[f64; 2]]) {
         if let Selection::Segment(i) = selection
@@ -1317,6 +1337,9 @@ impl OutlineEditor {
         };
         let tolerance = (PICK_PX / view.camera.scale.max(1e-6)) as f64;
         let mut changed = false;
+        // Inline fields take Tab and Enter first, so Enter in a field places
+        // the typed corner instead of finishing the path.
+        self.inline_keyboard(view.painter.ctx());
         let (escape, enter, backspace) = view.painter.ctx().input(|i| {
             (
                 i.key_pressed(egui::Key::Escape),
@@ -1344,14 +1367,30 @@ impl OutlineEditor {
             .filter(|p| view.rect.contains(*p))
             .and_then(|p| view.camera.on_plane(p, view.rect, frame));
         self.hover = raw.map(|r| self.snap(r, &points, targets, tolerance));
+        let typed = self.typed_hover(document, &points);
+        if typed.is_some() {
+            self.hover = typed;
+        }
         self.hover_refusal = self
             .pending_path(&points)
             .filter(|(path, closed)| path.len() >= if *closed { 3 } else { 2 })
             .and_then(|(path, closed)| check(&path, closed).err());
-        if view.clicked
+        if self.take_inline_commit() {
+            changed |= self.commit_typed(document, &points, check);
+        } else if view.clicked
             && let Some(r) = raw
         {
-            changed |= self.click_checked(r, &points, targets, tolerance, check);
+            changed |= match typed {
+                // A click with entered values places the shown corner.
+                Some(snapped) if self.mode == Mode::Drawing => {
+                    let placed = self.place_drawn(snapped, &points, check);
+                    if placed {
+                        self.clear_inline();
+                    }
+                    placed
+                }
+                _ => self.click_checked(r, &points, targets, tolerance, check),
+            };
         }
         let points = if changed {
             self.positions(document).unwrap_or(points)
@@ -1359,7 +1398,57 @@ impl OutlineEditor {
             points
         };
         self.paint(view, z, &points);
+        match (points.last(), self.hover) {
+            (Some(last), Some(hover)) => self.inline_fields_ui(view, z, *last, hover.point),
+            (Some(last), None) => {
+                let ahead = [last[0] + 1000., last[1]];
+                self.inline_fields_ui(view, z, *last, ahead);
+            }
+            _ => self.inline_fields_ui(view, z, [0., 0.], [0., 0.]),
+        }
         changed
+    }
+    /// The pending corner with the entered Length/Angle held fixed, from the
+    /// pointer's hover (or +X without one). A typed corner on the first
+    /// corner closes the outline.
+    fn typed_hover(&mut self, document: &Document, points: &[[f64; 2]]) -> Option<Snapped> {
+        if !self.inline_entry || self.mode != Mode::Drawing {
+            return None;
+        }
+        let last = *points.last()?;
+        let (length, angle) = self.inline_values(document);
+        let point = inline::typed_corner(last, self.hover.map(|h| h.point), length, angle)?;
+        let kind = if points.len() >= 3 && dist(point, points[0]) < 1e-6 {
+            SnapKind::Close
+        } else {
+            SnapKind::Free
+        };
+        Some(Snapped { point, kind })
+    }
+    /// Enter in an inline field: place the typed corner and keep drawing
+    /// from it, with the fields cleared for the next segment.
+    fn commit_typed(
+        &mut self,
+        document: &Document,
+        points: &[[f64; 2]],
+        check: PathCheck<'_>,
+    ) -> bool {
+        let typed = self.typed_hover(document, points);
+        if let Some(error) = self.inline_invalid() {
+            self.message = Some(format!("Corner not added: {error}"));
+            return false;
+        }
+        let Some(snapped) = typed else {
+            self.message = Some("Enter a length or an angle for the next segment".into());
+            return false;
+        };
+        let placed = self.place_drawn(snapped, points, check);
+        if placed {
+            self.clear_inline();
+            self.hover = None;
+            self.focus_inline_field(true);
+        }
+        placed
     }
 
     fn paint(&self, view: &TerminationViewport<'_>, z: f64, points: &[[f64; 2]]) {

@@ -2675,6 +2675,13 @@ impl Application {
                             .focus_inline_field(action == ShortcutAction::NextWorkspace);
                         continue;
                     }
+                    // Likewise for a wall path's Length/Angle fields (CAD-427).
+                    if self.current().sketch.model_outline_inline_visible() {
+                        self.current_mut()
+                            .sketch
+                            .focus_model_outline_inline(action == ShortcutAction::NextWorkspace);
+                        continue;
+                    }
                     // Cycle the ribbon's visible workbenches in their chosen order.
                     if let Some(category) = self.active_architecture_category() {
                         self.cycle_architecture_category(

@@ -1167,6 +1167,13 @@ impl SketchEditor {
             "Boolean · the preview follows the selected bodies; Apply or Enter commits".into();
         Ok(())
     }
+    /// The wall path's inline Length/Angle fields (CAD-427).
+    pub(crate) fn model_outline_inline_visible(&self) -> bool {
+        self.model.outline_inline_visible()
+    }
+    pub(crate) fn focus_model_outline_inline(&mut self, forward: bool) {
+        self.model.focus_outline_inline(forward);
+    }
     /// Route a path-drawing key to the active wall, fence or slab outline.
     /// Returns the status text, or `None` when no path takes the key.
     pub(crate) fn model_outline_key(

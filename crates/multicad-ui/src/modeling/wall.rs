@@ -201,6 +201,7 @@ impl WallPanel {
             panel.wall_type = panel.types.first().map(|(id, _)| *id);
         }
         panel.outline.start_on_empty_click = true;
+        panel.outline.inline_entry = true;
         panel.load_type(document)?;
         if panel.wall_type.is_none()
             && let Some(id) = panel.symbol.first()
@@ -320,6 +321,7 @@ impl WallPanel {
         }
         panel.outline = OutlineEditor::new(OutlineKind::WallPath, &wall.path, wall.closed)?;
         panel.outline.start_on_empty_click = false;
+        panel.outline.inline_entry = true;
         panel.level = wall.level;
         panel.base_z = DimensionField::from_dimension(&wall.base_z, "mm")?;
         panel.cutouts = wall.cutouts.clone();
@@ -425,6 +427,13 @@ impl WallPanel {
             self.error = None;
         }
         Some(changed)
+    }
+    /// The inline Length/Angle fields beside the pending segment.
+    pub(super) fn outline_mut(&mut self) -> &mut OutlineEditor {
+        &mut self.outline
+    }
+    pub(super) fn outline(&self) -> &OutlineEditor {
+        &self.outline
     }
     /// The construction the plan preview offsets the path with: the canonical
     /// resolution of this form's wall where its type already exists, else the
@@ -1334,6 +1343,7 @@ fn paint_band(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modeling::outline::SegmentField;
     use multicad_core::commands::{Actor, Channel, Session};
     use multicad_model::Compiler;
 
@@ -1900,14 +1910,6 @@ mod tests {
         clicked: bool,
         keys: &[egui::Key],
     ) -> (bool, egui::FullOutput) {
-        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 800.));
-        let camera = crate::camera::Camera {
-            yaw: 0.,
-            pitch: 1.5,
-            scale: 0.1,
-            target: [1000., 1000., 0.],
-            perspective: false,
-        };
         let events = keys
             .iter()
             .map(|key| egui::Event::Key {
@@ -1918,6 +1920,25 @@ mod tests {
                 modifiers: egui::Modifiers::NONE,
             })
             .collect();
+        plan_input(ctx, panel, session, at, clicked, events)
+    }
+    /// One plan frame with arbitrary input events (typed text, keys).
+    fn plan_input(
+        ctx: &egui::Context,
+        panel: &mut WallPanel,
+        session: &Session,
+        at: [f64; 2],
+        clicked: bool,
+        events: Vec<egui::Event>,
+    ) -> (bool, egui::FullOutput) {
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 800.));
+        let camera = crate::camera::Camera {
+            yaw: 0.,
+            pitch: 1.5,
+            scale: 0.1,
+            target: [1000., 1000., 0.],
+            perspective: false,
+        };
         let mut changed = false;
         let mut output = ctx.run_ui(
             egui::RawInput {
@@ -2365,5 +2386,225 @@ mod tests {
         }
         assert_eq!(panel.justification, Justification::Right);
         assert_eq!(panel.outline.positions(session.document()).unwrap(), points);
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+    fn text(text: &str) -> egui::Event {
+        egui::Event::Text(text.into())
+    }
+
+    #[test]
+    fn a_four_by_three_metre_room_is_typed_as_four_lengths_and_closes_exactly() {
+        let session = Session::new(Document::new("Typed room").unwrap()).unwrap();
+        let mut panel = WallPanel::new(session.document(), "Room".into()).unwrap();
+        panel.sync_source(&session);
+        let ctx = egui::Context::default();
+        // The first click (on empty plan space) sets where the wall starts.
+        plan_frame(&ctx, &mut panel, &session, [-2000., 2000.], true, &[]);
+        assert!(panel.outline.drawing());
+        assert_eq!(panel.outline.len(), 1);
+        // Typing a number enters Length; the fields stand beside the segment.
+        let (_, _) = plan_input(
+            &ctx,
+            &mut panel,
+            &session,
+            [-1500., 2100.],
+            false,
+            vec![text("4 m")],
+        );
+        assert_eq!(panel.outline.inline_text(SegmentField::Length), "4 m");
+        assert!(panel.outline.inline_fields_visible());
+        // Before Enter the pending segment already shows the typed length,
+        // its direction snapped to +X toward the pointer.
+        let (_, output) = plan_frame(&ctx, &mut panel, &session, [-1500., 2100.], false, &[]);
+        let points = panel.outline.positions(session.document()).unwrap();
+        assert_eq!(
+            panel.outline.pending_path(&points),
+            Some((vec![[-2000., 2000.], [2000., 2000.]], false))
+        );
+        assert_eq!(filled_quads(&output), 1, "the typed segment is previewed");
+        assert!(panel.outline.inline_input_active());
+        plan_input(
+            &ctx,
+            &mut panel,
+            &session,
+            [-1500., 2100.],
+            false,
+            vec![key(egui::Key::Enter)],
+        );
+        assert_eq!(
+            panel.outline.positions(session.document()).unwrap(),
+            vec![[-2000., 2000.], [2000., 2000.]]
+        );
+        assert!(
+            panel.outline.drawing(),
+            "the chain continues from the new end"
+        );
+        assert_eq!(panel.outline.inline_text(SegmentField::Length), "");
+        // Length keeps focus for the next segment: centimetres, toward +Y.
+        plan_input(
+            &ctx,
+            &mut panel,
+            &session,
+            [2100., 2600.],
+            false,
+            vec![text("300cm")],
+        );
+        plan_input(
+            &ctx,
+            &mut panel,
+            &session,
+            [2100., 2600.],
+            false,
+            vec![key(egui::Key::Enter)],
+        );
+        // Tab moves to Angle for an exact direction regardless of the pointer.
+        plan_input(
+            &ctx,
+            &mut panel,
+            &session,
+            [5000., 0.],
+            false,
+            vec![text("4 m")],
+        );
+        plan_input(
+            &ctx,
+            &mut panel,
+            &session,
+            [5000., 0.],
+            false,
+            vec![key(egui::Key::Tab)],
+        );
+        plan_input(
+            &ctx,
+            &mut panel,
+            &session,
+            [5000., 0.],
+            false,
+            vec![text("180")],
+        );
+        assert_eq!(panel.outline.inline_text(SegmentField::Angle), "180");
+        plan_input(
+            &ctx,
+            &mut panel,
+            &session,
+            [5000., 0.],
+            false,
+            vec![key(egui::Key::Enter)],
+        );
+        plan_input(
+            &ctx,
+            &mut panel,
+            &session,
+            [5000., 0.],
+            false,
+            vec![text("3000")],
+        );
+        plan_input(
+            &ctx,
+            &mut panel,
+            &session,
+            [5000., 0.],
+            false,
+            vec![key(egui::Key::Tab)],
+        );
+        plan_input(
+            &ctx,
+            &mut panel,
+            &session,
+            [5000., 0.],
+            false,
+            vec![text("270")],
+        );
+        plan_input(
+            &ctx,
+            &mut panel,
+            &session,
+            [5000., 0.],
+            false,
+            vec![key(egui::Key::Enter)],
+        );
+        // The fourth length lands exactly on the start, which closes the room.
+        assert!(panel.outline.closed());
+        assert!(!panel.outline.capturing());
+        assert_eq!(
+            panel.outline.positions(session.document()).unwrap(),
+            vec![
+                [-2000., 2000.],
+                [2000., 2000.],
+                [2000., 5000.],
+                [-2000., 5000.]
+            ]
+        );
+        let command = panel.request(session.document(), true).unwrap();
+        assert!(command.wall.closed);
+        let prepared = command
+            .prepare(&session, Actor::local(Channel::Ui))
+            .unwrap();
+        let model = Compiler::default()
+            .compile(prepared.prepared.document(), session.revision())
+            .unwrap();
+        let shape = &model.snapshot().shapes[&prepared.outputs[0].feature];
+        assert_eq!(shape.solid_count, 1, "one connected, mitered room");
+        assert!(
+            (shape.volume_mm3 - 14000. * 200. * 2500.).abs() < 1e-3,
+            "{}",
+            shape.volume_mm3
+        );
+    }
+
+    #[test]
+    fn invalid_inline_entries_are_refused_and_a_click_places_the_typed_corner() {
+        let session = Session::new(Document::new("Typed wall").unwrap()).unwrap();
+        let mut panel = WallPanel::new(session.document(), "Wall".into()).unwrap();
+        panel.sync_source(&session);
+        let ctx = egui::Context::default();
+        plan_frame(&ctx, &mut panel, &session, [-2000., 2000.], true, &[]);
+        for bad in ["-2 m", "3 yards", "0"] {
+            plan_frame(&ctx, &mut panel, &session, [0., 2100.], false, &[]);
+            panel.outline.set_inline_text(SegmentField::Length, bad);
+            panel.outline.request_inline_commit();
+            let (changed, _) = plan_frame(&ctx, &mut panel, &session, [0., 2100.], false, &[]);
+            assert!(!changed, "{bad}");
+            assert_eq!(panel.outline.len(), 1, "{bad}");
+            assert!(
+                panel
+                    .outline
+                    .message
+                    .as_deref()
+                    .unwrap()
+                    .starts_with("Corner not added"),
+                "{bad}"
+            );
+        }
+        panel.outline.set_inline_text(SegmentField::Length, "");
+        panel.outline.set_inline_text(SegmentField::Angle, "north");
+        panel.outline.request_inline_commit();
+        plan_frame(&ctx, &mut panel, &session, [0., 2100.], false, &[]);
+        assert_eq!(panel.outline.len(), 1);
+        // A valid length with the pointer below: the direction snaps to -Y,
+        // and a click places the shown, exact corner.
+        panel.outline.set_inline_text(SegmentField::Angle, "");
+        panel.outline.set_inline_text(SegmentField::Length, "3.5 m");
+        plan_frame(&ctx, &mut panel, &session, [-1900., -400.], true, &[]);
+        assert_eq!(
+            panel.outline.positions(session.document()).unwrap(),
+            vec![[-2000., 2000.], [-2000., -1500.]]
+        );
+        assert_eq!(panel.outline.inline_text(SegmentField::Length), "");
+        // Without entered values a click places the snapped pointer as before.
+        plan_frame(&ctx, &mut panel, &session, [1000., -1500.], true, &[]);
+        assert_eq!(
+            panel.outline.positions(session.document()).unwrap(),
+            vec![[-2000., 2000.], [-2000., -1500.], [1000., -1500.]]
+        );
     }
 }

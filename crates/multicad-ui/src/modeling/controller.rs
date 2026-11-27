@@ -976,6 +976,16 @@ impl ModelToolController {
             _ => false,
         }
     }
+    /// Whether the wall path's inline Length/Angle fields are shown (CAD-427).
+    pub(crate) fn outline_inline_visible(&self) -> bool {
+        matches!(&self.form, Some(ModelForm::Wall(panel)) if panel.outline().inline_fields_visible())
+    }
+    /// Tab from the canvas enters Length (Shift+Tab: Angle).
+    pub(crate) fn focus_outline_inline(&mut self, forward: bool) {
+        if let Some(ModelForm::Wall(panel)) = self.form.as_mut() {
+            panel.outline_mut().focus_inline_field(forward);
+        }
+    }
     /// Give Enter, Escape or Backspace to a wall, fence or slab path while it
     /// is being drawn or a corner is moved. Returns `None` when the key is not
     /// the path's, so the form keeps its usual Apply and Cancel meaning.
