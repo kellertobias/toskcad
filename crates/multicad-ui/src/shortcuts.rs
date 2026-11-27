@@ -62,7 +62,12 @@ impl Chord {
                 ""
             },
             if self.shift { "Shift+" } else { "" },
-            self.key.name()
+            // Slash reads as the key cap people press: ⌘/.
+            if self.key == Key::Slash {
+                "/"
+            } else {
+                self.key.name()
+            }
         )
     }
 }
@@ -288,6 +293,13 @@ impl ShortcutMap {
         add(
             Scope::Global,
             Chord::plain(Key::F1),
+            Command(crate::registry::Command::KeyboardShortcuts),
+            "Keyboard shortcuts",
+            false,
+        );
+        add(
+            Scope::Global,
+            Chord::primary(Key::Slash),
             Command(crate::registry::Command::KeyboardShortcuts),
             "Keyboard shortcuts",
             false,

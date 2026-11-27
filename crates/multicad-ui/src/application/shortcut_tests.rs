@@ -180,6 +180,12 @@ fn tooltips_and_the_shortcut_list_show_the_keys() {
         b.chord == crate::shortcuts::Chord::plain(egui::Key::M)
             && b.action == crate::shortcuts::Action::Command(Command::Modeling(ModelingTool::Move))
     }));
+    chord(&mut h, egui::Key::Slash, egui::Modifiers::COMMAND);
+    assert!(h.app.shortcut_help, "⌘/ opens the keyboard shortcut list");
+    let texts = h.texts();
+    let label = crate::shortcuts::Chord::primary(egui::Key::Slash).label();
+    assert!(label.ends_with('/'), "{label}");
+    assert!(texts.contains(&label), "{texts:?}");
 }
 
 #[test]
