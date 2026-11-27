@@ -96,6 +96,10 @@ fn side_label(side: FrameSide) -> &'static str {
         .map_or("Centered on the line", |(_, l)| l)
 }
 
+/// What a joint report was computed for: the form state, the document
+/// revision, and a node being moved with its rounded position.
+type ReportKey = (u64, u64, Option<(EntityId, [i64; 2])>);
+
 pub struct FramePanel {
     stamp: FormStamp,
     frame: EntityId,
@@ -119,7 +123,12 @@ pub struct FramePanel {
     segment_length: DimensionField,
     segment_angle: DimensionField,
     gap_text: String,
-    report: Option<(u64, u64, Result<Vec<NodeJoint>, String>)>,
+    report: Option<(ReportKey, Result<Vec<NodeJoint>, String>)>,
+    /// Placed section outlines at both ends of every member, from the
+    /// same candidate the badges come from.
+    sections: Vec<[Vec<[f64; 3]>; 2]>,
+    dragging: bool,
+    drag_from: Option<[f64; 2]>,
     error: Option<String>,
     counter: usize,
 }
@@ -169,6 +178,9 @@ impl FramePanel {
             segment_angle: field(0., "deg")?,
             gap_text: String::new(),
             report: None,
+            sections: vec![],
+            dragging: false,
+            drag_from: None,
             error: None,
             counter: 0,
         })
@@ -220,13 +232,21 @@ impl FramePanel {
     }
 
     pub fn request(&self, document: &Document, enabled: bool) -> Result<FrameCommand, String> {
+        self.request_for(&self.definition, document, enabled)
+    }
+    fn request_for(
+        &self,
+        definition: &FrameDefinition,
+        document: &Document,
+        enabled: bool,
+    ) -> Result<FrameCommand, String> {
         if !enabled {
             return Err("Native modeling is unavailable".into());
         }
         if self.name.trim().is_empty() {
             return Err("Name the frame".into());
         }
-        if self.definition.members.is_empty() {
+        if definition.members.is_empty() {
             return Err("Draw at least one member: click two points or type a segment".into());
         }
         for m in self.new_members.values() {
@@ -236,9 +256,8 @@ impl FramePanel {
             request: FrameRequest {
                 frame: self.frame,
                 name: self.name.trim().into(),
-                definition: self.definition.clone(),
-                members: self
-                    .definition
+                definition: definition.clone(),
+                members: definition
                     .members
                     .iter()
                     .filter_map(|m| self.new_members.get(&m.id).cloned())
@@ -306,6 +325,7 @@ impl FramePanel {
         raw: [f64; 2],
         nodes: &[(EntityId, [f64; 2])],
         last: Option<[f64; 2]>,
+        directions: &[f64],
         tolerance: f64,
     ) -> ([f64; 2], Option<EntityId>) {
         if let Some((id, p)) = nodes
@@ -321,8 +341,16 @@ impl FramePanel {
             let (dx, dy) = (raw[0] - l[0], raw[1] - l[1]);
             let r = dx.portable_hypot(dy);
             let a = dy.portable_atan2(dx).to_degrees();
-            let step = (a / ANGLE_STEP_DEG).round() * ANGLE_STEP_DEG;
-            if r > 0. && (a - step).abs() <= ANGLE_SNAP_DEG {
+            // 15° steps from the plane axes and from every member drawn
+            // (which includes parallel and perpendicular to each), and the
+            // exact directions of existing members.
+            let wrap = |d: f64| (d + 540.).rem_euclid(360.) - 180.;
+            let step = std::iter::once(0.)
+                .chain(directions.iter().copied())
+                .map(|base| base + (wrap(a - base) / ANGLE_STEP_DEG).round() * ANGLE_STEP_DEG)
+                .min_by(|x, y| wrap(a - x).abs().total_cmp(&wrap(a - y).abs()))
+                .unwrap_or(a);
+            if r > 0. && wrap(a - step).abs() <= ANGLE_SNAP_DEG {
                 let r = r.round();
                 let (s, c) = step.to_radians().portable_sin_cos();
                 return ([l[0] + r * c, l[1] + r * s], None);
@@ -498,27 +526,52 @@ impl FramePanel {
 
     // --- Joint badges ----------------------------------------------------------
 
-    fn refresh_report(&mut self, session: &Session) {
-        let key = (self.stamp.revision, session.revision());
-        if self
-            .report
-            .as_ref()
-            .is_some_and(|(a, b, _)| (*a, *b) == key)
-        {
+    /// Recompute joint badges and section outlines when the source, the
+    /// document or a moving node changed. A moving node is evaluated at its
+    /// live position, so badges and sections follow a drag.
+    fn refresh_report(&mut self, session: &Session, probe: Option<(EntityId, [f64; 2])>) {
+        let key: ReportKey = (
+            self.stamp.revision,
+            session.revision(),
+            probe.map(|(n, p)| (n, [p[0].round() as i64, p[1].round() as i64])),
+        );
+        if self.report.as_ref().is_some_and(|(k, _)| *k == key) {
             return;
         }
+        let mut definition = self.definition.clone();
+        if let Some((node, p)) = probe {
+            let _ = definition.set_node(
+                node,
+                NodePosition::Absolute {
+                    u: length(p[0]),
+                    v: length(p[1]),
+                    w: None,
+                },
+            );
+        }
+        let mut sections = vec![];
         let result = (|| -> Result<Vec<NodeJoint>, String> {
-            let command = self.request(session.document(), true)?;
+            let command = self.request_for(&definition, session.document(), true)?;
             let actor = Actor::local(multicad_core::commands::Channel::Ui);
             let prepared = command.prepare(session, actor)?;
-            model::frame_joint_report(
-                prepared.prepared.document(),
-                session.parameters(),
-                self.frame,
-            )
-            .map_err(|e| e.to_string())
+            let document = prepared.prepared.document();
+            let parameters = session.parameters();
+            for (member, feature) in model::frame_member_features(document, self.frame) {
+                let source = model::read_member(document, feature).map_err(|e| e.to_string())?;
+                let segment = model::frame_member_path(document, parameters, self.frame, member)
+                    .map_err(|e| e.to_string())?;
+                let m = model::resolve_member(document, parameters, &source, segment)
+                    .map_err(|e| e.to_string())?;
+                let start = m.start_offset_mm();
+                sections.push([
+                    m.outline_world(start),
+                    m.outline_world(start + m.length_mm()),
+                ]);
+            }
+            model::frame_joint_report(document, parameters, self.frame).map_err(|e| e.to_string())
         })();
-        self.report = Some((key.0, key.1, result));
+        self.sections = sections;
+        self.report = Some((key, result));
     }
     fn badge(joint: &NodeJoint) -> (String, bool) {
         if joint.problem.is_some() {
@@ -538,7 +591,7 @@ impl FramePanel {
     /// The joint shown for a node, if any.
     pub fn joint(&self, node: EntityId) -> Option<&NodeJoint> {
         match &self.report {
-            Some((_, _, Ok(joints))) => joints.iter().find(|j| j.node == node),
+            Some((_, Ok(joints))) => joints.iter().find(|j| j.node == node),
             _ => None,
         }
     }
@@ -561,11 +614,59 @@ impl FramePanel {
             .last()
             .and_then(|(n, _)| nodes.iter().find(|(id, _)| id == n))
             .map(|(_, p)| *p);
-        let snapped =
-            raw.map(|r| self.snap(r, &nodes, if self.drawing { last } else { None }, tolerance));
+        let at = |id: EntityId| nodes.iter().find(|(n, _)| *n == id).map(|(_, p)| *p);
+        let directions: Vec<f64> = self
+            .definition
+            .members
+            .iter()
+            .filter_map(|m| {
+                let (a, b) = (at(m.start)?, at(m.end)?);
+                Some((b[1] - a[1]).portable_atan2(b[0] - a[0]).to_degrees())
+            })
+            .collect();
+        // A node being moved never snaps onto itself.
+        let targets: Vec<(EntityId, [f64; 2])> = nodes
+            .iter()
+            .filter(|(id, _)| Some(*id) != self.moving)
+            .copied()
+            .collect();
+        let anchor = if self.drawing { last } else { None };
+        let snapped = raw.map(|r| self.snap(r, &targets, anchor, &directions, tolerance));
         self.hover = snapped.map(|s| s.0);
         let mut changed = false;
-        if view.clicked && inside.is_some() {
+        // Dragging a node: press on it, move, release to place it. A press
+        // that does not move stays a click that selects the node.
+        let (pressed, released) = view
+            .painter
+            .ctx()
+            .input(|i| (i.pointer.primary_pressed(), i.pointer.primary_released()));
+        if pressed
+            && !self.drawing
+            && self.moving.is_none()
+            && inside.is_some()
+            && let Some((point, Some(node))) = snapped
+        {
+            self.moving = Some(node);
+            self.dragging = true;
+            self.drag_from = Some(point);
+        }
+        let mut consumed = false;
+        if self.dragging && released {
+            self.dragging = false;
+            let from = self.drag_from.take();
+            let node = self.moving.take();
+            if let (Some(node), Some(from)) = (node, from) {
+                match self.hover {
+                    Some(to) if (to[0] - from[0]).portable_hypot(to[1] - from[1]) >= 0.5 => {
+                        changed |= self.place(node, to, parameters);
+                    }
+                    // A press that did not move is a click on the node.
+                    _ => self.select_node(node, parameters),
+                }
+                consumed = true;
+            }
+        }
+        if view.clicked && inside.is_some() && !consumed {
             match (raw, snapped) {
                 (None, _) | (_, None) => {
                     self.error = Some(
@@ -575,42 +676,14 @@ impl FramePanel {
                 }
                 (Some(_), Some((point, hit))) => {
                     if let Some(node) = self.moving.take() {
-                        let position = NodePosition::Absolute {
-                            u: length(point[0]),
-                            v: length(point[1]),
-                            w: None,
-                        };
-                        let mut probe = self.definition.clone();
-                        match probe
-                            .set_node(node, position)
-                            .and_then(|_| probe.evaluate(parameters).map(|_| ()))
-                        {
-                            Ok(()) => {
-                                self.definition = probe;
-                                changed = true;
-                            }
-                            Err(e) => self.error = Some(e.to_string()),
-                        }
+                        changed |= self.place(node, point, parameters);
                     } else if self.drawing {
                         match self.draw_click(point, hit) {
                             Ok(c) => changed |= c,
                             Err(e) => self.error = Some(e),
                         }
                     } else if let Some(node) = hit {
-                        self.selected_node = Some(node);
-                        self.selected_member = None;
-                        self.gap_text = self
-                            .definition
-                            .joint(node)
-                            .and_then(|j| j.gap.as_ref())
-                            .map(|g| {
-                                format!(
-                                    "{} {}",
-                                    g.value_in(Unit::Millimeter, Some(parameters)).unwrap_or(0.),
-                                    "mm"
-                                )
-                            })
-                            .unwrap_or_default();
+                        self.select_node(node, parameters);
                     } else {
                         self.selected_member = self.member_at(point, &nodes, tolerance);
                         self.selected_node = None;
@@ -621,9 +694,48 @@ impl FramePanel {
         if changed {
             self.changed();
         }
-        self.refresh_report(session);
+        let probe = self.moving.zip(self.hover);
+        self.refresh_report(session, probe);
         self.paint(&view, &frame, &nodes);
         changed
+    }
+    fn select_node(&mut self, node: EntityId, parameters: &EvaluatedParameters) {
+        self.selected_node = Some(node);
+        self.selected_member = None;
+        self.gap_text = self
+            .definition
+            .joint(node)
+            .and_then(|j| j.gap.as_ref())
+            .map(|g| {
+                format!(
+                    "{} mm",
+                    g.value_in(Unit::Millimeter, Some(parameters)).unwrap_or(0.)
+                )
+            })
+            .unwrap_or_default();
+    }
+    /// Rewrite a node's own position to an absolute plane point; nodes that
+    /// depend on it follow.
+    fn place(&mut self, node: EntityId, point: [f64; 2], parameters: &EvaluatedParameters) -> bool {
+        let position = NodePosition::Absolute {
+            u: length(point[0]),
+            v: length(point[1]),
+            w: None,
+        };
+        let mut probe = self.definition.clone();
+        match probe
+            .set_node(node, position)
+            .and_then(|_| probe.evaluate(parameters).map(|_| ()))
+        {
+            Ok(()) => {
+                self.definition = probe;
+                true
+            }
+            Err(e) => {
+                self.error = Some(e.to_string());
+                false
+            }
+        }
     }
     fn member_at(
         &self,
@@ -669,6 +781,27 @@ impl FramePanel {
         let accent = egui::Color32::from_rgb(255, 176, 64);
         let bad = egui::Color32::from_rgb(255, 80, 80);
         let font = egui::FontId::proportional(11.);
+        // The real placed section at both ends of every member, joined
+        // along its edges: the section preview while drawing.
+        let section = egui::Stroke::new(
+            1.,
+            egui::Color32::from_rgba_unmultiplied(160, 200, 230, 150),
+        );
+        let to_screen = |p: &[f64; 3]| {
+            let s = view.camera.project(p.map(|v| v as f32), view.rect);
+            egui::pos2(s[0], s[1])
+        };
+        for [a, b] in &self.sections {
+            for outline in [a, b] {
+                let points: Vec<egui::Pos2> = outline.iter().map(to_screen).collect();
+                view.painter.add(egui::Shape::closed_line(points, section));
+            }
+            let step = (a.len() / 8).max(1);
+            for (p, q) in a.iter().zip(b).step_by(step) {
+                view.painter
+                    .line_segment([to_screen(p), to_screen(q)], section);
+            }
+        }
         for m in &self.definition.members {
             let (Some(a), Some(b)) = (at(m.start), at(m.end)) else {
                 continue;
@@ -1041,7 +1174,7 @@ impl FramePanel {
         if let Err(error) = &validation {
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
-        if let Some((_, _, Err(error))) = &self.report
+        if let Some((_, Err(error))) = &self.report
             && validation.is_ok()
         {
             ui.colored_label(ui.visuals().error_fg_color, error);

@@ -548,3 +548,65 @@ fn inches_a_gap_set_in_the_joint_editor_and_reversing_a_member_apply_as_typed() 
     near(hi[0], 1000.);
     near(hi[1], 600.);
 }
+
+#[test]
+fn dragging_a_node_updates_members_live_and_apply_keeps_member_ids() {
+    let mut h = Harness::new(document());
+    open_tool(&mut h);
+    h.type_into_field_and_enter(LENGTH, "200");
+    h.type_into_field_and_enter(TURN, "90");
+    h.type_into_field_and_enter(LENGTH, "100");
+    apply(&mut h);
+    let document = h.app.current().session.document().clone();
+    let frame_id = the_frame(&document);
+    let ids = model::frame_member_features(&document, frame_id);
+    reopen(&mut h);
+    let frame = model::read_frame(&document, frame_id).unwrap();
+    let tip = frame.members[1].end;
+    let screen = |h: &Harness, p: [f64; 3]| {
+        let viewport = h.app.current().sketch.viewport_rect.unwrap();
+        let s = h
+            .app
+            .current()
+            .sketch
+            .camera
+            .project(p.map(|v| v as f32), viewport);
+        egui::pos2(s[0], s[1])
+    };
+    let from = screen(&h, [200., 100., 0.]);
+    let to = screen(&h, [250., 220., 0.]);
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    h.frame(vec![egui::Event::PointerMoved(from)]);
+    h.frame(vec![button(from, true)]);
+    for k in 1..=10 {
+        let p = from + (to - from) * (k as f32 / 10.);
+        h.frame(vec![egui::Event::PointerMoved(p)]);
+    }
+    // While dragging, the second member's live length follows the node:
+    // from (200, 0) to (250, 220).
+    assert!(h.texts().iter().any(|t| t == "226 mm"), "{:?}", h.texts());
+    h.frame(vec![button(to, false)]);
+    apply(&mut h);
+    let after = h.app.current().session.document().clone();
+    assert_eq!(
+        model::frame_member_features(&after, frame_id),
+        ids,
+        "ids kept"
+    );
+    let p = model::read_frame(&after, frame_id)
+        .unwrap()
+        .evaluate(h.app.current().session.parameters())
+        .unwrap()
+        .nodes[&tip];
+    near(p[0], 250.);
+    near(p[1], 220.);
+    assert!(
+        cut_list(&after).iter().all(|r| r.issues.is_empty()),
+        "both members rebuild with their new joint"
+    );
+}
