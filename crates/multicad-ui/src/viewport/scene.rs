@@ -1476,6 +1476,35 @@ impl Scene {
         }
         faces
     }
+    /// The current wall faces a door, window or cutout cut: its jambs, head,
+    /// sill or chase back, by the opening's provenance role in its wall.
+    pub(crate) fn opening_faces(&self, openings: &BTreeSet<EntityId>) -> Vec<(EntityId, u32)> {
+        if openings.is_empty() {
+            return vec![];
+        }
+        let prefixes: Vec<_> = openings
+            .iter()
+            .flat_map(|id| [format!("opening.{id}."), format!("cutout.{id}.")])
+            .collect();
+        let mut faces = Vec::new();
+        for instance in self.instances.iter() {
+            faces.extend(
+                self.geometries[&instance.geometry]
+                    .topology
+                    .iter()
+                    .filter(|face| {
+                        face.key.kind == TopologyKind::Face
+                            && face.origins.iter().any(|origin| {
+                                prefixes
+                                    .iter()
+                                    .any(|prefix| origin.role.starts_with(prefix))
+                            })
+                    })
+                    .map(|face| (instance.id, face.key.ordinal)),
+            );
+        }
+        faces
+    }
     pub fn visible_subset(&self, visible: &BTreeSet<EntityId>) -> Result<Arc<Self>, String> {
         let existing: BTreeSet<_> = self
             .reference_instances

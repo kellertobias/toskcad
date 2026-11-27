@@ -53,6 +53,42 @@ impl ArchitecturePlan {
             scene.visible_subset(&visible)
         }
     }
+    /// Emphasize selected wall-hosted openings in the plan: the footprint
+    /// each cuts through its wall, from the canonical wall source. Openings
+    /// of walls not drawn in this plan are skipped.
+    pub fn paint_openings(
+        &self,
+        painter: &egui::Painter,
+        session: &multicad_core::commands::Session,
+        camera: Camera,
+        rect: egui::Rect,
+        openings: &BTreeSet<EntityId>,
+    ) {
+        let document = session.document();
+        for id in openings {
+            let Some(host) = multicad_core::model::opening_host(document, *id) else {
+                continue;
+            };
+            if !self.sources.contains(&host.part) {
+                continue;
+            }
+            let Some(corners) =
+                multicad_core::model::opening_footprint(document, session.parameters(), *id)
+            else {
+                continue;
+            };
+            let mut points: Vec<_> = corners
+                .iter()
+                .map(|p| {
+                    let pixel = camera.project([p[0] as f32, p[1] as f32, camera.target[2]], rect);
+                    egui::pos2(pixel[0], pixel[1])
+                })
+                .collect();
+            points.push(points[0]);
+            let color = egui::Color32::from_rgb(90, 170, 255);
+            painter.add(egui::Shape::line(points, egui::Stroke::new(2.5, color)));
+        }
+    }
     pub fn paint(
         &self,
         painter: &egui::Painter,

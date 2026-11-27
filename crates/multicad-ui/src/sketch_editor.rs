@@ -905,6 +905,53 @@ impl SketchEditor {
             .collect();
         (recipes.len() == 1).then(|| *recipes.first().expect("one recipe"))
     }
+    /// The one wall-hosted opening selected in the tree (CAD-428).
+    pub(crate) fn selected_opening(
+        &self,
+        document: &Document,
+    ) -> Option<multicad_core::model::HostedOpening> {
+        if self.tree_selection.len() != 1 {
+            return None;
+        }
+        let id = *self.tree_selection.first()?;
+        document
+            .get(id)
+            .is_none()
+            .then(|| multicad_core::model::opening_host(document, id))
+            .flatten()
+    }
+    /// Reopen the selected door, window or cutout in its Room tool.
+    pub(crate) fn begin_opening_edit(
+        &mut self,
+        session: &Session,
+        resources: &multicad_core::project_file::ProjectResources,
+        feed: &crate::viewport::SceneFeed,
+        channel: Channel,
+    ) -> Result<(), String> {
+        let host = self
+            .selected_opening(session.document())
+            .ok_or("Select one door, window or cutout in the model tree")?;
+        if !self.primitive_ready() || self.editing {
+            return Err("Apply or cancel the active operation before editing this opening".into());
+        }
+        self.model
+            .begin_opening_existing(session, resources, host.wall, host.id, channel)?;
+        if feed.is_current(session.document().id(), session.revision())
+            && let Some(scene) = feed.visible()
+        {
+            let _ = self.model.set_feature_context(session, resources, scene);
+        } else {
+            self.model.source_only_context(
+                feed.error()
+                    .unwrap_or("The current native model is not ready"),
+            );
+        }
+        self.message = format!(
+            "Edit {} · change it, move it to another wall or remove it, then Preview",
+            host.kind.label().to_lowercase()
+        );
+        Ok(())
+    }
     fn selected_applied_feature(&self, document: &Document) -> Option<(EntityId, bool)> {
         if self.tree_selection.len() != 1 {
             return None;
@@ -1189,6 +1236,17 @@ impl SketchEditor {
     #[cfg(test)]
     pub(crate) fn model_for_tests_mut(&mut self) -> &mut crate::modeling::ModelToolController {
         &mut self.model
+    }
+    #[cfg(test)]
+    pub(crate) fn tree_rows_for_tests(
+        &mut self,
+        session: &Session,
+    ) -> Vec<crate::model_tree::TreeRow> {
+        self.tree.rows(session).unwrap().to_vec()
+    }
+    #[cfg(test)]
+    pub(crate) fn solid_for_tests(&self) -> &crate::viewport::Interaction {
+        &self.solid
     }
     #[cfg(test)]
     pub(crate) fn tree_selection_for_tests(&self) -> &std::collections::BTreeSet<EntityId> {
@@ -3481,8 +3539,13 @@ impl SketchEditor {
                 None
             }
         });
-        self.tree_selection
-            .retain(|id| *id == session.document().id() || session.document().get(*id).is_some());
+        // A selected door, window or cutout is a source identity in its
+        // wall; it stays selected while a wall hosts it (CAD-428).
+        self.tree_selection.retain(|id| {
+            *id == session.document().id()
+                || session.document().get(*id).is_some()
+                || multicad_core::model::opening_host(session.document(), *id).is_some()
+        });
         if let Some(current) = scene
             .as_ref()
             .filter(|scene| scene.stamp().revision == session.revision())
@@ -3514,7 +3577,9 @@ impl SketchEditor {
             self.clear_drawing_progress();
             self.revision = session.revision();
             self.tree_selection.retain(|id| {
-                *id == session.document().id() || session.document().get(*id).is_some()
+                *id == session.document().id()
+                    || session.document().get(*id).is_some()
+                    || multicad_core::model::opening_host(session.document(), *id).is_some()
             });
             if self.selected.is_some_and(|id| {
                 !matches!(
@@ -3754,6 +3819,20 @@ impl SketchEditor {
                                     self.message = error;
                                 }
                             }
+                            if self.model_active() {return;}
+                        }
+                        if let Some(host)=self.selected_opening(session.document()) {
+                            let wall=session.document().get(host.part).map(|e|e.name.clone()).unwrap_or_else(||"wall".into());
+                            ui.separator();
+                            ui.strong(format!("{} · {}",host.kind.label(),host.name));
+                            ui.small(format!("Hosted by {wall} · segment {}",host.segment+1));
+                            let ready=self.primitive_ready() && !self.editing;
+                            if ui.add_enabled(ready,egui::Button::new(format!("Edit {}",host.kind.label().to_lowercase())))
+                                .on_hover_text("Reopen its saved placement, size and type; move it to another wall or remove it")
+                                .on_disabled_hover_text("Apply or cancel the active operation first")
+                                .clicked()
+                                && let Err(error)=self.begin_opening_edit(session,resources,feed,Channel::Ui)
+                            {self.message=error;}
                             if self.model_active() {return;}
                         }
                         self.solid.inspector(ui,session.document());
@@ -4865,6 +4944,13 @@ impl SketchEditor {
                     rect,
                     &self.solid.selected_ids(),
                     self.solid.hovered_instance(),
+                );
+                plan.paint_openings(
+                    &painter,
+                    session,
+                    self.camera,
+                    rect,
+                    self.solid.selected_openings(),
                 );
             }
             if response.clicked() && selectable {

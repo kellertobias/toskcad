@@ -217,6 +217,37 @@ pub fn centered_on_first_segment(
     Ok(((segment.length_mm - width_mm) / 2.).max(0.))
 }
 
+/// The plan footprint of a hosted opening or cutout in world X/Y
+/// millimetres: the rectangle it cuts through the wall band, counter-
+/// clockwise from the start jamb on the right face. `None` when no current
+/// wall hosts it or the wall does not resolve.
+pub fn opening_footprint(
+    document: &Document,
+    parameters: &crate::parameters::EvaluatedParameters,
+    id: EntityId,
+) -> Option<[[f64; 2]; 4]> {
+    let host = opening_host(document, id)?;
+    let wall = resolve_wall(document, parameters, &read_wall(document, host.wall).ok()?).ok()?;
+    let plan = wall.plan().ok()?;
+    let ([a, b], [low, high]) = if let Some(o) = wall.openings.iter().find(|o| o.id == id) {
+        (
+            [o.offset_mm, o.offset_mm + o.width_mm],
+            [plan.right_mm, plan.left_mm],
+        )
+    } else {
+        let c = wall.cutouts.iter().find(|c| c.id == id)?;
+        wall.cutout_span(&plan, c)
+    };
+    let seg = plan.segments.get(host.segment)?;
+    let at = |along: f64, across: f64| {
+        [
+            seg.start[0] + seg.direction[0] * along + seg.normal[0] * across,
+            seg.start[1] + seg.direction[1] * along + seg.normal[1] * across,
+        ]
+    };
+    Some([at(a, low), at(b, low), at(b, high), at(a, high)])
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{
@@ -372,6 +403,27 @@ mod tests {
             (south, HostedKind::VerticalCutout, "Vertical cutout")
         );
         assert_eq!(opening_host(document, EntityId::new()), None);
+        // The north wall runs along +X at y = 3000 and is 200 mm thick; its
+        // left face is +Y. The door spans x 1000–1900 across the band.
+        let parameters = crate::parameters::evaluate(document).unwrap();
+        assert_eq!(
+            opening_footprint(document, &parameters, door.id),
+            Some([
+                [1000., 2900.],
+                [1900., 2900.],
+                [1900., 3100.],
+                [1000., 3100.]
+            ])
+        );
+        // A 50 mm chase on the left face of the south wall (y = 0).
+        assert_eq!(
+            opening_footprint(document, &parameters, cutout.id),
+            Some([[5000., 50.], [5300., 50.], [5300., 100.], [5000., 100.]])
+        );
+        assert_eq!(
+            opening_footprint(document, &parameters, EntityId::new()),
+            None
+        );
 
         // Rehost the door: one transaction on both walls, identity kept.
         let mut moved = door.clone();
