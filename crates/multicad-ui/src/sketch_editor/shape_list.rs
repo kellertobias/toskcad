@@ -68,7 +68,8 @@ pub(crate) fn elements(
         .iter()
         .map(|shape| ListedElement {
             key: ElementKey::Shape(shape.id),
-            label: shape.name.clone(),
+            // A fillet or chamfer is named with its size, "Fillet R10".
+            label: shape_edit::corner_label(&source.sketch, shape),
             curves: shape.curves.clone(),
         })
         .collect();
@@ -344,6 +345,10 @@ impl SketchEditor {
             }
             let text = match constraint.and_then(|c| c.kind.dimension()) {
                 Some(Dimension::Expression { expression }) => expression.text.clone(),
+                // A chamfer setback has no single curve to measure.
+                Some(Dimension::Literal { value, unit }) if shape.kind.corner() && unit == "mm" => {
+                    format_mm(*value)
+                }
                 _ => solved
                     .as_ref()
                     .and_then(|s| measured(s, &shape, *size))

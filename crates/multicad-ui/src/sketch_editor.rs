@@ -217,6 +217,11 @@ pub struct SketchEditor {
     construction: bool,
     /// Fillet radius or chamfer setback for the corner tools, in mm.
     corner_size_mm: f64,
+    /// Fillet / chamfer shapes made in the active corner tool session; a new
+    /// size in the tool resizes them (CAD-414).
+    corner_session: Vec<EntityId>,
+    /// The size those shapes currently have.
+    corner_session_size: Option<f64>,
     /// The last ended drawing tool and its settings; a plain right-click in
     /// Select restarts it (CAD-413).
     last_tool: Option<RepeatTool>,
@@ -345,6 +350,8 @@ impl Default for SketchEditor {
             inline: Default::default(),
             construction: false,
             corner_size_mm: 2.,
+            corner_session: vec![],
+            corner_session_size: None,
             last_tool: None,
             model_right_click: None,
             text_tool: Default::default(),
@@ -2073,6 +2080,16 @@ impl SketchEditor {
     ) -> multicad_core::constraint_sketch::source::Source {
         shape_list::canonical(document, sketch).expect("a canonical sketch source")
     }
+    /// The current solved sketch of `sketch`, if the worker has published it.
+    #[cfg(test)]
+    pub(crate) fn solved_for_tests(
+        &self,
+        sketch: EntityId,
+    ) -> Option<multicad_core::constraint_sketch::Sketch> {
+        self.sketch_evaluation
+            .current(sketch)
+            .and_then(|p| p.evaluated.solved().cloned())
+    }
     /// The canvas status line.
     #[cfg(test)]
     pub(crate) fn status_message(&self) -> &str {
@@ -2971,6 +2988,7 @@ impl SketchEditor {
     /// right-click repeat (CAD-413). Returns the ended tool.
     pub fn end_tool(&mut self) -> Option<DrawTool> {
         let tool = self.tool.take()?;
+        self.corner_session.clear();
         self.last_tool = Some(RepeatTool {
             tool,
             construction: self.construction,
@@ -3026,6 +3044,7 @@ impl SketchEditor {
         self.external.cancel();
         self.moving = false;
         self.tool = Some(tool);
+        self.corner_session.clear();
         self.clear_drawing_progress();
         self.snap_assist.clear();
         self.set_tool_status();

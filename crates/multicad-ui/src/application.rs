@@ -5354,6 +5354,9 @@ mod model_tool_lifecycle_tests;
 #[path = "application/ribbon_fit_tests.rs"]
 mod ribbon_fit_tests;
 #[cfg(test)]
+#[path = "application/sketch_corner_tests.rs"]
+mod sketch_corner_tests;
+#[cfg(test)]
 #[path = "application/sketch_select_tests.rs"]
 mod sketch_select_tests;
 #[cfg(test)]

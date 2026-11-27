@@ -25,67 +25,6 @@ impl SketchHarness {
         self.h.key(egui::Key::Enter);
         self.settle();
     }
-    /// Click the drag-value field painted beside `caption`, replace its
-    /// value and press Enter, as a user types a value.
-    fn type_beside(&mut self, caption: &str, text: &str) {
-        let out = self.h.render(vec![]);
-        let label = out
-            .shapes
-            .iter()
-            .find_map(|s| match &s.shape {
-                egui::Shape::Text(t) if t.galley.text() == caption => {
-                    Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
-                }
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("Missing {caption}"));
-        let field = out
-            .platform_output
-            .accesskit_update
-            .as_ref()
-            .unwrap()
-            .nodes
-            .iter()
-            .filter(|(_, n)| {
-                matches!(
-                    n.role(),
-                    egui::accesskit::Role::SpinButton | egui::accesskit::Role::TextInput
-                )
-            })
-            .filter_map(|(_, n)| n.bounds())
-            .find(|b| {
-                b.x0 as f32 >= label.max.x - 1.
-                    && (b.y0 as f32) <= label.center().y
-                    && (b.y1 as f32) >= label.center().y
-            })
-            .unwrap_or_else(|| panic!("a field beside {caption}"));
-        out.drop_without_applying_deltas();
-        let at = egui::pos2(
-            ((field.x0 + field.x1) * 0.5) as f32,
-            ((field.y0 + field.y1) * 0.5) as f32,
-        );
-        self.h.click_at(at);
-        assert!(self.h.ctx.text_edit_focused(), "{caption} field focused");
-        let key = |key, pressed, modifiers| egui::Event::Key {
-            key,
-            physical_key: None,
-            pressed,
-            repeat: false,
-            modifiers,
-        };
-        for events in [
-            vec![key(egui::Key::A, true, egui::Modifiers::COMMAND)],
-            vec![key(egui::Key::A, false, egui::Modifiers::COMMAND)],
-            vec![
-                egui::Event::Text(text.into()),
-                key(egui::Key::Enter, true, egui::Modifiers::NONE),
-            ],
-            vec![key(egui::Key::Enter, false, egui::Modifiers::NONE)],
-        ] {
-            self.h.frame(events);
-        }
-        self.settle();
-    }
     /// Radius dimensions of every sketch arc, in mm.
     fn fillet_radii(&self) -> Vec<f64> {
         self.source()
