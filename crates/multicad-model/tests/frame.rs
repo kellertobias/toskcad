@@ -668,3 +668,65 @@ fn frames_round_trip_in_files_requiring_their_capability() {
     older.remove(model::FRAME_CAPABILITY);
     assert!(project_file::read(&mut bytes.as_slice(), Default::default(), &older).is_err());
 }
+
+#[test]
+fn centroid_placement_offset_and_roll_place_the_section_exactly() {
+    let (mut s, _) = session();
+    let steel = s
+        .document()
+        .entities()
+        .find(|e| matches!(e.data, EntityData::Material { .. }))
+        .unwrap()
+        .id;
+    let angle_stock = stock(steel, "L 40×40×4", ProfileShape::Angle, 40., 40., 4.);
+    let angle_id = angle_stock.id;
+    s.commit(prepare_library(&s, s.revision(), actor(), &[angle_stock]).unwrap())
+        .unwrap();
+    let build = |s: &mut Session, side: FrameSide, offset: Option<[f64; 2]>, roll: Option<f64>| {
+        let mut frame = FrameDefinition::new(FramePlane::xy());
+        let a = origin(&mut frame, 0., 0.);
+        let m = frame
+            .add_chain(s.parameters(), a, &[seg(500., 0.)], false)
+            .unwrap()[0];
+        let member = frame.members.iter_mut().find(|x| x.id == m).unwrap();
+        member.side = Some(side);
+        member.offset = offset.map(|o| o.map(length));
+        member.roll = roll.map(angle);
+        let id = EntityId::new();
+        commit_frame(s, id, &frame, &[(m, "Angle", angle_id)]);
+        let model = compile(s);
+        let r = model
+            .member_cut_list(s.document())
+            .unwrap()
+            .into_iter()
+            .find(|r| {
+                r.path
+                    == model::MemberPath::FrameMember {
+                        frame: id,
+                        member: m,
+                    }
+            })
+            .unwrap();
+        model
+            .solid(model.snapshot().bodies[&r.part])
+            .unwrap()
+            .bounds()
+            .unwrap()
+    };
+    // An equal angle 40×40×4: its centroid from the heel on both legs.
+    let area = 40. * 4. + 36. * 4.;
+    let centroid = (40. * 4. * 20. + 36. * 4. * 2.) / area;
+    // Section x runs along +y (world), section y along +z for a +x member.
+    let b = build(&mut s, FrameSide::Centroid, None, None);
+    near(-b.min[1], centroid);
+    near(-b.min[2], centroid);
+    // An offset of 10 mm along the section width moves it 10 mm along +y.
+    let b = build(&mut s, FrameSide::Centroid, Some([10., 0.]), None);
+    near(-b.min[1], centroid - 10.);
+    near(-b.min[2], centroid);
+    // A 90° roll about the axis through the centroid: the section width
+    // turns to +z and its height to −y.
+    let b = build(&mut s, FrameSide::Centroid, None, Some(90.));
+    near(-b.min[1], 40. - centroid);
+    near(-b.min[2], centroid);
+}

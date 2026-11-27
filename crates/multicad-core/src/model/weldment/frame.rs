@@ -95,6 +95,9 @@ pub enum FrameSide {
     Outer,
     Left,
     Right,
+    /// The section's area centroid lies on the line (angles, channels,
+    /// custom sections).
+    Centroid,
 }
 impl FrameSide {
     fn is_center(&self) -> bool {
@@ -110,6 +113,13 @@ pub struct FrameMember {
     /// None follows the frame default side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side: Option<FrameSide>,
+    /// Section shift after anchoring, along the section width and height.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<[Dimension; 2]>,
+    /// Turn of the section about the member axis, added to the member's
+    /// own rotation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roll: Option<Dimension>,
 }
 /// A stored change to one node's derived joint. Every field left empty
 /// stays automatic.
@@ -200,6 +210,10 @@ impl FrameDefinition {
                 }
                 NodePosition::Along { distance, .. } => out.push((distance, Unit::Millimeter)),
             }
+        }
+        for m in &self.members {
+            out.extend(m.offset.iter().flatten().map(|d| (d, Unit::Millimeter)));
+            out.extend(m.roll.iter().map(|d| (d, Unit::Degree)));
         }
         out.extend(
             self.joints
@@ -433,6 +447,8 @@ impl FrameDefinition {
             start,
             end,
             side: None,
+            offset: None,
+            roll: None,
         });
         id
     }
@@ -681,8 +697,21 @@ pub(super) fn frame_anchor(
         .member(member)
         .ok_or_else(|| invalid("This member was removed from its frame"))?;
     let side = m.side.unwrap_or(definition.side);
-    if side == FrameSide::Center {
-        return Ok(anchor_mm);
+    // The offset shifts the section by +offset in its own x and y, so the
+    // point on the line moves the other way in section coordinates.
+    let shifted = |anchor: [f64; 2]| -> Result<[f64; 2], DocumentError> {
+        let Some([dx, dy]) = &m.offset else {
+            return Ok(anchor);
+        };
+        Ok([
+            anchor[0] - number(dx, Unit::Millimeter, parameters)?,
+            anchor[1] - number(dy, Unit::Millimeter, parameters)?,
+        ])
+    };
+    match side {
+        FrameSide::Center => return shifted(anchor_mm),
+        FrameSide::Centroid => return shifted(section_centroid(section)),
+        _ => {}
     }
     let frame = definition.evaluate(parameters)?;
     let (a, b) = (frame.nodes[&m.start], frame.nodes[&m.end]);
@@ -702,10 +731,10 @@ pub(super) fn frame_anchor(
         }
         FrameSide::Left => unit(cross(frame.n, axis)),
         FrameSide::Right => unit(cross(axis, frame.n)),
-        FrameSide::Center => None,
+        FrameSide::Center | FrameSide::Centroid => None,
     };
     let Some(d) = toward else {
-        return Ok(anchor_mm);
+        return shifted(anchor_mm);
     };
     let size = [section.width_mm, section.height_mm];
     let mut out = anchor_mm;
@@ -717,7 +746,53 @@ pub(super) fn frame_anchor(
             out[k] = size[k];
         }
     }
-    Ok(out)
+    shifted(out)
+}
+/// The roll of a frame member about its axis, in radians.
+pub(super) fn frame_roll(
+    document: &Document,
+    parameters: &EvaluatedParameters,
+    frame: EntityId,
+    member: EntityId,
+) -> Result<f64, DocumentError> {
+    let definition = read_frame(document, frame)?;
+    definition
+        .member(member)
+        .and_then(|m| m.roll.as_ref())
+        .map_or(Ok(0.), |r| number(r, Unit::Radian, parameters))
+}
+/// The area centroid of a section in its own coordinates: the outside less
+/// its holes, from boundaries sampled at most 1° apart on arcs.
+pub fn section_centroid(section: &ProfileSection) -> [f64; 2] {
+    let outer = section
+        .custom
+        .as_ref()
+        .map_or_else(|| section.outer(0.), |c| c.outer.clone());
+    let holes = section.holes();
+    let moment = |points: &[[f64; 2]]| {
+        let mut area = 0.;
+        let mut c = [0.; 2];
+        for (a, b) in points.iter().zip(points.iter().cycle().skip(1)) {
+            let cross = a[0] * b[1] - b[0] * a[1];
+            area += cross;
+            c[0] += (a[0] + b[0]) * cross;
+            c[1] += (a[1] + b[1]) * cross;
+        }
+        (area / 2., [c[0] / 6., c[1] / 6.])
+    };
+    let (mut area, mut c) = moment(&sample_section_loop(&outer));
+    for hole in &holes {
+        let (a, m) = moment(&sample_section_loop(hole));
+        // Holes subtract whatever their winding.
+        let sign = if a.signum() == area.signum() { -1. } else { 1. };
+        area += sign * a;
+        c[0] += sign * m[0];
+        c[1] += sign * m[1];
+    }
+    if area.abs() < 1e-12 {
+        return [section.width_mm / 2., section.height_mm / 2.];
+    }
+    [c[0] / area, c[1] / area]
 }
 
 /// One derived joint between two frame members at a node, in the order

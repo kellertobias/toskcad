@@ -39,6 +39,8 @@ pub enum FrameSideArg {
     Outer,
     Left,
     Right,
+    /// The section's area centroid on the line.
+    Centroid,
 }
 impl From<FrameSideArg> for FrameSide {
     fn from(s: FrameSideArg) -> Self {
@@ -48,6 +50,7 @@ impl From<FrameSideArg> for FrameSide {
             FrameSideArg::Outer => Self::Outer,
             FrameSideArg::Left => Self::Left,
             FrameSideArg::Right => Self::Right,
+            FrameSideArg::Centroid => Self::Centroid,
         }
     }
 }
