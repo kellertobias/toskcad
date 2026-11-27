@@ -5234,6 +5234,9 @@ mod ribbon_layout_tests {
 #[path = "application/boolean_ux_tests.rs"]
 mod boolean_ux_tests;
 #[cfg(test)]
+#[path = "application/frame_tests.rs"]
+mod frame_tests;
+#[cfg(test)]
 #[path = "application/inspector_tests.rs"]
 mod inspector_tests;
 #[cfg(test)]
