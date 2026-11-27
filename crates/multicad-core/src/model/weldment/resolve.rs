@@ -701,7 +701,8 @@ fn mm(d: &Dimension, p: &EvaluatedParameters) -> Result<f64, DocumentError> {
     number(d, Unit::Millimeter, p)
 }
 /// Resolve a point-pair path. Sketch-line paths are solved by the native
-/// evaluator, which passes the segment to [`resolve_member`].
+/// evaluator, which passes the segment to [`resolve_member`]; frame member
+/// paths use [`frame_member_path`].
 pub fn point_path(
     path: &MemberPath,
     parameters: &EvaluatedParameters,
@@ -763,14 +764,30 @@ pub fn resolve_member(
             "The item Line 8 member exceeds the selected stock length",
         ));
     }
-    let anchor_mm = [
+    let mut anchor_mm = [
         member.anchor[0].fraction() * section.width_mm,
         member.anchor[1].fraction() * section.height_mm,
     ];
+    let frame = member_frame(axis, path.reference, rotation_rad);
+    if let MemberPath::FrameMember {
+        frame: frame_id,
+        member: frame_member,
+    } = &member.path
+    {
+        anchor_mm = super::frame_anchor(
+            document,
+            parameters,
+            *frame_id,
+            *frame_member,
+            &frame,
+            &section,
+            anchor_mm,
+        )?;
+    }
     Ok(ResolvedMember {
         stock: member.stock,
         stock_spec,
-        frame: member_frame(axis, path.reference, rotation_rad),
+        frame,
         section,
         path,
         path_length_mm,

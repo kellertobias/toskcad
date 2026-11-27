@@ -272,6 +272,12 @@ impl WeldmentPanel {
                 form.sketch = Some(*sketch);
                 form.path = Some(member.path.clone());
             }
+            MemberPath::FrameMember { .. } => {
+                return Err(
+                    "This member belongs to a frame; its path, placement and joints are edited with the frame"
+                        .into(),
+                );
+            }
         }
         form.anchor = member.anchor;
         if let Some(r) = &member.rotation {
