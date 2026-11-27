@@ -13,6 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 mod presentation;
 #[cfg(test)]
 mod rename_tests;
+#[cfg(test)]
+mod cascade_delete_tests;
 use presentation::{Catalog, Presentation};
 #[derive(Clone, Copy)]
 pub struct TreeOptions {
