@@ -596,8 +596,9 @@ fn support_face_corners_and_edges_snap_exactly_and_existing_sketch_geometry_wins
         .with_support_edges(vec![(edge, SupportEdge::Line([30., -10.], [0., -10.]))]);
     let target = resolve(&drawn, &[], &query_px([12., -10.], 0., 3.), None).unwrap();
     assert!(matches!(target.key, TargetKey::OnCurve(_)), "{target:?}");
-    // Support targets are not dwell-acquirable references.
-    assert!(!TargetKey::Support(corner).acquirable());
+    // A face corner is a dwell-acquirable reference (CAD-423, approved by
+    // the product owner 2026-11-27); a point on a face edge is not.
+    assert!(TargetKey::Support(corner).acquirable());
     assert!(!TargetKey::Support(edge).acquirable());
 }
 
@@ -787,4 +788,222 @@ fn a_sketch_point_on_a_face_centre_keeps_it_and_a_centre_beats_a_nearby_edge() {
     )]);
     let target = resolve(&geometry, &[], &query_px([0., 0.], 2., 0.), None).unwrap();
     assert_eq!(target.key, TargetKey::SupportCenter(small), "{target:?}");
+}
+
+fn parallel(a: [f64; 2], b: [f64; 2]) -> bool {
+    (a[0] * b[1] - a[1] * b[0]).abs() < 1e-12 * (1. + len(a) * len(b))
+}
+fn unit(d: [f64; 2]) -> [f64; 2] {
+    let l = len(d);
+    [d[0] / l, d[1] / l]
+}
+
+#[test]
+fn a_triangle_corner_offers_exactly_x_y_and_its_two_extended_sides() {
+    let mut b = Builder::default();
+    let (points, _) = b.polygon(&[[0., 0.], [20., 5.], [7., 15.]]);
+    let g = b.geometry();
+    let mut assist = SnapAssist::default();
+    acquire(&mut assist, &g, [0., 0.], 0.);
+    let r = assist.references()[0].clone();
+    assert_eq!(r.source, TargetKey::Point(points[0]));
+    let guides = r.guides();
+    assert_eq!(guides.len(), 4, "X, Y and two sides: {guides:?}");
+    assert_eq!(guides[0], (Axis::Horizontal, [1., 0.]));
+    assert_eq!(guides[1], (Axis::Vertical, [0., 1.]));
+    // Each side continues past the corner, away from its other end.
+    let expected = [unit([-20., -5.]), unit([-7., -15.])];
+    for (axis, d) in &guides[2..] {
+        assert!(matches!(axis, Axis::Edge(_)));
+        let e = expected.iter().find(|e| parallel(**e, *d)).expect("a side");
+        assert!(dot(*e, *d) > 0.999_999, "points past the corner: {d:?}");
+    }
+    // Moving along an extension snaps onto it exactly.
+    let along = unit([-20., -5.]);
+    let normal = [-along[1], along[0]];
+    let pointer = [
+        -30. * along[0] + 0.4 * normal[0],
+        -30. * along[1] + 0.4 * normal[1],
+    ];
+    let target = assist.update(&g, &query(pointer), 2.).target.unwrap();
+    assert!(
+        matches!(target.kind, TargetKind::Guide(Axis::Edge(_))),
+        "{target:?}"
+    );
+    assert_eq!(target.kind.label(), "Edge extension");
+    assert_eq!(target.kind.marker(), Marker::Alignment);
+    assert!(
+        parallel(target.position, along) && dot(target.position, along) < 0.,
+        "on the extension past the corner: {:?}",
+        target.position
+    );
+    assert_eq!(target.guides[0].from, [0., 0.]);
+    assert_eq!(
+        placement(Some(&target), pointer, Some(5.)).0,
+        target.position
+    );
+    // Beyond the guide tolerance (6 px = 1.5 mm here) it does not snap.
+    let away = [pointer[0] + 2. * normal[0], pointer[1] + 2. * normal[1]];
+    let target = assist.update(&g, &query(away), 3.).target;
+    assert!(
+        !target.is_some_and(|t| matches!(t.kind, TargetKind::Guide(Axis::Edge(_)))),
+        "no extension snap 2.4 mm off it"
+    );
+}
+
+/// A 30 x 20 rectangle with corner radius 4, rotated by 30 degrees about the
+/// origin: four sides and four counter-clockwise corner arcs sharing their
+/// tangent points. Returns the builder and the rotation.
+fn rotated_rounded_rectangle() -> (Builder, impl Fn([f64; 2]) -> [f64; 2]) {
+    let (w, h, r) = (30., 20., 4.);
+    let (s, c) = (0.5f64, 0.75f64.sqrt());
+    let rot = move |p: [f64; 2]| [c * p[0] - s * p[1], s * p[0] + c * p[1]];
+    let mut b = Builder::default();
+    let tangent = [
+        [r, 0.],
+        [w - r, 0.],
+        [w, r],
+        [w, h - r],
+        [w - r, h],
+        [r, h],
+        [0., h - r],
+        [0., r],
+    ]
+    .map(|p| b.point(rot(p)));
+    let centers = [[w - r, r], [w - r, h - r], [r, h - r], [r, r]].map(|p| b.point(rot(p)));
+    for k in 0..4 {
+        b.line(tangent[2 * k], tangent[2 * k + 1]);
+        b.curve(CurveKind::Arc {
+            center: centers[k],
+            start: tangent[2 * k + 1],
+            end: tangent[(2 * k + 2) % 8],
+            clockwise: false,
+        });
+    }
+    (b, rot)
+}
+
+#[test]
+fn both_ends_of_a_rounded_corner_extend_their_sides_and_cross_at_the_virtual_corner() {
+    let (b, rot) = rotated_rounded_rectangle();
+    let g = b.geometry();
+    let mut assist = SnapAssist::default();
+    let (a, c) = (rot([30., 16.]), rot([26., 20.]));
+    acquire(&mut assist, &g, a, 0.);
+    acquire(&mut assist, &g, c, 1.);
+    let [ra, rc] = [&assist.references()[0], &assist.references()[1]];
+    // The side and the tangent arc meet in one line: one extension each.
+    assert_eq!(ra.directions.len(), 1, "{:?}", ra.directions);
+    assert!(parallel(ra.directions[0], rot([0., 1.])));
+    assert_eq!(rc.directions.len(), 1, "{:?}", rc.directions);
+    assert!(parallel(rc.directions[0], rot([1., 0.])));
+    let (sa, sc) = (ra.serial, rc.serial);
+    let corner = rot([30., 20.]);
+    let target = assist
+        .update(&g, &query_px(corner, 1., -1.), 2.)
+        .target
+        .unwrap();
+    assert_eq!(
+        target.key,
+        TargetKey::GuideCrossing {
+            first: (sa, Axis::Edge(0)),
+            second: (sc, Axis::Edge(0)),
+        }
+    );
+    assert_eq!(target.kind, TargetKind::GuideIntersection);
+    assert_eq!(target.kind.marker(), Marker::Construction);
+    assert!(
+        len(sub(target.position, corner)) < 1e-12,
+        "the exact virtual corner: {:?} vs {corner:?}",
+        target.position
+    );
+    assert_eq!(target.guides.len(), 2);
+    assert_eq!(
+        placement(Some(&target), [0.; 2], Some(10.)).0,
+        target.position
+    );
+    // X/Y guides of one reference also cross the other's extension.
+    let crossings = candidates(&g, assist.references(), &query(corner))
+        .into_iter()
+        .filter(|c| matches!(c.target.key, TargetKey::GuideCrossing { .. }))
+        .count();
+    assert_eq!(
+        crossings, 5,
+        "edge x edge plus edge x X/Y in both directions"
+    );
+}
+
+#[test]
+fn face_corners_and_face_centres_are_acquired_with_their_face_edge_guides() {
+    use std::f64::consts::FRAC_PI_3;
+    let corner = support_key(TopologyKind::Vertex, 0);
+    let arc_end = support_key(TopologyKind::Vertex, 1);
+    let arc = support_key(TopologyKind::Edge, 3);
+    // The arc's end, at 60 degrees about its centre (40, 0).
+    let end = [40. + 10. * FRAC_PI_3.cos(), 10. * FRAC_PI_3.sin()];
+    let g = SnapGeometry::default()
+        .with_support(vec![(corner, [0., 0.]), (arc_end, end)])
+        .with_support_edges(vec![
+            (
+                support_key(TopologyKind::Edge, 0),
+                SupportEdge::Line([20., 5.], [0., 0.]),
+            ),
+            (
+                support_key(TopologyKind::Edge, 1),
+                SupportEdge::Line([0., 0.], [7., 15.]),
+            ),
+            (
+                arc,
+                SupportEdge::Arc {
+                    center: [40., 0.],
+                    radius: 10.,
+                    start: 0.,
+                    sweep: FRAC_PI_3,
+                },
+            ),
+        ]);
+    let mut assist = SnapAssist::default();
+    acquire(&mut assist, &g, [0., 0.], 0.);
+    let r = &assist.references()[0];
+    assert_eq!(r.source, TargetKey::Support(corner));
+    assert_eq!(r.kind, TargetKind::FaceCorner);
+    assert_eq!(r.guides().len(), 4, "X, Y and two face edges");
+    // An arc's end extends along its tangent there.
+    acquire(&mut assist, &g, end, 1.);
+    let r = &assist.references()[1];
+    assert_eq!(r.source, TargetKey::Support(arc_end));
+    assert_eq!(r.directions.len(), 1);
+    let tangent = [-FRAC_PI_3.sin(), FRAC_PI_3.cos()];
+    assert!(
+        dot(r.directions[0], tangent) > 1. - 1e-12,
+        "{:?}",
+        r.directions
+    );
+    // A face centre is acquired too; it has X and Y guides only.
+    acquire(&mut assist, &g, [40., 0.], 2.);
+    let r = assist.references().last().unwrap();
+    assert_eq!(r.source, TargetKey::SupportCenter(arc));
+    assert_eq!(r.kind, TargetKind::FaceCenter);
+    assert_eq!(r.guides().len(), 2);
+    // Leaving and dwelling again releases it.
+    assist.update(&g, &query([80., 80.]), 3.5);
+    let q = query_px([40., 0.], 1., 1.);
+    let out = hover(&mut assist, &g, &q, &[4., 4. + DWELL_SECONDS]);
+    assert!(
+        matches!(out.event, Some(DwellEvent::Released(_))),
+        "{out:?}"
+    );
+    // The centre took the oldest (corner) reference's place; the arc end
+    // is held. Once projected, a sketch point holds that corner and the
+    // reference stays on it; when nothing is there any more it is dropped.
+    assert_eq!(assist.references().len(), 1);
+    let mut b = Builder::default();
+    b.point(end);
+    assist.revalidate(&b.geometry());
+    assert_eq!(assist.references()[0].position, end);
+    assist.revalidate(&SnapGeometry::default());
+    assert!(
+        assist.references().is_empty(),
+        "a vanished corner is dropped"
+    );
 }

@@ -93,7 +93,7 @@ impl SketchEditor {
         match outcome.event {
             Some(snap::DwellEvent::Acquired(_)) => {
                 self.message = format!(
-                    "Reference acquired ({} held) · align horizontally or vertically · dwell again to release",
+                    "Reference acquired ({} held) · follow its X, Y or edge-extension guides · dwell again to release",
                     self.snap_assist.references().len()
                 );
             }
@@ -128,6 +128,30 @@ impl SketchEditor {
         let project = to_screen(self.camera, frame, rect);
         let screen = |p: [f64; 2]| project(p).map(|s| Pos2::new(s[0], s[1]));
         let references = self.snap_assist.references();
+        // Every guide of a held reference, faint and across the canvas
+        // (CAD-423): X, Y and the extension of each edge meeting it.
+        let reach = rect.width() + rect.height();
+        for r in references {
+            let Some(c) = screen(r.position) else {
+                continue;
+            };
+            for (_, d) in r.guides() {
+                let Some(along) = screen([r.position[0] + d[0], r.position[1] + d[1]]) else {
+                    continue;
+                };
+                let direction = along - c;
+                if direction.length() <= 1e-3 {
+                    continue;
+                }
+                let u = direction.normalized() * reach;
+                painter.extend(egui::Shape::dotted_line(
+                    &[c - u, c + u],
+                    GUIDE_COLOR.gamma_multiply(0.35),
+                    7.,
+                    0.8,
+                ));
+            }
+        }
         for r in references {
             if let Some(c) = screen(r.position) {
                 let stroke = Stroke::new(1.5, REFERENCE_COLOR);
@@ -237,6 +261,7 @@ impl SketchEditor {
         let label = match target.kind {
             TargetKind::Guide(Axis::Horizontal) => "Horizontal",
             TargetKind::Guide(Axis::Vertical) => "Vertical",
+            TargetKind::Guide(Axis::Edge(_)) => "Extension",
             kind => kind.label(),
         };
         painter.text(

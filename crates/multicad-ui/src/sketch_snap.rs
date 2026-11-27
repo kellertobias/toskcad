@@ -1,5 +1,6 @@
 //! Transient sketch placement aids: geometry snapping, dwell-acquired
-//! references, horizontal/vertical assistive lines, and perpendicular and
+//! references, horizontal/vertical and edge-extension assistive lines with
+//! their crossings (CAD-423), and perpendicular and
 //! tangent targets for a line being drawn from a known start point.
 //!
 //! Everything here is pure and display-only. It never reads or writes the
@@ -40,6 +41,10 @@ const SHAPE_TOLERANCE: f64 = 1e-6;
 pub enum Axis {
     Horizontal,
     Vertical,
+    /// The extension of the `n`th edge meeting the reference (CAD-423): a
+    /// line's own direction, or an arc's tangent at that end. See
+    /// [`Reference::directions`].
+    Edge(u8),
 }
 
 /// Stable identity of a snap target across frames.
@@ -62,6 +67,12 @@ pub enum TargetKey {
     GuideIntersection {
         horizontal: u64,
         vertical: u64,
+    },
+    /// The crossing of two guides of two references where at least one is
+    /// an edge extension; the reference with the lower serial comes first.
+    GuideCrossing {
+        first: (u64, Axis),
+        second: (u64, Axis),
     },
     GuideOnLine {
         reference: u64,
@@ -93,6 +104,7 @@ impl TargetKey {
             | Self::Reference(_)
             | Self::ReferenceMidpoint(..) => 1,
             Self::GuideIntersection { .. }
+            | Self::GuideCrossing { .. }
             | Self::GuideOnLine { .. }
             | Self::Perpendicular(..)
             | Self::Tangent(..) => 2,
@@ -100,16 +112,23 @@ impl TargetKey {
             Self::Guide { .. } => 4,
         }
     }
-    /// Targets that dwelling can acquire (or release, for references).
+    /// Targets that dwelling can acquire (or release, for references):
+    /// sketch points (curve and arc ends included), face corners and face
+    /// centres (CAD-423), midpoints, shape centres and points on curves.
+    /// Points on a face edge are not acquirable.
     pub fn acquirable(&self) -> bool {
-        matches!(
-            self,
-            Self::Point(_)
-                | Self::LineMidpoint(_)
-                | Self::ShapeCenter(_)
-                | Self::OnCurve(_)
-                | Self::Reference(_)
-        )
+        match self {
+            Self::Support(key) => key.kind == multicad_core::references::TopologyKind::Vertex,
+            _ => matches!(
+                self,
+                Self::Point(_)
+                    | Self::SupportCenter(_)
+                    | Self::LineMidpoint(_)
+                    | Self::ShapeCenter(_)
+                    | Self::OnCurve(_)
+                    | Self::Reference(_)
+            ),
+        }
     }
 }
 
@@ -159,6 +178,7 @@ impl TargetKind {
             Self::OnCurve => "On curve",
             Self::Guide(Axis::Horizontal) => "Horizontal alignment",
             Self::Guide(Axis::Vertical) => "Vertical alignment",
+            Self::Guide(Axis::Edge(_)) => "Edge extension",
             Self::Perpendicular => "Perpendicular",
             Self::Tangent => "Tangent",
         }
@@ -222,6 +242,26 @@ pub struct Reference {
     pub source: TargetKey,
     pub kind: TargetKind,
     pub position: [f64; 2],
+    /// Unit directions of the edges meeting the reference, extended past
+    /// it (CAD-423): `Axis::Edge(n)` is `directions[n]`. Directions along
+    /// the X or Y axis, or along another edge, are left out, so every guide
+    /// is a distinct line.
+    pub directions: Vec<[f64; 2]>,
+}
+impl Reference {
+    /// Every guide line through the reference: X, Y and each edge
+    /// extension, with its unit direction.
+    pub fn guides(&self) -> Vec<(Axis, [f64; 2])> {
+        [(Axis::Horizontal, [1., 0.]), (Axis::Vertical, [0., 1.])]
+            .into_iter()
+            .chain(
+                self.directions
+                    .iter()
+                    .enumerate()
+                    .map(|(n, d)| (Axis::Edge(n as u8), *d)),
+            )
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -432,6 +472,74 @@ impl SnapGeometry {
             .collect();
         self
     }
+    /// Unit directions of the sketch and supporting-face edges ending at
+    /// `at`, pointing past it: a line continues away from its other end, an
+    /// arc continues along its tangent at that end. Directions along X or Y
+    /// or along an earlier direction (either sense) are dropped, so a
+    /// tangent arc and its adjacent line give one extension.
+    pub fn incident_directions(&self, at: [f64; 2]) -> Vec<[f64; 2]> {
+        let near = |p: [f64; 2]| len(sub(p, at)) <= 1e-9 * (1. + len(at));
+        let mut raw: Vec<[f64; 2]> = vec![];
+        let mut line = |a: [f64; 2], b: [f64; 2]| {
+            if near(b) {
+                raw.push(sub(b, a));
+            } else if near(a) {
+                raw.push(sub(a, b));
+            }
+        };
+        for &(_, a, b) in &self.lines {
+            line(a, b);
+        }
+        for (_, edge) in &self.support_edges {
+            if let SupportEdge::Line(a, b) = *edge {
+                line(a, b);
+            }
+        }
+        let arcs = self
+            .arcs
+            .iter()
+            .map(|a| (a.center, a.radius, a.start, a.sweep))
+            .chain(self.support_edges.iter().filter_map(|(_, e)| match *e {
+                SupportEdge::Arc {
+                    center,
+                    radius,
+                    start,
+                    sweep,
+                } => Some((center, radius, start, sweep)),
+                SupportEdge::Line(..) => None,
+            }));
+        for (center, radius, start, sweep) in arcs {
+            if sweep >= TAU - 1e-9 {
+                continue;
+            }
+            let on = |angle: f64| {
+                [
+                    center[0] + radius * angle.portable_cos(),
+                    center[1] + radius * angle.portable_sin(),
+                ]
+            };
+            // Counter-clockwise travel is (-sin, cos); past the end it
+            // continues, before the start it is reversed.
+            let end = start + sweep;
+            if near(on(end)) {
+                raw.push([-end.portable_sin(), end.portable_cos()]);
+            } else if near(on(start)) {
+                raw.push([start.portable_sin(), -start.portable_cos()]);
+            }
+        }
+        let mut out: Vec<[f64; 2]> = vec![[1., 0.], [0., 1.]];
+        for d in raw {
+            let l = len(d);
+            if l <= 1e-12 {
+                continue;
+            }
+            let d = [d[0] / l, d[1] / l];
+            if out.iter().all(|e| (e[0] * d[1] - e[1] * d[0]).abs() > 1e-9) {
+                out.push(d);
+            }
+        }
+        out.split_off(2)
+    }
     fn point(&self, id: EntityId) -> Option<[f64; 2]> {
         self.points.iter().find(|p| p.0 == id).map(|p| p.1)
     }
@@ -450,6 +558,12 @@ impl SnapGeometry {
                 .find(|l| l.0 == *id)
                 .map(|l| mid(l.1, l.2)),
             TargetKey::ShapeCenter(ids) => self.centers.iter().find(|c| &c.0 == ids).map(|c| c.1),
+            TargetKey::Support(key) => self.support.iter().find(|c| c.0 == *key).map(|c| c.1),
+            TargetKey::SupportCenter(key) => self
+                .support_centers
+                .iter()
+                .find(|c| c.0 == *key)
+                .map(|c| c.1),
             _ => None,
         }
     }
@@ -717,11 +831,69 @@ fn candidates(geometry: &SnapGeometry, references: &[Reference], q: &Query) -> V
             }
         }
     }
+    // Crossings of guides from two references where at least one is an
+    // edge extension, placed at the exact line intersection.
+    for (k, a) in references.iter().enumerate() {
+        for b in &references[k + 1..] {
+            let (a, b) = if a.serial < b.serial { (a, b) } else { (b, a) };
+            for (axis_a, da) in a.guides() {
+                for (axis_b, db) in b.guides() {
+                    if !matches!(axis_a, Axis::Edge(_)) && !matches!(axis_b, Axis::Edge(_)) {
+                        continue;
+                    }
+                    let Some(position) = crossing(a.position, da, b.position, db) else {
+                        continue;
+                    };
+                    push(
+                        TargetKey::GuideCrossing {
+                            first: (a.serial, axis_a),
+                            second: (b.serial, axis_b),
+                        },
+                        TargetKind::GuideIntersection,
+                        position,
+                        None,
+                        vec![
+                            GuideLine {
+                                from: a.position,
+                                axis: axis_a,
+                            },
+                            GuideLine {
+                                from: b.position,
+                                axis: axis_b,
+                            },
+                        ],
+                        POINT_SNAP_PX,
+                    );
+                }
+            }
+        }
+    }
+    // A guide along an edge extension: the foot of the pointer on it.
+    for r in references {
+        for (n, d) in r.directions.iter().enumerate() {
+            let axis = Axis::Edge(n as u8);
+            let t = dot(sub(pointer, r.position), *d);
+            push(
+                TargetKey::Guide {
+                    reference: r.serial,
+                    axis,
+                },
+                TargetKind::Guide(axis),
+                [r.position[0] + t * d[0], r.position[1] + t * d[1]],
+                None,
+                vec![GuideLine {
+                    from: r.position,
+                    axis,
+                }],
+                GUIDE_SNAP_PX,
+            );
+        }
+    }
     for r in references {
         for axis in [Axis::Horizontal, Axis::Vertical] {
             let i = match axis {
                 Axis::Horizontal => 1,
-                Axis::Vertical => 0,
+                _ => 0,
             };
             for &(line, a, b) in &geometry.lines {
                 let d = b[i] - a[i];
@@ -849,6 +1021,21 @@ fn candidates(geometry: &SnapGeometry, references: &[Reference], q: &Query) -> V
         }
     }
     out
+}
+
+/// The intersection of the line through `a` along `da` with the line through
+/// `b` along `db`, or `None` for (nearly) parallel lines. A crossing at
+/// either reference is omitted: the reference itself is the target there.
+fn crossing(a: [f64; 2], da: [f64; 2], b: [f64; 2], db: [f64; 2]) -> Option<[f64; 2]> {
+    let denominator = da[0] * db[1] - da[1] * db[0];
+    if denominator.abs() <= 1e-9 {
+        return None;
+    }
+    let ab = sub(b, a);
+    let t = (ab[0] * db[1] - ab[1] * db[0]) / denominator;
+    let p = [a[0] + t * da[0], a[1] + t * da[1]];
+    let apart = |q: [f64; 2]| len(sub(p, q)) > 1e-9 * (1. + len(q));
+    (apart(a) && apart(b)).then_some(p)
 }
 
 /// Perpendicular feet and tangent points as seen from `from`, the start of
@@ -985,6 +1172,22 @@ pub fn resolve(
                     });
                 }
             }
+            for (n, d) in r.directions.iter().enumerate() {
+                let axis = Axis::Edge(n as u8);
+                let off = sub(target.position, r.position);
+                if (off[0] * d[1] - off[1] * d[0]).abs() <= 1e-9 * (1. + len(r.position))
+                    && len(off) > 1e-9
+                    && !target
+                        .guides
+                        .iter()
+                        .any(|g| g.axis == axis && g.from == r.position)
+                {
+                    target.guides.push(GuideLine {
+                        from: r.position,
+                        axis,
+                    });
+                }
+            }
         }
         target
     })
@@ -1087,16 +1290,32 @@ impl SnapAssist {
     /// Re-anchors references to current solved geometry. Point, midpoint and
     /// center references follow their source; on-curve references keep their
     /// acquired position while the curve exists. Missing sources are dropped.
+    ///
+    /// A face corner or centre that a sketch point now occupies (it was
+    /// projected) is no longer offered; the reference stays on that point.
+    /// Edge-extension directions are recomputed from the current edges.
     pub fn revalidate(&mut self, geometry: &SnapGeometry) {
-        self.references.retain_mut(|r| match &r.source {
-            TargetKey::OnCurve(id) => geometry.has_curve(*id),
-            source => match geometry.locate(source) {
-                Some(position) => {
-                    r.position = position;
-                    true
-                }
-                None => false,
-            },
+        self.references.retain_mut(|r| {
+            let kept = match &r.source {
+                TargetKey::OnCurve(id) => geometry.has_curve(*id),
+                source => match geometry.locate(source) {
+                    Some(position) => {
+                        r.position = position;
+                        true
+                    }
+                    None => {
+                        matches!(source, TargetKey::Support(_) | TargetKey::SupportCenter(_))
+                            && geometry
+                                .points
+                                .iter()
+                                .any(|p| len(sub(p.1, r.position)) <= 1e-9 * (1. + len(r.position)))
+                    }
+                },
+            };
+            if kept {
+                r.directions = geometry.incident_directions(r.position);
+            }
+            kept
         });
     }
     pub fn update(&mut self, geometry: &SnapGeometry, q: &Query, now: f64) -> Outcome {
@@ -1124,7 +1343,7 @@ impl SnapAssist {
                     let elapsed = now - dwell.since;
                     if elapsed >= DWELL_SECONDS {
                         dwell.done = true;
-                        outcome.event = Some(self.toggle(candidate));
+                        outcome.event = Some(self.toggle(geometry, candidate));
                     } else {
                         outcome.repaint_after = Some(DWELL_SECONDS - elapsed);
                     }
@@ -1155,15 +1374,16 @@ impl SnapAssist {
         outcome.target = target;
         outcome
     }
-    fn toggle(&mut self, target: &Target) -> DwellEvent {
+    fn toggle(&mut self, geometry: &SnapGeometry, target: &Target) -> DwellEvent {
         let existing = match &target.key {
             TargetKey::Reference(serial) => {
                 self.references.iter().position(|r| r.serial == *serial)
             }
-            key
-            @ (TargetKey::Point(_) | TargetKey::LineMidpoint(_) | TargetKey::ShapeCenter(_)) => {
-                self.references.iter().position(|r| &r.source == key)
-            }
+            key @ (TargetKey::Point(_)
+            | TargetKey::Support(_)
+            | TargetKey::SupportCenter(_)
+            | TargetKey::LineMidpoint(_)
+            | TargetKey::ShapeCenter(_)) => self.references.iter().position(|r| &r.source == key),
             _ => None,
         };
         if let Some(index) = existing {
@@ -1176,6 +1396,7 @@ impl SnapAssist {
             source: target.key.clone(),
             kind: target.kind,
             position: target.position,
+            directions: geometry.incident_directions(target.position),
         });
         if self.references.len() > MAX_REFERENCES {
             self.references.remove(0);

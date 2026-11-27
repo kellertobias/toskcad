@@ -1404,3 +1404,109 @@ fn a_circle_centred_on_a_face_hole_reuses_its_projected_centre_in_one_undo() {
     host.session.undo(host.session.revision(), actor()).unwrap();
     assert_eq!(host.session.document(), &before);
 }
+
+impl Host {
+    /// Hovers the face target at `world` until dwelling acquires it.
+    fn dwell_support(&mut self, world: [f64; 3], kind: TargetKind) {
+        self.hover_support(world, kind);
+        let held = self.editor.snap_assist.references().len();
+        self.wait("the dwell to acquire the face target", |h| {
+            let at = h.screen(world);
+            h.frame(vec![egui::Event::PointerMoved(at)]);
+            h.editor.snap_assist.references().len() > held
+        });
+    }
+}
+
+#[test]
+fn dwelling_on_both_ends_of_a_filleted_corner_snaps_the_exact_virtual_corner() {
+    let (session, sketch, frame) = filleted_box_face_sketch();
+    let mut host = Host::new(session, sketch);
+    host.editor.set_tool(DrawTool::Line).unwrap();
+    let before = host.session.document().clone();
+    let revision = host.session.revision();
+    let z = SIZE[2];
+    // The corner arc about (4, 4) ends at (0, 4) and (4, 0). The camera is
+    // not framed on the part, so this corner keeps every target on canvas.
+    let (a, c) = ([0., 4., z], [4., 0., z]);
+    host.dwell_support(a, TargetKind::FaceCorner);
+    host.dwell_support(c, TargetKind::FaceCorner);
+    assert_eq!(
+        host.session.document(),
+        &before,
+        "acquiring changes nothing"
+    );
+    let parallel = |u: [f64; 2], v: [f64; 2]| {
+        (u[0] * v[1] - u[1] * v[0]).abs()
+            <= 1e-9 * u[0].portable_hypot(u[1]) * v[0].portable_hypot(v[1])
+    };
+    let sketch_dir = |from: [f64; 3], to: [f64; 3]| {
+        let (p, q) = (frame.coordinates(from), frame.coordinates(to));
+        [q[0] - p[0], q[1] - p[1]]
+    };
+    // Each end offers X, Y and the extension of its adjacent straight side.
+    let sides = [
+        sketch_dir([0., SIZE[1] - 4., z], a),
+        sketch_dir([SIZE[0] - 4., 0., z], c),
+    ];
+    for (reference, side) in host.editor.snap_assist.references().iter().zip(sides) {
+        assert_eq!(reference.kind, TargetKind::FaceCorner);
+        let guides = reference.guides();
+        assert!(
+            guides.iter().any(|(_, d)| parallel(*d, side)),
+            "the side extension is a guide: {guides:?}"
+        );
+        assert!(guides.len() >= 2 && guides.len() <= 3, "{guides:?}");
+    }
+    // The two extensions cross at the virtual sharp corner (0, 0).
+    let corner = [0., 0., z];
+    let expected = frame.coordinates(corner);
+    host.wait("the virtual corner snap", |h| {
+        let at = h.screen(corner);
+        h.frame(vec![egui::Event::PointerMoved(at)]);
+        h.editor
+            .snap_assist
+            .shown()
+            .is_some_and(|t| t.kind == TargetKind::GuideIntersection)
+    });
+    let shown = host.editor.snap_assist.shown().unwrap().clone();
+    assert!(
+        (shown.position[0] - expected[0]).abs() <= 1e-9
+            && (shown.position[1] - expected[1]).abs() <= 1e-9,
+        "{:?} vs {expected:?}",
+        shown.position
+    );
+    assert_eq!(shown.guides.len(), 2, "{shown:?}");
+    assert_eq!(
+        snap_host::snap_cursor(shown.kind),
+        Some(egui::CursorIcon::Crosshair)
+    );
+    host.click(corner);
+    assert_eq!(
+        host.session.revision(),
+        revision,
+        "the start only begins the line"
+    );
+    host.click([12., 8., z]);
+    host.wait("the line to commit", |h| h.session.revision() > revision);
+    assert_eq!(
+        host.session.revision(),
+        revision + 1,
+        "{}",
+        host.editor.message
+    );
+    let document = host.session.document().clone();
+    assert!(
+        sketch_external::bindings(&document, sketch)
+            .unwrap()
+            .is_empty(),
+        "a guide crossing projects nothing"
+    );
+    let (start, _) = drawn_lines(&document, sketch)[0];
+    let positions = solved(&document, host.session.revision(), sketch);
+    let p = positions[&start];
+    assert!(
+        (p[0] - expected[0]).abs() <= 1e-9 && (p[1] - expected[1]).abs() <= 1e-9,
+        "the line starts exactly at the virtual corner: {p:?} vs {expected:?}"
+    );
+}
