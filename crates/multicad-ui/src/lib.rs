@@ -22,6 +22,7 @@ pub mod metadata_sidebar;
 pub mod model_tree;
 pub mod modeling;
 pub mod navigation;
+mod numeric_field;
 pub mod parameter_editor;
 pub mod preferences;
 pub mod preview_capture;
