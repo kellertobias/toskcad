@@ -165,3 +165,82 @@ fn new_drawing_add_view_and_one_click_give_a_correct_native_front_view() {
     assert_eq!(view.scale, fit.scale);
     assert_eq!(drawings::scale_text(view.scale), "10:1");
 }
+
+/// CAD-438 with real geometry: excluding a tag or hiding a part removes
+/// its solid from the native projection; the other part is still drawn.
+#[test]
+fn part_filters_remove_hidden_parts_from_the_native_projection() {
+    use multicad_core::{
+        commands::Actor,
+        materials::{TagEdit, prepare_tags},
+    };
+    use std::collections::BTreeSet;
+    let mut session = Session::new(Document::new("Filtered view").unwrap()).unwrap();
+    let frame = add_box(&mut session, "Frame", 0.).body;
+    let bolt = add_box(&mut session, "Bolt", 40.).body;
+    let prepared = prepare_tags(
+        &session,
+        session.revision(),
+        Actor::local(Channel::Ui),
+        &[bolt],
+        &TagEdit::Add(BTreeSet::from(["hardware".to_owned()])),
+    )
+    .unwrap();
+    session.commit(prepared).unwrap();
+    let mut editor = DrawingEditor::default();
+    editor.set_backend_factory(Arc::new(|| {
+        Box::new(Backend::with_cache_and_backend(None, GeometryBackend::Rust))
+    }));
+    let ui = Ui {
+        ctx: egui::Context::default(),
+        start: Instant::now(),
+    };
+    editor
+        .invoke(&mut session, DrawingTool::NewDocument, Channel::Ui)
+        .unwrap();
+    editor
+        .invoke(&mut session, DrawingTool::AddView, Channel::Ui)
+        .unwrap();
+    ui.until(&mut editor, &mut session, "the fitted preview", |e| {
+        e.next_step_hint()
+            .is_some_and(|h| h.starts_with("Click the sheet"))
+    });
+    editor.place_view([140., 90.]).unwrap();
+    ui.until(&mut editor, &mut session, "the applied view", |e| {
+        !e.view_placement_active()
+    });
+    let book = drawings::books(session.document()).next().unwrap();
+    let page_id = drawings::read(session.document(), book).unwrap().pages[0].id;
+    let drawn = |session: &Session| {
+        let page = drawings::read(session.document(), book).unwrap().pages[0].clone();
+        let mut backend = Backend::with_cache_and_backend(None, GeometryBackend::Rust);
+        let evaluation = preview(&mut backend, session, page_id);
+        match evaluation.views.get(&page.views[0].id) {
+            Some(ViewEvaluation::Ready { vectors, .. }) => vectors
+                .iter()
+                .map(|v| v.material_part)
+                .collect::<BTreeSet<_>>(),
+            other => panic!("view did not resolve: {other:?}"),
+        }
+    };
+    assert_eq!(drawn(&session), BTreeSet::from([frame, bolt]));
+    let view = drawings::read(session.document(), book).unwrap().pages[0].views[0].id;
+    let revision = session.revision();
+    editor
+        .set_view_tag_filter(
+            &mut session,
+            view,
+            BTreeSet::new(),
+            BTreeSet::from(["hardware".to_owned()]),
+        )
+        .unwrap();
+    assert_eq!(session.revision(), revision + 1);
+    assert_eq!(drawn(&session), BTreeSet::from([frame]));
+    editor
+        .set_view_tag_filter(&mut session, view, BTreeSet::new(), BTreeSet::new())
+        .unwrap();
+    editor
+        .set_part_shown(&mut session, view, frame, false)
+        .unwrap();
+    assert_eq!(drawn(&session), BTreeSet::from([bolt]));
+}
