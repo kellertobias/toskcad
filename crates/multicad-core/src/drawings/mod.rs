@@ -4,7 +4,9 @@ mod annotations;
 pub mod dxf;
 mod guides;
 mod layout;
+mod part_filters;
 pub mod pdf;
+mod projections;
 pub mod render;
 mod scale;
 mod source;
@@ -15,6 +17,8 @@ mod views;
 pub use annotations::*;
 pub use guides::*;
 pub use layout::*;
+pub use part_filters::*;
+pub use projections::*;
 pub use scale::*;
 pub use source::*;
 pub use title_block::{

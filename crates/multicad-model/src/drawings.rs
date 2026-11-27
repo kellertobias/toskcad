@@ -155,6 +155,30 @@ impl DrawingProviders {
         self.providers.insert(kind, provider);
         Ok(())
     }
+    /// The view's bodies without the parts its page filter hides (CAD-438).
+    fn resolve_shown<'a>(
+        &self,
+        document: &Document,
+        model: &'a Model,
+        view: &DrawingView,
+        filter: Option<&ViewPartFilter>,
+    ) -> Result<Vec<DrawingBody<'a>>, ModelError> {
+        let bodies = self.resolve(document, model, &view.source)?;
+        let Some(filter) = filter else {
+            return Ok(bodies);
+        };
+        let shown: Vec<_> = bodies
+            .into_iter()
+            .filter(|body| filter.shows(document, body.material_part))
+            .collect();
+        if shown.is_empty() {
+            return Err(error(
+                Some(view.id),
+                "The view's part filter hides every part; show a part or change the tag filter",
+            ));
+        }
+        Ok(shown)
+    }
     fn resolve<'a>(
         &self,
         document: &Document,
@@ -375,7 +399,7 @@ impl Model {
                 "A source-only inspection model cannot generate drawings",
             ));
         }
-        self.project_drawing_view(document, revision, view, providers)
+        self.project_drawing_view(document, revision, view, providers, None)
     }
     fn project_drawing_view(
         &self,
@@ -383,6 +407,7 @@ impl Model {
         revision: u64,
         view: &DrawingView,
         providers: &DrawingProviders,
+        filter: Option<&ViewPartFilter>,
     ) -> Result<ViewEvaluation, ModelError> {
         // A guided view takes its frame, cut and sources from the current
         // guide and levels; a deleted guide or level is reported here.
@@ -409,7 +434,7 @@ impl Model {
                 "Native model is stale for drawing generation",
             ));
         }
-        let bodies = providers.resolve(document, self, &view.source)?;
+        let bodies = providers.resolve_shown(document, self, view, filter)?;
         let mut planting = crate::plant_plans::plans(document, self, revision, view, &bodies)?;
         planting.extend(crate::equipment_plans::plans(
             document, self, revision, view, &bodies,
@@ -801,13 +826,15 @@ impl Model {
                 let mut evaluation = if exhausted || views.len() >= budget.views {
                     ViewEvaluation::Unresolved{message:"Drawing publication budget exceeded; reduce the number or complexity of views".into()}
                 } else {
-                    self.project_drawing_view(document, revision, view, providers)
+                    let filter = page.part_filter(view.id);
+                    self.project_drawing_view(document, revision, view, providers, filter)
                         .and_then(|mut evaluation| {
                             // Display-only grain draws first, beneath outlines.
                             if page.settings.panel_grain
                                 && let ViewEvaluation::Ready { vectors, .. } = &mut evaluation
                             {
-                                let mut grain = self.grain_vectors(document, view, providers)?;
+                                let mut grain =
+                                    self.grain_vectors(document, view, providers, filter)?;
                                 grain.append(vectors);
                                 *vectors = grain;
                             }

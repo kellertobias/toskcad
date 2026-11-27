@@ -341,3 +341,404 @@ fn a_picked_parent_line_defines_a_finite_section_and_paper_points_invert() {
     let back = top.model_point(top.paper_point([5., 6.]));
     assert!((back[0] - 5.).abs() < 1e-12 && (back[1] - 6.).abs() < 1e-12);
 }
+
+/// CAD-437: front, top and right views of the same frame origin.
+fn three_views(source: EntityId) -> (Page, [EntityId; 3]) {
+    let mut page = Page::new("P1");
+    let mut front = view(source);
+    front.frame.v = [0., 0., 1.];
+    front.position_mm = [100., 150.];
+    let mut top = view(source);
+    top.name = "Top".into();
+    top.position_mm = [100., 60.];
+    let mut right = view(source);
+    right.name = "Right".into();
+    right.frame.u = [0., 1., 0.];
+    right.frame.v = [0., 0., 1.];
+    right.position_mm = [200., 150.];
+    let ids = [front.id, top.id, right.id];
+    page.views = vec![front, top, right];
+    page.projections = vec![
+        ProjectedView {
+            view: ids[1],
+            base: ids[0],
+        },
+        ProjectedView {
+            view: ids[2],
+            base: ids[0],
+        },
+    ];
+    (page, ids)
+}
+fn at(page: &Page, id: EntityId) -> [f64; 2] {
+    page.views.iter().find(|v| v.id == id).unwrap().position_mm
+}
+
+#[test]
+fn moving_a_base_view_carries_its_projections_and_projections_slide_on_their_axis() {
+    let (mut page, [front, top, right]) = three_views(EntityId::new());
+    page.settings.paper = PaperSize::A3;
+    page.settings.orientation = Orientation::Landscape;
+    DrawingBook {
+        pages: vec![page.clone()],
+    }
+    .validate()
+    .unwrap();
+    // The base carries both projections by the same delta.
+    assert_eq!(move_view(&mut page, front, [10., -5.]).unwrap(), [10., -5.]);
+    assert_eq!(at(&page, front), [110., 145.]);
+    assert_eq!(at(&page, top), [110., 55.]);
+    assert_eq!(at(&page, right), [210., 145.]);
+    // A top view keeps the front's column; a side view keeps its row.
+    assert_eq!(move_view(&mut page, top, [30., -20.]).unwrap(), [0., -20.]);
+    assert_eq!(at(&page, top), [110., 35.]);
+    assert_eq!(move_view(&mut page, right, [40., 25.]).unwrap(), [40., 0.]);
+    assert_eq!(at(&page, right), [250., 145.]);
+    // The whole group stops at the printable area instead of leaving it.
+    let margin = page.settings.margin_mm;
+    move_view(&mut page, front, [-1000., 0.]).unwrap();
+    assert!((at(&page, front)[0] - margin).abs() < 1e-9);
+    assert_eq!(at(&page, top)[0], at(&page, front)[0]);
+    assert!(move_view(&mut page, front, [f64::NAN, 0.]).is_err());
+    // Scale and origin changes on the base re-align the projections.
+    page.views[0].scale = Scale {
+        numerator: 1,
+        denominator: 5,
+    };
+    page.views[1].frame.origin_mm = [50., 0., 0.];
+    align_projections(&mut page);
+    assert_eq!(page.views[1].scale, page.views[0].scale);
+    assert!((at(&page, top)[0] - (at(&page, front)[0] + 10.)).abs() < 1e-9);
+    // Removing the base frees its projections.
+    remove_view(&mut page, front);
+    assert!(page.projections.is_empty());
+}
+
+#[test]
+fn projection_links_validate_roundtrip_with_their_capability_and_survive_duplicate() {
+    let mut doc = Document::new("Projected").unwrap();
+    let part = Entity::new(
+        "Part",
+        EntityData::Part {
+            features: vec![],
+            material: None,
+            tags: Default::default(),
+        },
+    );
+    let source = part.id;
+    doc.insert(part).unwrap();
+    let (page, [front, top, _]) = three_views(source);
+    // Invalid links never enter the document.
+    for bad in [
+        ProjectedView {
+            view: top,
+            base: EntityId::new(),
+        },
+        ProjectedView {
+            view: front,
+            base: top,
+        },
+    ] {
+        let mut p = page.clone();
+        p.projections.push(bad);
+        assert!(DrawingBook { pages: vec![p] }.validate().is_err());
+    }
+    let mut same_direction = page.clone();
+    same_direction.views[1].frame = same_direction.views[0].frame;
+    assert!(
+        DrawingBook {
+            pages: vec![same_direction]
+        }
+        .validate()
+        .is_err()
+    );
+    let book = DrawingBook { pages: vec![page] }.entity("Drawing").unwrap();
+    let id = book.id;
+    doc.insert(book).unwrap();
+    let mut session = Session::new(doc).unwrap();
+    let project = ProjectFile::new(session.document().clone()).unwrap();
+    assert!(project.capabilities().contains(PROJECTION_CAPABILITY));
+    let mut bytes = vec![];
+    project_file::write(&project, &mut bytes, Default::default()).unwrap();
+    let mut older = project_file::supported_capabilities();
+    older.remove(PROJECTION_CAPABILITY);
+    assert!(project_file::read(&mut bytes.as_slice(), Default::default(), &older).is_err());
+    let reopened = project_file::read(
+        &mut bytes.as_slice(),
+        Default::default(),
+        &project_file::supported_capabilities(),
+    )
+    .unwrap();
+    assert_eq!(
+        read(&reopened.project.document, id).unwrap(),
+        read(session.document(), id).unwrap()
+    );
+    // A duplicated page links its own copies.
+    let first = read(session.document(), id).unwrap().pages[0].id;
+    let copy = EntityId::new();
+    let prepared = prepare(
+        &session,
+        session.revision(),
+        actor(),
+        id,
+        PageAction::Duplicate {
+            page: first,
+            new_page: copy,
+        },
+    )
+    .unwrap();
+    session.commit(prepared).unwrap();
+    let book = read(session.document(), id).unwrap();
+    let ids: Vec<_> = book.pages[1].views.iter().map(|v| v.id).collect();
+    assert_eq!(book.pages[1].projections.len(), 2);
+    assert!(
+        book.pages[1]
+            .projections
+            .iter()
+            .all(|l| ids.contains(&l.view) && ids.contains(&l.base))
+    );
+    // Without projections the wire form is unchanged.
+    let wire = serde_json::to_string(&Page::new("x")).unwrap();
+    assert!(!wire.contains("projections"));
+}
+
+/// CAD-436: the standard layout picks the largest standard scale that fits
+/// the sheet, aligns top with front's column and right with its row, and
+/// follows the page's projection angle.
+#[test]
+fn standard_layout_fits_the_sheet_and_aligns_projections() {
+    // A 400 × 200 × 100 mm block: front 400 × 100, top 400 × 200, right 200 × 100.
+    let extents = [[400., 100.], [400., 200.], [200., 100.], [420., 300.]];
+    let mut chosen = vec![];
+    for paper in [PaperSize::A4, PaperSize::A3, PaperSize::A1] {
+        let mut page = Page::new("1");
+        page.settings.paper = paper;
+        for projection in [Projection::ThirdAngle, Projection::FirstAngle] {
+            page.settings.projection = projection;
+            let layout = layout_page(&page, 1, 1).unwrap();
+            let arranged = standard_layout(&layout, projection, extents).unwrap();
+            let [front, top, right, iso] = arranged.positions;
+            assert_eq!(front[0], top[0], "top shares the front's column");
+            assert_eq!(front[1], right[1], "right shares the front's row");
+            assert!(iso[0] == right[0] && iso[1] == top[1]);
+            let third = projection == Projection::ThirdAngle;
+            assert_eq!(top[1] < front[1], third, "top above front in third angle");
+            assert_eq!(right[0] > front[0], third, "right of front in third angle");
+            // The chosen scale fits; the next larger standard scale does not.
+            let fits = |scale: Scale| {
+                let s = scale_factor(scale);
+                let w = (400. + 420.) * s + VIEW_GAP_MM;
+                let h = (100. + 300.) * s + VIEW_GAP_MM;
+                fit_regions(&layout)
+                    .iter()
+                    .any(|r| w <= r[2] - r[0] + 1e-9 && h <= r[3] - r[1] + 1e-9)
+            };
+            assert!(fits(arranged.scale));
+            let scales = standard_scales();
+            let index = scales.iter().position(|s| *s == arranged.scale).unwrap();
+            assert!(index == 0 || !fits(scales[index - 1]));
+            // Everything stays on the printable paper.
+            let [x0, y0, x1, y1] = layout.printable_mm;
+            for p in arranged.positions {
+                assert!(p[0] > x0 && p[0] < x1 && p[1] > y0 && p[1] < y1);
+            }
+        }
+        chosen.push(arranged_scale(paper, extents));
+    }
+    assert_eq!(
+        chosen,
+        [
+            Scale {
+                numerator: 1,
+                denominator: 5
+            },
+            Scale {
+                numerator: 1,
+                denominator: 5
+            },
+            Scale {
+                numerator: 1,
+                denominator: 2
+            },
+        ]
+    );
+    assert!(
+        standard_layout(
+            &layout_page(&Page::new("1"), 1, 1).unwrap(),
+            Projection::FirstAngle,
+            [[f64::NAN, 1.], [1., 1.], [1., 1.], [1., 1.]]
+        )
+        .is_err()
+    );
+}
+fn arranged_scale(paper: PaperSize, extents: [[f64; 2]; 4]) -> Scale {
+    let mut page = Page::new("1");
+    page.settings.paper = paper;
+    standard_layout(
+        &layout_page(&page, 1, 1).unwrap(),
+        Projection::FirstAngle,
+        extents,
+    )
+    .unwrap()
+    .scale
+}
+
+/// CAD-436: a single guided view takes the largest standard scale that fits
+/// the free sheet with margins, so a larger sheet never gets a smaller scale.
+#[test]
+fn single_view_default_scale_is_the_largest_standard_scale_fitting_the_sheet() {
+    let source = EntityId::new();
+    let mut previous = 0.;
+    for (paper, expected) in [
+        (PaperSize::A4, (1, 2)),
+        (PaperSize::A3, (1, 2)),
+        (PaperSize::A2, (1, 1)),
+        (PaperSize::A0, (2, 1)),
+    ] {
+        let mut page = Page::new("1");
+        page.settings.paper = paper;
+        let layout = layout_page(&page, 1, 1).unwrap();
+        let fit = fit_view(
+            &view(source),
+            &layout,
+            [-200., -50.],
+            [200., 50.],
+            FitMode::Standard,
+        )
+        .unwrap();
+        assert_eq!(
+            (fit.scale.numerator, fit.scale.denominator),
+            expected,
+            "{paper:?}"
+        );
+        let f = scale_factor(fit.scale);
+        assert!(f >= previous);
+        previous = f;
+        assert!(
+            fit_regions(&layout)
+                .iter()
+                .any(|r| 400. * f <= r[2] - r[0] && 100. * f <= r[3] - r[1])
+        );
+    }
+}
+
+/// CAD-438: a view shows every part until its page stores a filter; tags
+/// and per-part toggles decide, invalid filters are refused, a duplicated
+/// page keeps its filters and pages without filters keep their wire form.
+#[test]
+fn view_part_filters_follow_tags_and_toggles_and_validate() {
+    let mut doc = Document::new("Filters").unwrap();
+    let part = |name: &str, tags: &[&str]| {
+        Entity::new(
+            name,
+            EntityData::Part {
+                features: vec![],
+                material: None,
+                tags: tags.iter().map(|t| t.to_string()).collect(),
+            },
+        )
+    };
+    let (frame, bolt) = (part("Frame", &["frame"]), part("Bolt", &["hardware"]));
+    let (f, b) = (frame.id, bolt.id);
+    doc.insert(frame).unwrap();
+    doc.insert(bolt).unwrap();
+    let mut page = Page::new("1");
+    let mut v = view(f);
+    v.source = ViewSource::Model {
+        entities: vec![f, b],
+    };
+    let id = v.id;
+    page.views.push(v);
+    assert_eq!(view_parts(&doc, &page.views[0]), [f, b]);
+    assert!(page.part_filter(id).is_none(), "everything by default");
+    let shows = |page: &Page, part| page.part_filter(id).is_none_or(|x| x.shows(&doc, part));
+    page.set_tag_filter(id, ["frame".into()].into(), Default::default())
+        .unwrap();
+    assert!(shows(&page, f) && !shows(&page, b));
+    page.set_tag_filter(id, Default::default(), ["frame".into()].into())
+        .unwrap();
+    assert!(!shows(&page, f) && shows(&page, b));
+    page.set_part_shown(&doc, id, f, true).unwrap();
+    assert!(shows(&page, f), "a toggle overrides the tag rule");
+    page.set_part_shown(&doc, id, b, false).unwrap();
+    assert!(!shows(&page, b));
+    DrawingBook {
+        pages: vec![page.clone()],
+    }
+    .validate()
+    .unwrap();
+    // Clearing everything removes the stored filter.
+    page.set_tag_filter(id, Default::default(), Default::default())
+        .unwrap();
+    page.set_part_shown(&doc, id, f, true).unwrap();
+    page.set_part_shown(&doc, id, b, true).unwrap();
+    assert!(page.part_filters.is_empty());
+    assert!(
+        page.set_part_shown(&doc, EntityId::new(), f, false)
+            .is_err()
+    );
+    assert!(
+        page.set_tag_filter(id, [" padded".into()].into(), Default::default())
+            .is_err()
+    );
+    for bad in [
+        ViewPartFilter {
+            view: EntityId::new(),
+            hidden: [f].into(),
+            ..Default::default()
+        },
+        ViewPartFilter {
+            view: id,
+            ..Default::default()
+        },
+        ViewPartFilter {
+            view: id,
+            hidden: [f].into(),
+            shown: [f].into(),
+            ..Default::default()
+        },
+    ] {
+        let mut p = page.clone();
+        p.part_filters = vec![bad];
+        assert!(DrawingBook { pages: vec![p] }.validate().is_err());
+    }
+    // Stored, duplicated with the page and required by readers.
+    page.set_part_shown(&doc, id, b, false).unwrap();
+    let book = DrawingBook {
+        pages: vec![page.clone()],
+    }
+    .entity("Drawing")
+    .unwrap();
+    let book_id = book.id;
+    doc.insert(book).unwrap();
+    let mut session = Session::new(doc).unwrap();
+    let copy = EntityId::new();
+    let prepared = prepare(
+        &session,
+        session.revision(),
+        actor(),
+        book_id,
+        PageAction::Duplicate {
+            page: page.id,
+            new_page: copy,
+        },
+    )
+    .unwrap();
+    session.commit(prepared).unwrap();
+    let book = read(session.document(), book_id).unwrap();
+    let duplicate = &book.pages[1];
+    assert_eq!(duplicate.part_filters.len(), 1);
+    assert_eq!(duplicate.part_filters[0].view, duplicate.views[0].id);
+    let project = ProjectFile::new(session.document().clone()).unwrap();
+    assert!(project.capabilities().contains(PART_FILTER_CAPABILITY));
+    let mut bytes = vec![];
+    project_file::write(&project, &mut bytes, Default::default()).unwrap();
+    let mut older = project_file::supported_capabilities();
+    older.remove(PART_FILTER_CAPABILITY);
+    assert!(project_file::read(&mut bytes.as_slice(), Default::default(), &older).is_err());
+    assert!(
+        !serde_json::to_string(&Page::new("x"))
+            .unwrap()
+            .contains("part_filters")
+    );
+}

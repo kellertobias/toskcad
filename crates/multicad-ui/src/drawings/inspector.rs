@@ -27,6 +27,9 @@ impl DrawingEditor {
                 if let Some(error) = &self.error {
                     ui.colored_label(egui::Color32::LIGHT_RED, error);
                 }
+                if let Some(notice) = &self.notice {
+                    ui.colored_label(egui::Color32::LIGHT_GREEN, notice);
+                }
                 if let Some(error) = &self.feed.error {
                     ui.colored_label(egui::Color32::LIGHT_RED, error);
                 }
@@ -39,6 +42,10 @@ impl DrawingEditor {
             });
         self.note_inspector(ui);
         self.draft_placement_inspector(ui);
+        if self.view_placement_active() {
+            self.view_placement_inspector(ui);
+            return;
+        }
         if self.selected_view.is_some() {
             self.views_inspector(ui, session);
             return;

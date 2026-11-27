@@ -290,7 +290,8 @@ impl DrawingEditor {
         let section = self.section_pick.take().is_some();
         let placement = self.placing();
         self.cancel_placement();
-        section || placement
+        let view = self.cancel_view_placement();
+        section || placement || view
     }
     /// Drafting points on the page and pending, for snapping.
     fn snap_targets(&self) -> Vec<[f64; 2]> {

@@ -142,7 +142,8 @@ pub fn groups(mode: Mode, tab: &RibbonTab) -> Vec<Group> {
     if mode == Mode::Sketch || mode == Mode::Drawings {
         let sections: &[(&str, &[&str])] = match (mode, tab.title) {
             (Mode::Drawings, "Common") => &[
-                ("Drawing", &["drawing-new", "drawing-pdf"]),
+                // New drawing lives in the Drawings list and the empty sheet.
+                ("Drawing", &["drawing-pdf"]),
                 (
                     "Pages",
                     &[
@@ -152,13 +153,16 @@ pub fn groups(mode: Mode, tab: &RibbonTab) -> Vec<Group> {
                         "page-earlier",
                         "page-later",
                         "page-setup",
-                        "page-apply",
-                        "page-discard",
                     ],
                 ),
                 (
                     "Views",
-                    &["drawing-projection", "drawing-section", "drawing-detail"],
+                    &[
+                        "drawing-add-view",
+                        "drawing-standard-views",
+                        "drawing-section",
+                        "drawing-detail",
+                    ],
                 ),
             ],
             (Mode::Drawings, "Annotate") => &[

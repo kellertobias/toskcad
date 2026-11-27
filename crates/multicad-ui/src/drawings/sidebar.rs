@@ -6,8 +6,8 @@ mod tests;
 
 struct SheetEntry {
     id: EntityId,
-    number: String,
-    title: String,
+    /// The saved sheet, for its views and their shown parts.
+    page: Page,
 }
 struct BookEntry {
     id: EntityId,
@@ -25,6 +25,41 @@ pub(super) enum Action {
         page: Option<EntityId>,
     },
     New,
+    /// Select a view on a sheet and open its inspector.
+    View {
+        book: EntityId,
+        page: EntityId,
+        view: EntityId,
+    },
+    /// Toggle one part of the selected sheet's view.
+    Part {
+        view: EntityId,
+        part: EntityId,
+        shown: bool,
+    },
+}
+/// One tree row: an icon, then a selectable label at `depth`.
+fn row(
+    ui: &mut egui::Ui,
+    depth: usize,
+    icon: Icon,
+    selected: bool,
+    enabled: bool,
+    label: &str,
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.add_space(depth as f32 * 14.);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(16., 16.), egui::Sense::hover());
+        crate::icons::paint_sized(ui, icon, rect.center(), ui.visuals().text_color(), 14.);
+        ui.add_enabled(
+            enabled,
+            egui::Button::selectable(selected, label)
+                .wrap()
+                .min_size(egui::vec2(ui.available_width(), 26.)),
+        )
+        .on_hover_text(label)
+    })
+    .inner
 }
 pub(super) fn new_book_name(session: &Session) -> String {
     let names: std::collections::BTreeSet<_> = drawings::books(session.document())
@@ -43,6 +78,7 @@ impl DrawingEditor {
     pub(super) fn navigation_ready(&self) -> bool {
         !self.dirty()
             && self.placement.is_none()
+            && self.view_placement.is_none()
             && self.section_pick.is_none()
             && !self.schedules.chooser
             && !self.schedules.placing()
@@ -116,11 +152,7 @@ impl DrawingEditor {
                             pages: book
                                 .pages
                                 .into_iter()
-                                .map(|p| SheetEntry {
-                                    id: p.id,
-                                    number: p.number,
-                                    title: p.info.title,
-                                })
+                                .map(|p| SheetEntry { id: p.id, page: p })
                                 .collect(),
                             error: None,
                         },
@@ -141,6 +173,7 @@ impl DrawingEditor {
         let has_selection = self.selected_page().is_some();
         let mut pdf_requested = false;
         let books = &self.sidebar.catalog.as_ref().expect("current catalog").1;
+        let document = session.document();
         egui::Panel::left("drawing-sidebar")
             .default_size(224.).min_size(190.).max_size(340.).resizable(true)
             .frame(egui::Frame::new().fill(crate::theme::PANEL).inner_margin(12))
@@ -155,7 +188,8 @@ impl DrawingEditor {
                 )).inner.on_disabled_hover_text("Add or select a drawing sheet first").clicked() {
                     pdf_requested = true;
                 }
-                if ui.add_enabled_ui(ready, |ui| crate::icons::labeled_button_sized(
+                // With no drawing yet, the sheet area's New drawing is the one entry.
+                if !books.is_empty() && ui.add_enabled_ui(ready, |ui| crate::icons::labeled_button_sized(
                     ui, Icon::New, "New drawing", egui::vec2(ui.available_width(), 34.)
                 )).inner.on_disabled_hover_text("Apply/discard page edits or finish/cancel the current placement first").clicked() {
                     action = Some(Action::New);
@@ -166,22 +200,41 @@ impl DrawingEditor {
                     if books.is_empty() { ui.label("No drawings yet."); ui.small("Create a drawing to add its first sheet."); }
                     for book in books {
                         let current_book = self.book == Some(book.id);
-                        if ui.add_enabled(ready || current_book, egui::Button::selectable(current_book, &book.name).wrap()
-                            .min_size(egui::vec2(ui.available_width(), 28.))).clicked() && book.error.is_none() {
+                        if row(ui, 0, Icon::Page, current_book && self.selected.is_none(), ready || current_book, &book.name).clicked() && book.error.is_none() {
                             action = Some(Action::Select { book:book.id, page:if current_book {self.selected} else {book.pages.first().map(|p| p.id)} });
                         }
                         if let Some(error) = &book.error { ui.colored_label(egui::Color32::LIGHT_YELLOW, error); }
                         if book.pages.is_empty() && book.error.is_none() { ui.small("No sheets · select this drawing, then Add page."); }
-                        for page in &book.pages {
-                            let current = current_book && self.selected == Some(page.id);
-                            let draft = current.then_some(self.draft.as_ref()).flatten();
-                            let number = draft.map_or(page.number.as_str(), |p| p.number.as_str());
-                            let title = draft.map_or(page.title.as_str(), |p| p.info.title.as_str());
-                            let title = if title.trim().is_empty() { "Untitled sheet" } else { title };
-                            let label = format!("{number} · {title}{}", if current && !ready { " •" } else { "" });
-                            if ui.add_enabled(ready || current, egui::Button::selectable(current, &label).wrap()
-                                .min_size(egui::vec2(ui.available_width(), 32.))).on_hover_text(&label).clicked() {
-                                action = Some(Action::Select { book:book.id, page:Some(page.id) });
+                        for sheet in &book.pages {
+                            let current = current_book && self.selected == Some(sheet.id);
+                            // The selected sheet shows its pending draft.
+                            let page = if current { self.draft.as_ref().unwrap_or(&sheet.page) } else { &sheet.page };
+                            let title = if page.info.title.trim().is_empty() { "Untitled sheet" } else { page.info.title.as_str() };
+                            let label = format!("{} · {title}{}", page.number, if current && !ready { " •" } else { "" });
+                            if row(ui, 1, Icon::Grid, current && self.selected_view.is_none(), ready || current, &label).clicked() {
+                                action = Some(Action::Select { book:book.id, page:Some(sheet.id) });
+                            }
+                            for view in &page.views {
+                                let selected = current && self.selected_view == Some(view.id);
+                                if row(ui, 2, Icon::Orthographic, selected, ready || current, &view.name).clicked() {
+                                    action = Some(Action::View { book: book.id, page: sheet.id, view: view.id });
+                                }
+                                let filter = page.part_filter(view.id);
+                                for part in drawings::view_parts(document, view) {
+                                    let name = document.get(part).map_or("Missing part", |e| e.name.as_str());
+                                    let mut shown = filter.is_none_or(|f| f.shows(document, part));
+                                    ui.horizontal(|ui| {
+                                        ui.add_space(3. * 14.);
+                                        let (rect, _) = ui.allocate_exact_size(egui::vec2(16., 16.), egui::Sense::hover());
+                                        crate::icons::paint_sized(ui, Icon::Box, rect.center(), ui.visuals().text_color(), 13.);
+                                        if ui.add_enabled(current && !self.dirty(), egui::Checkbox::new(&mut shown, name))
+                                            .on_hover_text("Show or hide this part in the view; one undoable edit")
+                                            .on_disabled_hover_text("Select this sheet and apply or discard its edits first")
+                                            .changed() {
+                                            action = Some(Action::Part { view: view.id, part, shown });
+                                        }
+                                    });
+                                }
                             }
                         }
                         ui.add_space(8.);
