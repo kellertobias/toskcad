@@ -463,3 +463,88 @@ fn moving_a_node_of_an_applied_frame_keeps_member_and_part_ids() {
         .nodes[&corner];
     assert!(p[0] < -50. && p[1] < -50., "{p:?}");
 }
+
+#[test]
+fn inches_a_gap_set_in_the_joint_editor_and_reversing_a_member_apply_as_typed() {
+    // An open chain typed in inches.
+    let mut h = Harness::new(document());
+    open_tool(&mut h);
+    h.type_into_field_and_enter(LENGTH, "10 in");
+    apply(&mut h);
+    let list = cut_list(h.app.current().session.document());
+    assert_eq!(list.len(), 1);
+    near(list[0].length_mm, 254.);
+
+    // A rectangle with a 2 mm gap typed at one corner.
+    let mut h = Harness::new(document());
+    typed_rectangle(&mut h);
+    apply(&mut h);
+    reopen(&mut h);
+    let document = h.app.current().session.document().clone();
+    let frame_id = the_frame(&document);
+    let frame = model::read_frame(&document, frame_id).unwrap();
+    // The corner at the origin, in view.
+    let corner = frame.members[0].start;
+    let world = frame
+        .evaluate(h.app.current().session.parameters())
+        .unwrap()
+        .nodes[&corner];
+    let viewport = h.app.current().sketch.viewport_rect.unwrap();
+    let s = h
+        .app
+        .current()
+        .sketch
+        .camera
+        .project(world.map(|v| v as f32), viewport);
+    h.click_at(egui::pos2(s[0], s[1]));
+    eprintln!("DEBUG {:?}", h.texts());
+    h.type_into_field_and_enter("Weld gap (mm, empty = frame default 0 mm)", "2");
+    assert!(
+        h.texts().iter().any(|t| t == "M*"),
+        "the badge shows the override"
+    );
+    apply(&mut h);
+    let after = h.app.current().session.document().clone();
+    let gapped: Vec<f64> = cut_list(&after)
+        .iter()
+        .map(|r| r.length_mm)
+        .filter(|l| (l.round() - l).abs() > 1e-3)
+        .collect();
+    assert_eq!(gapped.len(), 2, "both members at the corner are shortened");
+    for l in gapped {
+        near(l.fract(), (1000f64 - std::f64::consts::SQRT_2).fract());
+    }
+
+    // Reversing a member keeps its section on the same side.
+    reopen(&mut h);
+    let front = model::read_frame(&after, frame_id).unwrap().members[0].clone();
+    let nodes = model::read_frame(&after, frame_id)
+        .unwrap()
+        .evaluate(h.app.current().session.parameters())
+        .unwrap()
+        .nodes;
+    // A point on the front rail near the origin selects it.
+    let a = nodes[&front.start];
+    let mid: [f64; 3] = [a[0] + 60., a[1], a[2]];
+    let viewport = h.app.current().sketch.viewport_rect.unwrap();
+    let s = h
+        .app
+        .current()
+        .sketch
+        .camera
+        .project(mid.map(|v| v as f32), viewport);
+    h.click_at(egui::pos2(s[0], s[1]));
+    h.click_label("Reverse");
+    apply(&mut h);
+    let reversed = h.app.current().session.document().clone();
+    let stored = model::read_frame(&reversed, frame_id).unwrap();
+    assert_eq!(
+        stored.members[0].start, front.end,
+        "the member was reversed"
+    );
+    let (lo, hi) = outside(&reversed);
+    near(lo[0], 0.);
+    near(lo[1], 0.);
+    near(hi[0], 1000.);
+    near(hi[1], 600.);
+}

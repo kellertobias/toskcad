@@ -828,72 +828,6 @@ impl FramePanel {
                 }
             });
         ui.separator();
-        // Drawing.
-        let draw_label = if self.drawing {
-            "Stop drawing"
-        } else {
-            "Draw in viewport"
-        };
-        if ui.button(draw_label).clicked() {
-            self.drawing = !self.drawing;
-            self.chain.clear();
-        }
-        if self.drawing {
-            ui.small("Click nodes on the plane; click the first node to close the loop. Backspace removes the last node, Esc cancels the pending segment, Enter ends the chain.");
-        }
-        if self.chain.is_empty() {
-            ui.horizontal(|ui| {
-                changed |= self.start[0].show_compact(
-                    ui,
-                    "frame-start-u",
-                    "Start u",
-                    "First node, along the plane's u axis",
-                );
-                changed |= self.start[1].show_compact(
-                    ui,
-                    "frame-start-v",
-                    "Start v",
-                    "First node, along the plane's v axis",
-                );
-            });
-        }
-        ui.label(format!("Segment length ({})", self.segment_length.unit()));
-        let length_response = ui.add(
-            egui::TextEdit::singleline(&mut self.segment_length.text)
-                .id_salt("frame-segment-length")
-                .hint_text("1000, 1 m, 39 in or =$width"),
-        );
-        ui.label("Turn from the previous member (deg, counterclockwise)");
-        let angle_response = ui.add(
-            egui::TextEdit::singleline(&mut self.segment_angle.text)
-                .id_salt("frame-segment-angle")
-                .hint_text("90"),
-        );
-        // Enter in the length field adds the segment; the turn is set first.
-        let entered = length_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let _ = angle_response;
-        ui.horizontal(|ui| {
-            if ui.button("Add segment").clicked() || entered {
-                match self.add_segment(document, parameters) {
-                    Ok(()) => changed = true,
-                    Err(e) => self.error = Some(e),
-                }
-            }
-            if ui
-                .add_enabled(self.chain.len() >= 3, egui::Button::new("Close loop"))
-                .clicked()
-            {
-                match self.close_loop() {
-                    Ok(()) => changed = true,
-                    Err(e) => self.error = Some(e),
-                }
-            }
-        });
-        ui.small(format!(
-            "{} members · {} nodes",
-            self.definition.members.len(),
-            self.definition.nodes.len()
-        ));
         // Selected member.
         if let Some(member) = self.selected_member
             && self.definition.member(member).is_some()
@@ -1034,6 +968,73 @@ impl FramePanel {
         if self.moving.is_some() {
             ui.small("Click the new position on the plane; Esc keeps the node where it is.");
         }
+        ui.separator();
+        // Drawing.
+        let draw_label = if self.drawing {
+            "Stop drawing"
+        } else {
+            "Draw in viewport"
+        };
+        if ui.button(draw_label).clicked() {
+            self.drawing = !self.drawing;
+            self.chain.clear();
+        }
+        if self.drawing {
+            ui.small("Click nodes on the plane; click the first node to close the loop. Backspace removes the last node, Esc cancels the pending segment, Enter ends the chain.");
+        }
+        if self.chain.is_empty() {
+            ui.horizontal(|ui| {
+                changed |= self.start[0].show_compact(
+                    ui,
+                    "frame-start-u",
+                    "Start u",
+                    "First node, along the plane's u axis",
+                );
+                changed |= self.start[1].show_compact(
+                    ui,
+                    "frame-start-v",
+                    "Start v",
+                    "First node, along the plane's v axis",
+                );
+            });
+        }
+        ui.label(format!("Segment length ({})", self.segment_length.unit()));
+        let length_response = ui.add(
+            egui::TextEdit::singleline(&mut self.segment_length.text)
+                .id_salt("frame-segment-length")
+                .hint_text("1000, 1 m, 39 in or =$width"),
+        );
+        ui.label("Turn from the previous member (deg, counterclockwise)");
+        let angle_response = ui.add(
+            egui::TextEdit::singleline(&mut self.segment_angle.text)
+                .id_salt("frame-segment-angle")
+                .hint_text("90"),
+        );
+        // Enter in the length field adds the segment; the turn is set first.
+        let entered = length_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let _ = angle_response;
+        ui.horizontal(|ui| {
+            if ui.button("Add segment").clicked() || entered {
+                match self.add_segment(document, parameters) {
+                    Ok(()) => changed = true,
+                    Err(e) => self.error = Some(e),
+                }
+            }
+            if ui
+                .add_enabled(self.chain.len() >= 3, egui::Button::new("Close loop"))
+                .clicked()
+            {
+                match self.close_loop() {
+                    Ok(()) => changed = true,
+                    Err(e) => self.error = Some(e),
+                }
+            }
+        });
+        ui.small(format!(
+            "{} members · {} nodes",
+            self.definition.members.len(),
+            self.definition.nodes.len()
+        ));
         ui.separator();
         form::preview_status(ui, self.stamp, preview);
         let validation = self.request(document, enabled);
