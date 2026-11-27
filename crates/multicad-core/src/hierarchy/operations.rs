@@ -21,7 +21,12 @@ pub enum Action {
         parent: Option<EntityId>,
         before: Option<EntityId>,
     },
+    /// Delete one entry. Refused, listing them, when other entries depend on it.
     Delete {
+        id: EntityId,
+    },
+    /// Delete one entry together with every entry that depends on it.
+    DeleteWithDependents {
         id: EntityId,
     },
     SetVisible {
@@ -172,51 +177,21 @@ fn insertion_offset(
     }
 }
 
-fn standalone_body_recipe(
-    document: &Document,
-    body: EntityId,
-    feature: EntityId,
-) -> Result<BTreeSet<EntityId>, String> {
-    use crate::model;
-    let mut recipe = BTreeSet::from([feature]);
-    let standalone = match document.get(feature).map(|entity| &entity.data) {
-        Some(EntityData::Feature { definition, .. }) => match definition.type_id.as_str() {
-            model::PRIMITIVE_TYPE => model::read_primitive(document, feature)
-                .is_ok_and(|source| source.output.body == body),
-            model::REVOLVE_TYPE => model::read_revolve(document, feature)
-                .is_ok_and(|source| source.output.body == body),
-            model::EXTRUDE_TYPE => {
-                if let Some(group) = model::extrude_group_owner(document, feature)
-                    .map_err(|error| error.to_string())?
-                {
-                    let owner = model::read_extrude_group(document, group)
-                        .map_err(|error| error.to_string())?;
-                    if owner.kind != model::ExtrudeGroupKind::NewBody || owner.tools.len() != 1 {
-                        return Err("This extrusion shares an operation with other outputs. Delete is unavailable".into());
-                    }
-                    recipe.insert(group);
-                }
-                model::read_extrude(document, feature).is_ok_and(|source| {
-                    source.output.body == body && source.operation == model::Operation::NewBody
-                })
-            }
-            _ => false,
-        },
-        _ => false,
-    };
-    if !standalone {
-        return Err("Delete is unavailable for this part's creating operation".into());
-    }
-    Ok(recipe)
-}
-
-/// Report why a model-tree entry cannot be deleted. The transaction runs the
-/// same checks again against its current revision before removing any source.
+/// Report why a model-tree entry cannot be deleted without its dependents.
+/// The transaction runs the same checks again against its current revision
+/// before removing any source.
 pub fn deletion_available(session: &Session, id: EntityId) -> Result<(), String> {
-    deletable_entries(session, id).map(|_| ())
+    let plan = deletion_plan(session, id)?;
+    if plan.dependents.is_empty() {
+        Ok(())
+    } else {
+        Err(plan.refusal())
+    }
 }
 
-fn deletable_entries(session: &Session, id: EntityId) -> Result<BTreeSet<EntityId>, String> {
+/// Everything one Delete of `id` removes, with the dependents it must name.
+/// Refused only for entries that cannot be deleted at all.
+pub fn deletion_plan(session: &Session, id: EntityId) -> Result<DeletionPlan, String> {
     let document = session.document();
     if id == document.id() {
         return Err("The document root cannot be deleted".into());
@@ -224,39 +199,7 @@ fn deletable_entries(session: &Session, id: EntityId) -> Result<BTreeSet<EntityI
     let entity = document.get(id).ok_or("The model entry no longer exists")?;
     let index = Index::new(document).map_err(|error| error.to_string())?;
     let parent = index.parent(id).map_err(|error| error.to_string())?;
-    let mut removed = BTreeSet::from([id]);
     match &entity.data {
-        EntityData::Assembly { instances } if !instances.is_empty() => {
-            return Err("Move or delete this assembly's contents first".into());
-        }
-        EntityData::Assembly { .. } | EntityData::Group {} => {
-            if !index
-                .children(Some(id))
-                .map_err(|error| error.to_string())?
-                .is_empty()
-            {
-                return Err("Move or delete this container's contents first".into());
-            }
-        }
-        EntityData::Part { features, .. } => {
-            match features.as_slice() {
-                [] => {}
-                [feature] => {
-                    removed.extend(standalone_body_recipe(document, id, *feature)?);
-                }
-                _ => {
-                    return Err(
-                        "This part has multiple features. Delete is unavailable for that history"
-                            .into(),
-                    );
-                }
-            }
-            if let Some((properties, _)) = crate::materials::part_properties(document, id)
-                .map_err(|error| error.to_string())?
-            {
-                removed.insert(properties);
-            }
-        }
         EntityData::Instance {
             placement_source, ..
         } => {
@@ -268,12 +211,13 @@ fn deletable_entries(session: &Session, id: EntityId) -> Result<BTreeSet<EntityI
             {
                 return Err("Edit the reusable assembly to remove this member instance".into());
             }
+            let mut seen = BTreeSet::new();
             let mut driver = *placement_source;
             while let Some(source) = driver {
                 let placement = crate::model::read_instance_placement(document, source).map_err(
                     |_| "This instance has managed placement. Use its owning tool to remove it",
                 )?;
-                if placement.owner != id || !removed.insert(source) {
+                if placement.owner != id || !seen.insert(source) {
                     return Err("This instance has an invalid or shared placement source".into());
                 }
                 driver = match placement.base {
@@ -282,33 +226,60 @@ fn deletable_entries(session: &Session, id: EntityId) -> Result<BTreeSet<EntityI
                 };
             }
         }
-        EntityData::Sketch { .. } | EntityData::Plane { .. } => {}
-        EntityData::Feature { .. } => {
-            return Err(
-                "Delete the body or use the feature's own tool to remove this operation".into(),
-            );
-        }
+        EntityData::Assembly { .. }
+        | EntityData::Group {}
+        | EntityData::Part { .. }
+        | EntityData::Sketch { .. }
+        | EntityData::Plane { .. }
+        | EntityData::Feature { .. } => {}
         _ => return Err("Delete is unavailable for this kind of model entry".into()),
     }
+    let plan = closure(document, id)?;
     let managed =
         crate::symbols::owned_entities_in_session(session).map_err(|error| error.to_string())?;
-    if !managed.is_disjoint(&removed) {
+    if !managed.is_disjoint(&plan.removed) {
         return Err("This source is managed by a linked Library item or architecture type".into());
     }
-    if let Some(dependent) = document.entities().find(|candidate| {
-        !removed.contains(&candidate.id)
-            && candidate.references().iter().any(|link| {
-                removed.contains(&link.target)
-                    && !(link.role == "instances"
-                        && matches!(candidate.data, EntityData::Assembly { .. }))
-            })
-    }) {
-        return Err(format!(
-            "“{}” depends on this entry. Remove or update that dependency first",
-            dependent.name
-        ));
+    Ok(plan)
+}
+
+/// Remove `removed` from the document, its hierarchy and the part histories
+/// that keep their creating operation.
+fn removal_edits(
+    document: &Document,
+    state: &mut Hierarchy,
+    removed: &BTreeSet<EntityId>,
+) -> Vec<Mutation> {
+    let mut edits = detach_legacy(document, removed);
+    for entity in document.entities() {
+        if removed.contains(&entity.id) {
+            continue;
+        }
+        if let EntityData::Part { features, .. } = &entity.data
+            && features.iter().any(|id| removed.contains(id))
+        {
+            let mut replacement = entity.clone();
+            if let EntityData::Part { features, .. } = &mut replacement.data {
+                features.retain(|id| !removed.contains(id));
+            }
+            edits.push(Mutation::Replace(replacement));
+        }
     }
-    Ok(removed)
+    for id in removed {
+        state.members.remove(id);
+        state.hidden.remove(id);
+    }
+    for members in state.members.values_mut() {
+        members.retain(|id| !removed.contains(id));
+    }
+    if state
+        .active_component
+        .is_some_and(|id| removed.contains(&id))
+    {
+        state.active_component = None;
+    }
+    edits.extend(removed.iter().copied().map(Mutation::Remove));
+    edits
 }
 
 pub fn prepare(
@@ -387,23 +358,23 @@ pub fn prepare(
             "Move model entries"
         }
         Action::Delete { id } => {
-            let removed = deletable_entries(session, id).map_err(command_error)?;
-            edits.extend(detach_legacy(document, &removed));
-            for id in &removed {
-                state.members.remove(id);
-                state.hidden.remove(id);
+            let plan = deletion_plan(session, id).map_err(command_error)?;
+            if !plan.dependents.is_empty() {
+                let mut error = command_error(plan.refusal());
+                error.involved = plan.dependents.iter().map(|d| d.id).collect();
+                return Err(error);
             }
-            for members in state.members.values_mut() {
-                members.retain(|id| !removed.contains(id));
-            }
-            if state
-                .active_component
-                .is_some_and(|id| removed.contains(&id))
-            {
-                state.active_component = None;
-            }
-            edits.extend(removed.into_iter().map(Mutation::Remove));
+            edits.extend(removal_edits(document, &mut state, &plan.removed));
             "Delete model entry"
+        }
+        Action::DeleteWithDependents { id } => {
+            let plan = deletion_plan(session, id).map_err(command_error)?;
+            edits.extend(removal_edits(document, &mut state, &plan.removed));
+            if plan.dependents.is_empty() {
+                "Delete model entry"
+            } else {
+                "Delete model entry and dependents"
+            }
         }
         Action::SetVisible { id, visible } => {
             if id != document.id()
