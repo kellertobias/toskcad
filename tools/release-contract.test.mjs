@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { githubRepositoryUrl, requirePublicationEnvironment, requireVersion } from './release-policy.mjs';
-import {archivePartitions,archiveRunArguments,archiveTargetDirectory,exampleGeneratorFilter,nextestVersion,packageTestArguments,partitionArchiveArguments,partitionArchiveName,partitionBinaries,testPartitions,workspaceDocTestArguments,workspaceListArguments,workspaceTestArguments} from './native-test-shard.mjs';
+import {archivePartitions,archiveRunArguments,archiveTargetDirectory,prepareArchiveRun,exampleGeneratorFilter,nextestVersion,packageTestArguments,partitionArchiveArguments,partitionArchiveName,partitionBinaries,testPartitions,workspaceDocTestArguments,workspaceListArguments,workspaceTestArguments} from './native-test-shard.mjs';
 
 const require = createRequire(import.meta.url);
 const config = require('../release.config.cjs');
@@ -193,6 +193,14 @@ test('every platform compiles the workspace tests once and its archive runs all 
   // put binaries in `target/`, so the archive job compiles exactly there.
   assert(archive.includes('      CARGO_TARGET_DIR: ${{ github.workspace }}/target\n'));
   assert.equal(archiveTargetDirectory('/w'),join('/w','target'));
+  // Extracted archives lack CARGO_TARGET_TMPDIR; the runner creates it.
+  const workspace=mkdtempSync(join(tmpdir(),'multicad-archive-run-'));
+  try{
+    const tmp=prepareArchiveRun(workspace);
+    assert.equal(tmp,join(workspace,'target','tmp'));
+    assert(statSync(tmp).isDirectory());
+    assert.equal(prepareArchiveRun(workspace),tmp);
+  }finally{rmSync(workspace,{recursive:true,force:true});}
   const saved=process.env.CARGO_TARGET_DIR;
   try{
     for(const wrong of [undefined,'target/cargo']){

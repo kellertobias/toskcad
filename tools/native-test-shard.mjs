@@ -44,6 +44,14 @@ export function partitionArchiveArguments(binaries,file){
 export function archiveRunArguments(file){
   return ['nextest','run','--archive-file',file,'--workspace-remap','.','--extract-to','.','--extract-overwrite','--no-fail-fast'];
 }
+// Cargo creates CARGO_TARGET_TMPDIR (`target/tmp`) while building, but nextest
+// archives do not contain it. Tests write scratch files and ledgers there, so
+// a runner creates it before running an extracted archive.
+export function prepareArchiveRun(workspace=root){
+  const tmp=join(archiveTargetDirectory(workspace),'tmp');
+  mkdirSync(tmp,{recursive:true});
+  return tmp;
+}
 // Deterministic longest-first assignment: each binary goes to the partition
 // with the least weight so far. Weights only balance runtime; every listed
 // binary is assigned to exactly one partition.
@@ -112,6 +120,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
       archivePartitions(resolve(path));
     }else if(mode==='shard'){
       if(!path)throw new Error('Usage: native-test-shard.mjs shard ARCHIVE');
+      prepareArchiveRun();
       cargo(archiveRunArguments(path),{stdio:'inherit'});
     }else{
       if(path)throw new Error('Unexpected arguments');
