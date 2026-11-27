@@ -619,12 +619,26 @@ pub struct Scene {
     envelope_boxes: Arc<BTreeMap<EntityId, [Point; 8]>>,
     guide_outlines: Arc<BTreeMap<EntityId, Vec<[Point; 4]>>>,
     weld_markers: Arc<[WeldMarker]>,
+    display_elements: Arc<[DisplayElement]>,
     sheet_faces: Arc<[multicad_core::model::SheetFaceFrame]>,
     sheet_cut_previews: Arc<BTreeMap<EntityId, multicad_core::manufacturing::PlanarContours>>,
     sheet_bend_schedules: Arc<BTreeMap<EntityId, Vec<crate::sheet_pattern::Bend>>>,
     fdm_reviews: Option<Arc<fdm_review::AidReviews>>,
     display_leaf_paths: BTreeMap<EntityId, multicad_core::model::OccurrencePath>,
     display_origin: Option<(SceneStamp, multicad_core::project_file::ContentHash)>,
+}
+/// A display-only element drawn with a host instance (CAD-429): a door or
+/// window inside its wall opening. It shares the host's visibility, is
+/// emphasized when its identity is selected, and is never picked, measured,
+/// referenced or exported: it is not manufacturing geometry.
+#[derive(Clone)]
+pub struct DisplayElement {
+    /// The element's source identity (the door or window).
+    pub id: EntityId,
+    /// The scene instance it belongs to (the wall Part).
+    pub host: EntityId,
+    pub geometry: Arc<Geometry>,
+    pub color: [u8; 4],
 }
 /// An authored weld symbol at the solved joint. It carries no solid geometry.
 pub struct WeldMarker {
@@ -798,6 +812,7 @@ impl Scene {
             envelope_boxes: Arc::new(BTreeMap::new()),
             guide_outlines: Arc::new(BTreeMap::new()),
             weld_markers: Arc::default(),
+            display_elements: Arc::default(),
             sheet_faces: Arc::default(),
             sheet_cut_previews: Arc::default(),
             sheet_bend_schedules: Arc::default(),
@@ -1476,6 +1491,35 @@ impl Scene {
         }
         faces
     }
+    /// The current wall faces a door, window or cutout cut: its jambs, head,
+    /// sill or chase back, by the opening's provenance role in its wall.
+    pub(crate) fn opening_faces(&self, openings: &BTreeSet<EntityId>) -> Vec<(EntityId, u32)> {
+        if openings.is_empty() {
+            return vec![];
+        }
+        let prefixes: Vec<_> = openings
+            .iter()
+            .flat_map(|id| [format!("opening.{id}."), format!("cutout.{id}.")])
+            .collect();
+        let mut faces = Vec::new();
+        for instance in self.instances.iter() {
+            faces.extend(
+                self.geometries[&instance.geometry]
+                    .topology
+                    .iter()
+                    .filter(|face| {
+                        face.key.kind == TopologyKind::Face
+                            && face.origins.iter().any(|origin| {
+                                prefixes
+                                    .iter()
+                                    .any(|prefix| origin.role.starts_with(prefix))
+                            })
+                    })
+                    .map(|face| (instance.id, face.key.ordinal)),
+            );
+        }
+        faces
+    }
     pub fn visible_subset(&self, visible: &BTreeSet<EntityId>) -> Result<Arc<Self>, String> {
         let existing: BTreeSet<_> = self
             .reference_instances
@@ -1505,6 +1549,7 @@ impl Scene {
         view.transfer_evaluation = self.transfer_evaluation.clone();
         view.native_bounds = self.native_bounds.clone();
         view.weld_markers = self.weld_markers.clone();
+        view.display_elements = self.display_elements.clone();
         view.sheet_faces = self.sheet_faces.clone();
         view.sheet_cut_previews = self.sheet_cut_previews.clone();
         view.sheet_bend_schedules = self.sheet_bend_schedules.clone();
@@ -1513,6 +1558,38 @@ impl Scene {
     }
     pub fn geometries(&self) -> &BTreeMap<EntityId, Arc<Geometry>> {
         &self.geometries
+    }
+    /// Attach display-only elements to their host instances. Identities
+    /// must be distinct from each other and from every instance and
+    /// geometry; each host must be a reference instance of this scene.
+    pub fn with_display_elements(mut self, elements: Vec<DisplayElement>) -> Result<Self, String> {
+        let hosts: BTreeSet<_> = self.reference_instances.iter().map(|i| i.id).collect();
+        let mut ids = BTreeSet::new();
+        let mut triangles = 0usize;
+        for element in &elements {
+            triangles = triangles.saturating_add(element.geometry.triangle_faces.len());
+            if element.id.is_nil()
+                || !ids.insert(element.id)
+                || hosts.contains(&element.id)
+                || self.geometries.contains_key(&element.id)
+                || element.geometry.id != element.id
+                || !hosts.contains(&element.host)
+            {
+                return Err("Invalid display element".into());
+            }
+        }
+        if triangles > 1_000_000 {
+            return Err("Display element triangle budget exceeded".into());
+        }
+        self.display_elements = elements.into();
+        Ok(self)
+    }
+    /// The display elements whose host is drawn in this view.
+    pub fn display_elements(&self) -> impl Iterator<Item = &DisplayElement> {
+        let drawn: BTreeSet<_> = self.instances.iter().map(|i| i.id).collect();
+        self.display_elements
+            .iter()
+            .filter(move |element| drawn.contains(&element.host))
     }
     /// Canonical source aliases remain available even when a reusable Part is
     /// definition-only and has no independent physical display instance.

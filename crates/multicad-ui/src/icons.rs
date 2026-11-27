@@ -2,7 +2,7 @@
 use crate::svg_icon::SvgIcon;
 use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
 use multicad_precision::PortableMath as _;
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
     User,
     Hammer,
@@ -90,6 +90,12 @@ pub enum Icon {
     VisibleEdges,
     Filled,
     Section,
+    /// A wall-hosted door: frame and an open leaf with its swing.
+    Door,
+    /// A wall-hosted window: frame, glazing bars.
+    Window,
+    /// A wall-hosted vertical cutout: a gap between two wall ends.
+    WallCutout,
 }
 pub fn button(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Response {
     icon_button(ui, icon, label, 30.0, false)
@@ -1269,6 +1275,24 @@ pub(crate) fn paint_sized(ui: &egui::Ui, icon: Icon, center: Pos2, color: Color3
             ]);
             path(&[[8.0, 4.0], [8.0, 20.0]]);
             line([3.0, 12.0], [21.0, 12.0]);
+        }
+        Icon::Door => {
+            path(&[[4.0, 21.0], [4.0, 3.0], [16.0, 3.0], [16.0, 21.0]]);
+            path(&[[4.0, 21.0], [12.0, 17.0], [12.0, 5.0], [4.0, 3.0]]);
+            line([2.0, 21.0], [22.0, 21.0]);
+            p.circle_filled(v(10.0, 12.0), 1.1 * scale, color);
+        }
+        Icon::Window => {
+            rect(3.0, 4.0, 18.0, 16.0);
+            line([12.0, 4.0], [12.0, 20.0]);
+            line([3.0, 12.0], [21.0, 12.0]);
+        }
+        Icon::WallCutout => {
+            rect(2.0, 6.0, 7.0, 12.0);
+            rect(15.0, 6.0, 7.0, 12.0);
+            for y in [9.0, 12.0, 15.0] {
+                line([10.5, y], [13.5, y]);
+            }
         }
     }
 }

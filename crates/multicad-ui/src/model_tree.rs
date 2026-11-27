@@ -45,6 +45,9 @@ pub enum NodeKind {
     Instance,
     Plane,
     Feature,
+    /// A door, window or vertical cutout hosted by the wall row above it
+    /// (CAD-428). The row's identity is the opening's own source identity.
+    Opening,
 }
 impl NodeKind {
     fn label(self) -> &'static str {
@@ -57,6 +60,7 @@ impl NodeKind {
             Self::Instance => "Instance",
             Self::Plane => "Plane",
             Self::Feature => "Feature",
+            Self::Opening => "Opening",
         }
     }
     fn icon(self) -> Icon {
@@ -69,6 +73,7 @@ impl NodeKind {
             Self::Instance => Icon::Link,
             Self::Plane => Icon::Grid,
             Self::Feature => Icon::Cut,
+            Self::Opening => Icon::Door,
         }
     }
     fn container(self) -> bool {
@@ -106,6 +111,16 @@ pub struct TreeRow {
     pub history_of: Option<EntityId>,
     pub available: bool,
     key: egui::Id,
+}
+impl TreeRow {
+    /// The row's type label, such as Part, Door or Window.
+    pub fn type_label(&self) -> &'static str {
+        self.presentation.label
+    }
+    /// The row's type glyph.
+    pub fn icon(&self) -> Icon {
+        self.presentation.icon
+    }
 }
 #[derive(Clone)]
 struct Destination {
@@ -296,12 +311,18 @@ impl TreeView {
                 Some(EntityData::Part { features, .. }) => features.as_slice(),
                 _ => &[],
             };
-            let expandable = !children.is_empty() || !history.is_empty();
+            // A wall Part lists the openings its canonical source hosts.
+            let openings = if node_kind == NodeKind::Body {
+                hosted_openings(document, history)
+            } else {
+                vec![]
+            };
+            let expandable = !children.is_empty() || !history.is_empty() || !openings.is_empty();
             let expanded = expandable
-                && expansion
-                    .get(&id)
-                    .copied()
-                    .unwrap_or(root || (history.is_empty() && children.len() <= 8));
+                && expansion.get(&id).copied().unwrap_or(
+                    root || (!openings.is_empty() && openings.len() <= 8)
+                        || (history.is_empty() && children.len() <= 8),
+                );
             let editable = !symbol_owned.contains(&id);
             rows.push(TreeRow {
                 id,
@@ -362,6 +383,29 @@ impl TreeView {
                         key: key.with(("feature-history", position, feature)),
                     });
                 }
+                for opening in &openings {
+                    rows.push(TreeRow {
+                        id: opening.id,
+                        depth: depth + 1,
+                        name: opening.name.clone(),
+                        kind: NodeKind::Opening,
+                        presentation: Presentation::opening(opening.kind),
+                        owner: format!(
+                            "Hosted by {}",
+                            container_path(document, &index, Some(opening.part))
+                        ),
+                        local_visible: true,
+                        effective_visible,
+                        active: false,
+                        expandable: false,
+                        expanded: false,
+                        movable: false,
+                        destination: false,
+                        history_of: None,
+                        available: true,
+                        key: key.with(("hosted-opening", opening.id)),
+                    });
+                }
                 pending.extend(
                     children
                         .into_iter()
@@ -379,6 +423,25 @@ impl TreeView {
             occurrence_aliases,
         })
     }
+}
+/// The openings hosted by the wall feature in a Part's history, if any.
+fn hosted_openings(
+    document: &Document,
+    history: &[EntityId],
+) -> Vec<multicad_core::model::HostedOpening> {
+    history
+        .iter()
+        .find(|feature| multicad_core::model::read_wall(document, **feature).is_ok())
+        .and_then(|wall| multicad_core::model::wall_openings(document, *wall).ok())
+        .unwrap_or_default()
+}
+/// The wall Part hosting a selected opening row, for callers that resolve a
+/// tree selection to views and the Inspector.
+pub fn opening_host(
+    document: &Document,
+    id: EntityId,
+) -> Option<multicad_core::model::HostedOpening> {
+    multicad_core::model::opening_host(document, id)
 }
 #[derive(Clone)]
 enum Tool {
@@ -828,10 +891,11 @@ impl ModelTree {
                                 });
                             }
                             let role = if row.history_of.is_some() { "Feature history" } else { row.presentation.label };
+                            let owner_label = if row.kind == NodeKind::Opening { "Host" } else { "Owning component" };
                             let link_hint = if row.presentation.linked { "\nLinked Library definition" } else { "" };
                             let selection_hint = if targets_only { "Shift or Cmd/Ctrl-click toggles one target" } else { "Cmd/Ctrl-click toggles; Shift-click selects a range" };
                             let drag_hint = if draggable { "\nDrag to move or reorder" } else { "" };
-                            response.clone().on_hover_text(format!("{}\n{role}{link_hint}\nOwning component: {}\n{selection_hint}{drag_hint}", row.name, row.owner));
+                            response.clone().on_hover_text(format!("{}\n{role}{link_hint}\n{owner_label}: {}\n{selection_hint}{drag_hint}", row.name, row.owner));
                             if response.clicked() || icon.clicked() {
                                 let modifiers = crate::selection_input::click_modifiers(ui, if response.clicked() { &response } else { &icon });
                                 let toggle_one = modifiers.command || (targets_only && modifiers.shift);
@@ -866,7 +930,7 @@ impl ModelTree {
                                     action = Some(Action::SetActive { component: if row.kind == NodeKind::Root { None } else { Some(row.id) } });
                                 }
                             }
-                            if row.history_of.is_some() {
+                            if row.history_of.is_some() || row.kind == NodeKind::Opening {
                                 ui.add_space(trailing);
                             } else {
                             let mut visible = row.local_visible;
@@ -884,6 +948,11 @@ impl ModelTree {
                             }
                             }
                             response.union(icon).context_menu(|ui| {
+                                if row.kind == NodeKind::Opening {
+                                    ui.label(format!("{} · {}", row.presentation.label, row.owner));
+                                    ui.small("Select it to edit, move to another wall or remove it in the Inspector.");
+                                    return;
+                                }
                                 if row.history_of.is_some() {
                                     ui.label("Feature used by part");
                                     ui.small("Feature history refers to the operation that produced this body.");

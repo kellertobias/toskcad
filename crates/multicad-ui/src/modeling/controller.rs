@@ -881,6 +881,36 @@ impl ModelToolController {
             ModelForm::Opening(Box::new(panel)),
         )
     }
+    /// Reopen one existing door, window or vertical cutout of `wall` in its
+    /// Room tool, for editing, moving to another wall or removal.
+    pub fn begin_opening_existing(
+        &mut self,
+        session: &Session,
+        resources: &ProjectResources,
+        wall: EntityId,
+        opening: EntityId,
+        channel: Channel,
+    ) -> Result<(), String> {
+        let panel = super::opening::OpeningPanel::existing(session.document(), wall, opening)?;
+        self.begin_form(
+            session,
+            resources,
+            channel,
+            ModelForm::Opening(Box::new(panel)),
+        )
+    }
+    /// Choose the wall the open door or window form moves it to.
+    #[cfg(test)]
+    pub(crate) fn rehost_opening_for_tests(
+        &mut self,
+        document: &multicad_core::document::Document,
+        to: Option<EntityId>,
+    ) -> Result<(), String> {
+        match &mut self.form {
+            Some(ModelForm::Opening(panel)) => panel.set_rehost(document, to),
+            _ => Err("No opening form is open".into()),
+        }
+    }
     /// The wall feature producing a selected Part, for the Room tools.
     pub fn wall_of(document: &multicad_core::document::Document, id: EntityId) -> Option<EntityId> {
         super::opening::wall_of_part(document, id)
