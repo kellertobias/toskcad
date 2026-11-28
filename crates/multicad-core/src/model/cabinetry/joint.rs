@@ -496,13 +496,16 @@ pub fn resolve_panel_joint_pair(
     let (x0, x1, y0, y1, e0, e1) = (lo[x], hi[x], lo[y], hi[y], lo[e], hi[e]);
     let m = MARGIN_MM;
     // The corner block, grown outward wherever the cut panel has no material.
+    // A panel continuing past the corner on both sides (the through panel of
+    // a T) has material on both sides, so it is not grown there.
+    let grow = |has_material: bool| if has_material { 0. } else { m };
     let butt_b = [
-        [x0 - if sb > 0. { m } else { 0. }, y0 - m],
-        [x1 + if sb < 0. { m } else { 0. }, y1 + m],
+        [x0 - grow(b_lo[x] < x0 - 1e-6), y0 - m],
+        [x1 + grow(b_hi[x] > x1 + 1e-6), y1 + m],
     ];
     let butt_a = [
-        [x0 - m, y0 - if sa > 0. { m } else { 0. }],
-        [x1 + m, y1 + if sa < 0. { m } else { 0. }],
+        [x0 - m, y0 - grow(0. < y0 - 1e-6)],
+        [x1 + m, y1 + grow(a_hi[y] > y1 + 1e-6)],
     ];
     let rect = |r: [[f64; 2]; 2]| {
         vec![
