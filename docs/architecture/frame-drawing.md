@@ -271,6 +271,27 @@ rails): the joint picks an order: one member through (the leg, by default),
 the others cut against it and against each other (two mitres plus a butt
 onto the leg top, or two butts). The editor lists the order explicitly.
 
+**Leg corners** (one leg along the plane normal and two members in the
+plane, nothing else) are built in one of three ways, stored as the node's
+joint override `corner` (product owner, 2026-11-27: "ask: show a dropdown
+at the edge location and let the user cycle with arrow keys and then with
+enter to select. while an entry is selected, preview the selected entry"):
+
+| `corner` | Construction | Table of SHS 40×40×2, inner rectangle 1000 × 600 |
+| --- | --- | --- |
+| `leg_through` (automatic) | The leg runs through to the rail tops; both rails butt onto its faces. | legs 720 mm, rails 920 / 520 mm, outside 1000 × 600 |
+| `mitre_on_leg` | The rails mitre; the leg stops under them, butted square to a rail's underside. | rails 1000 / 600 mm mitred, legs 680 mm |
+| `mitre_around_leg` | The leg is centred on the node and runs to the rail tops; the rails mitre and are also cut to the leg faces. | legs 720 mm standing 20 mm outside, rails cut back to u = max(v, 20 mm) |
+
+A corner construction excludes a joint kind and a through member at the
+same node; one stored at a node that is no longer a leg corner is reported,
+never dropped. Two plane cuts on one member end are clipped in turn. In the
+Frame tool, clicking a leg corner opens a dropdown at the corner: ↑ and ↓
+cycle the entries and the highlighted one previews in the viewport, Enter
+applies it as one transaction, Esc restores the previous joint. Choosing a
+joint kind or through member in the joint editor replaces the corner
+construction. MCP `edit_frame` takes the same `corner` in `set_joint`.
+
 ### 5.2 Gap and weld preparation
 
 - **Gap** (Q9: "make configurable weld gap, defaults to 0") is a value on

@@ -5,7 +5,10 @@
 //! steps); typed segments add polar nodes whose length keeps any
 //! `=$parameter`, at an angle relative to the previous member. Joints are
 //! derived by the core at every node and drawn as badges; clicking a node
-//! opens its joint editor. Nothing is written until Apply, which commits
+//! opens its joint editor. Clicking a leg corner also opens a dropdown at
+//! the corner listing its constructions: arrow keys cycle and preview the
+//! highlighted one, Enter applies it as the node's joint override, Esc
+//! restores the previous joint. Nothing is written until Apply, which commits
 //! one `prepare_frame` transaction; Discard keeps the source.
 use super::{
     FormStamp, OutlineKey, PreviewState, TerminationViewport,
@@ -18,9 +21,9 @@ use multicad_core::{
     commands::{Actor, Session},
     document::{Document, EntityId},
     model::{
-        self, ChainSegment, ConnectionKind, FrameDefinition, FrameMemberRequest, FramePlane,
-        FrameRequest, FrameSide, JointOverride, ModelPrepared, NodeJoint, NodePosition, angle,
-        length,
+        self, ChainSegment, ConnectionKind, FrameCorner, FrameDefinition, FrameMemberRequest,
+        FramePlane, FrameRequest, FrameSide, JointOverride, ModelPrepared, NodeJoint, NodePosition,
+        angle, length,
     },
     parameters::{EvaluatedParameters, Unit},
     sketch::Frame,
@@ -143,6 +146,15 @@ fn side_label(side: FrameSide) -> &'static str {
 /// revision, and a node being moved with its rounded position.
 type ReportKey = (u64, u64, Option<(EntityId, [i64; 2])>);
 
+/// The corner dropdown open at a leg corner.
+#[derive(Clone, Debug, PartialEq)]
+struct CornerMenu {
+    node: EntityId,
+    highlighted: usize,
+    /// The node's override when the dropdown opened, restored by Esc.
+    before: Option<JointOverride>,
+}
+
 pub struct FramePanel {
     stamp: FormStamp,
     frame: EntityId,
@@ -165,6 +177,7 @@ pub struct FramePanel {
     moving: Option<EntityId>,
     selected_node: Option<EntityId>,
     selected_member: Option<EntityId>,
+    corner_menu: Option<CornerMenu>,
     start: [DimensionField; 2],
     segment_length: DimensionField,
     segment_angle: DimensionField,
@@ -219,6 +232,7 @@ impl FramePanel {
             moving: None,
             selected_node: None,
             selected_member: None,
+            corner_menu: None,
             start: [field(0., "mm")?, field(0., "mm")?],
             segment_length: field(1000., "mm")?,
             segment_angle: field(0., "deg")?,
@@ -538,6 +552,24 @@ impl FramePanel {
     /// Enter, Escape or Backspace while drawing; `None` when the key is the
     /// form's (Apply or Cancel).
     pub(super) fn outline_key(&mut self, key: OutlineKey) -> Option<bool> {
+        if let Some(menu) = self.corner_menu.take() {
+            return match key {
+                // Enter keeps the highlighted construction and lets the form
+                // apply it: one transaction, one Undo step.
+                OutlineKey::Finish => {
+                    self.set_corner(menu.node, FrameCorner::ALL[menu.highlighted], &menu.before);
+                    None
+                }
+                OutlineKey::Cancel => {
+                    self.restore_joint(menu.node, menu.before);
+                    Some(true)
+                }
+                OutlineKey::RemoveLast => {
+                    self.corner_menu = Some(menu);
+                    Some(false)
+                }
+            };
+        }
         if self.moving.take().is_some() {
             return Some(false);
         }
@@ -748,6 +780,7 @@ impl FramePanel {
                     } else if let Some(node) = hit {
                         self.select_node(node, parameters);
                     } else {
+                        self.dismiss_corner_menu();
                         self.selected_member = self.member_at(point, &nodes, tolerance);
                         self.selected_node = None;
                     }
@@ -757,12 +790,149 @@ impl FramePanel {
         if changed {
             self.changed();
         }
+        changed |= self.corner_keys(&view);
         let probe = self.moving.zip(self.hover);
         self.refresh_report(session, probe);
         self.paint(&view, &frame, &nodes);
+        changed |= self.corner_dropdown(&view, &frame, &nodes);
         changed
     }
+    /// Arrow keys cycle the open corner dropdown, unless a field has the
+    /// keyboard.
+    fn corner_keys(&mut self, view: &TerminationViewport<'_>) -> bool {
+        let Some(menu) = &self.corner_menu else {
+            return false;
+        };
+        let ctx = view.painter.ctx();
+        if ctx.egui_wants_keyboard_input() {
+            return false;
+        }
+        let (down, up) = ctx.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+            )
+        });
+        let n = FrameCorner::ALL.len();
+        let step = usize::from(down) + (n - 1) * usize::from(up);
+        if step.is_multiple_of(n) {
+            return false;
+        }
+        let next = (menu.highlighted + step) % n;
+        self.highlight_corner(next);
+        true
+    }
+    /// The dropdown at the corner: every construction, the highlighted one
+    /// selected; clicking an entry highlights and previews it.
+    fn corner_dropdown(
+        &mut self,
+        view: &TerminationViewport<'_>,
+        frame: &Frame,
+        nodes: &[(EntityId, [f64; 2])],
+    ) -> bool {
+        let Some(menu) = self.corner_menu.clone() else {
+            return false;
+        };
+        let Some(p) = nodes
+            .iter()
+            .find(|(id, _)| *id == menu.node)
+            .map(|(_, p)| *p)
+        else {
+            return false;
+        };
+        let world = std::array::from_fn::<f32, 3, _>(|i| {
+            (frame.origin[i] + p[0] * frame.u[i] + p[1] * frame.v[i]) as f32
+        });
+        let s = view.camera.project(world, view.rect);
+        let at = egui::pos2(s[0], s[1]) + egui::vec2(14., 10.);
+        let mut clicked = None;
+        egui::Area::new(egui::Id::new(("frame-corner-menu", menu.node)))
+            .order(egui::Order::Foreground)
+            .fixed_pos(at)
+            .show(view.painter.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.label(egui::RichText::new("Corner").strong());
+                    for (i, corner) in FrameCorner::ALL.iter().enumerate() {
+                        if ui
+                            .selectable_label(i == menu.highlighted, corner.label())
+                            .clicked()
+                        {
+                            clicked = Some(i);
+                        }
+                    }
+                    ui.weak("↑ ↓ choose · Enter apply · Esc cancel");
+                });
+            });
+        match clicked {
+            Some(i) if i != menu.highlighted => {
+                self.highlight_corner(i);
+                true
+            }
+            _ => false,
+        }
+    }
+    /// Store `corner` as the node's construction, keeping its gap.
+    fn set_corner(&mut self, node: EntityId, corner: FrameCorner, before: &Option<JointOverride>) {
+        let joint = JointOverride {
+            node,
+            corner: Some(corner),
+            gap: before.as_ref().and_then(|j| j.gap.clone()),
+            ..Default::default()
+        };
+        if self.definition.joint(node) != Some(&joint) {
+            self.definition.set_joint(joint);
+            self.changed();
+        }
+    }
+    fn restore_joint(&mut self, node: EntityId, before: Option<JointOverride>) {
+        if self.definition.joint(node) == before.as_ref() {
+            return;
+        }
+        self.definition.joints.retain(|j| j.node != node);
+        if let Some(joint) = before {
+            self.definition.joints.push(joint);
+        }
+        self.changed();
+    }
+    /// Close an open corner dropdown without choosing: the previous joint
+    /// comes back.
+    fn dismiss_corner_menu(&mut self) {
+        if let Some(menu) = self.corner_menu.take() {
+            self.restore_joint(menu.node, menu.before);
+        }
+    }
+    /// Highlight entry `index` of the open dropdown and preview it.
+    fn highlight_corner(&mut self, index: usize) {
+        let Some(menu) = self.corner_menu.as_mut() else {
+            return;
+        };
+        menu.highlighted = index % FrameCorner::ALL.len();
+        let (node, corner, before) = (
+            menu.node,
+            FrameCorner::ALL[menu.highlighted],
+            menu.before.clone(),
+        );
+        self.set_corner(node, corner, &before);
+    }
     fn select_node(&mut self, node: EntityId, parameters: &EvaluatedParameters) {
+        if self.corner_menu.as_ref().is_some_and(|m| m.node != node) {
+            self.dismiss_corner_menu();
+        }
+        if self.corner_menu.is_none() && model::is_leg_corner(&self.definition, parameters, node) {
+            let before = self.definition.joint(node).cloned();
+            let highlighted = before
+                .as_ref()
+                .and_then(|j| j.corner)
+                .and_then(|c| FrameCorner::ALL.iter().position(|x| *x == c))
+                .unwrap_or(0);
+            self.corner_menu = Some(CornerMenu {
+                node,
+                highlighted,
+                before,
+            });
+            // The highlighted entry previews from the moment it shows.
+            self.highlight_corner(highlighted);
+        }
         self.selected_node = Some(node);
         self.selected_member = None;
         self.gap_text = self
@@ -1305,6 +1475,10 @@ impl FramePanel {
                     ..Default::default()
                 });
             let before = joint.clone();
+            let mut picked = false;
+            if let Some(corner) = joint.corner {
+                ui.label(format!("Corner: {}", corner.label()));
+            }
             ui.horizontal_wrapped(|ui| {
                 for (kind, label) in [
                     (None, "Automatic"),
@@ -1313,6 +1487,7 @@ impl FramePanel {
                     (Some(ConnectionKind::Cope), "Cope"),
                 ] {
                     if ui.selectable_label(joint.kind == kind, label).clicked() {
+                        picked = true;
                         joint.kind = kind;
                         if kind == Some(ConnectionKind::Miter) {
                             joint.through = None;
@@ -1337,6 +1512,7 @@ impl FramePanel {
                         .selectable_label(joint.through.is_none(), "Automatic")
                         .clicked()
                     {
+                        picked = true;
                         joint.through = None;
                     }
                     for m in &incident {
@@ -1345,6 +1521,7 @@ impl FramePanel {
                             .selectable_label(joint.through == Some(*m), label)
                             .clicked()
                         {
+                            picked = true;
                             joint.through = Some(*m);
                         }
                     }
@@ -1364,7 +1541,23 @@ impl FramePanel {
                     field.resolve(document).ok()
                 };
             }
+            if picked {
+                // A joint kind or through member replaces a corner
+                // construction.
+                joint.corner = None;
+                self.corner_menu = None;
+            }
             if joint != before {
+                if let Some(menu) = self.corner_menu.as_mut() {
+                    // Keep a typed gap when the dropdown restores or applies.
+                    menu.before.get_or_insert_with(|| JointOverride {
+                        node,
+                        ..Default::default()
+                    });
+                    if let Some(b) = menu.before.as_mut() {
+                        b.gap = joint.gap.clone();
+                    }
+                }
                 self.definition.set_joint(joint);
                 changed = true;
             }

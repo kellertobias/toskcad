@@ -755,3 +755,250 @@ fn a_picked_planar_face_becomes_the_drawing_plane() {
         .unwrap();
     near((b.min[2] + b.max[2]) / 2., top[2]);
 }
+
+/// The frame tool document with a table frame: the inner 1000 × 600
+/// rectangle of SHS 40×40×2 and four 700 mm legs down from its corners,
+/// built through the same typed transaction the tool commits (drawing legs
+/// in 3D is CAD-441). Returns the document and the rectangle's corners.
+fn table_document() -> (Document, Vec<EntityId>) {
+    use model::{ChainSegment, FrameDefinition, FrameMemberRequest, FramePlane, FrameRequest};
+    let mut session = Session::new(document()).unwrap();
+    let stock = session
+        .document()
+        .entities()
+        .find(|e| e.name == "SHS 40×40×2")
+        .unwrap()
+        .id;
+    let mut frame = FrameDefinition::new(FramePlane::xy());
+    frame.side = model::FrameSide::Inner;
+    let start = frame.add_node(NodePosition::Absolute {
+        u: model::length(0.),
+        v: model::length(0.),
+        w: None,
+    });
+    let seg = |l: f64, a: f64, rise: Option<f64>| ChainSegment {
+        length: model::length(l),
+        angle: model::angle(a),
+        rise: rise.map(model::length),
+    };
+    let parameters = session.parameters().clone();
+    let rails = frame
+        .add_chain(
+            &parameters,
+            start,
+            &[
+                seg(1000., 0., None),
+                seg(600., 90., None),
+                seg(1000., 180., None),
+            ],
+            true,
+        )
+        .unwrap();
+    let corners: Vec<EntityId> = rails
+        .iter()
+        .map(|m| frame.member(*m).unwrap().start)
+        .collect();
+    let mut members: Vec<FrameMemberRequest> = rails
+        .iter()
+        .zip(["Front", "Right", "Back", "Left"])
+        .map(|(m, n)| FrameMemberRequest::new(*m, n, stock))
+        .collect();
+    for (i, corner) in corners.iter().enumerate() {
+        let leg = frame
+            .add_chain(&parameters, *corner, &[seg(0., 0., Some(-700.))], false)
+            .unwrap()[0];
+        members.push(FrameMemberRequest::new(
+            leg,
+            format!("Leg {}", i + 1),
+            stock,
+        ));
+    }
+    let prepared = model::prepare_frame(
+        &session,
+        session.revision(),
+        Actor::local(Channel::Ui),
+        &FrameRequest {
+            frame: EntityId::new(),
+            name: "Table".into(),
+            definition: frame,
+            members,
+        },
+    )
+    .unwrap()
+    .prepared;
+    session.commit(prepared).unwrap();
+    (session.document().clone(), corners)
+}
+/// The Part of the leg standing on `corner`.
+fn leg_part(document: &Document, corner: EntityId) -> EntityId {
+    let frame = the_frame(document);
+    let definition = model::read_frame(document, frame).unwrap();
+    let leg = definition
+        .members
+        .iter()
+        .filter(|m| m.start == corner)
+        .find(|m| {
+            definition
+                .node(m.end)
+                .is_some_and(|n| matches!(n.position, NodePosition::Polar { .. }))
+                && !definition.members.iter().any(|o| o.start == m.end)
+        })
+        .unwrap()
+        .id;
+    let feature = model::frame_member_features(document, frame)
+        .into_iter()
+        .find(|(m, _)| *m == leg)
+        .unwrap()
+        .1;
+    model::read_member(document, feature).unwrap().output.body
+}
+/// Wait for the native preview of the current form and return the bounds
+/// of `part` in the scene the viewport shows.
+fn previewed_bounds(h: &mut Harness, part: EntityId) -> [[f64; 3]; 2] {
+    h.until("the native corner preview", |app| {
+        let p = app.current();
+        p.sketch.model_can_apply(&p.session, &p.resources)
+    });
+    let p = h.app.current();
+    let scene = p
+        .sketch
+        .model_for_tests()
+        .display_scene(&p.session, &p.resources)
+        .expect("the preview scene is shown");
+    let [lo, hi] = scene
+        .native_instance_bounds(part)
+        .expect("the previewed leg has native bounds");
+    [lo, hi]
+}
+fn click_node(h: &mut Harness, document: &Document, node: EntityId) {
+    let frame = model::read_frame(document, the_frame(document)).unwrap();
+    let world = frame
+        .evaluate(h.app.current().session.parameters())
+        .unwrap()
+        .nodes[&node];
+    let viewport = h.app.current().sketch.viewport_rect.unwrap();
+    let s = h
+        .app
+        .current()
+        .sketch
+        .camera
+        .project(world.map(|v| v as f32), viewport);
+    h.click_at(egui::pos2(s[0], s[1]));
+}
+const LEG_THROUGH: &str = "Leg through, rails butt onto it";
+const MITRE_ON_LEG: &str = "Rails mitred, leg below";
+const MITRE_AROUND_LEG: &str = "Rails mitred, leg outside";
+
+#[test]
+fn a_leg_corner_dropdown_cycles_previews_and_applies_its_construction_in_one_step() {
+    let (document, corners) = table_document();
+    let mut h = Harness::new(document.clone());
+    let leg = leg_part(&document, corners[0]);
+    let before = h.app.current().session.document().clone();
+    let revision = h.revision();
+    reopen(&mut h);
+    // A plain rectangle corner of the table is a leg corner: clicking it
+    // opens the dropdown there with every construction, leg through first.
+    click_node(&mut h, &document, corners[0]);
+    let texts = h.texts();
+    for label in ["Corner", LEG_THROUGH, MITRE_ON_LEG, MITRE_AROUND_LEG] {
+        assert!(texts.iter().any(|t| t == label), "{label}: {texts:?}");
+    }
+    assert!(
+        texts.iter().any(|t| t == &format!("Corner: {LEG_THROUGH}")),
+        "{texts:?}"
+    );
+    // The highlighted entry previews in 3D: the leg runs to the rail tops.
+    let [lo, hi] = previewed_bounds(&mut h, leg);
+    assert!((hi[2] - 20.).abs() < 1e-3, "{hi:?}");
+    assert!(lo[0].abs() < 1e-3 && lo[1].abs() < 1e-3, "{lo:?}");
+
+    // Down: rails mitred, leg below; the leg stops under the rails.
+    h.key(egui::Key::ArrowDown);
+    assert!(
+        h.texts()
+            .iter()
+            .any(|t| t == &format!("Corner: {MITRE_ON_LEG}"))
+    );
+    let [_, hi] = previewed_bounds(&mut h, leg);
+    assert!((hi[2] + 20.).abs() < 1e-3, "{hi:?}");
+    // Down: rails mitred, leg outside; the leg is centred on the node.
+    h.key(egui::Key::ArrowDown);
+    let [lo, hi] = previewed_bounds(&mut h, leg);
+    assert!(
+        (lo[0] + 20.).abs() < 1e-3 && (lo[1] + 20.).abs() < 1e-3,
+        "{lo:?}"
+    );
+    assert!((hi[2] - 20.).abs() < 1e-3, "{hi:?}");
+    // Down wraps to the first entry; Up comes back to the last.
+    h.key(egui::Key::ArrowDown);
+    let [_, hi] = previewed_bounds(&mut h, leg);
+    assert!((hi[2] - 20.).abs() < 1e-3, "{hi:?}");
+    h.key(egui::Key::ArrowUp);
+    h.key(egui::Key::ArrowUp);
+    assert!(
+        h.texts()
+            .iter()
+            .any(|t| t == &format!("Corner: {MITRE_ON_LEG}"))
+    );
+    previewed_bounds(&mut h, leg);
+
+    // Enter applies the highlighted construction as the node's override.
+    h.key(egui::Key::Enter);
+    h.until("the applied corner", |app| {
+        app.current().session.revision() > revision
+    });
+    assert_eq!(h.revision(), revision + 1, "one transaction");
+    let after = h.app.current().session.document().clone();
+    let stored = model::read_frame(&after, the_frame(&after)).unwrap();
+    assert_eq!(
+        stored.joint(corners[0]).and_then(|j| j.corner),
+        Some(model::FrameCorner::MitreOnLeg)
+    );
+    assert!(stored.joints.iter().all(|j| j.node == corners[0]));
+    let list = cut_list(&after);
+    let legs: Vec<f64> = list
+        .iter()
+        .filter(|r| r.name.starts_with("Leg"))
+        .map(|r| r.length_mm.round())
+        .collect();
+    assert_eq!(legs.iter().filter(|l| **l == 680.).count(), 1, "{legs:?}");
+    assert_eq!(legs.iter().filter(|l| **l == 720.).count(), 3, "{legs:?}");
+    // One Undo step restores the table exactly.
+    h.app.invoke(Command::Undo, &[], Channel::Ui).unwrap();
+    assert_eq!(h.app.current().session.document(), &before);
+}
+
+#[test]
+fn esc_closes_the_corner_dropdown_and_restores_the_joint() {
+    let (document, corners) = table_document();
+    let mut h = Harness::new(document.clone());
+    let leg = leg_part(&document, corners[0]);
+    let revision = h.revision();
+    reopen(&mut h);
+    click_node(&mut h, &document, corners[0]);
+    h.key(egui::Key::ArrowDown);
+    let [_, hi] = previewed_bounds(&mut h, leg);
+    assert!((hi[2] + 20.).abs() < 1e-3, "{hi:?}");
+    h.key(egui::Key::Escape);
+    let texts = h.texts();
+    assert!(!texts.iter().any(|t| t == MITRE_ON_LEG), "{texts:?}");
+    assert!(h.app.current().sketch.model_active(), "the tool stays open");
+    // The preview is back to the automatic corner and nothing was written.
+    let [_, hi] = previewed_bounds(&mut h, leg);
+    assert!((hi[2] - 20.).abs() < 1e-3, "{hi:?}");
+    assert_eq!(h.revision(), revision);
+    // Choosing a joint kind in the editor replaces a corner construction.
+    click_node(&mut h, &document, corners[0]);
+    h.key(egui::Key::ArrowDown);
+    h.click_label("Automatic");
+    assert!(!h.texts().iter().any(|t| t == MITRE_ON_LEG));
+    apply(&mut h);
+    let after = h.app.current().session.document().clone();
+    let stored = model::read_frame(&after, the_frame(&after)).unwrap();
+    assert!(
+        stored.joint(corners[0]).is_none_or(|j| j.corner.is_none()),
+        "{:?}",
+        stored.joints
+    );
+}

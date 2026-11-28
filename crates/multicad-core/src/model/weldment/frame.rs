@@ -879,6 +879,44 @@ fn leg_corner(
         _ => None,
     }
 }
+/// Whether one leg along the frame normal and two members in the plane
+/// meet at `node` and nothing else: where a corner construction applies.
+pub fn is_leg_corner(
+    definition: &FrameDefinition,
+    parameters: &EvaluatedParameters,
+    node: EntityId,
+) -> bool {
+    let Some(n) = definition.node(node) else {
+        return false;
+    };
+    if matches!(n.position, NodePosition::Along { .. }) {
+        return false;
+    }
+    let Ok(frame) = definition.evaluate(parameters) else {
+        return false;
+    };
+    let mut legs = 0;
+    let mut rails = 0;
+    for m in &definition.members {
+        if m.start != node && m.end != node {
+            continue;
+        }
+        let (Some(a), Some(b)) = (frame.nodes.get(&m.start), frame.nodes.get(&m.end)) else {
+            return false;
+        };
+        let Some(axis) = unit(sub(*b, *a)) else {
+            return false;
+        };
+        if norm(cross(axis, frame.n)) < 1e-6 {
+            legs += 1;
+        } else if dot(axis, frame.n).abs() < 1e-6 {
+            rails += 1;
+        } else {
+            return false;
+        }
+    }
+    legs == 1 && rails == 2
+}
 /// Whether a frame member is a leg built centred on its node.
 fn centred_leg(definition: &FrameDefinition, member: &FrameMember, axis: [f64; 3]) -> bool {
     norm(cross(axis, definition.plane.normal)) < 1e-6
