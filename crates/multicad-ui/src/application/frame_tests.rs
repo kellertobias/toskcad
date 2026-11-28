@@ -160,7 +160,7 @@ fn clicks_draw_and_close_a_chain_backspace_and_esc_edit_it_and_discard_keeps_the
         viewport.center() + egui::vec2(-120., 60.),
         viewport.center() + egui::vec2(120., 60.),
         viewport.center() + egui::vec2(0., -90.),
-        viewport.center() + egui::vec2(-60., -150.),
+        viewport.center() + egui::vec2(-170., -40.),
     ];
     for p in &at {
         h.click_at(*p);
