@@ -959,3 +959,111 @@ fn centroid_placement_offset_and_roll_place_the_section_exactly() {
     near(-b.min[1], 40. - centroid);
     near(-b.min[2], centroid);
 }
+
+#[test]
+fn a_member_order_at_a_three_member_corner_cuts_each_member_against_earlier_ones() {
+    let (mut s, st) = session();
+    let (frame, mut definition, corners) = table(&mut s, st.shs);
+    let (front, left) = (definition.members[0].id, definition.members[3].id);
+    let leg = definition
+        .members
+        .iter()
+        .find(|m| m.start == corners[0] && m.id != front)
+        .unwrap()
+        .id;
+    // Front runs through, Left is cut against it, the leg against both.
+    definition.set_joint(JointOverride {
+        node: corners[0],
+        order: Some(vec![front, left, leg]),
+        ..Default::default()
+    });
+    commit_frame(&mut s, frame, &definition, &[]);
+    let m = compile(&s);
+    let list = m.member_cut_list(s.document()).unwrap();
+    for r in &list {
+        assert!(r.issues.is_empty(), "{}: {:?}", r.name, r.issues);
+    }
+    let boxes = bounds(&m, &list);
+    let b = |name: &str| boxes.iter().find(|(n, ..)| n == name).unwrap().clone();
+    // Front now reaches the outer corner; Left stops at Front's inner
+    // face; Leg 1 stops under the rails.
+    near(b("Front").1[0], 0.);
+    near(b("Left").1[1], 40.);
+    near(b("Leg 1").2[2], -20.);
+    near(record(&list, "Leg 1").length_mm, 680.);
+    // An order that no longer lists the members ending there is refused.
+    definition.set_joint(JointOverride {
+        node: corners[0],
+        order: Some(vec![front, leg]),
+        ..Default::default()
+    });
+    let message = refused(&s, &prepare(&s, frame, &definition, &[]));
+    assert!(message.contains("member order"), "{message}");
+}
+
+#[test]
+fn a_diagonal_brace_butts_at_an_angle_and_split_and_merge_keep_part_ids() {
+    let (mut s, st) = session();
+    let (frame, mut definition, corners) = table(&mut s, st.shs);
+    let evaluated = definition.evaluate(s.parameters()).unwrap();
+    // Leg 2's foot: the far end of the leg on the second corner.
+    let foot = definition
+        .members
+        .iter()
+        .filter(|m| m.start == corners[1])
+        .map(|m| m.end)
+        .find(|n| (evaluated.nodes[n][2] + 700.).abs() < 1e-9)
+        .unwrap();
+    let brace = definition.add_member(corners[0], foot);
+    commit_frame(&mut s, frame, &definition, &[(brace, "Brace", st.shs)]);
+    let m = compile(&s);
+    let list = m.member_cut_list(s.document()).unwrap();
+    let r = record(&list, "Brace");
+    assert!(r.issues.is_empty(), "{:?}", r.issues);
+    for (i, end) in r.ends.iter().enumerate() {
+        eprintln!("brace end {i}: {:?} {}", end.kind, end.angle_deg);
+        assert!(end.kind.is_some(), "joined at both nodes");
+    }
+    // At the corner the leg runs through and the brace is cut along its
+    // face, (90° − the brace's angle to the leg) from square.
+    let incline = multicad_precision::PortableMath::portable_atan2(1000.0_f64, 700.).to_degrees();
+    assert_eq!(r.ends[0].kind, Some(ConnectionKind::Butt));
+    near(r.ends[0].angle_deg, 90. - incline);
+
+    // Split Front at a station: Front keeps its Part to the station.
+    let parts = |s: &Session| -> Vec<(EntityId, EntityId)> {
+        model::frame_member_features(s.document(), frame)
+            .into_iter()
+            .map(|(m, f)| (m, model::read_member(s.document(), f).unwrap().output.body))
+            .collect()
+    };
+    let front = definition.members[0].id;
+    let before_parts = parts(&s);
+    let station = definition.add_station(front, length(400.), false).unwrap();
+    let half = definition
+        .split_member(s.parameters(), front, station)
+        .unwrap();
+    let before = s.document().clone();
+    commit_frame(&mut s, frame, &definition, &[(half, "Front 2", st.shs)]);
+    let after_parts = parts(&s);
+    for (m, part) in &before_parts {
+        assert!(after_parts.contains(&(*m, *part)), "kept Part ids");
+    }
+    let list = compile(&s).member_cut_list(s.document()).unwrap();
+    // Front ends square at the station, 400 mm from the node.
+    near(record(&list, "Front").span_mm[1], 400.);
+    // Undo / redo restore exactly.
+    let after = s.document().clone();
+    s.undo(s.revision(), actor()).unwrap();
+    assert_eq!(s.document(), &before);
+    s.redo(s.revision(), actor()).unwrap();
+    assert_eq!(s.document(), &after);
+    // Merge them back: Front keeps its Part; Front 2's is removed.
+    definition
+        .merge_members(s.parameters(), front, half)
+        .unwrap();
+    commit_frame(&mut s, frame, &definition, &[]);
+    assert_eq!(parts(&s), before_parts);
+    let list = compile(&s).member_cut_list(s.document()).unwrap();
+    near(record(&list, "Front").length_mm, 920.);
+}

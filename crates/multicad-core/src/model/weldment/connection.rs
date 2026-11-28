@@ -511,3 +511,89 @@ pub fn resolve_connection(
         }
     }
 }
+
+/// A joint at a frame node (CAD-441). As `resolve_connection`, except that
+/// a butt may meet a flat face at an angle (the branch is cut along that
+/// face, at least the minimum connection angle from it) or butt square
+/// against a round member, touching it.
+pub fn resolve_frame_connection(
+    kind: ConnectionKind,
+    a: &ResolvedMember,
+    b: &ResolvedMember,
+    gap_mm: f64,
+) -> Result<ResolvedConnection, DocumentError> {
+    if kind != ConnectionKind::Butt {
+        return resolve_connection(kind, a, b, gap_mm);
+    }
+    let strict = resolve_connection(kind, a, b, gap_mm);
+    if strict.is_ok() || b.section.shape.open_section_name().is_some() || b.section.is_sketch() {
+        return strict;
+    }
+    let p = meeting_point(a, b)?;
+    let et = at_end(a, p, "terminating")?;
+    let ut = away(a, et);
+    let round = b.section.shape == crate::materials::ProfileShape::Round;
+    // The face of the continuing member the branch meets: square to it for
+    // a round member, else its flat face most facing the branch.
+    let face = if round {
+        ut
+    } else {
+        [
+            b.frame.x,
+            b.frame.y,
+            scale(b.frame.x, -1.),
+            scale(b.frame.y, -1.),
+        ]
+        .into_iter()
+        .max_by(|f, g| dot(*f, ut).total_cmp(&dot(*g, ut)))
+        .expect("four faces")
+    };
+    let min = MIN_CONNECTION_ANGLE_DEG;
+    // The branch axis must leave the face plane at the minimum angle.
+    let incidence = 90. - angle_between(face, ut);
+    if incidence < min {
+        return Err(invalid(format!(
+            "The branch meets the face at {incidence:.1}°; butt joints need at least {min}°"
+        )));
+    }
+    let h = extent(b, p, face);
+    let mut treatments = [
+        Some(EndTreatment {
+            end: et,
+            kind,
+            cut: EndCut::Plane {
+                point: add(p, scale(face, h + gap_mm)),
+                normal: face,
+            },
+            angle_deg: angle_between(face, ut),
+            terminates: true,
+        }),
+        None,
+    ];
+    let angle_deg;
+    if let Position::At(ec) = position(b, p)? {
+        let uc = away(b, ec);
+        angle_deg = angle_between(ut, uc);
+        let e = extent(a, p, scale(uc, -1.));
+        treatments[1] = Some(EndTreatment {
+            end: ec,
+            kind,
+            cut: EndCut::Plane {
+                point: sub(p, scale(uc, e)),
+                normal: uc,
+            },
+            angle_deg: 0.,
+            terminates: false,
+        });
+    } else {
+        angle_deg =
+            angle_between(ut, b.frame.axis).min(angle_between(ut, scale(b.frame.axis, -1.)));
+    }
+    Ok(ResolvedConnection {
+        kind,
+        point: p,
+        angle_deg,
+        gap_mm,
+        treatments,
+    })
+}

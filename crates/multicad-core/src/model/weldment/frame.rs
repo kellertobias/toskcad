@@ -12,7 +12,10 @@
 //! builders. An override is stored only when the user changes a node; an
 //! override that no longer applies is reported at the node, never replaced.
 use super::*;
-use crate::{model::common::number, parameters::EvaluatedParameters};
+use crate::{
+    model::{common::number, length},
+    parameters::EvaluatedParameters,
+};
 use multicad_precision::PortableMath as _;
 use resolve::vec3::*;
 use std::collections::BTreeMap;
@@ -139,10 +142,19 @@ pub struct JointOverride {
     /// meets two members in the plane. Excludes `kind` and `through`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corner: Option<FrameCorner>,
+    /// The order members are cut at a node where three or more meet: the
+    /// first runs through, each later one is cut against every earlier one.
+    /// Excludes `through` and `corner`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<Vec<EntityId>>,
 }
 impl JointOverride {
     pub fn is_automatic(&self) -> bool {
-        self.kind.is_none() && self.through.is_none() && self.gap.is_none() && self.corner.is_none()
+        self.kind.is_none()
+            && self.through.is_none()
+            && self.gap.is_none()
+            && self.corner.is_none()
+            && self.order.is_none()
     }
 }
 /// The constructions of a leg corner: one leg along the plane normal and
@@ -591,6 +603,156 @@ impl FrameDefinition {
         n.position = position;
         Ok(())
     }
+    /// The plane coordinates (u, v, w) of a world point.
+    pub fn plane_coordinates(&self, frame: &EvaluatedFrame, p: [f64; 3]) -> [f64; 3] {
+        let d = sub(p, frame.origin);
+        [dot(d, frame.u), dot(d, frame.v), dot(d, frame.n)]
+    }
+    /// An absolute node at the world point `p`.
+    pub fn add_point(&mut self, frame: &EvaluatedFrame, p: [f64; 3]) -> EntityId {
+        let [u, v, w] = self
+            .plane_coordinates(frame, p)
+            .map(|x| (x * 1e6).round() / 1e6);
+        self.add_node(NodePosition::Absolute {
+            u: length(u),
+            v: length(v),
+            w: (w.abs() > 1e-9).then(|| length(w)),
+        })
+    }
+    /// Fix stations on `member` at their current points, so the member can
+    /// change ends without moving them.
+    fn freeze_stations(
+        &mut self,
+        frame: &EvaluatedFrame,
+        member: EntityId,
+        except: Option<EntityId>,
+    ) {
+        let stations: Vec<EntityId> = self
+            .nodes
+            .iter()
+            .filter(|n| {
+                Some(n.id) != except
+                    && matches!(n.position, NodePosition::Along { member: m, .. } if m == member)
+            })
+            .map(|n| n.id)
+            .collect();
+        for id in stations {
+            let [u, v, w] = self.plane_coordinates(frame, frame.nodes[&id]);
+            let n = self.nodes.iter_mut().find(|n| n.id == id).unwrap();
+            n.position = NodePosition::Absolute {
+                u: length(u),
+                v: length(v),
+                w: (w.abs() > 1e-9).then(|| length(w)),
+            };
+        }
+    }
+    /// Split `member` at `node`, which lies on it: the member keeps its id
+    /// (and so its feature and Part) from its start to the node; a new
+    /// member continues to its end and is returned. A station node becomes
+    /// a fixed point, since the member it was measured on now ends there.
+    pub fn split_member(
+        &mut self,
+        parameters: &EvaluatedParameters,
+        member: EntityId,
+        node: EntityId,
+    ) -> Result<EntityId, DocumentError> {
+        let frame = self.evaluate(parameters)?;
+        let m = self
+            .member(member)
+            .cloned()
+            .ok_or_else(|| invalid("Choose a member of this frame"))?;
+        let p = *frame
+            .nodes
+            .get(&node)
+            .ok_or_else(|| invalid("Choose a node of this frame"))?;
+        if node == m.start || node == m.end {
+            return Err(invalid("Split a member at a node between its ends"));
+        }
+        let (a, b) = (frame.nodes[&m.start], frame.nodes[&m.end]);
+        let axis = unit(sub(b, a)).ok_or_else(|| invalid("The member has no length"))?;
+        let s = dot(sub(p, a), axis);
+        let off = norm(sub(sub(p, a), scale(axis, s)));
+        if off > 1e-6 || s <= 0. || s >= distance3(a, b) {
+            return Err(invalid(
+                "The node does not lie on the member between its ends",
+            ));
+        }
+        // Stations past the split move to the new member; fix them all.
+        self.freeze_stations(&frame, member, None);
+        let created = self.add_member(node, m.end);
+        let new = self.members.iter_mut().find(|x| x.id == created).unwrap();
+        new.side = m.side;
+        new.offset = m.offset.clone();
+        new.roll = m.roll.clone();
+        self.members
+            .iter_mut()
+            .find(|x| x.id == member)
+            .unwrap()
+            .end = node;
+        self.evaluate(parameters)?;
+        Ok(created)
+    }
+    /// Merge `remove` into `keep`: two collinear members meeting at a node
+    /// where nothing else meets. `keep` keeps its id and runs on to the far
+    /// end of `remove`, which is deleted.
+    pub fn merge_members(
+        &mut self,
+        parameters: &EvaluatedParameters,
+        keep: EntityId,
+        remove: EntityId,
+    ) -> Result<(), DocumentError> {
+        let frame = self.evaluate(parameters)?;
+        let (k, r) = match (self.member(keep).cloned(), self.member(remove).cloned()) {
+            (Some(k), Some(r)) if keep != remove => (k, r),
+            _ => return Err(invalid("Choose two members of this frame")),
+        };
+        let shared = [k.start, k.end]
+            .into_iter()
+            .find(|n| *n == r.start || *n == r.end)
+            .ok_or_else(|| invalid("The members do not meet at a node"))?;
+        let others = self
+            .members
+            .iter()
+            .any(|m| m.id != keep && m.id != remove && (m.start == shared || m.end == shared))
+            || matches!(
+                self.node(shared).map(|n| &n.position),
+                Some(NodePosition::Along { .. })
+            )
+            || self
+                .nodes
+                .iter()
+                .any(|n| matches!(n.position, NodePosition::Along { member, .. } if member == keep || member == remove) && n.id == shared);
+        if others {
+            return Err(invalid(
+                "Only two members meeting at a node with nothing else can be merged",
+            ));
+        }
+        let far_k = if k.start == shared { k.end } else { k.start };
+        let far_r = if r.start == shared { r.end } else { r.start };
+        let (pk, ps, pr) = (
+            frame.nodes[&far_k],
+            frame.nodes[&shared],
+            frame.nodes[&far_r],
+        );
+        let (Some(d1), Some(d2)) = (unit(sub(ps, pk)), unit(sub(pr, ps))) else {
+            return Err(invalid("A member has no length"));
+        };
+        if norm(cross(d1, d2)) >= PARALLEL || dot(d1, d2) <= 0. {
+            return Err(invalid("Only collinear members running on can be merged"));
+        }
+        self.freeze_stations(&frame, keep, None);
+        self.freeze_stations(&frame, remove, None);
+        let m = self.members.iter_mut().find(|x| x.id == keep).unwrap();
+        if m.start == shared {
+            m.start = far_r;
+        } else {
+            m.end = far_r;
+        }
+        self.members.retain(|x| x.id != remove);
+        self.joints.retain(|j| j.node != shared);
+        self.evaluate(parameters)?;
+        Ok(())
+    }
     /// Store, change or (when automatic) clear a node's joint override.
     pub fn set_joint(&mut self, joint: JointOverride) {
         self.joints.retain(|j| j.node != joint.node);
@@ -850,6 +1012,8 @@ pub enum PairCuts {
     /// Both members; the first member's cut is made in addition to its
     /// other cuts at the same end.
     FirstAdds,
+    /// Only the first member, in addition to its other cuts at that end.
+    FirstOnlyAdds,
 }
 /// A leg corner at a node: one member along the frame normal and two in
 /// the plane, nothing else.
@@ -1017,6 +1181,50 @@ pub fn frame_pairs(
         };
         let kind_override = joint.and_then(|j| j.kind);
         let mut through = through;
+        if let Some(order) = joint.and_then(|j| j.order.as_ref()) {
+            if joint.is_some_and(|j| j.through.is_some() || j.corner.is_some()) {
+                return Err(invalid(
+                    "A member order cannot be combined with a through member or a corner construction; choose one",
+                ));
+            }
+            let mut sorted = order.clone();
+            sorted.sort();
+            let mut expected = ends.clone();
+            expected.sort();
+            if station.is_some() || ends.len() < 3 || sorted != expected {
+                return Err(invalid(
+                    "The member order at this node no longer lists exactly the members ending there; edit or remove the override",
+                ));
+            }
+            for (k, later) in order.iter().enumerate().skip(1) {
+                for (j, earlier) in order.iter().enumerate().take(k) {
+                    let (lm, em) = (resolved(*later)?, resolved(*earlier)?);
+                    let kind = kind_override.unwrap_or(
+                        if is_round(lm)
+                            || em.section.shape != crate::materials::ProfileShape::Rectangular
+                        {
+                            ConnectionKind::Cope
+                        } else {
+                            ConnectionKind::Butt
+                        },
+                    );
+                    out.push(FramePair {
+                        node: node.id,
+                        kind,
+                        members: [*later, *earlier],
+                        gap_mm,
+                        // Only the first member is cut square to cover the
+                        // others; later cuts add to earlier ones.
+                        cuts: match (j, k) {
+                            (0, 1) => PairCuts::Both,
+                            (0, _) => PairCuts::FirstAdds,
+                            _ => PairCuts::FirstOnlyAdds,
+                        },
+                    });
+                }
+            }
+            continue;
+        }
         if let Some(corner) = joint.and_then(|j| j.corner) {
             if kind_override.is_some() || through.is_some() {
                 return Err(invalid(
@@ -1116,9 +1324,26 @@ pub fn frame_pairs(
                         ConnectionKind::Cope
                     }
                     // Rule 5: mirroring sections mitre (Q4).
-                    None if same => ConnectionKind::Miter,
-                    // Rule 6: different sections butt, larger through.
+                    None if same
+                        && resolve_connection(ConnectionKind::Miter, am, bm, 0.).is_ok() =>
+                    {
+                        ConnectionKind::Miter
+                    }
+                    // Rule 6: different sections, or equal ones placed so they
+                    // do not mirror (a brace onto a leg), butt with the larger
+                    // through.
                     None => ConnectionKind::Butt,
+                };
+                // Between equal sections a leg along the plane normal runs
+                // through (rule 8).
+                let is_leg =
+                    |m: &ResolvedMember| norm(cross(m.frame.axis, definition.plane.normal)) < 1e-6;
+                let (first, second) = if !bigger(am, bm) && !bigger(bm, am) && is_leg(am) {
+                    (b, a)
+                } else if !bigger(am, bm) && !bigger(bm, am) && is_leg(bm) {
+                    (a, b)
+                } else {
+                    (first, second)
                 };
                 let members = match kind {
                     ConnectionKind::Miter => [a, b],
@@ -1237,7 +1462,7 @@ pub fn frame_joint_report(
         match pairs {
             Ok(pairs) => {
                 let problem = pairs.iter().find_map(|p| {
-                    resolve_connection(
+                    resolve_frame_connection(
                         p.kind,
                         &resolved[&p.members[0]],
                         &resolved[&p.members[1]],

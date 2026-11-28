@@ -195,7 +195,17 @@ pub enum FrameOperationArg {
         /// Leg corners only; excludes `kind` and `through`.
         #[serde(default)]
         corner: Option<FrameCornerArg>,
+        /// Members ending at the node, first through, each later one cut
+        /// against every earlier one; excludes `through` and `corner`.
+        #[serde(default)]
+        order: Option<Vec<String>>,
     },
+    /// Split a member at a node on it: the member keeps its Part up to the
+    /// node, a new member and Part continue to its end.
+    SplitMember { member: String, node: String },
+    /// Merge two collinear members meeting at a node with nothing else:
+    /// the first keeps its Part and runs on; the second is removed.
+    MergeMembers { keep: String, remove: String },
     /// Change one member's side, or the frame default without `member`.
     SetSide {
         #[serde(default)]
@@ -416,12 +426,17 @@ pub(super) fn edit_frame(host: &dyn Host, call: &Request, args: EditFrameArgs) -
                 through,
                 gap,
                 corner,
+                order,
             } => definition.set_joint(JointOverride {
                 node: id(node)?,
                 kind: kind.map(Into::into),
                 through: through.as_deref().map(id).transpose()?,
                 gap: opt(gap, d, e)?,
                 corner: corner.map(Into::into),
+                order: order
+                    .as_ref()
+                    .map(|o| o.iter().map(|m| id(m)).collect::<Result<Vec<_>, _>>())
+                    .transpose()?,
             }),
             FrameOperationArg::SetSide { member, side } => match member {
                 Some(m) => {
@@ -436,6 +451,12 @@ pub(super) fn edit_frame(host: &dyn Host, call: &Request, args: EditFrameArgs) -
                 None => definition.side = (*side).into(),
             },
             FrameOperationArg::RemoveMember { member } => definition.remove_member(id(member)?)?,
+            FrameOperationArg::SplitMember { member, node } => {
+                created.push(definition.split_member(e, id(member)?, id(node)?)?);
+            }
+            FrameOperationArg::MergeMembers { keep, remove } => {
+                definition.merge_members(e, id(keep)?, id(remove)?)?;
+            }
         }
     }
     let prefix = args.name_prefix.as_deref().unwrap_or("Member");

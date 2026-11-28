@@ -211,6 +211,8 @@ pub(crate) struct Joint {
     pub partner_member: ResolvedMember,
     pub resolved: ResolvedConnection,
     pub treatment: EndTreatment,
+    /// A frame cut made in addition to the other cuts at the same end.
+    pub stacked: bool,
 }
 /// Every connection that cuts an end of the member Part `part`. Two
 /// connections cutting the same end are refused.
@@ -272,6 +274,7 @@ pub(crate) fn joints(
             partner_member,
             resolved,
             treatment,
+            stacked: false,
         });
     }
     frame_joints(document, parameters, part, member, other, &mut out)?;
@@ -351,10 +354,19 @@ fn frame_joints(
         let Some(index) = pair.members.iter().position(|m| *m == this) else {
             continue;
         };
-        if index == 1 && pair.cuts == model::PairCuts::FirstOnly {
+        if index == 1
+            && matches!(
+                pair.cuts,
+                model::PairCuts::FirstOnly | model::PairCuts::FirstOnlyAdds
+            )
+        {
             continue;
         }
-        let adds = index == 0 && pair.cuts == model::PairCuts::FirstAdds;
+        let adds = index == 0
+            && matches!(
+                pair.cuts,
+                model::PairCuts::FirstAdds | model::PairCuts::FirstOnlyAdds
+            );
         let partner_id = pair.members[1 - index];
         let (a, b) = (&resolved[&pair.members[0]], &resolved[&pair.members[1]]);
         if a.section.is_item_line_8_40x40() || b.section.is_item_line_8_40x40() {
@@ -363,19 +375,20 @@ fn frame_joints(
                 "Slotted extrusion frame nodes use Mechanical profile connectors; welded end cuts are unavailable",
             ));
         }
-        let joined = model::resolve_connection(pair.kind, a, b, pair.gap_mm).map_err(|err| {
-            error(
-                Some(frame),
-                format!(
-                    "At a frame node ({} joint): {}",
-                    pair.kind.label(),
-                    match err {
-                        DocumentError::Invalid(m) => m,
-                        other => other.to_string(),
-                    }
-                ),
-            )
-        })?;
+        let joined =
+            model::resolve_frame_connection(pair.kind, a, b, pair.gap_mm).map_err(|err| {
+                error(
+                    Some(frame),
+                    format!(
+                        "At a frame node ({} joint): {}",
+                        pair.kind.label(),
+                        match err {
+                            DocumentError::Invalid(m) => m,
+                            other => other.to_string(),
+                        }
+                    ),
+                )
+            })?;
         let Some(treatment) = joined.treatments[index] else {
             continue;
         };
@@ -385,8 +398,12 @@ fn frame_joints(
             partner_member: resolved[&partner_id].clone(),
             resolved: joined,
             treatment,
+            stacked: adds,
         };
-        match out.iter().position(|j| j.treatment.end == treatment.end) {
+        match out
+            .iter()
+            .position(|j| !j.stacked && j.treatment.end == treatment.end)
+        {
             _ if adds => out.push(joint),
             None => out.push(joint),
             Some(i) => {
