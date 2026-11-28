@@ -31,8 +31,10 @@ impl SketchHarness {
             other => panic!("{other:?}"),
         }
     }
-    /// Solved radius of a fillet arc.
-    fn solved_radius(&self, shape: &Shape) -> f64 {
+    /// Solved radius of a fillet arc, once the worker has delivered the
+    /// solution of the current revision.
+    fn solved_radius(&mut self, shape: &Shape) -> f64 {
+        self.settle();
         let project = self.h.app.current();
         let sketch = project.sketch.selected.unwrap();
         let solved = project.sketch.solved_for_tests(sketch).unwrap();
