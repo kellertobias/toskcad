@@ -447,19 +447,32 @@ fn a_real_fillet_and_chamfer_nest_under_their_rectangle() {
     assert_eq!(chamfer.modifies, Some(rect.id));
     h.frame(vec![]).drop_without_applying_deltas();
     let row = |kind, label: &str, depth| (kind, label.to_string(), depth);
-    // The corner treatment's two construction helpers per corner belong to no
-    // recorded shape, so they stay listed as single curves.
+    // The treatments' construction helpers stay in the sketch but are not
+    // listed (product-owner decision: "Hide them").
+    let helpers: Vec<_> = [&fillet, &chamfer]
+        .iter()
+        .flat_map(|s| s.helpers.iter().copied())
+        .collect();
+    assert_eq!(helpers.len(), 4, "two helpers per corner");
+    assert!(helpers.iter().all(|id| {
+        source
+            .sketch
+            .curves
+            .iter()
+            .any(|c| c.id == *id && c.construction)
+    }));
     assert_eq!(
         element_rows_painted(&h),
         vec![
             row(ElementType::Rectangle, "Rectangle 1", 0),
             row(ElementType::Fillet, "Fillet R30", 1),
             row(ElementType::Chamfer, "Chamfer 2", 1),
-            row(ElementType::Line, "Line 1 (single curve)", 0),
-            row(ElementType::Line, "Line 2 (single curve)", 0),
-            row(ElementType::Line, "Line 3 (single curve)", 0),
-            row(ElementType::Line, "Line 4 (single curve)", 0),
         ]
+    );
+    let labels = h.labels();
+    assert!(
+        !labels.iter().any(|l| l.ends_with("(single curve)")),
+        "{labels:?}"
     );
     // Collapsing the rectangle hides its corners.
     click_chevron(&mut h, "Rectangle 1");

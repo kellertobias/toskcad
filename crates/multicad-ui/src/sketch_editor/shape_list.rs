@@ -89,7 +89,9 @@ pub(crate) fn elements(
         .sketch
         .curves
         .iter()
-        .filter(|c| !owned.contains(&c.id))
+        // A fillet's or chamfer's construction helpers stay in the sketch
+        // but are not listed (CAD-415).
+        .filter(|c| !owned.contains(&c.id) && !source.sketch.is_corner_helper(c.id))
     {
         let projected =
             crate::external_references::Controller::protected(document, sketch, curve.id);
