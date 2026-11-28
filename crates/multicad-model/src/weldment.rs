@@ -351,6 +351,10 @@ fn frame_joints(
         let Some(index) = pair.members.iter().position(|m| *m == this) else {
             continue;
         };
+        if index == 1 && pair.cuts == model::PairCuts::FirstOnly {
+            continue;
+        }
+        let adds = index == 0 && pair.cuts == model::PairCuts::FirstAdds;
         let partner_id = pair.members[1 - index];
         let (a, b) = (&resolved[&pair.members[0]], &resolved[&pair.members[1]]);
         if a.section.is_item_line_8_40x40() || b.section.is_item_line_8_40x40() {
@@ -383,6 +387,7 @@ fn frame_joints(
             treatment,
         };
         match out.iter().position(|j| j.treatment.end == treatment.end) {
+            _ if adds => out.push(joint),
             None => out.push(joint),
             Some(i) => {
                 let reach = |j: &Joint| match j.treatment.cut {
@@ -492,6 +497,15 @@ fn rust_member(
     let from = member.start_offset_mm();
     let mut stations = [from, from + member.length_mm()];
     let mut miters = [None; 2];
+    let shared_end = joints.iter().enumerate().any(|(i, a)| {
+        joints[i + 1..]
+            .iter()
+            .any(|b| b.treatment.end == a.treatment.end)
+    });
+    if shared_end {
+        // Several cuts on one end: clip the stock by each in turn.
+        return rust_clipped_member(member, joints, id, policy);
+    }
     for joint in joints {
         let EndCut::Plane { point, normal } = joint.treatment.cut else {
             return rust_clipped_member(member, joints, id, policy);

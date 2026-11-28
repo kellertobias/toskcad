@@ -135,10 +135,39 @@ pub struct JointOverride {
     /// Weld gap at this node; the frame default otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gap: Option<Dimension>,
+    /// How a leg corner is built, where one member along the plane normal
+    /// meets two members in the plane. Excludes `kind` and `through`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner: Option<FrameCorner>,
 }
 impl JointOverride {
     pub fn is_automatic(&self) -> bool {
-        self.kind.is_none() && self.through.is_none() && self.gap.is_none()
+        self.kind.is_none() && self.through.is_none() && self.gap.is_none() && self.corner.is_none()
+    }
+}
+/// The constructions of a leg corner: one leg along the plane normal and
+/// two rails in the plane meeting at one node.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameCorner {
+    /// The leg runs through to the top of the rails; both rails butt onto
+    /// its faces. The automatic construction.
+    #[default]
+    LegThrough,
+    /// The rails mitre; the leg stops under them, butted to a rail.
+    MitreOnLeg,
+    /// The leg is centred on the node and runs through to the top; the
+    /// rails mitre and are also cut to the leg's faces.
+    MitreAroundLeg,
+}
+impl FrameCorner {
+    pub const ALL: [Self; 3] = [Self::LegThrough, Self::MitreOnLeg, Self::MitreAroundLeg];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LegThrough => "Leg through, rails butt onto it",
+            Self::MitreOnLeg => "Rails mitred, leg below",
+            Self::MitreAroundLeg => "Rails mitred, leg outside",
+        }
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -708,6 +737,9 @@ pub(super) fn frame_anchor(
             anchor[1] - number(dy, Unit::Millimeter, parameters)?,
         ])
     };
+    if centred_leg(&definition, m, member_frame.axis) {
+        return shifted(anchor_mm);
+    }
     match side {
         FrameSide::Center => return shifted(anchor_mm),
         FrameSide::Centroid => return shifted(section_centroid(section)),
@@ -805,6 +837,56 @@ pub struct FramePair {
     pub kind: ConnectionKind,
     pub members: [EntityId; 2],
     pub gap_mm: f64,
+    pub cuts: PairCuts,
+}
+/// Which members a frame pair cuts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PairCuts {
+    /// Both members, each end keeping one cut (the one leaving it longer).
+    #[default]
+    Both,
+    /// Only the first member; the second keeps its other cuts.
+    FirstOnly,
+    /// Both members; the first member's cut is made in addition to its
+    /// other cuts at the same end.
+    FirstAdds,
+}
+/// A leg corner at a node: one member along the frame normal and two in
+/// the plane, nothing else.
+fn leg_corner(
+    definition: &FrameDefinition,
+    ends: &[EntityId],
+    station: Option<EntityId>,
+    members: &BTreeMap<EntityId, ResolvedMember>,
+) -> Option<(EntityId, [EntityId; 2])> {
+    if ends.len() != 3 || station.is_some() {
+        return None;
+    }
+    let n = definition.plane.normal;
+    let axis = |id: &EntityId| members.get(id).map(|m| m.frame.axis);
+    let legs: Vec<EntityId> = ends
+        .iter()
+        .copied()
+        .filter(|id| axis(id).is_some_and(|a| norm(cross(a, n)) < 1e-6))
+        .collect();
+    let rails: Vec<EntityId> = ends
+        .iter()
+        .copied()
+        .filter(|id| axis(id).is_some_and(|a| dot(a, n).abs() < 1e-6))
+        .collect();
+    match (legs.as_slice(), rails.as_slice()) {
+        ([leg], [a, b]) => Some((*leg, [*a, *b])),
+        _ => None,
+    }
+}
+/// Whether a frame member is a leg built centred on its node.
+fn centred_leg(definition: &FrameDefinition, member: &FrameMember, axis: [f64; 3]) -> bool {
+    norm(cross(axis, definition.plane.normal)) < 1e-6
+        && [member.start, member.end].iter().any(|node| {
+            definition
+                .joint(*node)
+                .is_some_and(|j| j.corner == Some(FrameCorner::MitreAroundLeg))
+        })
 }
 fn bigger(a: &ResolvedMember, b: &ResolvedMember) -> bool {
     let size = |m: &ResolvedMember| {
@@ -896,6 +978,40 @@ pub fn frame_pairs(
             None => station,
         };
         let kind_override = joint.and_then(|j| j.kind);
+        let mut through = through;
+        if let Some(corner) = joint.and_then(|j| j.corner) {
+            if kind_override.is_some() || through.is_some() {
+                return Err(invalid(
+                    "A corner construction cannot be combined with a joint kind or a through member; choose one",
+                ));
+            }
+            let Some((leg, [r1, r2])) = leg_corner(definition, &ends, station, members) else {
+                return Err(invalid(
+                    "A corner construction is stored at a node that is no longer a leg corner (one leg and two members in the plane); remove the override",
+                ));
+            };
+            let pair = |kind, members, cuts| FramePair {
+                node: node.id,
+                kind,
+                members,
+                gap_mm,
+                cuts,
+            };
+            match corner {
+                FrameCorner::LegThrough => through = Some(leg),
+                FrameCorner::MitreOnLeg => {
+                    out.push(pair(ConnectionKind::Miter, [r1, r2], PairCuts::Both));
+                    out.push(pair(ConnectionKind::Butt, [leg, r1], PairCuts::FirstOnly));
+                    continue;
+                }
+                FrameCorner::MitreAroundLeg => {
+                    out.push(pair(ConnectionKind::Miter, [r1, r2], PairCuts::Both));
+                    out.push(pair(ConnectionKind::Butt, [r1, leg], PairCuts::FirstAdds));
+                    out.push(pair(ConnectionKind::Butt, [r2, leg], PairCuts::FirstAdds));
+                    continue;
+                }
+            }
+        }
         if kind_override == Some(ConnectionKind::Miter) && through.is_some() {
             return Err(invalid(
                 "A mitre has no through member; choose butt or cope, or clear the through member",
@@ -941,6 +1057,7 @@ pub fn frame_pairs(
                         kind,
                         members: [branch, t],
                         gap_mm,
+                        cuts: PairCuts::Both,
                     });
                 }
             }
@@ -977,6 +1094,7 @@ pub fn frame_pairs(
                     kind,
                     members,
                     gap_mm,
+                    cuts: PairCuts::Both,
                 });
             }
         }
