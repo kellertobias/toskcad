@@ -352,3 +352,32 @@ fn a_cached_compile_rebuilds_the_partner_cut_after_a_move() {
     assert_eq!(faces(&cached, f.upright), faces(&fm, fresh.upright));
     assert_eq!(faces(&cached, f.base), faces(&fm, fresh.base));
 }
+
+/// CAD-446: in a T the base continues past the upright on both sides, so the
+/// slots it loses are exactly the upright's 18 mm, not grown by the cutting
+/// margin into the base on one side; and the fingers fill them exactly.
+#[test]
+fn t_joint_slots_are_exactly_the_upright_thickness() {
+    let f = fixture(BASE, UPRIGHT);
+    let m = compile(f.s.document());
+    // 5 fingers of 80 mm along Y: the base loses fingers 2 and 4 (Y 80–160,
+    // 240–320), each 18 × 18 × 80; the upright loses fingers 1, 3 and 5.
+    let finger = 18. * 18. * 80.;
+    assert!(
+        (volume(&m, f.base) - (600. * 400. * 18. - 2. * finger)).abs() < 1e-3,
+        "base volume {}",
+        volume(&m, f.base)
+    );
+    assert!(
+        (volume(&m, f.upright) - (400. * 300. * 18. - 3. * finger)).abs() < 1e-3,
+        "upright volume {}",
+        volume(&m, f.upright)
+    );
+    // The slot walls are the upright's faces at X 291 and 309.
+    let walls: Vec<i64> = faces(&m, f.base)
+        .into_iter()
+        .filter(|[_, y, _, area]| *area == 80 * 18 * 1000 && [120_000, 280_000].contains(y))
+        .map(|[x, ..]| x)
+        .collect();
+    assert_eq!(walls, [291_000, 291_000, 309_000, 309_000], "slot walls");
+}
