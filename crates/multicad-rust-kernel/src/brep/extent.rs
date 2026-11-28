@@ -111,6 +111,50 @@ fn interior(
     Ok(())
 }
 
+/// Bounds of each trimmed face on its own: its loop edges' extrema, a pole
+/// inside its domain and, on a curved support, the interior stationary
+/// points inside its trim.
+pub(crate) fn face_bounds(boundary: &Boundary, domains: &[Domain]) -> Result<Vec<[Point; 2]>> {
+    let ends: Vec<[usize; 2]> = boundary.edges.iter().map(|edge| edge.vertices).collect();
+    let mut all = Vec::with_capacity(boundary.faces.len());
+    for (index, (face, domain)) in boundary.faces.iter().zip(domains).enumerate() {
+        let mut bounds = [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]];
+        for &(e, _) in face.loops.iter().flat_map(|l| &l.uses) {
+            let edge = &boundary.edges[e];
+            let mut low = [0.; 3];
+            let mut high = [0.; 3];
+            for axis in 0..3 {
+                [low[axis], high[axis]] = edge.curve.extent(edge.range[0], edge.range[1], axis);
+            }
+            include(&mut bounds, low);
+            include(&mut bounds, high);
+        }
+        for l in &face.loops {
+            if let Some(v) = l.vertex {
+                include(&mut bounds, boundary.vertices[v]);
+            }
+        }
+        if let Domain::Trimmed {
+            pole: Some((v, _)), ..
+        } = domain
+        {
+            include(&mut bounds, face.surface.evaluate([0., *v]).0);
+        }
+        let ruled = matches!(
+            face.surface,
+            Surface::Plane(_)
+                | Surface::Cylinder { .. }
+                | Surface::Cone { .. }
+                | Surface::Extrusion { .. }
+        );
+        if !ruled {
+            interior(&face.surface, domain, index, &ends, &mut bounds)?;
+        }
+        all.push(bounds);
+    }
+    Ok(all)
+}
+
 pub(crate) fn bounds(boundary: &Boundary, domains: &[Domain]) -> Result<[Point; 2]> {
     let mut bounds = [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]];
     let ends: Vec<[usize; 2]> = boundary.edges.iter().map(|edge| edge.vertices).collect();

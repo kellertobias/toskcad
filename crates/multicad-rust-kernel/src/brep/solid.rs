@@ -593,6 +593,11 @@ impl Solid {
         self.bounds_mm
     }
 
+    /// Axis-aligned bounds of each trimmed face, in face order.
+    pub fn face_bounds_mm(&self) -> Result<Vec<[Point; 2]>> {
+        extent::face_bounds(&self.boundary, &self.domains)
+    }
+
     pub fn faces(&self) -> &[FaceProperties] {
         &self.faces
     }

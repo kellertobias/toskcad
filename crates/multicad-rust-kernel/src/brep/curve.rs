@@ -225,7 +225,7 @@ impl Curve {
     }
 
     /// Largest and smallest coordinate along `axis` between `a` and `b`.
-    pub(crate) fn extent(&self, a: f64, b: f64, axis: usize) -> [f64; 2] {
+    pub fn extent(&self, a: f64, b: f64, axis: usize) -> [f64; 2] {
         let mut range = [f64::INFINITY, f64::NEG_INFINITY];
         let mut include = |t: f64| {
             let x = self.evaluate(t).0[axis];
