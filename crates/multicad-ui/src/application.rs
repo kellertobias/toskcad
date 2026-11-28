@@ -5374,14 +5374,14 @@ mod drawing_flow_tests;
 #[path = "application/inspector_tests.rs"]
 mod inspector_tests;
 #[cfg(test)]
-#[path = "application/panel_placement_tests.rs"]
-mod panel_placement_tests;
+#[path = "application/model_tool_lifecycle_tests.rs"]
+mod model_tool_lifecycle_tests;
 #[cfg(test)]
 #[path = "application/numeric_field_tests.rs"]
 mod numeric_field_tests;
 #[cfg(test)]
-#[path = "application/model_tool_lifecycle_tests.rs"]
-mod model_tool_lifecycle_tests;
+#[path = "application/panel_placement_tests.rs"]
+mod panel_placement_tests;
 #[cfg(test)]
 #[path = "application/ribbon_fit_tests.rs"]
 mod ribbon_fit_tests;
