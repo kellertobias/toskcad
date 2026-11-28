@@ -36,6 +36,14 @@ impl SketchHarness {
         let project = self.h.app.current();
         project.sketch.sketch_screen(&project.session, p)
     }
+    /// Where a user clicks `p`: the sketch must be solved and painted first,
+    /// since a tool change can start a new solve on the worker.
+    pub(super) fn click_point(&mut self, p: [f64; 2]) -> egui::Pos2 {
+        if self.h.app.current().sketch.sketch_evaluation_pending() {
+            self.settle();
+        }
+        self.screen(p)
+    }
     pub(super) fn button(
         &mut self,
         at: egui::Pos2,
@@ -62,7 +70,7 @@ impl SketchHarness {
         offset: egui::Vec2,
         modifiers: egui::Modifiers,
     ) {
-        let at = self.screen(p) + offset;
+        let at = self.click_point(p) + offset;
         self.button(at, egui::PointerButton::Primary, modifiers);
     }
     pub(super) fn click(&mut self, p: [f64; 2], offset: egui::Vec2) {
@@ -102,7 +110,7 @@ impl SketchHarness {
     /// Painted selection highlight: curve segments within 3 px of `p`, or a
     /// selected point marker at `p`.
     pub(super) fn highlighted_at(&mut self, p: [f64; 2]) -> bool {
-        let at = self.screen(p);
+        let at = self.click_point(p);
         let out = self.h.render(vec![]);
         let hit = out.shapes.iter().any(|clipped| match &clipped.shape {
             egui::Shape::LineSegment {
@@ -554,7 +562,7 @@ fn a_click_with_real_pointer_travel_and_timing_selects() {
     let mut s = SketchHarness::new();
     s.draw(DrawTool::Rectangle, &["0", "0", "60", "40"]);
     let rectangle = s.source().sketch.shapes[0].clone();
-    let target = s.screen([30., 0.]) + ON_LINE;
+    let target = s.click_point([30., 0.]) + ON_LINE;
     let start = target + egui::vec2(-200., -150.);
     let mut t = 10.;
     for i in 0..=30 {

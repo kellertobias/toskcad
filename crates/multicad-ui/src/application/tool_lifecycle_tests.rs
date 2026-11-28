@@ -18,7 +18,7 @@ impl SketchHarness {
         self.source().sketch.curves.len()
     }
     fn right_click(&mut self, p: [f64; 2]) {
-        let at = self.screen(p);
+        let at = self.click_point(p);
         self.button(at, egui::PointerButton::Secondary, egui::Modifiers::NONE);
     }
     fn enter(&mut self) {
@@ -206,7 +206,7 @@ fn right_click_in_select_repeats_the_last_tool_with_its_settings_and_right_drag_
     // A right-drag navigates and does not repeat.
     assert_eq!(s.tool_now(), None);
     let camera = s.h.app.current().sketch.camera;
-    let start = s.screen([30., 20.]);
+    let start = s.click_point([30., 20.]);
     s.h.frame(vec![egui::Event::PointerMoved(start)]);
     let button = |pos, pressed| egui::Event::PointerButton {
         pos,
