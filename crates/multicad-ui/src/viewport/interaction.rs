@@ -23,6 +23,10 @@ pub struct Interaction {
     hovered: Option<Hit>,
     parts: Arc<BTreeSet<EntityId>>,
     member_faces: Arc<Vec<(EntityId, u32)>>,
+    /// Wall-hosted openings selected through the tree (CAD-428). They are
+    /// source identities inside a wall, not Parts: their reveal faces join
+    /// `member_faces` and their display-only elements are emphasized.
+    openings: Arc<BTreeSet<EntityId>>,
     range_anchor: Option<EntityId>,
     pub filter: PickFilter,
     pub(crate) origin_axes: bool,
@@ -72,8 +76,17 @@ impl Interaction {
         self.hovered = None;
         Arc::make_mut(&mut self.parts).clear();
         self.member_faces = Arc::default();
+        self.openings = Arc::default();
         self.range_anchor = None;
         self.last_query = None;
+    }
+    /// Wall-hosted openings selected from the tree, if any.
+    pub fn selected_openings(&self) -> &BTreeSet<EntityId> {
+        &self.openings
+    }
+    /// The reveal faces highlighted for the selected sources, by instance.
+    pub fn selected_member_faces(&self) -> &[(EntityId, u32)] {
+        &self.member_faces
     }
     pub fn has_topology_selection(&self) -> bool {
         self.selected.is_some()
@@ -116,6 +129,7 @@ impl Interaction {
         }
         self.selected = self.faces.last().cloned();
         Arc::make_mut(&mut self.parts).clear();
+        self.openings = Arc::default();
         self.range_anchor = None;
     }
     pub fn hovered_instance(&self) -> Option<EntityId> {
@@ -147,9 +161,19 @@ impl Interaction {
         if scene.stamp().document != document.id() || scene.stamp().revision != revision {
             return Err("Wait for a current scene before selecting model occurrences".into());
         }
+        // A door, window or cutout is a source identity in its wall.
+        let openings: BTreeSet<EntityId> = source
+            .iter()
+            .copied()
+            .filter(|id| {
+                *id != document.id()
+                    && document.get(*id).is_none()
+                    && multicad_core::model::opening_host(document, *id).is_some()
+            })
+            .collect();
         if source
             .iter()
-            .any(|id| *id != document.id() && document.get(*id).is_none())
+            .any(|id| *id != document.id() && document.get(*id).is_none() && !openings.contains(id))
         {
             return Err("The selected model entry no longer exists".into());
         }
@@ -159,7 +183,10 @@ impl Interaction {
             })
         }).map(|instance| instance.id).collect();
         self.clear();
-        self.member_faces = Arc::new(scene.member_faces(source, &selected));
+        let mut faces = scene.member_faces(source, &selected);
+        faces.extend(scene.opening_faces(&openings));
+        self.member_faces = Arc::new(faces);
+        self.openings = Arc::new(openings);
         self.parts = Arc::new(selected);
         self.last_stamp = Some(scene.stamp());
         Ok(())
@@ -193,6 +220,7 @@ impl Interaction {
         if !toggle || !parts.remove(&id) {
             parts.insert(id);
         }
+        self.openings = Arc::default();
         self.range_anchor = Some(id);
         self.hovered = None;
         self.last_query = None;
@@ -471,9 +499,16 @@ impl Interaction {
             },
         });
         let selection =
-            if !self.member_faces.is_empty() {
+            if !self.member_faces.is_empty() || !self.openings.is_empty() {
+                // Display elements of selected openings are drawn emphasized
+                // like whole parts; their identities never join `parts`.
+                let parts = if self.openings.is_empty() {
+                    self.parts.clone()
+                } else {
+                    Arc::new(self.parts.union(&self.openings).copied().collect())
+                };
                 Some(Selection::PartsAndFaces {
-                    parts: self.parts.clone(),
+                    parts,
                     faces: self.member_faces.clone(),
                 })
             } else if !self.faces.is_empty() {

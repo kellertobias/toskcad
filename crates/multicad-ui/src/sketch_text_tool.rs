@@ -96,16 +96,10 @@ impl SketchEditor {
         .on_hover_text(
             "Bundled vector outline fonts: Cantarell (proportional, OFL) or Hack (monospaced)",
         );
-        ui.horizontal(|ui| {
-            ui.label("Size");
-            ui.add(
-                egui::DragValue::new(&mut draft.height_mm)
-                    .range(0.1..=10_000.0)
-                    .speed(0.1)
-                    .suffix(" mm"),
-            )
-            .on_hover_text("Cap height: the height of capital letters such as H");
-        });
+        crate::numeric_field::NumericField::new("Size", "mm")
+            .id(ui.make_persistent_id("sketch-text-size"))
+            .help("Cap height: the height of capital letters such as H")
+            .value(ui, &mut draft.height_mm, 0.1..=10_000.0);
         ui.horizontal(|ui| {
             ui.label("Anchor");
             egui::Grid::new("sketch-text-anchor")
@@ -135,27 +129,22 @@ impl SketchEditor {
         })
         .response
         .on_hover_text("Alignment of each line inside the text block");
-        ui.horizontal(|ui| {
-            ui.label("Rotation");
-            ui.add(
-                egui::DragValue::new(&mut draft.rotation_deg)
-                    .range(-360.0..=360.0)
-                    .speed(1.)
-                    .suffix("°"),
-            )
-            .on_hover_text("Counterclockwise about the anchor");
-        });
+        crate::numeric_field::NumericField::new("Rotation", "deg")
+            .id(ui.make_persistent_id("sketch-text-rotation"))
+            .help("Counterclockwise about the anchor")
+            .value(ui, &mut draft.rotation_deg, -360.0..=360.0);
         ui.small("Outlines are exact closed profiles. A click places the anchor.");
         if let Some(editing) = self.text_tool.editing {
             let draft = &mut self.text_tool.draft;
-            ui.horizontal(|ui| {
-                ui.label("Position");
-                for value in &mut draft.position_mm {
-                    ui.add(egui::DragValue::new(value).speed(0.1).suffix(" mm"));
-                }
-            })
-            .response
-            .on_hover_text("Anchor position in sketch coordinates");
+            for (axis, value) in ["Position X", "Position Y"]
+                .into_iter()
+                .zip(&mut draft.position_mm)
+            {
+                crate::numeric_field::NumericField::new(axis, "mm")
+                    .id(ui.make_persistent_id(("sketch-text-position", axis)))
+                    .help("Anchor position in sketch coordinates")
+                    .value(ui, value, f64::NEG_INFINITY..=f64::INFINITY);
+            }
             ui.small("Editing the selected text · click empty space to place another");
             ui.horizontal(|ui| {
                 if ui.button("Apply text").clicked() {

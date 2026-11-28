@@ -70,6 +70,7 @@ mod weldment;
 
 pub use advanced::{AdvancedCommand, AdvancedKind, AdvancedSelection};
 pub use alignment_panel::AlignmentCommand;
+pub(crate) use controller::ToolSettings;
 pub use controller::{ModelToolController, ModelToolOutcome, ProfileTarget};
 pub use controller::{OperationViewport, PlacementViewportResult};
 pub use edge_treatment::EdgeTreatmentCommand;

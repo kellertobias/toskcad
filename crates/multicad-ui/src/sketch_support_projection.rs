@@ -1,9 +1,11 @@
 //! Snap-time projection of the supporting face (CAD-383). While a draw tool
 //! is active in a face-attached sketch, the corners and edges of that face are
-//! offered as snap targets. When the gesture commits, each corner or edge it
-//! placed a point on is captured as a canonical projected reference (the
-//! CAD-128 mechanism): a corner's output point is reused by identity and a
-//! point on an edge lies exactly on it. The captures are prepared separately
+//! offered as snap targets, and so is the centre of every circular edge
+//! (CAD-422). When the gesture commits, each corner or edge it placed a point
+//! on is captured as a canonical projected reference (the CAD-128 mechanism):
+//! a corner's output point is reused by identity, a point at a circular
+//! edge's centre reuses the projected centre point, and a point on an edge
+//! lies exactly on it. The captures are prepared separately
 //! against the same base, merged into one candidate, extended with the drawn
 //! geometry and entered sizes, checked by the asynchronous native candidate
 //! validation and committed once. Nothing changes on failure or cancellation.
@@ -19,7 +21,7 @@ use multicad_core::{
         TopologyKind,
     },
     sketch_draw::{DrawInput, DrawRequest, PointInput},
-    sketch_external::{self, Behavior, CaptureInput, CaptureRequest, Method},
+    sketch_external::{self, Behavior, CaptureInput, CaptureRequest, Method, OutputIds},
 };
 use snap::SupportEdge;
 
@@ -255,14 +257,14 @@ impl SketchEditor {
     /// Each capture is prepared against the current document and the
     /// captures are merged into one transaction, so none can change another
     /// or existing source. Returns the candidate, its reference report and,
-    /// per key in order, the projected point of a corner.
+    /// per key in order, the projected output ids.
     fn capture_support(
         &self,
         session: &Session,
         sketch: EntityId,
         keys: &[TopologyKey],
         channel: Channel,
-    ) -> Result<(Prepared, ReferenceReport, Vec<Option<EntityId>>), String> {
+    ) -> Result<(Prepared, ReferenceReport, Vec<Option<OutputIds>>), String> {
         let revision = session.revision();
         let (producer, snapshot) = self
             .support_source(session.document(), revision, sketch)
@@ -274,7 +276,7 @@ impl SketchEditor {
             .unwrap_or_default();
         let document = session.document();
         let mut previews = Vec::new();
-        let mut captured: Vec<(TopologyKey, EntityId, Option<EntityId>)> = Vec::new();
+        let mut captured: Vec<(TopologyKey, EntityId, OutputIds)> = Vec::new();
         for key in keys {
             if captured.iter().any(|(k, ..)| k == key) {
                 continue;
@@ -300,21 +302,13 @@ impl SketchEditor {
                 &snapshots,
             )
             .map_err(|e| e.to_string())?;
-            let point = if key.kind == TopologyKind::Vertex {
-                Some(
-                    *request
-                        .output
-                        .points()
-                        .first()
-                        .ok_or("The face corner has no projected point")?,
-                )
-            } else {
-                None
-            };
+            if key.kind == TopologyKind::Vertex && request.output.points().is_empty() {
+                return Err("The face corner has no projected point".into());
+            }
             let step = sketch_external::capture_edits(document, revision, &request, &snapshots)
                 .map_err(|e| e.to_string())?;
             previews.push(document.edited(&step).map_err(|e| e.to_string())?);
-            captured.push((*key, request.reference, point));
+            captured.push((*key, request.reference, request.output.clone()));
         }
         let previews: Vec<&Document> = previews.iter().collect();
         let edits = sketch_external::merge_capture_previews(document, sketch, &previews)
@@ -338,16 +332,16 @@ impl SketchEditor {
                 return Err(error);
             }
         }
-        let points = keys
+        let outputs = keys
             .iter()
             .map(|key| {
                 captured
                     .iter()
                     .find(|(k, ..)| k == key)
-                    .and_then(|(.., point)| *point)
+                    .map(|(.., output)| output.clone())
             })
             .collect();
-        Ok((prepared, report, points))
+        Ok((prepared, report, outputs))
     }
     /// Whether a draw request places a point on a face corner or edge that
     /// the current gesture snapped to.
@@ -360,8 +354,8 @@ impl SketchEditor {
             })
     }
     /// Prepares a drawing whose point placements `used` sit on face corners
-    /// or edges: they become projected references, a corner's point is
-    /// reused, and the references, the drawing and the entered `sizes` form
+    /// or edges: they become projected references, a corner's point and a
+    /// circular edge's centre point are reused, and the references, the drawing and the entered `sizes` form
     /// one candidate awaiting native validation.
     pub(super) fn draw_on_support(
         &mut self,
@@ -389,12 +383,40 @@ impl SketchEditor {
                 keys.push(*key);
             }
         }
-        let (base, report, points) = self.capture_support(session, sketch, &keys, channel)?;
+        // Centres of the face's circular edges, to tell a placement at an
+        // edge's centre from one on the edge itself.
+        let centers: Vec<(TopologyKey, [f64; 2])> = self
+            .support_edges(session, sketch)
+            .into_iter()
+            .filter_map(|(key, edge)| match edge {
+                SupportEdge::Arc { center, .. } => Some((key, center)),
+                SupportEdge::Line(..) => None,
+            })
+            .collect();
+        let (base, report, outputs) = self.capture_support(session, sketch, &keys, channel)?;
         for point in point_inputs(&mut request.input) {
-            if let PointInput::Position(p) = point
-                && let Some((key, _)) = used.iter().find(|(_, at)| at == p)
-                && let Some(Some(id)) = keys.iter().position(|k| k == key).map(|i| points[i])
-            {
+            let PointInput::Position(p) = point else {
+                continue;
+            };
+            let Some((key, _)) = used.iter().find(|(_, at)| at == p) else {
+                continue;
+            };
+            let Some(Some(output)) = keys.iter().position(|k| k == key).map(|i| &outputs[i]) else {
+                continue;
+            };
+            let at_center = centers.iter().any(|(k, c)| {
+                k == key
+                    && (c[0] - p[0]).portable_hypot(c[1] - p[1])
+                        <= 1e-9 * (1. + c[0].portable_hypot(c[1]))
+            });
+            let reused = match output {
+                OutputIds::Point { point, .. } if key.kind == TopologyKind::Vertex => Some(*point),
+                OutputIds::Circle { center, .. } | OutputIds::Arc { center, .. } if at_center => {
+                    Some(*center)
+                }
+                _ => None,
+            };
+            if let Some(id) = reused {
                 *point = PointInput::Existing(id);
             }
         }
@@ -550,6 +572,9 @@ impl SketchEditor {
                 self.inline.texts.iter_mut().for_each(String::clear);
                 self.message =
                     "Face reference projected and geometry committed · one Undo step".into();
+                if let Some(tool) = tool {
+                    self.end_single_shot(tool);
+                }
                 // A polyline continues from the end of the committed segment.
                 let line = created
                     .last()

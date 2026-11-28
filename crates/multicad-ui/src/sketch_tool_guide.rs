@@ -103,7 +103,7 @@ impl DrawTool {
                 }),
                 commit: "Nothing is committed while you place poles. Apply in the action bar \
                          (or Enter) commits an open spline once four poles are placed; clicking \
-                         the first pole commits a closed spline."
+                         the first pole commits a closed spline. Then the tool returns to Select."
                     .into(),
                 escape: if pending > 0 {
                     format!(
@@ -160,7 +160,7 @@ impl DrawTool {
                 pending: None,
                 commit: format!(
                     "Each corner click applies the {} {} from this Inspector immediately; the tool \
-                     stays active for the next corner.",
+                     stays active for the next corner until Enter or a right-click ends it.",
                     self.noun(),
                     if self == Self::Fillet { "radius" } else { "setback" }
                 ),
@@ -189,7 +189,7 @@ impl DrawTool {
                         .then(|| format!("Pending: {placed} · not in the sketch yet")),
                     commit: format!(
                         "The {} click commits the {noun} immediately; no Apply is needed. \
-                         The tool stays active for the next {noun}.",
+                         Then the tool returns to Select; a right-click there repeats it.",
                         points[total - 1]
                             .split_once(" (")
                             .map_or(points[total - 1], |(name, _)| name)
@@ -238,8 +238,13 @@ impl SketchEditor {
     }
     /// Status line for the current pointer step of the active tool.
     pub(super) fn set_tool_status(&mut self) {
-        if let Some(guide) = self.tool_guide() {
-            self.message = guide.status();
+        if let (Some(guide), Some(tool)) = (self.tool_guide(), self.tool) {
+            // The status line names the active tool and how it ends (CAD-413).
+            self.message = format!(
+                "{} · {} · Enter or right-click ends the tool",
+                tool.label(),
+                guide.status()
+            );
         }
     }
     /// Status line after a pointer gesture committed geometry.
@@ -252,7 +257,13 @@ impl SketchEditor {
             let noun = tool.noun();
             let mut noun = noun.to_owned();
             noun[..1].make_ascii_uppercase();
-            self.message = format!("{noun} committed · Undo removes it · {}", guide.status());
+            if tool.single_shot() {
+                // A tool that creates one thing returns to Select (CAD-413).
+                self.message = format!("{noun} committed · Undo removes it");
+                self.end_single_shot(tool);
+            } else {
+                self.message = format!("{noun} committed · Undo removes it · {}", guide.status());
+            }
         }
     }
     /// Inspector body for the active drawing tool: the pointer step, pending

@@ -22,6 +22,22 @@ pub(super) struct Catalog {
     symbol_roots: BTreeMap<EntityId, EntityId>,
 }
 
+impl Presentation {
+    /// The type label and glyph of a wall-hosted opening row.
+    pub(super) fn opening(kind: model::HostedKind) -> Self {
+        Self {
+            label: kind.label(),
+            icon: match kind {
+                model::HostedKind::Door => Icon::Door,
+                model::HostedKind::Window => Icon::Window,
+                model::HostedKind::VerticalCutout => Icon::WallCutout,
+            },
+            linked: false,
+            part: None,
+        }
+    }
+}
+
 impl Catalog {
     pub(super) fn new(document: &Document) -> Result<Self, String> {
         let mut catalog = Self::default();

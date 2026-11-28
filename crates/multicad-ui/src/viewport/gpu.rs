@@ -245,24 +245,47 @@ impl Renderer {
         if !self.scene.as_ref().is_some_and(|s| Arc::ptr_eq(s, scene))
             || self.selection != selection
         {
+            // Display-only elements (doors, windows) draw like instances at
+            // their host's placement; their identity is their mesh identity.
+            let element_meshes: BTreeMap<EntityId, &Arc<super::Geometry>> = scene
+                .display_elements()
+                .map(|element| (element.id, &element.geometry))
+                .collect();
+            let elements: Vec<super::Instance> = scene
+                .display_elements()
+                .filter_map(|element| {
+                    let host = scene.instances().iter().find(|i| i.id == element.host)?;
+                    Some(super::Instance {
+                        id: element.id,
+                        geometry: element.id,
+                        transform: host.transform,
+                        color: element.color,
+                    })
+                })
+                .collect();
+            let source = |id: &EntityId| {
+                scene
+                    .geometries()
+                    .get(id)
+                    .or_else(|| element_meshes.get(id).copied())
+            };
             let mut groups: BTreeMap<EntityId, Vec<_>> = BTreeMap::new();
-            for instance in scene.instances() {
+            for instance in scene.instances().iter().chain(&elements) {
                 groups.entry(instance.geometry).or_default().push(instance);
             }
             // Retain unchanged meshes for parts already drawn, even when
             // hidden. Reference and history geometry stays on the CPU until
             // a draw instance actually needs it.
             self.meshes.retain(|id, mesh| {
-                scene
-                    .geometries()
-                    .get(id)
-                    .is_some_and(|geometry| Arc::ptr_eq(&mesh.source, geometry))
+                source(id).is_some_and(|geometry| Arc::ptr_eq(&mesh.source, geometry))
             });
             for id in groups.keys() {
                 if self.meshes.contains_key(id) {
                     continue;
                 }
-                let geometry = &scene.geometries()[id];
+                let Some(geometry) = source(id) else {
+                    continue;
+                };
                 let mut bytes = Vec::with_capacity(geometry.indices().len() * 32);
                 for (triangle, face) in geometry
                     .indices()
@@ -626,7 +649,7 @@ fn valid_view(rect: egui::Rect, camera: Camera) -> bool {
         && camera
             .target
             .iter()
-            .chain([&camera.yaw, &camera.pitch])
+            .chain([&camera.yaw, &camera.pitch, &camera.roll])
             .all(|v| v.is_finite())
 }
 

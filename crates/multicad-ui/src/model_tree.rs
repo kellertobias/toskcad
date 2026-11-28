@@ -10,6 +10,10 @@ use multicad_core::{
     hierarchy::{self, Action, ContainerKind, Index},
 };
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+mod cascade_delete_tests;
+#[cfg(test)]
+mod joint_tests;
 mod presentation;
 #[cfg(test)]
 mod rename_tests;
@@ -45,6 +49,11 @@ pub enum NodeKind {
     Instance,
     Plane,
     Feature,
+    /// A door, window or vertical cutout hosted by the wall row above it
+    /// (CAD-428). The row's identity is the opening's own source identity.
+    Opening,
+    /// A panel joint placed in the component of its panels (CAD-432).
+    Joint,
 }
 impl NodeKind {
     fn label(self) -> &'static str {
@@ -57,6 +66,8 @@ impl NodeKind {
             Self::Instance => "Instance",
             Self::Plane => "Plane",
             Self::Feature => "Feature",
+            Self::Opening => "Opening",
+            Self::Joint => "Joint",
         }
     }
     fn icon(self) -> Icon {
@@ -69,6 +80,8 @@ impl NodeKind {
             Self::Instance => Icon::Link,
             Self::Plane => Icon::Grid,
             Self::Feature => Icon::Cut,
+            Self::Opening => Icon::Door,
+            Self::Joint => Icon::Joint,
         }
     }
     fn container(self) -> bool {
@@ -84,6 +97,7 @@ fn kind(data: &EntityData) -> Option<NodeKind> {
         EntityData::Instance { .. } => Some(NodeKind::Instance),
         EntityData::Plane { .. } => Some(NodeKind::Plane),
         EntityData::Feature { .. } => Some(NodeKind::Feature),
+        data if hierarchy::is_joint_entry(data) => Some(NodeKind::Joint),
         _ => None,
     }
 }
@@ -106,6 +120,16 @@ pub struct TreeRow {
     pub history_of: Option<EntityId>,
     pub available: bool,
     key: egui::Id,
+}
+impl TreeRow {
+    /// The row's type label, such as Part, Door or Window.
+    pub fn type_label(&self) -> &'static str {
+        self.presentation.label
+    }
+    /// The row's type glyph.
+    pub fn icon(&self) -> Icon {
+        self.presentation.icon
+    }
 }
 #[derive(Clone)]
 struct Destination {
@@ -296,12 +320,18 @@ impl TreeView {
                 Some(EntityData::Part { features, .. }) => features.as_slice(),
                 _ => &[],
             };
-            let expandable = !children.is_empty() || !history.is_empty();
+            // A wall Part lists the openings its canonical source hosts.
+            let openings = if node_kind == NodeKind::Body {
+                hosted_openings(document, history)
+            } else {
+                vec![]
+            };
+            let expandable = !children.is_empty() || !history.is_empty() || !openings.is_empty();
             let expanded = expandable
-                && expansion
-                    .get(&id)
-                    .copied()
-                    .unwrap_or(root || (history.is_empty() && children.len() <= 8));
+                && expansion.get(&id).copied().unwrap_or(
+                    root || (!openings.is_empty() && openings.len() <= 8)
+                        || (history.is_empty() && children.len() <= 8),
+                );
             let editable = !symbol_owned.contains(&id);
             rows.push(TreeRow {
                 id,
@@ -362,6 +392,29 @@ impl TreeView {
                         key: key.with(("feature-history", position, feature)),
                     });
                 }
+                for opening in &openings {
+                    rows.push(TreeRow {
+                        id: opening.id,
+                        depth: depth + 1,
+                        name: opening.name.clone(),
+                        kind: NodeKind::Opening,
+                        presentation: Presentation::opening(opening.kind),
+                        owner: format!(
+                            "Hosted by {}",
+                            container_path(document, &index, Some(opening.part))
+                        ),
+                        local_visible: true,
+                        effective_visible,
+                        active: false,
+                        expandable: false,
+                        expanded: false,
+                        movable: false,
+                        destination: false,
+                        history_of: None,
+                        available: true,
+                        key: key.with(("hosted-opening", opening.id)),
+                    });
+                }
                 pending.extend(
                     children
                         .into_iter()
@@ -379,6 +432,25 @@ impl TreeView {
             occurrence_aliases,
         })
     }
+}
+/// The openings hosted by the wall feature in a Part's history, if any.
+fn hosted_openings(
+    document: &Document,
+    history: &[EntityId],
+) -> Vec<multicad_core::model::HostedOpening> {
+    history
+        .iter()
+        .find(|feature| multicad_core::model::read_wall(document, **feature).is_ok())
+        .and_then(|wall| multicad_core::model::wall_openings(document, *wall).ok())
+        .unwrap_or_default()
+}
+/// The wall Part hosting a selected opening row, for callers that resolve a
+/// tree selection to views and the Inspector.
+pub fn opening_host(
+    document: &Document,
+    id: EntityId,
+) -> Option<multicad_core::model::HostedOpening> {
+    multicad_core::model::opening_host(document, id)
 }
 #[derive(Clone)]
 enum Tool {
@@ -420,6 +492,16 @@ pub struct ModelTree {
     selected_references: BTreeSet<EntityId>,
     scroll_to_source: Option<EntityId>,
     inline: Option<InlineRename>,
+    delete: Option<PendingDelete>,
+    delete_pass: Option<u64>,
+}
+/// A Delete that removes dependents waits for this confirmation (CAD-426).
+#[derive(Clone)]
+struct PendingDelete {
+    document: EntityId,
+    revision: u64,
+    id: EntityId,
+    question: String,
 }
 /// In-place name editing of one tree row (CAD-376).
 #[derive(Clone)]
@@ -488,6 +570,8 @@ impl Default for ModelTree {
             selected_references: BTreeSet::new(),
             scroll_to_source: None,
             inline: None,
+            delete: None,
+            delete_pass: None,
         }
     }
 }
@@ -635,9 +719,122 @@ impl ModelTree {
         self.expansion.insert(id, expanded);
         self.view = None;
     }
-    fn execute(&mut self, session: &mut Session, revision: u64, action: Action) -> TreeEvents {
+    /// The pending delete confirmation, e.g. "Delete Extrude 1 and 2
+    /// dependent features (Fillet 1, Chamfer 1)?".
+    pub fn delete_question(&self) -> Option<&str> {
+        self.delete
+            .as_ref()
+            .map(|pending| pending.question.as_str())
+    }
+    /// Delete a joint through the shared joint API in one transaction.
+    fn delete_joint(
+        &mut self,
+        session: &mut Session,
+        joint: EntityId,
+        group: multicad_core::model::JointGroupOnDelete,
+    ) -> TreeEvents {
         let mut events = TreeEvents::default();
-        let deleting = matches!(&action, Action::Delete { .. });
+        let prepared = multicad_core::model::prepare_panel_joint_delete_with(
+            session,
+            session.revision(),
+            Actor::local(Channel::Ui),
+            joint,
+            group,
+        );
+        match prepared
+            .map_err(|e| e.to_string())
+            .and_then(|prepared| session.commit(prepared).map_err(|e| e.to_string()))
+        {
+            Ok(change) => {
+                events.message = Some("Deleted joint".into());
+                events.change = Some(change);
+                events.selection = Some(BTreeSet::new());
+                self.history_selection = None;
+                self.selected_references.clear();
+                self.view = None;
+            }
+            Err(error) => events.error = Some(error),
+        }
+        events
+    }
+    fn execute(&mut self, session: &mut Session, revision: u64, action: Action) -> TreeEvents {
+        // A delete that would also remove dependents first names all of them.
+        if let Action::DeleteWithDependents { id } = action {
+            return match hierarchy::deletion_plan(session, id) {
+                Ok(plan) => {
+                    self.delete = Some(PendingDelete {
+                        document: session.document().id(),
+                        revision,
+                        id,
+                        question: plan.question(),
+                    });
+                    TreeEvents::default()
+                }
+                Err(error) => TreeEvents {
+                    error: Some(error),
+                    ..Default::default()
+                },
+            };
+        }
+        self.commit_action(session, revision, action)
+    }
+    /// Show the pending delete confirmation once per pass. Confirming deletes
+    /// the entry and its dependents in one transaction; Cancel, Escape or a
+    /// changed document leave everything unchanged.
+    fn delete_confirmation(&mut self, ui: &egui::Ui, session: &mut Session) -> Option<TreeEvents> {
+        let pass = ui.ctx().cumulative_pass_nr();
+        if self.delete_pass == Some(pass) {
+            return None;
+        }
+        let pending = self.delete.clone()?;
+        if pending.document != session.document().id() || pending.revision != session.revision() {
+            self.delete = None;
+            return None;
+        }
+        self.delete_pass = Some(pass);
+        let mut confirm = false;
+        let mut cancel = false;
+        let response = crate::controls::modal(
+            ui.ctx(),
+            "model-tree-delete-confirmation",
+            "Delete with dependents",
+            |ui| {
+                ui.label(&pending.question);
+                ui.small("Undo restores everything this removes.");
+                ui.add_space(8.);
+                ui.horizontal(|ui| {
+                    confirm = ui.button("Delete all").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            },
+        );
+        if response.should_close() {
+            cancel = true;
+        }
+        if confirm {
+            self.delete = None;
+            return Some(self.commit_action(
+                session,
+                pending.revision,
+                Action::DeleteWithDependents { id: pending.id },
+            ));
+        }
+        if cancel {
+            self.delete = None;
+        }
+        None
+    }
+    fn commit_action(
+        &mut self,
+        session: &mut Session,
+        revision: u64,
+        action: Action,
+    ) -> TreeEvents {
+        let mut events = TreeEvents::default();
+        let deleting = matches!(
+            &action,
+            Action::Delete { .. } | Action::DeleteWithDependents { .. }
+        );
         match hierarchy::prepare(session, revision, Actor::local(Channel::Ui), action) {
             Ok(pending) => {
                 let created = pending.created;
@@ -703,8 +900,12 @@ impl ModelTree {
                 ..Default::default()
             };
         }
+        if !targets_only && let Some(events) = self.delete_confirmation(ui, session) {
+            return events;
+        }
         let mut events = TreeEvents::default();
         let mut action = None;
+        let mut joint_delete = None;
         let mut create = None;
         let mut inline_start = None;
         let mut inline_commit = None;
@@ -828,10 +1029,11 @@ impl ModelTree {
                                 });
                             }
                             let role = if row.history_of.is_some() { "Feature history" } else { row.presentation.label };
+                            let owner_label = if row.kind == NodeKind::Opening { "Host" } else { "Owning component" };
                             let link_hint = if row.presentation.linked { "\nLinked Library definition" } else { "" };
                             let selection_hint = if targets_only { "Shift or Cmd/Ctrl-click toggles one target" } else { "Cmd/Ctrl-click toggles; Shift-click selects a range" };
                             let drag_hint = if draggable { "\nDrag to move or reorder" } else { "" };
-                            response.clone().on_hover_text(format!("{}\n{role}{link_hint}\nOwning component: {}\n{selection_hint}{drag_hint}", row.name, row.owner));
+                            response.clone().on_hover_text(format!("{}\n{role}{link_hint}\n{owner_label}: {}\n{selection_hint}{drag_hint}", row.name, row.owner));
                             if response.clicked() || icon.clicked() {
                                 let modifiers = crate::selection_input::click_modifiers(ui, if response.clicked() { &response } else { &icon });
                                 let toggle_one = modifiers.command || (targets_only && modifiers.shift);
@@ -866,13 +1068,15 @@ impl ModelTree {
                                     action = Some(Action::SetActive { component: if row.kind == NodeKind::Root { None } else { Some(row.id) } });
                                 }
                             }
-                            if row.history_of.is_some() {
+                            if row.history_of.is_some() || row.kind == NodeKind::Opening {
                                 ui.add_space(trailing);
                             } else {
                             let mut visible = row.local_visible;
-                            let visibility = ui.add_enabled(mutations_enabled && !matches!(row.kind, NodeKind::Plane | NodeKind::Feature),
+                            let visibility = ui.add_enabled(mutations_enabled && !matches!(row.kind, NodeKind::Plane | NodeKind::Feature | NodeKind::Joint),
                                 egui::Checkbox::new(&mut visible, "").indeterminate(row.local_visible && !row.effective_visible));
-                            let hint = if matches!(row.kind, NodeKind::Plane | NodeKind::Feature) {
+                            let hint = if row.kind == NodeKind::Joint {
+                                "A joint is shown through the cuts in its panels; show or hide the panels"
+                            } else if matches!(row.kind, NodeKind::Plane | NodeKind::Feature) {
                                 "This source is evaluated through its sketch or body; standalone visibility is unavailable"
                             } else if row.local_visible && !row.effective_visible {
                                 "Local visibility is on; an ancestor or the component definition is hidden"
@@ -884,10 +1088,17 @@ impl ModelTree {
                             }
                             }
                             response.union(icon).context_menu(|ui| {
+                                if row.kind == NodeKind::Opening {
+                                    ui.label(format!("{} · {}", row.presentation.label, row.owner));
+                                    ui.small("Select it to edit, move to another wall or remove it in the Inspector.");
+                                    return;
+                                }
                                 if row.history_of.is_some() {
                                     ui.label("Feature used by part");
                                     ui.small("Feature history refers to the operation that produced this body.");
-                                    let _ = delete_menu(ui, session, row.id, false, Some("Select the body to delete it, or reopen the feature to edit its controls."));
+                                    if let Some(delete) = delete_menu(ui, session, row.id, mutations_enabled && row.available, None) {
+                                        action = Some(delete);
+                                    }
                                     return;
                                 }
                                 ui.add_enabled_ui(mutations_enabled && row.available, |ui| {
@@ -908,7 +1119,7 @@ impl ModelTree {
                                         inline_start = Some(row.id);
                                         ui.close();
                                     }
-                                    if row.kind == NodeKind::Sketch && options.allow_open_sketch && ui.button("Open sketch").clicked() {
+                                    if row.kind == NodeKind::Sketch && options.allow_open_sketch && ui.button("Edit sketch").on_hover_text("Open this sketch for editing; double-clicking it does the same").clicked() {
                                         events.open_sketch = Some(row.id);
                                         ui.close();
                                     }
@@ -919,7 +1130,11 @@ impl ModelTree {
                                         action = Some(Action::NormalizeLegacy { component: row.id });
                                         ui.close();
                                     }
-                                    if let Some(delete) = delete_menu(ui, session, row.id, mutations_enabled, None) {
+                                    if row.kind == NodeKind::Joint {
+                                        if let Some(group) = joint_delete_menu(ui, mutations_enabled) {
+                                            joint_delete = Some((row.id, group));
+                                        }
+                                    } else if let Some(delete) = delete_menu(ui, session, row.id, mutations_enabled, None) {
                                         action = Some(delete);
                                     }
                                 });
@@ -967,6 +1182,13 @@ impl ModelTree {
         }
         if let Some((row, target, payload)) = drop {
             return self.drop_entries(session, &payload, row, target);
+        }
+        if let Some((joint, group)) = joint_delete {
+            let mut result = self.delete_joint(session, joint, group);
+            if result.selection.is_none() {
+                result.selection = events.selection;
+            }
+            return result;
         }
         if let Some(action) = action {
             let mut result = self.execute(session, session.revision(), action);
@@ -1057,6 +1279,9 @@ impl ModelTree {
                 error: Some(error),
                 ..Default::default()
             };
+        }
+        if let Some(events) = self.delete_confirmation(ui, session) {
+            return events;
         }
         let mut events = TreeEvents::default();
         if let Some(tool) = self.tool.as_mut() {
@@ -1198,15 +1423,6 @@ impl ModelTree {
                     if inline_renamable(node_kind) {
                         rename = ui.button("Rename…").clicked();
                     }
-                    if node_kind == NodeKind::Sketch
-                        && options.allow_open_sketch
-                        && ui
-                            .button("Open selected sketch")
-                            .on_hover_text("Open this sketch in the Sketch workspace")
-                            .clicked()
-                    {
-                        events.open_sketch = Some(id);
-                    }
                 });
             })
             .response;
@@ -1216,11 +1432,7 @@ impl ModelTree {
             .id(self.salt.with(("inspector-delete", id)))
             .open_memory(secondary_click.then(|| true.into()))
             .show(|ui| {
-                let reason = if history_body.is_some() {
-                    Some(
-                        "Select the body to delete it, or reopen the feature to edit its controls.",
-                    )
-                } else if selected.len() > 1 {
+                let reason = if selected.len() > 1 {
                     Some("Select one entity to delete it.")
                 } else {
                     None
@@ -1314,18 +1526,26 @@ impl DropPosition {
 }
 
 fn disclosure(ui: &mut egui::Ui, row: &TreeRow) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(16., 24.), egui::Sense::click());
     let verb = if row.expanded { "Collapse" } else { "Expand" };
     let label = if row.presentation.part.is_some() {
         format!("{verb} feature history for {}", row.name)
     } else {
         format!("{verb} {}", row.name)
     };
+    disclosure_chevron(ui, row.expanded, label)
+}
+/// The tree's expand/collapse chevron for a row named `name`.
+pub(crate) fn disclosure_button(ui: &mut egui::Ui, expanded: bool, name: &str) -> egui::Response {
+    let verb = if expanded { "Collapse" } else { "Expand" };
+    disclosure_chevron(ui, expanded, format!("{verb} {name}"))
+}
+fn disclosure_chevron(ui: &mut egui::Ui, expanded: bool, label: String) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(16., 24.), egui::Sense::click());
     let visuals = ui.style().interact(&response);
     if response.hovered() || response.has_focus() {
         ui.painter().rect_filled(rect, 3., visuals.weak_bg_fill);
     }
-    let chevron = if row.expanded {
+    let chevron = if expanded {
         [[-4., -2.], [0., 2.], [4., -2.]]
     } else {
         [[-2., -4.], [2., 0.], [-2., 4.]]
@@ -1341,6 +1561,39 @@ fn disclosure(ui: &mut egui::Ui, row: &TreeRow) -> egui::Response {
     response.on_hover_text(label)
 }
 
+/// Deleting a joint keeps its panels; the user chooses whether their
+/// component stays (CAD-432).
+fn joint_delete_menu(
+    ui: &mut egui::Ui,
+    enabled: bool,
+) -> Option<multicad_core::model::JointGroupOnDelete> {
+    use multicad_core::model::JointGroupOnDelete;
+    let mut chosen = None;
+    for (group, label, help) in [
+        (
+            JointGroupOnDelete::Keep,
+            JOINT_DELETE_KEEP,
+            "Remove the joint and its cuts; the panels stay in their component",
+        ),
+        (
+            JointGroupOnDelete::Ungroup,
+            JOINT_DELETE_UNGROUP,
+            "Remove the joint and its cuts, and dissolve the component when no other joint is left in it; the panels stay in place",
+        ),
+    ] {
+        if ui
+            .add_enabled(enabled, egui::Button::new(label))
+            .on_hover_text(help)
+            .clicked()
+        {
+            ui.close();
+            chosen = Some(group);
+        }
+    }
+    chosen
+}
+pub(crate) const JOINT_DELETE_KEEP: &str = "Delete joint, keep group";
+pub(crate) const JOINT_DELETE_UNGROUP: &str = "Delete joint and ungroup panels";
 fn delete_menu(
     ui: &mut egui::Ui,
     session: &Session,
@@ -1351,14 +1604,23 @@ fn delete_menu(
     let availability = match reason {
         Some(reason) => Err(reason.to_owned()),
         None if !enabled => Err("Finish the current tool before deleting an entity.".into()),
-        None => hierarchy::deletion_available(session, id),
+        None => hierarchy::deletion_plan(session, id),
     };
-    if ui
-        .add_enabled(availability.is_ok(), egui::Button::new("Delete"))
-        .clicked()
-    {
+    let hint = match &availability {
+        Ok(plan) if !plan.dependents.is_empty() => Some(plan.question()),
+        _ => None,
+    };
+    let mut button = ui.add_enabled(availability.is_ok(), egui::Button::new("Delete"));
+    if let Some(hint) = hint {
+        button = button.on_hover_text(hint);
+    }
+    if button.clicked() {
         ui.close();
-        return Some(Action::Delete { id });
+        // Entries without dependents keep the immediate delete; others ask.
+        return Some(match availability {
+            Ok(plan) if !plan.dependents.is_empty() => Action::DeleteWithDependents { id },
+            _ => Action::Delete { id },
+        });
     }
     if let Err(reason) = availability {
         ui.small(reason);
@@ -1388,7 +1650,7 @@ pub(super) fn feature_operation(document: &Document, feature: EntityId) -> Strin
     )
 }
 
-fn flat_row_label(
+pub(crate) fn flat_row_label(
     ui: &mut egui::Ui,
     width: f32,
     label: &str,

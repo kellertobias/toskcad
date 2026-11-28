@@ -551,15 +551,12 @@ impl AlignmentPanel {
         if self.mode == AlignmentMode::Axis {
             ui.label("World Up vector");
             for (value, label) in self.up.iter_mut().zip(["Up X", "Up Y", "Up Z"]) {
-                ui.horizontal(|ui| {
-                    ui.label(label);
-                    changed |= ui
-                        .add(egui::DragValue::new(value).speed(0.1))
-                        .on_hover_text(
-                            "Explicit roll reference; a parallel or zero Up vector is rejected",
-                        )
-                        .changed();
-                });
+                changed |= crate::numeric_field::NumericField::new(label, "ratio")
+                    .id(ui.make_persistent_id(("alignment-up", label)))
+                    .help("Explicit roll reference; a parallel or zero Up vector is rejected")
+                    .value(ui, value, f64::NEG_INFINITY..=f64::INFINITY)
+                    .input
+                    .changed();
             }
         }
         let validation = self.request(document, enabled);

@@ -153,6 +153,7 @@ fn native_scene(s: &Session) -> Arc<Scene> {
 }
 fn camera(above: bool) -> Camera {
     Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: if above {
             std::f32::consts::FRAC_PI_2

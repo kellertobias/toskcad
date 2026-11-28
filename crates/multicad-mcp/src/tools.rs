@@ -51,6 +51,9 @@ use compound_cutouts::{
     CompoundCutoutArgs, CompoundCutoutInspectArgs, CompoundCutoutRemoveArgs,
     inspect_compound_cutout, preview_compound_cutout, remove_compound_cutout, set_compound_cutout,
 };
+mod delete;
+pub use delete::DeleteEntityArgs;
+use delete::delete_entity;
 mod engraving;
 mod fdm;
 mod profile_connections;
@@ -334,6 +337,9 @@ tools! {
     "sketch_edit_text" => EditTextArgs, "Edit sketch text", false,
         "Replace the string, font, size, anchor position, anchor, rotation or line alignment of a sketch text element (text_id from sketch_add_text or inspect_sketch). Contour identities follow character and contour position, so extrusions of unchanged glyph structure rebuild. Validation matches sketch_add_text; commits one transaction.",
         sketch_edit_text;
+    "delete_entity" => DeleteEntityArgs, "Delete model entry", false,
+        "Delete a part, feature, sketch, plane, instance, component or group by ID as one transaction and one Undo step, through the same canonical closure as the model tree. When other entries depend on it (later features of its part history, Booleans that consume it, instances of it, a container's contents), the call is refused with code has_dependents and lists them unless cascade is true; with cascade it removes the entry and all of them together. Sketches on its faces, drawings and export sets are kept and report the lost reference. Returns the removed IDs and the named dependents.",
+        delete_entity;
     "sketch_remove_text" => RemoveTextArgs, "Remove sketch text", false,
         "Remove a sketch text element. Features that used its regions report that their profile changed. Commits one transaction.",
         sketch_remove_text;

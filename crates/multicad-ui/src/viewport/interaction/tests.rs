@@ -180,6 +180,7 @@ fn viewport_modifier_click_adds_parts_and_scene_refresh_retains_only_existing_id
     let ctx = egui::Context::default();
     let mut interaction = Interaction::default();
     let camera = Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         scale: 2.,
@@ -345,6 +346,7 @@ fn command_click_toggles_faces_plain_click_replaces_and_stale_faces_are_dropped(
     let ctx = egui::Context::default();
     let mut interaction = Interaction::default();
     let camera = Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         scale: 2.,

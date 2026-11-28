@@ -228,6 +228,7 @@ fn tilted_circle_native_spline_preview_passes_shared_inspector_apply_undo_and_re
     assert!(!controller.waiting_for_editing_pose());
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.));
     let camera = Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: 1.,
         scale: 10.,

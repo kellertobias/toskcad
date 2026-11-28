@@ -36,8 +36,20 @@ pub struct Shape {
     /// Readable, stable name such as "Rectangle 1".
     pub name: String,
     /// Curves in authored drawing order; a rectangle's first curve is its
-    /// width edge and its second the height edge.
+    /// width edge and its second the height edge. A fillet or chamfer lists
+    /// only its new arc or line.
     pub curves: Vec<EntityId>,
+    /// For a fillet or chamfer, the shape whose corner it rounds or cuts
+    /// (CAD-414); `None` for every other kind, and when that corner's curves
+    /// belong to no recorded shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modifies: Option<EntityId>,
+    /// For a fillet or chamfer, the construction helper curves the treatment
+    /// added (CAD-415). They stay in the sketch and keep its dimensions, but
+    /// belong to the treatment, so element lists hide them. Empty for every
+    /// other kind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub helpers: Vec<EntityId>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +60,10 @@ pub enum ShapeKind {
     Arc,
     Polyline,
     Spline,
+    /// A tangent arc replacing a corner (CAD-414).
+    Fillet,
+    /// A straight cut replacing a corner (CAD-414).
+    Chamfer,
 }
 impl ShapeKind {
     pub fn label(self) -> &'static str {
@@ -58,7 +74,13 @@ impl ShapeKind {
             Self::Arc => "Arc",
             Self::Polyline => "Polyline",
             Self::Spline => "Spline",
+            Self::Fillet => "Fillet",
+            Self::Chamfer => "Chamfer",
         }
+    }
+    /// Fillets and chamfers modify another shape's corner.
+    pub fn corner(self) -> bool {
+        matches!(self, Self::Fillet | Self::Chamfer)
     }
 }
 /// Longest accepted shape name.
@@ -67,6 +89,25 @@ impl Sketch {
     /// Record `curves` as one drawn shape named "<Kind> N", where N is one
     /// past the highest number already used by that kind. Returns its id.
     pub fn record_shape(&mut self, kind: ShapeKind, curves: Vec<EntityId>) -> EntityId {
+        self.record(kind, curves, None)
+    }
+    /// Record a fillet or chamfer `curve` that treats a corner of the shape
+    /// `modifies` (CAD-414), named "Fillet N" or "Chamfer N".
+    pub fn record_corner(
+        &mut self,
+        kind: ShapeKind,
+        curve: EntityId,
+        modifies: Option<EntityId>,
+    ) -> EntityId {
+        debug_assert!(kind.corner());
+        self.record(kind, vec![curve], modifies)
+    }
+    fn record(
+        &mut self,
+        kind: ShapeKind,
+        curves: Vec<EntityId>,
+        modifies: Option<EntityId>,
+    ) -> EntityId {
         let prefix = format!("{} ", kind.label());
         let next = self
             .shapes
@@ -81,8 +122,23 @@ impl Sketch {
             kind,
             name: format!("{prefix}{next}"),
             curves,
+            modifies,
+            helpers: Vec::new(),
         });
         id
+    }
+    /// Link construction `helpers` to the fillet or chamfer `shape` that
+    /// added them (CAD-415).
+    pub fn record_corner_helpers(&mut self, shape: EntityId, helpers: Vec<EntityId>) {
+        if let Some(shape) = self.shapes.iter_mut().find(|s| s.id == shape) {
+            debug_assert!(shape.kind.corner());
+            shape.helpers = helpers;
+        }
+    }
+    /// Whether `curve` is a construction helper of a recorded fillet or
+    /// chamfer.
+    pub fn is_corner_helper(&self, curve: EntityId) -> bool {
+        self.shapes.iter().any(|s| s.helpers.contains(&curve))
     }
     /// The recorded shape that owns `curve`, if any.
     pub fn shape_of(&self, curve: EntityId) -> Option<&Shape> {
@@ -93,8 +149,16 @@ impl Sketch {
         let curves: std::collections::BTreeSet<_> = self.curves.iter().map(|c| c.id).collect();
         for shape in &mut self.shapes {
             shape.curves.retain(|id| curves.contains(id));
+            shape.helpers.retain(|id| curves.contains(id));
         }
         self.shapes.retain(|s| !s.curves.is_empty());
+        // A treatment whose modified shape is gone stands on its own.
+        let shapes: std::collections::BTreeSet<_> = self.shapes.iter().map(|s| s.id).collect();
+        for shape in &mut self.shapes {
+            if shape.modifies.is_some_and(|id| !shapes.contains(&id)) {
+                shape.modifies = None;
+            }
+        }
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -71,6 +71,9 @@ pub struct OpeningCommand {
     /// A cutout that cuts slabs (or leaves them) uses the shared
     /// wall-and-slab operation instead of `change`.
     pub cutout: Option<CutoutChange>,
+    /// Moving an existing door or window to the `anchor` wall from this
+    /// wall (CAD-428): `change` is then its addition to the new host.
+    pub rehost_from: Option<EntityId>,
 }
 impl OpeningCommand {
     pub(super) fn prepare(&self, session: &Session, actor: Actor) -> Result<ModelPrepared, String> {
@@ -80,6 +83,23 @@ impl OpeningCommand {
                     .map_err(|e| e.to_string())?;
             // The window proves the anchor's rebuild; the other cut slabs are
             // rebuilt by the same native evaluation of the whole document.
+            prepared.outputs.retain(|o| o.feature == self.anchor);
+            return Ok(prepared);
+        }
+        if let (Some(from), WallOpeningChange::AddOpening(opening)) =
+            (self.rehost_from, &self.change)
+        {
+            let mut prepared = model::prepare_rehost_opening(
+                session,
+                session.revision(),
+                actor,
+                from,
+                self.anchor,
+                opening,
+            )
+            .map_err(|e| e.to_string())?;
+            // As for a slab cutout: the form proves the new host's rebuild;
+            // the wall it leaves is rebuilt by the same native evaluation.
             prepared.outputs.retain(|o| o.feature == self.anchor);
             return Ok(prepared);
         }
@@ -135,6 +155,9 @@ pub(super) struct OpeningPanel {
     wall: Option<EntityId>,
     /// The existing opening or cutout being edited; `None` places a new one.
     editing: Option<EntityId>,
+    /// The wall an existing door or window moves to on Apply; `None` keeps
+    /// it in `wall`.
+    rehost: Option<EntityId>,
     remove: bool,
     new_id: EntityId,
     /// One-based segment number shown to the user.
@@ -213,6 +236,7 @@ impl OpeningPanel {
             kind,
             wall,
             editing: None,
+            rehost: None,
             remove: false,
             new_id: EntityId::new(),
             segment: 1,
@@ -341,6 +365,42 @@ impl OpeningPanel {
     pub fn stamp(&self) -> FormStamp {
         self.stamp
     }
+    /// The wall the opening is placed on: the chosen new host while moving,
+    /// otherwise its current wall.
+    fn placement_wall(&self) -> Option<EntityId> {
+        self.rehost.or(self.wall)
+    }
+    /// Choose the wall an existing door or window moves to (`None` or its
+    /// current wall keeps it there). A new host starts with the opening
+    /// centered on its first segment; pick or enter a placement to adjust.
+    pub(crate) fn set_rehost(
+        &mut self,
+        document: &Document,
+        to: Option<EntityId>,
+    ) -> Result<(), String> {
+        if self.editing.is_none() || self.kind == RoomOpening::Cutout {
+            return Err("Only an existing door or window can move to another wall".into());
+        }
+        let to = to.filter(|to| Some(*to) != self.wall);
+        if to == self.rehost {
+            return Ok(());
+        }
+        if let Some(to) = to {
+            let offset = model::centered_on_first_segment(document, to, self.width_mm(document))
+                .map_err(|e| e.to_string())?;
+            self.segment = 1;
+            self.offset.set_literal((offset / 10.).round() * 10., "mm");
+        } else if let (Some(wall), Some(id)) = (self.wall, self.editing)
+            && let Ok(original) = Self::existing(document, wall, id)
+        {
+            self.segment = original.segment;
+            self.offset = original.offset;
+        }
+        self.rehost = to;
+        self.remove = false;
+        self.changed();
+        Ok(())
+    }
     pub fn label(&self) -> &'static str {
         self.kind.title()
     }
@@ -393,6 +453,7 @@ impl OpeningPanel {
                 new_types: vec![],
                 change: WallOpeningChange::Remove(id),
                 cutout: Some(CutoutChange::Remove(id)),
+                rehost_from: None,
             });
         }
         if !self.cut_wall && !self.cut_slabs {
@@ -472,6 +533,7 @@ impl OpeningPanel {
             new_types: vec![],
             change: WallOpeningChange::Remove(id),
             cutout: Some(CutoutChange::place(placement)),
+            rehost_from: None,
         })
     }
     pub fn request(&self, document: &Document, enabled: bool) -> Result<OpeningCommand, String> {
@@ -493,6 +555,7 @@ impl OpeningPanel {
                 new_types: vec![],
                 change: WallOpeningChange::Remove(id),
                 cutout: None,
+                rehost_from: None,
             });
         }
         let segment = self
@@ -555,6 +618,18 @@ impl OpeningPanel {
                     height: sized.then(|| self.height.resolve(document)).transpose()?,
                     sill: sized.then(|| self.sill.resolve(document)).transpose()?,
                 };
+                if let Some(to) = self
+                    .rehost
+                    .filter(|to| self.editing.is_some() && *to != wall)
+                {
+                    return Ok(OpeningCommand {
+                        anchor: to,
+                        new_types,
+                        change: WallOpeningChange::AddOpening(opening),
+                        cutout: None,
+                        rehost_from: Some(wall),
+                    });
+                }
                 if self.editing.is_some() {
                     WallOpeningChange::ReplaceOpening(opening)
                 } else {
@@ -567,6 +642,7 @@ impl OpeningPanel {
             new_types,
             change,
             cutout: None,
+            rehost_from: None,
         })
     }
     /// The live placement check: the shared planner on the current inputs.
@@ -622,8 +698,14 @@ impl OpeningPanel {
                 (c.segment, c.offset_mm, c.offset_mm + c.width_mm)
             };
         let length = planned.plan.segments[segment].length_mm;
+        let moving = command
+            .rehost_from
+            .and_then(|_| model::read_wall(document, command.anchor).ok())
+            .and_then(|wall| document.get(wall.output.body))
+            .map(|wall| format!("Moves to {} · ", wall.name))
+            .unwrap_or_default();
         Ok(format!(
-            "Fits segment {} ({length:.0} mm): {a:.0}–{b:.0} mm along it, {:.0} mm to its end",
+            "{moving}Fits segment {} ({length:.0} mm): {a:.0}–{b:.0} mm along it, {:.0} mm to its end",
             segment + 1,
             length - b
         ))
@@ -683,11 +765,17 @@ impl OpeningPanel {
             ));
             return false;
         };
-        if self.editing.is_some() && self.wall != Some(hover.wall) {
-            self.error = Some("Pick the existing opening's wall to reposition it".into());
+        if self.editing.is_some() && self.placement_wall() != Some(hover.wall) {
+            self.error = Some(if self.rehost.is_some() {
+                "Pick the wall chosen in Move to wall to place it there".into()
+            } else {
+                "Pick the existing opening's wall to reposition it".into()
+            });
             return false;
         }
-        self.wall = Some(hover.wall);
+        if self.rehost.is_none() {
+            self.wall = Some(hover.wall);
+        }
         self.segment = hover.segment + 1;
         self.offset.set_literal(hover.offset_mm, "mm");
         self.changed();
@@ -889,6 +977,7 @@ impl OpeningPanel {
                         .changed()
                     {
                         self.editing = None;
+                        self.rehost = None;
                         self.remove = false;
                         changed = true;
                     }
@@ -984,6 +1073,46 @@ impl OpeningPanel {
                 changed = true;
             }
         }
+        if self.editing.is_some() && self.kind != RoomOpening::Cutout && !self.remove {
+            let level = self
+                .wall
+                .and_then(|w| model::read_wall(document, w).ok())
+                .map(|w| w.level);
+            let hosts: Vec<_> = walls
+                .iter()
+                .filter(|(id, _)| {
+                    Some(*id) != self.wall
+                        && model::read_wall(document, *id).is_ok_and(|w| Some(w.level) == level)
+                })
+                .cloned()
+                .collect();
+            if !hosts.is_empty() {
+                ui.label("Move to wall");
+                let current = self
+                    .rehost
+                    .and_then(|id| hosts.iter().find(|(w, _)| *w == id).map(|(_, n)| n.clone()))
+                    .unwrap_or_else(|| "Keep in this wall".into());
+                let mut pick = self.rehost;
+                controls::inspector_combo(ui, "opening-rehost")
+                    .selected_text(current)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut pick, None, "Keep in this wall");
+                        for (id, name) in &hosts {
+                            ui.selectable_value(&mut pick, Some(*id), name);
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "Apply moves this opening, with its identity and type, to the chosen wall on the same level",
+                    );
+                if pick != self.rehost {
+                    if let Err(error) = self.set_rehost(document, pick) {
+                        self.error = Some(error);
+                    }
+                    changed = true;
+                }
+            }
+        }
         if !self.remove {
             let label = if self.picking {
                 "Picking: click a wall face in the viewport"
@@ -1012,16 +1141,15 @@ impl OpeningPanel {
                 return;
             }
             let segments = self
-                .wall
+                .placement_wall()
                 .and_then(|w| model::read_wall(document, w).ok())
                 .map_or(1, |w| w.segment_count().max(1));
-            ui.horizontal(|ui| {
-                ui.label("Segment");
-                changed |= ui
-                    .add(egui::DragValue::new(&mut self.segment).range(1..=segments))
-                    .changed();
-                ui.small(format!("of {segments}"));
-            });
+            let label = format!("Segment (of {segments})");
+            changed |= crate::numeric_field::NumericField::new(&label, "count")
+                .id(ui.make_persistent_id("opening-segment"))
+                .value(ui, &mut self.segment, 1..=segments)
+                .input
+                .changed();
             changed |= self.offset.show(
                 ui,
                 "Offset along segment",
@@ -1189,16 +1317,11 @@ impl OpeningPanel {
         changed |= self
             .plan_depth
             .show(ui, "Depth", "Size along the rotated Y direction");
-        ui.horizontal(|ui| {
-            ui.label("Rotation");
-            changed |= ui
-                .add(
-                    egui::DragValue::new(&mut self.plan_rotation_deg)
-                        .range(-360.0..=360.0)
-                        .suffix(" °"),
-                )
-                .changed();
-        });
+        changed |= crate::numeric_field::NumericField::new("Rotation", "deg")
+            .id(ui.make_persistent_id("opening-plan-rotation"))
+            .value(ui, &mut self.plan_rotation_deg, -360.0..=360.0)
+            .input
+            .changed();
         changed
     }
     fn show_type(&mut self, ui: &mut egui::Ui, document: &Document, kind: RoomOpening) -> bool {

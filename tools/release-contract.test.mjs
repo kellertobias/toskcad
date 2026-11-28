@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { githubRepositoryUrl, requirePublicationEnvironment, requireVersion } from './release-policy.mjs';
-import {archiveRunArguments,exampleGeneratorFilter,nextestVersion,packageTestArguments,partitionArchiveArguments,partitionArchiveName,partitionBinaries,testPartitions,workspaceDocTestArguments,workspaceListArguments,workspaceTestArguments} from './native-test-shard.mjs';
+import {archivePartitions,archiveRunArguments,archiveTargetDirectory,prepareArchiveRun,exampleGeneratorFilter,nextestVersion,packageTestArguments,partitionArchiveArguments,partitionArchiveName,partitionBinaries,testPartitions,workspaceDocTestArguments,workspaceListArguments,workspaceTestArguments} from './native-test-shard.mjs';
 
 const require = createRequire(import.meta.url);
 const config = require('../release.config.cjs');
@@ -189,6 +189,25 @@ test('every platform compiles the workspace tests once and its archive runs all 
   const archive=job('test_archive'),test=job('test'),pack=job('package');
   for(const os of ['ubuntu-24.04','macos-15','windows-2025'])for(const [name,text] of [['test_archive',archive],['test',test],['package',pack]])assert(text.includes(`os: ${os}`),`${name} ${os}`);
   assert(archive.includes('run: node tools/native-test-shard.mjs archive nextest'));
+  // Tests start `multicad` through a compile-time path; extracted archives
+  // put binaries in `target/`, so the archive job compiles exactly there.
+  assert(archive.includes('      CARGO_TARGET_DIR: ${{ github.workspace }}/target\n'));
+  assert.equal(archiveTargetDirectory('/w'),join('/w','target'));
+  // Extracted archives lack CARGO_TARGET_TMPDIR; the runner creates it.
+  const workspace=mkdtempSync(join(tmpdir(),'multicad-archive-run-'));
+  try{
+    const tmp=prepareArchiveRun(workspace);
+    assert.equal(tmp,join(workspace,'target','tmp'));
+    assert(statSync(tmp).isDirectory());
+    assert.equal(prepareArchiveRun(workspace),tmp);
+  }finally{rmSync(workspace,{recursive:true,force:true});}
+  const saved=process.env.CARGO_TARGET_DIR;
+  try{
+    for(const wrong of [undefined,'target/cargo']){
+      if(wrong===undefined)delete process.env.CARGO_TARGET_DIR;else process.env.CARGO_TARGET_DIR=wrong;
+      assert.throws(()=>archivePartitions('unused'),/CARGO_TARGET_DIR=/);
+    }
+  }finally{if(saved===undefined)delete process.env.CARGO_TARGET_DIR;else process.env.CARGO_TARGET_DIR=saved;}
   assert(archive.includes('run: cargo test --workspace --doc --profile ci --locked'));
   assert(archive.includes('run: node tools/release-budgets.mjs --profile ci --repeat 1'));
   for(let k=1;k<=testPartitions;k++){
@@ -200,6 +219,8 @@ test('every platform compiles the workspace tests once and its archive runs all 
   assert(test.includes('name: nextest-${{ matrix.target }}-${{ matrix.partition }}-${{ github.sha }}'));
   assert(test.includes('run: node tools/native-test-shard.mjs shard "nextest-${{ matrix.partition }}.tar.zst"'));
   assert.doesNotMatch(pack,/nextest/);
+  // Packaging runs `tar`; Git Bash's GNU tar misreads Windows drive paths.
+  assert.doesNotMatch(pack,/shell: bash/);
   assert.match(release,/needs: \[metadata, quality, package, test, owned-kernel\]/);
   const weights=JSON.parse(readFileSync(new URL('./test-weights.json',import.meta.url),'utf8'));
   assert.match(weights.source,/never skips a test/);

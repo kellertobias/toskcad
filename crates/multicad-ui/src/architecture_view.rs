@@ -619,6 +619,7 @@ pub(crate) mod tests {
         let mut context = Context::default();
         context.sync(session.document(), session.revision());
         let mut camera = Camera {
+            roll: 0.0,
             yaw: 0.8,
             pitch: 0.4,
             scale: 0.1,

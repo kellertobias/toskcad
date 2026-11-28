@@ -38,13 +38,14 @@ pub(crate) struct NormalSweepBody {
 /// face ordinal 0 lies at height 0 and ordinal 1 at the far end; side
 /// `i` is face `2 + i`.
 pub(super) struct TreatablePrism<'a> {
-    pub(super) ring: &'a [Edge],
+    /// The outer ring, counterclockwise, then the hole rings, clockwise.
+    pub(super) rings: &'a [Vec<Edge>],
     pub(super) span: [f64; 2],
     pub(super) reverse: bool,
     pub(super) feature: EntityId,
     pub(super) origins: Vec<&'a Origin>,
-    /// The authored profile ran clockwise and was reversed into the ring.
-    pub(super) authored_reversed: bool,
+    /// Per ring: the authored wire ran the other way and was reversed.
+    pub(super) authored_reversed: Vec<bool>,
     pub(super) path_origin: Option<&'a Origin>,
     pub(super) cap_anchors: Option<[ReferenceFrame; 2]>,
 }
@@ -328,21 +329,30 @@ impl NormalSweepBody {
         self.sides.iter().map(|side| &side.origin)
     }
 
-    /// The single outer ring of an unpierced line-and-arc sweep without
-    /// stock history, for edge treatments that rebuild the prism.
+    /// The line-and-arc rings of an unpierced sweep without stock history,
+    /// for edge treatments that rebuild the prism.
     pub(super) fn treatable_prism(&self) -> Option<TreatablePrism<'_>> {
         let rings = self.sweep.rings();
         (self.openings.is_none()
             && self.stock_history.is_none()
-            && rings.len() == 1
-            && self.sides.len() == rings[0].len()
-            && !rings[0]
+            && self.sides.len() == rings.iter().map(Vec::len).sum::<usize>()
+            && !rings
                 .iter()
+                .flatten()
                 .any(|edge| matches!(edge, Edge::Circle { .. })))
         .then(|| {
             let height = self.sweep.height_mm();
+            let mut first = 0;
+            let authored_reversed = rings
+                .iter()
+                .map(|ring| {
+                    let reversed = self.sides[first].reversed;
+                    first += ring.len();
+                    reversed
+                })
+                .collect();
             TreatablePrism {
-                ring: &rings[0],
+                rings,
                 span: if self.reverse {
                     [-height, 0.]
                 } else {
@@ -351,7 +361,7 @@ impl NormalSweepBody {
                 reverse: self.reverse,
                 feature: self.feature,
                 origins: self.sides.iter().map(|side| &side.origin).collect(),
-                authored_reversed: self.sides.first().is_some_and(|side| side.reversed),
+                authored_reversed,
                 path_origin: self.path_origin.as_ref(),
                 cap_anchors: self.cap_anchors,
             }

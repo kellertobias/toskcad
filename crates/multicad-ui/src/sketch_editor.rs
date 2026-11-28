@@ -55,6 +55,10 @@ mod mechanical_import_host;
 #[path = "model_target_selection.rs"]
 mod model_target_selection;
 #[cfg(test)]
+mod numeric_field_tests;
+#[cfg(test)]
+mod open_sketch_tests;
+#[cfg(test)]
 mod overlap_profile_extrude_tests;
 #[path = "sketch_profile_connection_host.rs"]
 mod profile_connection_host;
@@ -65,9 +69,14 @@ mod scale_host_tests;
 mod screw_connection_host;
 mod shape_list;
 #[cfg(test)]
+pub(crate) use shape_list::SelectionSnapshot;
+#[cfg(test)]
 mod shape_list_tests;
 #[cfg(test)]
 mod sketch_entry_tests;
+mod sketch_tree;
+#[cfg(test)]
+mod sketch_tree_tests;
 #[path = "sketch_snap.rs"]
 mod snap;
 #[path = "sketch_snap_host.rs"]
@@ -172,6 +181,19 @@ struct SplinePointer {
     anchor: Option<EntityId>,
     clicked: bool,
 }
+/// What a plain right-click in the Model viewport asks for (CAD-413).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelRightClick {
+    EndTool,
+    RepeatTool,
+}
+/// A drawing tool with the settings it ended with (CAD-413).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RepeatTool {
+    pub tool: DrawTool,
+    pub construction: bool,
+    pub corner_size_mm: f64,
+}
 pub struct SketchEditor {
     architecture: crate::architecture_view::Context,
     show_source_tree: bool,
@@ -202,6 +224,17 @@ pub struct SketchEditor {
     construction: bool,
     /// Fillet radius or chamfer setback for the corner tools, in mm.
     corner_size_mm: f64,
+    /// Fillet / chamfer shapes made in the active corner tool session; a new
+    /// size in the tool resizes them (CAD-414).
+    corner_session: Vec<EntityId>,
+    /// The size those shapes currently have.
+    corner_session_size: Option<f64>,
+    /// The last ended drawing tool and its settings; a plain right-click in
+    /// Select restarts it (CAD-413).
+    last_tool: Option<RepeatTool>,
+    /// A plain right-click in the Model viewport this frame (CAD-413): end
+    /// the active Model tool, or repeat the last one. The application acts.
+    model_right_click: Option<ModelRightClick>,
     /// Text tool Inspector state (CAD-142).
     text_tool: text_tool::TextTool,
     draw_preview_id: EntityId,
@@ -209,6 +242,8 @@ pub struct SketchEditor {
     /// Selected sketch element in the left list (CAD-398).
     shape: Option<shape_list::ElementKey>,
     shape_fields: shape_list::ShapeFields,
+    /// Model / Sketch tabs of the left sidebar (CAD-415).
+    sketch_sidebar: sketch_tree::SketchSidebar,
     pub camera: Camera,
     style: DisplayStyle,
     grid: bool,
@@ -261,6 +296,9 @@ pub struct SketchEditor {
     measure_pin_allowed: bool,
     initial_fit: crate::initial_fit::InitialFit,
     home_requested: bool,
+    /// Plane normal (toward the eye) of the sketch the view was last
+    /// oriented to; roll arrows turn about it while editing (CAD-419).
+    sketch_normal: Option<[f32; 3]>,
     tree: crate::model_tree::ModelTree,
     tree_selection: std::collections::BTreeSet<EntityId>,
     sheet_view_requested: bool,
@@ -324,11 +362,16 @@ impl Default for SketchEditor {
             inline: Default::default(),
             construction: false,
             corner_size_mm: 2.,
+            corner_session: vec![],
+            corner_session_size: None,
+            last_tool: None,
+            model_right_click: None,
             text_tool: Default::default(),
             draw_preview_id: EntityId::new(),
             element: None,
             shape: None,
             shape_fields: Default::default(),
+            sketch_sidebar: Default::default(),
             camera: Camera {
                 target: [0.; 3],
                 ..Default::default()
@@ -384,6 +427,7 @@ impl Default for SketchEditor {
             measure_pin_allowed: true,
             initial_fit: Default::default(),
             home_requested: false,
+            sketch_normal: None,
             tree: Default::default(),
             tree_selection: Default::default(),
             sheet_view_requested: false,
@@ -780,6 +824,26 @@ impl SketchEditor {
             .then(|| self.model.wood_preset())
             .flatten()
     }
+    /// The Model viewport's plain right-click request of the last frame.
+    pub fn take_model_right_click(&mut self) -> Option<ModelRightClick> {
+        self.model_right_click.take()
+    }
+    /// Repeatable settings of the active Model tool (CAD-413).
+    pub(crate) fn model_tool_settings(&self) -> Option<crate::modeling::ToolSettings> {
+        self.model.tool_settings()
+    }
+    /// Start the just-begun Model tool from earlier settings (CAD-413).
+    pub(crate) fn restore_model_tool_settings(
+        &mut self,
+        settings: &crate::modeling::ToolSettings,
+    ) -> bool {
+        self.model.restore_tool_settings(settings)
+    }
+    /// Whether a Model tool is mid-gesture: a handle drag or point pick that
+    /// Enter or a right-click must not end.
+    pub(crate) fn model_gesture_active(&self) -> bool {
+        self.model.gesture_active()
+    }
     pub fn model_active(&self) -> bool {
         self.model.active()
             || self.assembly.active()
@@ -904,6 +968,53 @@ impl SketchEditor {
             .filter_map(|id| multicad_core::model::wood_box_owner(document, id))
             .collect();
         (recipes.len() == 1).then(|| *recipes.first().expect("one recipe"))
+    }
+    /// The one wall-hosted opening selected in the tree (CAD-428).
+    pub(crate) fn selected_opening(
+        &self,
+        document: &Document,
+    ) -> Option<multicad_core::model::HostedOpening> {
+        if self.tree_selection.len() != 1 {
+            return None;
+        }
+        let id = *self.tree_selection.first()?;
+        document
+            .get(id)
+            .is_none()
+            .then(|| multicad_core::model::opening_host(document, id))
+            .flatten()
+    }
+    /// Reopen the selected door, window or cutout in its Room tool.
+    pub(crate) fn begin_opening_edit(
+        &mut self,
+        session: &Session,
+        resources: &multicad_core::project_file::ProjectResources,
+        feed: &crate::viewport::SceneFeed,
+        channel: Channel,
+    ) -> Result<(), String> {
+        let host = self
+            .selected_opening(session.document())
+            .ok_or("Select one door, window or cutout in the model tree")?;
+        if !self.primitive_ready() || self.editing {
+            return Err("Apply or cancel the active operation before editing this opening".into());
+        }
+        self.model
+            .begin_opening_existing(session, resources, host.wall, host.id, channel)?;
+        if feed.is_current(session.document().id(), session.revision())
+            && let Some(scene) = feed.visible()
+        {
+            let _ = self.model.set_feature_context(session, resources, scene);
+        } else {
+            self.model.source_only_context(
+                feed.error()
+                    .unwrap_or("The current native model is not ready"),
+            );
+        }
+        self.message = format!(
+            "Edit {} · change it, move it to another wall or remove it, then Preview",
+            host.kind.label().to_lowercase()
+        );
+        Ok(())
     }
     fn selected_applied_feature(&self, document: &Document) -> Option<(EntityId, bool)> {
         if self.tree_selection.len() != 1 {
@@ -1167,14 +1278,25 @@ impl SketchEditor {
             "Boolean · the preview follows the selected bodies; Apply or Enter commits".into();
         Ok(())
     }
+    /// The wall path's inline Length/Angle fields (CAD-427).
+    pub(crate) fn model_outline_inline_visible(&self) -> bool {
+        self.model.outline_inline_visible()
+    }
+    pub(crate) fn focus_model_outline_inline(&mut self, forward: bool) {
+        self.model.focus_outline_inline(forward);
+    }
     /// Route a path-drawing key to the active wall, fence or slab outline.
     /// Returns the status text, or `None` when no path takes the key.
     pub(crate) fn model_outline_key(
         &mut self,
         key: crate::modeling::OutlineKey,
     ) -> Option<&'static str> {
+        let chains = self.model.outline_chains();
         self.model.outline_key(key)?;
         let message = match key {
+            crate::modeling::OutlineKey::Finish | crate::modeling::OutlineKey::Cancel if chains => {
+                "Wall chain ended · placed segments kept · Apply builds them as one wall"
+            }
             crate::modeling::OutlineKey::Finish => "Path finished · Preview or Apply builds it",
             crate::modeling::OutlineKey::Cancel => "Path drawing cancelled · previous path kept",
             crate::modeling::OutlineKey::RemoveLast => "Last corner removed",
@@ -1189,6 +1311,17 @@ impl SketchEditor {
     #[cfg(test)]
     pub(crate) fn model_for_tests_mut(&mut self) -> &mut crate::modeling::ModelToolController {
         &mut self.model
+    }
+    #[cfg(test)]
+    pub(crate) fn tree_rows_for_tests(
+        &mut self,
+        session: &Session,
+    ) -> Vec<crate::model_tree::TreeRow> {
+        self.tree.rows(session).unwrap().to_vec()
+    }
+    #[cfg(test)]
+    pub(crate) fn solid_for_tests(&self) -> &crate::viewport::Interaction {
+        &self.solid
     }
     #[cfg(test)]
     pub(crate) fn tree_selection_for_tests(&self) -> &std::collections::BTreeSet<EntityId> {
@@ -1906,6 +2039,7 @@ impl SketchEditor {
             )
         }) {
             self.camera = Camera {
+                roll: 0.0,
                 yaw: Camera::PLAN_YAW,
                 pitch: std::f32::consts::FRAC_PI_2,
                 scale: 0.05,
@@ -1967,6 +2101,7 @@ impl SketchEditor {
             )
         }) {
             self.camera = Camera {
+                roll: 0.0,
                 yaw: Camera::PLAN_YAW,
                 pitch: std::f32::consts::FRAC_PI_2,
                 scale: 0.05,
@@ -2040,6 +2175,48 @@ impl SketchEditor {
         self.model_workspace = mode == crate::registry::Mode::Model;
         self.motion_workspace = mode == crate::registry::Mode::Motion;
     }
+    /// The canonical source of a sketch, face sketches included.
+    #[cfg(test)]
+    pub(crate) fn canonical_source(
+        &self,
+        document: &Document,
+        sketch: EntityId,
+    ) -> multicad_core::constraint_sketch::source::Source {
+        shape_list::canonical(document, sketch).expect("a canonical sketch source")
+    }
+    /// The current solved sketch of `sketch`, if the worker has published it.
+    #[cfg(test)]
+    pub(crate) fn solved_for_tests(
+        &self,
+        sketch: EntityId,
+    ) -> Option<multicad_core::constraint_sketch::Sketch> {
+        self.sketch_evaluation
+            .current(sketch)
+            .and_then(|p| p.evaluated.solved().cloned())
+    }
+    /// The canvas status line.
+    #[cfg(test)]
+    pub(crate) fn status_message(&self) -> &str {
+        &self.message
+    }
+    /// Whether the sketch worker still owes the open sketch's solution.
+    #[cfg(test)]
+    pub(crate) fn sketch_evaluation_pending(&self) -> bool {
+        self.sketch_evaluation.pending()
+    }
+    /// Screen position of an open-sketch plane point in the last viewport.
+    #[cfg(test)]
+    pub(crate) fn sketch_screen(&self, session: &Session, p: [f64; 2]) -> Pos2 {
+        let sketch = self.selected.expect("an open sketch");
+        let (_, frame, _) = self
+            .read_sketch(session.document(), sketch, session.revision())
+            .expect("a readable sketch");
+        let s = self.camera.project(
+            frame.point(p).map(|v| v as f32),
+            self.viewport_rect.expect("a painted viewport"),
+        );
+        Pos2::new(s[0], s[1])
+    }
     pub fn has_pending_edits(&self) -> bool {
         if self.materials.pending() {
             return true;
@@ -2086,8 +2263,12 @@ impl SketchEditor {
         self.moving = false;
         self.picking = false;
         self.plane_picker.cancel();
-        self.tool = None;
-        self.clear_drawing_progress();
+        // Escape drops the pending gesture; the tool stays repeatable.
+        let message = self.message.clone();
+        if self.end_tool().is_none() {
+            self.clear_drawing_progress();
+        }
+        self.message = message;
         self.snap_assist.clear();
         self.cancel_move();
         // A queued or running face projection creates nothing (CAD-383).
@@ -2402,7 +2583,9 @@ impl SketchEditor {
             frame.n[0].portable_atan2(frame.n[1]) as f32
         };
         self.camera.pitch = frame.n[2].clamp(-1., 1.).portable_asin() as f32;
+        self.camera.roll = 0.;
         self.camera.target = frame.origin.map(|v| v as f32);
+        self.sketch_normal = Some(frame.n.map(|v| v as f32));
     }
     fn refresh_contexts(&mut self, doc: &Document, revision: u64) {
         let Some(scene) = self.display_scene.as_deref() else {
@@ -2775,6 +2958,20 @@ impl SketchEditor {
         }
         self.activate_sketch(id)
     }
+    /// Whether a viewport double-click on sketch geometry may open that
+    /// sketch (CAD-425): nothing else owns the pointer or has pending edits.
+    fn double_click_opens_sketch(&self) -> bool {
+        !self.editing
+            && !self.picking
+            && !self.moving
+            && !self.has_pending_edits()
+            && !self.measurement.active()
+            && !self.model.active()
+            && !self.assembly.active()
+            && !self.transfer.active()
+            && !self.external.active()
+            && self.acquisition.is_none()
+    }
     pub fn open_at(&mut self, doc: &Document, id: EntityId, revision: u64) -> Result<(), String> {
         if multicad_core::symbols::owned_entities(doc)
             .map_err(|e| e.to_string())?
@@ -2892,6 +3089,69 @@ impl SketchEditor {
         };
         Ok(())
     }
+    /// The Select tool (CAD-412): end the active drawing or sketch edit tool,
+    /// discarding only its uncommitted gesture, so canvas clicks select.
+    pub fn select_tool(&mut self) {
+        if !self.editing {
+            return;
+        }
+        self.end_tool();
+        if self.operations.tool().is_some() && !self.has_pending_edits() {
+            self.cancel_operation();
+        }
+        self.message =
+            "Select · click curves or points · Shift/Cmd-click adds or removes · empty space clears"
+                .into();
+    }
+    /// End the active drawing tool, keeping committed geometry and dropping
+    /// only the uncommitted gesture. The tool and its settings are kept for a
+    /// right-click repeat (CAD-413). Returns the ended tool.
+    pub fn end_tool(&mut self) -> Option<DrawTool> {
+        let tool = self.tool.take()?;
+        self.corner_session.clear();
+        self.last_tool = Some(RepeatTool {
+            tool,
+            construction: self.construction,
+            corner_size_mm: self.corner_size_mm,
+        });
+        self.clear_drawing_progress();
+        self.inline = Default::default();
+        self.inline_fields_ui_hidden();
+        self.snap_assist.clear();
+        self.message = format!(
+            "{} ended · committed geometry stays · {}",
+            tool.label(),
+            Self::repeat_hint(tool)
+        );
+        Some(tool)
+    }
+    /// Status hint that a plain right-click in Select repeats `tool`.
+    pub(crate) fn repeat_hint(tool: DrawTool) -> String {
+        format!("Select · right-click repeats {}", tool.label())
+    }
+    /// Restart the last ended drawing tool with its settings (CAD-413).
+    pub fn repeat_last_tool(&mut self) -> Result<DrawTool, String> {
+        let last = self.last_tool.ok_or("No drawing tool to repeat yet")?;
+        self.set_tool(last.tool)?;
+        self.construction = last.construction;
+        self.corner_size_mm = last.corner_size_mm;
+        self.set_tool_status();
+        self.message = format!("{} repeated · {}", last.tool.label(), self.message);
+        Ok(last.tool)
+    }
+    /// A single-shot tool's gesture committed: return to Select (CAD-413).
+    pub(super) fn end_single_shot(&mut self, tool: DrawTool) {
+        if !tool.single_shot() || self.tool != Some(tool) {
+            return;
+        }
+        let committed = std::mem::take(&mut self.message);
+        self.end_tool();
+        self.message = format!("{committed} · {}", Self::repeat_hint(tool));
+    }
+    /// Whether the open sketch is in the Select tool: no drawing or edit tool.
+    pub fn select_active(&self) -> bool {
+        self.editing && self.tool.is_none() && self.operations.tool().is_none()
+    }
     pub fn set_tool(&mut self, tool: DrawTool) -> Result<(), String> {
         if self.has_pending_edits() {
             return Err(self.pending_edits_refusal());
@@ -2904,6 +3164,7 @@ impl SketchEditor {
         self.external.cancel();
         self.moving = false;
         self.tool = Some(tool);
+        self.corner_session.clear();
         self.clear_drawing_progress();
         self.snap_assist.clear();
         self.set_tool_status();
@@ -3035,7 +3296,14 @@ impl SketchEditor {
                 construction: self.construction,
             },
             channel,
-        )
+        )?;
+        // A spline is one shape: finishing it returns to Select (CAD-413).
+        // A face projection ends the tool once it commits.
+        if !self.projection_pending() {
+            self.message = "Spline committed · Undo removes it".into();
+            self.end_single_shot(DrawTool::Spline);
+        }
+        Ok(())
     }
     fn spline_pointer(
         &mut self,
@@ -3500,8 +3768,13 @@ impl SketchEditor {
                 None
             }
         });
-        self.tree_selection
-            .retain(|id| *id == session.document().id() || session.document().get(*id).is_some());
+        // A selected door, window or cutout is a source identity in its
+        // wall; it stays selected while a wall hosts it (CAD-428).
+        self.tree_selection.retain(|id| {
+            *id == session.document().id()
+                || session.document().get(*id).is_some()
+                || multicad_core::model::opening_host(session.document(), *id).is_some()
+        });
         if let Some(current) = scene
             .as_ref()
             .filter(|scene| scene.stamp().revision == session.revision())
@@ -3533,7 +3806,9 @@ impl SketchEditor {
             self.clear_drawing_progress();
             self.revision = session.revision();
             self.tree_selection.retain(|id| {
-                *id == session.document().id() || session.document().get(*id).is_some()
+                *id == session.document().id()
+                    || session.document().get(*id).is_some()
+                    || multicad_core::model::opening_host(session.document(), *id).is_some()
             });
             if self.selected.is_some_and(|id| {
                 !matches!(
@@ -3558,8 +3833,14 @@ impl SketchEditor {
                 .size_range(160. ..=(ui.available_width() * 0.35).max(160.))
                 .resizable(true)
                 .show(ui, |ui| {
-                    self.element_list(ui, session);
+                    // CAD-415: while a sketch is open, Model and Sketch tabs;
+                    // the Sketch tab opens with the sketch.
+                    let tab = self.sidebar_tabs(ui);
                     self.architecture_panel(ui, session, resources, feed, scene.as_deref());
+                    if tab == sketch_tree::SidebarTab::Sketch {
+                        self.sketch_tree(ui, session);
+                        return;
+                    }
                     let options = crate::model_tree::TreeOptions {
                         enabled: (!self.has_pending_edits() || self.acquisition.is_some())
                             && !self.measurement.active(),
@@ -3572,21 +3853,6 @@ impl SketchEditor {
                         self.tree.show(ui, session, &self.tree_selection, options)
                     };
                     self.handle_tree_events(session, scene.as_deref(), events);
-                    if self.selected.is_some()
-                        && !self.editing
-                        && ui
-                            .add_enabled(
-                                !self.has_pending_edits(),
-                                egui::Button::new("Open selected sketch"),
-                            )
-                            .clicked()
-                    {
-                        let id = self.selected.expect("selected");
-                        if let Err(error) = self.open_at(session.document(), id, session.revision())
-                        {
-                            self.message = error;
-                        }
-                    }
                 });
         }
         if !self.measurement.active() {
@@ -3775,6 +4041,20 @@ impl SketchEditor {
                             }
                             if self.model_active() {return;}
                         }
+                        if let Some(host)=self.selected_opening(session.document()) {
+                            let wall=session.document().get(host.part).map(|e|e.name.clone()).unwrap_or_else(||"wall".into());
+                            ui.separator();
+                            ui.strong(format!("{} · {}",host.kind.label(),host.name));
+                            ui.small(format!("Hosted by {wall} · segment {}",host.segment+1));
+                            let ready=self.primitive_ready() && !self.editing;
+                            if ui.add_enabled(ready,egui::Button::new(format!("Edit {}",host.kind.label().to_lowercase())))
+                                .on_hover_text("Reopen its saved placement, size and type; move it to another wall or remove it")
+                                .on_disabled_hover_text("Apply or cancel the active operation first")
+                                .clicked()
+                                && let Err(error)=self.begin_opening_edit(session,resources,feed,Channel::Ui)
+                            {self.message=error;}
+                            if self.model_active() {return;}
+                        }
                         self.solid.inspector(ui,session.document());
                         if !sketch_mode && !self.editing {
                             let mut selection=self.tree_selection.clone();
@@ -3903,22 +4183,14 @@ impl SketchEditor {
                                     if self.moving {
                                         ui.separator();
                                         ui.strong("Move sketch");
-                                        if matches!(self.coordinates, Coordinates::Custom(_)) {
-                                            ui.horizontal(|ui| {
-                                                ui.label("Custom axis angle");
-                                                if ui
-                                                    .add(
-                                                        egui::DragValue::new(
-                                                            &mut self.custom_angle_deg,
-                                                        )
-                                                        .suffix("°")
-                                                        .range(-360.0..=360.0),
-                                                    )
-                                                    .changed()
-                                                {
-                                                    self.cancel_move();
-                                                }
-                                            });
+                                        if matches!(self.coordinates, Coordinates::Custom(_))
+                                            && crate::numeric_field::NumericField::new("Custom axis angle", "deg")
+                                                .id(ui.make_persistent_id("sketch-move-axis-angle"))
+                                                .value(ui, &mut self.custom_angle_deg, -360.0..=360.0)
+                                                .input
+                                                .changed()
+                                        {
+                                            self.cancel_move();
                                         }
                                         ui.label(format!(
                                             "{} coordinates · mm",
@@ -3928,15 +4200,11 @@ impl SketchEditor {
                                         for (i, label) in
                                             ["X / U", "Y / V", "Z / N"].into_iter().enumerate()
                                         {
-                                            ui.horizontal(|ui| {
-                                                ui.label(label);
-                                                changed |= ui
-                                                    .add(
-                                                        egui::DragValue::new(&mut self.delta[i])
-                                                            .speed(0.5),
-                                                    )
-                                                    .changed();
-                                            });
+                                            changed |= crate::numeric_field::NumericField::new(label, "mm")
+                                                .id(ui.make_persistent_id(("sketch-move-delta", i)))
+                                                .value(ui, &mut self.delta[i], f64::NEG_INFINITY..=f64::INFINITY)
+                                                .input
+                                                .changed();
                                         }
                                         if changed && let Err(e) = self.prepare_move(session) {
                                             self.preview = None;
@@ -4520,6 +4788,7 @@ impl SketchEditor {
             // Flat patterns read in plan: +X right, +Y up, seen from above.
             self.camera.yaw = Camera::PLAN_YAW;
             self.camera.pitch = std::f32::consts::FRAC_PI_2;
+            self.camera.roll = 0.;
             self.camera.perspective = false;
             let home = std::mem::take(&mut self.home_requested);
             if (home || self.fit_requested)
@@ -4884,6 +5153,13 @@ impl SketchEditor {
                     rect,
                     &self.solid.selected_ids(),
                     self.solid.hovered_instance(),
+                );
+                plan.paint_openings(
+                    &painter,
+                    session,
+                    self.camera,
+                    rect,
+                    self.solid.selected_openings(),
                 );
             }
             if response.clicked() && selectable {
@@ -5310,6 +5586,11 @@ impl SketchEditor {
                 self.sketch_area_under_pointer(session, scene.as_deref(), rect, pointer)
             });
         let mut hovered_profile = None;
+        // CAD-425: double-clicking a finished sketch's geometry opens it.
+        let double_click = response
+            .interact_pointer_pos()
+            .filter(|_| response.double_clicked() && self.double_click_opens_sketch());
+        let mut double_clicked_sketch = None;
         for e in doc.entities().filter(|e| {
             !self.measurement.active()
                 && !self.repair.viewing_candidates()
@@ -5327,6 +5608,24 @@ impl SketchEditor {
             if let Ok((source, frame, _)) =
                 self.read_sketch_with_hash(doc, e.id, session.revision(), source_hash)
             {
+                if let Some(pointer) = double_click
+                    && double_clicked_sketch.is_none()
+                    && let Some(current) = self.sketch_evaluation.current(e.id)
+                    && current.stamp.document == session.document().id()
+                    && current.stamp.revision == session.revision()
+                    && let Some(solved) = current.evaluated.solved()
+                    && crate::sketch_selection::pick_geometry(
+                        pointer,
+                        self.camera,
+                        rect,
+                        frame,
+                        &solved.points,
+                        &current.geometry,
+                    )
+                    .is_some()
+                {
+                    double_clicked_sketch = Some(e.id);
+                }
                 let tool_first = tool_first_hover.filter(|(id, _)| *id == e.id);
                 if (self.selected == Some(e.id)
                     && (self.editing || self.acquiring_profiles() || face_preselection)
@@ -5475,6 +5774,12 @@ impl SketchEditor {
             }
         }
         self.hovered_profile = hovered_profile;
+        if let Some(id) = double_clicked_sketch {
+            self.solid.clear();
+            if let Err(error) = self.open_at(session.document(), id, session.revision()) {
+                self.message = error;
+            }
+        }
         // A face-corner drawing whose native check finished commits here,
         // where the canvas holds the session for writing (CAD-383).
         self.finish_projection(session);
@@ -5881,6 +6186,19 @@ impl SketchEditor {
                     self.reset_profile_clicks();
                     self.element = None;
                     self.constraints.select_geometry(point, None, extend);
+                    if extend {
+                        // Adding a point keeps the list on the last curve.
+                        let remaining = self
+                            .constraints
+                            .selection()
+                            .iter()
+                            .rev()
+                            .copied()
+                            .find(|entity| presentation.geometry.iter().any(|g| g.id() == *entity));
+                        self.select_element_of_curve(session.document(), id, remaining);
+                    } else {
+                        self.select_element_of_hit(session.document(), id, None, Some(point));
+                    }
                     self.profiles.clear();
                     self.message = format!(
                         "{} selected sketch entities · Shift-click adds or removes",
@@ -5892,6 +6210,16 @@ impl SketchEditor {
                     self.element = Some(curve);
                     if !self.constraints.select_geometry(curve, Some(curve), extend) {
                         self.element = None;
+                        // A toggled-off curve leaves the list on the last
+                        // curve still selected, never on the removed one.
+                        let remaining = self
+                            .constraints
+                            .selection()
+                            .iter()
+                            .rev()
+                            .copied()
+                            .find(|entity| presentation.geometry.iter().any(|g| g.id() == *entity));
+                        self.select_element_of_curve(session.document(), id, remaining);
                     }
                     self.profiles.clear();
                     self.message = format!(
@@ -5911,6 +6239,12 @@ impl SketchEditor {
                     );
                 }
                 None => {
+                    // Empty space clears picked curves and points (CAD-412);
+                    // the queued area pick then chooses or clears profiles.
+                    if !extend {
+                        self.element = None;
+                        self.constraints.clear_geometry_selection();
+                    }
                     if let Some(point) = self.camera.on_plane(pointer, rect, frame) {
                         if let Err(error) = self.enqueue_profile_click(
                             session.document(),
@@ -5928,6 +6262,42 @@ impl SketchEditor {
                     }
                 }
             }
+        }
+        // CAD-413: a plain right-click (a right-drag navigates instead) ends
+        // the active tool, or in Select restarts the last tool and settings.
+        if sketch_mode
+            && self.editing
+            && !self.moving
+            && !self.external.active()
+            && response.secondary_clicked()
+        {
+            if self.tool.is_some() {
+                self.end_tool();
+            } else if self.operations.tool().is_some() {
+                if self.has_pending_edits() {
+                    self.message = self.pending_edits_refusal();
+                } else {
+                    self.select_tool();
+                }
+            } else if self.last_tool.is_some()
+                && let Err(error) = self.repeat_last_tool()
+            {
+                self.message = error;
+            }
+            ui.ctx().request_repaint();
+        }
+        if !sketch_mode
+            && !self.editing
+            && !self.picking
+            && !self.measurement.active()
+            && response.secondary_clicked()
+        {
+            self.model_right_click = Some(if self.model_active() {
+                ModelRightClick::EndTool
+            } else {
+                ModelRightClick::RepeatTool
+            });
+            ui.ctx().request_repaint();
         }
         self.paint_snap_aids(&painter, session, rect);
         if !self.measurement.active() && self.moving && self.selected.is_some() {
@@ -5948,7 +6318,8 @@ impl SketchEditor {
                 .pivot(Align2::RIGHT_TOP)
                 .fixed_pos(rect.right_top() - Vec2::new(8., -4.))
                 .show(ui.ctx(), |ui| {
-                    navigation::orientation(ui, &mut self.camera);
+                    let roll_axis = self.editing.then_some(self.sketch_normal).flatten();
+                    navigation::orientation_about(ui, &mut self.camera, roll_axis);
                 });
         }
         let mut coordinates = self.coordinates;

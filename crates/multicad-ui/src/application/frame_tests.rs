@@ -302,6 +302,13 @@ fn reopen(h: &mut Harness) {
 /// Run frames until the camera and viewport stop changing (reopening may
 /// fit the view), so clicks land where the test projects them.
 fn settle_view(h: &mut Harness) {
+    // The first evaluated bounds of a document frame the view once (CAD-175);
+    // wait for the scene of the current revision so that fit has happened.
+    h.until("the evaluated model of the current revision", |app| {
+        let p = app.current();
+        p.scene
+            .is_current(p.session.document().id(), p.session.revision())
+    });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     let mut previous = None;
     let mut still = 0;

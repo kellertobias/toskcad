@@ -135,7 +135,7 @@ fn stair_position_is_collapsed_retained_and_revealed_by_its_callout() {
     p.start = [1200., 300.];
     p.direction_deg = 90.;
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, document));
-    assert!(!painted.has("Direction °"), "position starts collapsed");
+    assert!(!painted.has("Direction"), "position starts collapsed");
     assert!(painted.has_prefix("Position · 1200, 300 mm · 90°"));
     let ArchitectureCommand::Stair { stair, .. } = p.request(document, true).unwrap() else {
         panic!("stair")
@@ -150,7 +150,7 @@ fn stair_position_is_collapsed_retained_and_revealed_by_its_callout() {
         &mut show(&mut p, document),
     );
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, document));
-    assert!(painted.has("Direction °"), "the callout opens its section");
+    assert!(painted.has("Direction"), "the callout opens its section");
     assert_eq!(p.link.active(), Some(visual::STAIR_DIRECTION));
     assert_eq!(p.direction_deg, 90.);
 }
@@ -206,10 +206,7 @@ fn slab_thickness_override_is_collapsed_retained_and_revealed_by_validation() {
     p.override_thickness = true;
     p.thickness.text = "250".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, document));
-    assert!(
-        !painted.has("Thickness (mm)"),
-        "the section starts collapsed"
-    );
+    assert!(!painted.has("Thickness"), "the section starts collapsed");
     assert!(painted.has_prefix("Thickness · 250 mm"));
     assert!(
         painted.has("Thickness 250 mm"),
@@ -222,8 +219,5 @@ fn slab_thickness_override_is_collapsed_retained_and_revealed_by_validation() {
     p.thickness.text = "=".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, document));
     assert_eq!(p.link.invalid, Some(visual::SLAB_THICKNESS));
-    assert!(
-        painted.has("Thickness (mm)"),
-        "validation reveals the field"
-    );
+    assert!(painted.has("Thickness"), "validation reveals the field");
 }

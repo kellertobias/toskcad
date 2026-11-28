@@ -50,7 +50,7 @@ pub(crate) fn sketch_split_focused(ctx: &egui::Context) -> bool {
 /// at the position of its first member.
 fn sketch_entries(tab: &RibbonTab) -> Vec<Entry> {
     use crate::sketch_editor::DrawTool;
-    let families: [(&'static str, Icon, Vec<&'static str>); 2] = [
+    let families: [(&'static str, Icon, Vec<&'static str>); 3] = [
         (
             "Rectangle",
             Icon::Rectangle,
@@ -60,6 +60,15 @@ fn sketch_entries(tab: &RibbonTab) -> Vec<Entry> {
             "Circle",
             Icon::Circle,
             DrawTool::CIRCLE_MODES.map(DrawTool::id).to_vec(),
+        ),
+        // Fillet first: the split button's main part starts it (CAD-412
+        // frees this tile for the Select tool).
+        (
+            "Corner",
+            Icon::Edge,
+            [DrawTool::Fillet, DrawTool::Chamfer]
+                .map(DrawTool::id)
+                .to_vec(),
         ),
     ];
     let mut entries = vec![];
@@ -142,7 +151,8 @@ pub fn groups(mode: Mode, tab: &RibbonTab) -> Vec<Group> {
     if mode == Mode::Sketch || mode == Mode::Drawings {
         let sections: &[(&str, &[&str])] = match (mode, tab.title) {
             (Mode::Drawings, "Common") => &[
-                ("Drawing", &["drawing-new", "drawing-pdf"]),
+                // New drawing lives in the Drawings list and the empty sheet.
+                ("Drawing", &["drawing-pdf"]),
                 (
                     "Pages",
                     &[
@@ -152,13 +162,16 @@ pub fn groups(mode: Mode, tab: &RibbonTab) -> Vec<Group> {
                         "page-earlier",
                         "page-later",
                         "page-setup",
-                        "page-apply",
-                        "page-discard",
                     ],
                 ),
                 (
                     "Views",
-                    &["drawing-projection", "drawing-section", "drawing-detail"],
+                    &[
+                        "drawing-add-view",
+                        "drawing-standard-views",
+                        "drawing-section",
+                        "drawing-detail",
+                    ],
                 ),
             ],
             (Mode::Drawings, "Annotate") => &[
@@ -1615,6 +1628,29 @@ mod tests {
         }
     }
     #[test]
+    fn sketch_common_leads_with_select_and_groups_fillet_and_chamfer_under_corner() {
+        let registry = Registry::default();
+        let tab = &registry.workspace(Mode::Sketch).tabs[0];
+        let entries = &groups(Mode::Sketch, tab)[0].entries;
+        assert!(matches!(entries[0], Entry::Tool("sketch-select")));
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            Entry::Menu { label: "Corner", tools, split: true, .. }
+                if *tools == vec!["sketch-fillet", "sketch-chamfer"]
+        )));
+        for width in [1024., 1360.] {
+            assert_eq!(
+                click(&registry, Mode::Sketch, tab, true, width, "Select"),
+                Some(Command::SketchSelect)
+            );
+            assert_eq!(
+                click(&registry, Mode::Sketch, tab, true, width, "Corner"),
+                Some(Command::Draw(crate::sketch_editor::DrawTool::Fillet)),
+                "the Corner split button starts Fillet"
+            );
+        }
+    }
+    #[test]
     fn additional_catalog_tools_are_not_lost_by_common_grouping() {
         let tab = RibbonTab {
             title: "Common",
@@ -1853,10 +1889,17 @@ mod tests {
         }
     }
     #[test]
-    fn sketch_creation_is_global_instead_of_duplicated_in_the_model_ribbon() {
+    fn model_common_offers_add_sketch_through_the_global_sketch_command() {
+        // CAD-418 (product-owner approval 2026-11-27): Model's Common group
+        // lists Add Sketch, which runs the same command as the global action.
         let registry = Registry::default();
         let tab = &registry.workspace(Mode::Model).tabs[0];
-        assert!(!tab.tools.contains(&"new-sketch"));
+        assert_eq!(tab.title, "Common");
+        assert!(tab.tools.contains(&"new-sketch"));
+        let tool = registry.tool("new-sketch").unwrap();
+        assert_eq!(tool.action, Command::NewSketch);
+        assert_eq!(tool.label, "Add Sketch");
+        assert!(matches!(tool.icon, Icon::Sketch));
         assert!(!tab.tools.contains(&"engraving"));
         assert_eq!(
             registry.resolve("sketch").unwrap().action,

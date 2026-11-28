@@ -4,6 +4,7 @@
 //! The gesture reuses the editor's `first` / `arc_start` progress slots, which
 //! `clear_drawing_progress` resets on Escape or tool change.
 use super::*;
+use multicad_core::constraint_sketch::shape_edit;
 use multicad_core::sketch_draw::{
     DrawInput, DrawRequest, PointInput, center_points_rectangle_corners, three_point_circle,
     three_point_rectangle_corners, two_point_circle_center,
@@ -24,6 +25,14 @@ impl DrawTool {
                 | Self::Fillet
                 | Self::Chamfer
                 | Self::Text
+        )
+    }
+    /// Tools that create one thing and then return to Select (CAD-413).
+    /// Polyline, the corner treatments and Text keep going until ended.
+    pub fn single_shot(self) -> bool {
+        !matches!(
+            self,
+            Self::Polyline | Self::Fillet | Self::Chamfer | Self::Text
         )
     }
     /// Corner treatments that modify existing lines instead of drawing.
@@ -260,23 +269,119 @@ impl SketchEditor {
 }
 
 impl SketchEditor {
-    pub(super) fn corner_size_ui(&mut self, ui: &mut egui::Ui, tool: DrawTool) {
-        ui.horizontal(|ui| {
-            ui.label(if tool == DrawTool::Fillet {
-                "Fillet radius"
+    pub(super) fn corner_size_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        session: &mut Session,
+        tool: DrawTool,
+    ) {
+        let before = self.corner_size_mm;
+        let response = ui
+            .horizontal(|ui| {
+                ui.label(if tool == DrawTool::Fillet {
+                    "Fillet radius"
+                } else {
+                    "Chamfer distance"
+                });
+                ui.add(
+                    egui::DragValue::new(&mut self.corner_size_mm)
+                        .range(0.001..=1.0e6)
+                        .speed(0.1)
+                        .suffix(" mm")
+                        // A typed size applies once, on Enter or focus loss.
+                        .update_while_editing(false),
+                )
+                .on_hover_text(
+                    "Applied to the next corner you click and to the corners already treated \
+                     in this tool session, through their solver dimension",
+                )
+            })
+            .inner;
+        if !self.corner_session.is_empty() {
+            ui.small(format!(
+                "Changing it resizes the {} {} made in this session · one Undo step",
+                self.corner_session.len(),
+                if tool == DrawTool::Fillet {
+                    "fillet(s)"
+                } else {
+                    "chamfer(s)"
+                }
+            ));
+        }
+        // A typed value commits on Enter or focus loss; a drag commits once
+        // when it ends, so one change is one transaction.
+        let typed = response.changed() && !response.dragged();
+        if (typed || response.drag_stopped())
+            && self.corner_size_mm != self.corner_session_size.unwrap_or(before)
+        {
+            self.resize_corner_session(session, tool);
+        }
+        if !response.dragged() {
+            self.corner_session_size = Some(self.corner_size_mm);
+        }
+    }
+    /// Set the fillets or chamfers of this tool session to the tool's size
+    /// through their canonical dimensions, as one transaction (CAD-414).
+    fn resize_corner_session(&mut self, session: &mut Session, tool: DrawTool) {
+        if self.corner_session.is_empty() {
+            return;
+        }
+        let result = (|| -> Result<usize, String> {
+            let id = self.selected.ok_or("Select a sketch")?;
+            let (mut source, _, _) = self
+                .read_source(session.document(), id, session.revision())
+                .map_err(|e| e.to_string())?;
+            let size = if tool == DrawTool::Fillet {
+                shape_edit::ShapeSize::Radius
             } else {
-                "Chamfer distance"
-            });
-            ui.add(
-                egui::DragValue::new(&mut self.corner_size_mm)
-                    .range(0.001..=1.0e6)
-                    .speed(0.1)
-                    .suffix(" mm"),
+                shape_edit::ShapeSize::Distance
+            };
+            let input = multicad_core::constraint_sketch::binding::DimensionInput::Literal {
+                value: self.corner_size_mm,
+                unit: "mm".into(),
+            };
+            self.corner_session
+                .retain(|shape| source.sketch.shapes.iter().any(|s| s.id == *shape));
+            for shape in &self.corner_session {
+                source = shape_edit::set_size(session.document(), &source, *shape, size, &input)
+                    .map_err(|e| e.to_string())?;
+            }
+            let edit = multicad_solver::prepare_edit_with_report(
+                session,
+                session.revision(),
+                Actor::local(Channel::Ui),
+                id,
+                source,
+                self.evaluated.as_ref(),
             )
-            .on_hover_text(
-                "Applied to the next corner you click. The result keeps a solver dimension you can edit later.",
-            );
-        });
+            .map_err(|e| e.to_string())?;
+            let preview = edit.preview.ok_or_else(|| {
+                format!(
+                    "That size does not fit ({:?})",
+                    edit.evaluation.diagnostics.state
+                )
+            })?;
+            session.commit(preview).map_err(|e| e.to_string())?;
+            self.revision = session.revision();
+            Ok(self.corner_session.len())
+        })();
+        self.message = match result {
+            Ok(count) => format!(
+                "{} {} mm applied to {count} {} of this session · one Undo step",
+                if tool == DrawTool::Fillet {
+                    "Fillet radius"
+                } else {
+                    "Chamfer distance"
+                },
+                format_size(self.corner_size_mm),
+                if tool == DrawTool::Fillet {
+                    "fillet(s)"
+                } else {
+                    "chamfer(s)"
+                }
+            ),
+            Err(error) => format!("{error}; nothing changed"),
+        };
     }
     /// Nearest corner shared by exactly two lines or arcs within 10 px of the pointer.
     fn hovered_corner(
@@ -360,6 +465,11 @@ impl SketchEditor {
             .map_err(|e| e.to_string())?;
         let draft = multicad_core::sketch_corner::corner_draft(&source, corner, treatment)
             .map_err(|e| e.to_string())?;
+        let created_shape = draft
+            .created_curves
+            .first()
+            .and_then(|curve| draft.source.sketch.shape_of(*curve))
+            .map(|shape| shape.id);
         let edit = multicad_solver::prepare_edit_with_report(
             session,
             session.revision(),
@@ -378,10 +488,22 @@ impl SketchEditor {
         session.commit(preview).map_err(|e| e.to_string())?;
         self.element = draft.created_curves.first().copied();
         self.revision = session.revision();
+        // Remember the new fillet or chamfer for size changes in this tool
+        // session (CAD-414).
+        if let Some(shape) = created_shape
+            && self.tool.is_some_and(DrawTool::corner)
+        {
+            self.corner_session.push(shape);
+            self.corner_session_size = Some(self.corner_size_mm);
+        }
         Ok(())
     }
 }
 
+fn format_size(value: f64) -> String {
+    let text = format!("{value:.3}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
 pub(super) fn corner_treatment(
     tool: DrawTool,
     size: f64,

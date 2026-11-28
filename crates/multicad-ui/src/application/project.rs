@@ -129,6 +129,7 @@ impl Application {
 
     pub(super) fn project_tab_blocked(&self, index: usize) -> bool {
         index != self.project_tab_index()
+            && !self.only_parameter_rows_pending()
             && if self.mode == Mode::Export || matches!(index, MATERIALS_TAB | PROJECT_EXPORT_TAB) {
                 if self.mode == Mode::Parameters && self.tab == 0 {
                     self.current().pending_non_metadata_edits()
@@ -142,6 +143,9 @@ impl Application {
 
     pub(super) fn select_project_tab(&mut self, index: usize) {
         if index == self.project_tab_index() || self.project_tab_blocked(index) {
+            return;
+        }
+        if self.guard_parameter_leave(super::parameter_leave::ParameterLeave::Tab(index)) {
             return;
         }
         if self.mode == Mode::Parameters && self.tab == 0 {

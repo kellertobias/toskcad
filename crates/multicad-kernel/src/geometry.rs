@@ -1860,6 +1860,7 @@ impl Solid {
                     .or_else(|| self.compound_intersection(other, operation, policy))
                     .or_else(|| self.cope_contact_intersection(other, operation, policy))
                     .or_else(|| self.profile_stack_boolean(other, operation, policy))
+                    .or_else(|| self.face_column_boolean(other, operation, policy))
                     .unwrap_or_else(|| {
                         Err(cross_refusal
                             .unwrap_or_else(|| self.no_exact_boolean(other, operation, error)))

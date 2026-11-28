@@ -17,6 +17,49 @@ impl SceneBackend for Capture {
         None
     }
 }
+/// The Wall tool draws (CAD-427): click `corners` on the plan at `z`, then
+/// Enter ends the chain, keeping the path for Preview and Apply.
+fn draw_wall(
+    controller: &mut ModelToolController,
+    session: &multicad_core::commands::Session,
+    z: f32,
+    corners: &[[f32; 2]],
+) {
+    let ctx = crate::egui::Context::default();
+    let rect =
+        crate::egui::Rect::from_min_size(crate::egui::Pos2::ZERO, crate::egui::vec2(800., 600.));
+    let camera = crate::camera::Camera {
+        roll: 0.0,
+        yaw: 0.,
+        pitch: std::f32::consts::FRAC_PI_2,
+        target: [2000., 0., z],
+        scale: 0.1,
+        perspective: false,
+    };
+    for corner in corners {
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            let p = camera.project([corner[0], corner[1], z], rect);
+            assert!(controller.outline_viewport(
+                session,
+                super::super::TerminationViewport {
+                    scene: None,
+                    report: None,
+                    camera,
+                    rect,
+                    pointer: Some(crate::egui::pos2(p[0], p[1])),
+                    clicked: true,
+                    painter: ui.painter(),
+                    section: None,
+                }
+            ));
+        });
+        output.textures_delta.clear();
+    }
+    assert_eq!(
+        controller.outline_key(super::super::OutlineKey::Finish),
+        Some(true)
+    );
+}
 fn controller() -> (ModelToolController, Arc<Mutex<Option<Document>>>) {
     let capture = Capture::default();
     let sent = capture.0.clone();
@@ -92,6 +135,7 @@ fn repeated_equipment_keeps_its_chosen_floor_when_the_active_level_changes() {
         );
         ctx.run_ui(Default::default(), |ui| {
             let camera = crate::camera::Camera {
+                roll: 0.0,
                 yaw: 0.,
                 pitch: std::f32::consts::FRAC_PI_2,
                 target: [x, 400., 0.],
@@ -161,6 +205,7 @@ fn active_level_seeds_new_wall_stair_slab_and_equipment_but_never_reassigns_save
     controller
         .begin_wall(&session, &resources, Channel::Ui)
         .unwrap();
+    draw_wall(&mut controller, &session, 3000., &[[0., 0.], [4000., 0.]]);
     controller
         .preview(&session, &resources, Channel::Ui)
         .unwrap();
@@ -182,6 +227,7 @@ fn active_level_seeds_new_wall_stair_slab_and_equipment_but_never_reassigns_save
     for point in [[1000., 500., 3000.], [2000., 500., 3000.]] {
         let mut output = ctx.run_ui(Default::default(), |ui| {
             let camera = crate::camera::Camera {
+                roll: 0.0,
                 yaw: 0.,
                 pitch: std::f32::consts::FRAC_PI_2,
                 target: [0., 0., 3000.],
@@ -272,6 +318,7 @@ fn active_level_seeds_new_wall_stair_slab_and_equipment_but_never_reassigns_save
             crate::egui::vec2(800., 600.),
         );
         let camera = crate::camera::Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: std::f32::consts::FRAC_PI_2,
             target: [0., 0., 3000.],
@@ -318,6 +365,7 @@ fn native_candidate_level_filter_uses_prepared_membership_and_keeps_canonical_co
     controller
         .begin_wall(&session, &resources, Channel::Ui)
         .unwrap();
+    draw_wall(&mut controller, &session, 3000., &[[0., 0.], [4000., 0.]]);
     controller
         .preview(&session, &resources, Channel::Ui)
         .unwrap();
@@ -397,18 +445,16 @@ fn path_keys_belong_to_the_wall_drawing_only_while_it_captures_the_plan() {
     controller
         .begin_wall(&session, &resources, Channel::Ui)
         .unwrap();
-    // Idle: Enter and Escape keep their form meaning (Apply / Cancel).
+    // The Wall tool draws at once (CAD-427), so the path keys are the
+    // drawing's from the start; nothing is placed yet to remove.
     assert_eq!(
-        controller.outline_key(super::super::OutlineKey::Finish),
-        None
-    );
-    assert_eq!(
-        controller.outline_key(super::super::OutlineKey::Cancel),
-        None
+        controller.outline_key(super::super::OutlineKey::RemoveLast),
+        Some(false)
     );
     let ctx = egui::Context::default();
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.));
     let camera = crate::camera::Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: 1.5,
         scale: 0.1,
@@ -434,7 +480,7 @@ fn path_keys_belong_to_the_wall_drawing_only_while_it_captures_the_plan() {
         });
         output.textures_delta.clear();
     };
-    // A click on empty plan space starts a new wall path.
+    // The first click sets where the wall starts.
     click(&mut controller, [-1000., 3000.]);
     click(&mut controller, [1000., 3000.]);
     click(&mut controller, [1000., 4000.]);
@@ -472,4 +518,155 @@ fn path_keys_belong_to_the_wall_drawing_only_while_it_captures_the_plan() {
         None
     );
     assert!(controller.active());
+}
+
+#[test]
+fn wall_tool_starts_empty_and_every_end_gesture_keeps_the_chain_as_one_undoable_wall() {
+    use crate::egui;
+    let mut session =
+        multicad_core::commands::Session::new(Document::new("Wall chain").unwrap()).unwrap();
+    let source = session.document().clone();
+    let resources = ProjectResources::default();
+    let mut controller = ModelToolController::default();
+    controller.set_backend(Box::new(super::super::native_fixture::NativeBackend::new()));
+    let ctx = egui::Context::default();
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.));
+    let camera = crate::camera::Camera {
+        roll: 0.0,
+        yaw: 0.,
+        pitch: std::f32::consts::FRAC_PI_2,
+        scale: 0.1,
+        target: [2000., 1500., 0.],
+        perspective: false,
+    };
+    let frame = |controller: &mut ModelToolController,
+                 session: &multicad_core::commands::Session,
+                 at: [f32; 2],
+                 clicked: bool,
+                 events: Vec<egui::Event>| {
+        let s = camera.project([at[0], at[1], 0.], rect);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                controller.outline_viewport(
+                    session,
+                    super::super::TerminationViewport {
+                        scene: None,
+                        report: None,
+                        camera,
+                        rect,
+                        pointer: Some(egui::pos2(s[0], s[1])),
+                        clicked,
+                        painter: ui.painter(),
+                        section: None,
+                    },
+                );
+            },
+        );
+        output.textures_delta.clear();
+    };
+    let corners = [[0., 0.], [4000., 0.], [4000., 3000.]];
+    let expected: Vec<_> = corners
+        .iter()
+        .map(|[x, y]| [model::length(*x as f64), model::length(*y as f64)])
+        .collect();
+    for gesture in ["Enter", "Escape", "right-click"] {
+        controller
+            .begin_wall(&session, &resources, Channel::Ui)
+            .unwrap();
+        // Choosing Wall places nothing: the path is empty until clicked.
+        match controller.request_for_tests(&session) {
+            Some(ModelRequest::Wall(command)) => {
+                assert!(command.wall.path.is_empty(), "{gesture}")
+            }
+            None => {}
+            Some(_) => panic!("wall request ({gesture})"),
+        }
+        assert_eq!(
+            controller.outline_key(super::super::OutlineKey::RemoveLast),
+            Some(false),
+            "drawing from the start ({gesture})"
+        );
+        for at in corners {
+            frame(&mut controller, &session, at, true, vec![]);
+        }
+        match gesture {
+            "Enter" => assert_eq!(
+                controller.outline_key(super::super::OutlineKey::Finish),
+                Some(true)
+            ),
+            "Escape" => assert_eq!(
+                controller.outline_key(super::super::OutlineKey::Cancel),
+                Some(true)
+            ),
+            _ => {
+                let s = camera.project([2000., 2000., 0.], rect);
+                let pos = egui::pos2(s[0], s[1]);
+                for pressed in [true, false] {
+                    frame(
+                        &mut controller,
+                        &session,
+                        [2000., 2000.],
+                        false,
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Secondary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                    );
+                }
+            }
+        }
+        // The chain ended: the drawing stopped, the form stays open, every
+        // placed segment is kept and the document is untouched.
+        assert_eq!(
+            controller.outline_key(super::super::OutlineKey::RemoveLast),
+            None,
+            "{gesture}"
+        );
+        assert!(controller.active(), "{gesture}");
+        let Some(ModelRequest::Wall(command)) = controller.request_for_tests(&session) else {
+            panic!("wall request ({gesture})")
+        };
+        assert_eq!(command.wall.path, expected, "{gesture}");
+        assert!(!command.wall.closed, "{gesture}");
+        assert_eq!(session.document(), &source, "{gesture}");
+        if gesture != "right-click" {
+            controller.cancel();
+            assert_eq!(session.document(), &source);
+        }
+    }
+    // Apply builds the whole chain as one wall feature; one Undo removes
+    // it and one Redo restores it.
+    controller
+        .preview(&session, &resources, Channel::Ui)
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !controller.can_apply(&session, &resources) && std::time::Instant::now() < deadline {
+        controller.poll(&session, &resources);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let applied = controller.apply(&mut session, &resources).unwrap();
+    assert_eq!(applied.len(), 1);
+    let after = session.document().clone();
+    assert_eq!(model::walls(&after).count(), 1);
+    assert_eq!(
+        model::read_wall(&after, applied[0].feature).unwrap().path,
+        expected
+    );
+    session
+        .undo(session.revision(), Actor::local(Channel::Ui))
+        .unwrap();
+    assert_eq!(session.document(), &source, "one Undo removes the chain");
+    session
+        .redo(session.revision(), Actor::local(Channel::Ui))
+        .unwrap();
+    assert_eq!(session.document(), &after, "one Redo restores it");
 }

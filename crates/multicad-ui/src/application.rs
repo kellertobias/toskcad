@@ -21,6 +21,7 @@ mod global_actions;
 mod library;
 mod mechanical_imports;
 mod native_picker;
+mod parameter_leave;
 mod print;
 mod print_plate;
 mod project;
@@ -180,6 +181,10 @@ pub struct Application {
     /// Specialized tool last started per project, highlighted while its
     /// form or page draft is open.
     active_tool: Option<(usize, Command)>,
+    /// The last Model tool started and the repeatable settings it last had;
+    /// a plain right-click in the Model viewport restarts it (CAD-413).
+    last_model_tool: Option<(usize, Command)>,
+    last_model_settings: Option<crate::modeling::ToolSettings>,
     storage: FileWorker,
     pending_files: BTreeMap<u64, PendingFile>,
     replacement: Option<Replacement>,
@@ -206,6 +211,7 @@ pub struct Application {
     import_open: bool,
     close_confirm: bool,
     close_project_confirm: Option<EntityId>,
+    parameter_leave: Option<parameter_leave::ParameterLeave>,
     close_allowed: bool,
     close_after_recents: bool,
     close_save: Option<closing::CloseSave>,
@@ -259,6 +265,8 @@ impl Application {
             registry: Registry::default(),
             tab: 0,
             active_tool: None,
+            last_model_tool: None,
+            last_model_settings: None,
             storage: FileWorker::new(storage)?,
             pending_files: BTreeMap::new(),
             replacement: None,
@@ -285,6 +293,7 @@ impl Application {
             import_open: false,
             close_confirm: false,
             close_project_confirm: None,
+            parameter_leave: None,
             close_allowed: false,
             close_after_recents: false,
             close_save: None,
@@ -515,6 +524,74 @@ impl Application {
                 _ => false,
             }
     }
+    /// Enter or a plain viewport right-click ends the active Model tool
+    /// (CAD-413): a complete form applies as Apply does (once a preview that
+    /// is still building is ready); an incomplete one ends without changes.
+    /// A handle drag or point pick in progress is left alone.
+    fn end_model_tool(&mut self) {
+        let project = self.current_mut();
+        if project.sketch.model_gesture_active() {
+            return;
+        }
+        if project
+            .sketch
+            .arm_model_confirmation(&project.session, &project.resources)
+        {
+            return;
+        }
+        if project
+            .sketch
+            .model_can_apply(&project.session, &project.resources)
+        {
+            self.execute(Command::Apply, &[], Channel::Ui);
+            return;
+        }
+        let label = project.sketch.model_label();
+        project.sketch.cancel_model();
+        self.message = format!("{label} ended · nothing to apply · right-click repeats it");
+        self.message_error = false;
+    }
+    /// A plain right-click in the Model viewport with no tool active restarts
+    /// the last Model tool with its repeatable settings (CAD-413).
+    fn repeat_model_tool(&mut self) {
+        let Some((project, command)) = self.last_model_tool.filter(|(p, _)| *p == self.active)
+        else {
+            return;
+        };
+        let _ = project;
+        if self.mode != Mode::Model || self.current().sketch.has_pending_edits() {
+            return;
+        }
+        if !self.enabled(command) {
+            self.message = format!(
+                "{} cannot restart here · select what it works on first",
+                self.command_label(command)
+            );
+            self.message_error = true;
+            return;
+        }
+        self.execute(command, &[], Channel::Ui);
+        if self.message_error {
+            return;
+        }
+        if let Some(settings) = self.last_model_settings.clone() {
+            self.current_mut()
+                .sketch
+                .restore_model_tool_settings(&settings);
+        }
+        self.message = format!(
+            "{} repeated · {}",
+            self.command_label(command),
+            self.message
+        );
+    }
+    fn command_label(&self, command: Command) -> String {
+        self.registry
+            .tools
+            .iter()
+            .find(|t| t.action == command)
+            .map_or_else(|| "Tool".into(), |t| t.label.to_string())
+    }
     fn close_measurement(&mut self) {
         let p = self.current_mut();
         p.sketch.measurement.close();
@@ -632,6 +709,12 @@ impl Application {
         args: &[&str],
         channel: Channel,
     ) -> Result<(), String> {
+        if channel == Channel::Ui
+            && let Some(target) = self.parameter_leave_target(command)
+            && self.guard_parameter_leave(target)
+        {
+            return Ok(());
+        }
         if command == Command::CloseProject {
             return self.request_close_project();
         }
@@ -885,6 +968,14 @@ impl Application {
                     );
                 }
                 let p = self.current_mut();
+                if matches!(
+                    tool,
+                    crate::drawings::DrawingTool::AddView
+                        | crate::drawings::DrawingTool::StandardViews
+                ) {
+                    let selection = p.sketch.export_selection(p.session.document());
+                    p.drawings.set_model_selection(selection);
+                }
                 p.drawings.invoke(&mut p.session, tool, channel)?;
                 // Page Apply / Discard finish the current task in place.
                 let keep = self.mode == Mode::Drawings
@@ -1337,6 +1428,12 @@ impl Application {
                     p.sketch.draw(&mut p.session, &request, channel)?;
                 }
             }
+            Command::SketchSelect => {
+                if self.mode != Mode::Sketch || !self.current().sketch.editing {
+                    return Err("Open a sketch to select its geometry".into());
+                }
+                self.current_mut().sketch.select_tool();
+            }
             Command::Construction => {
                 if !self.enabled(command) {
                     return Err("Open a sketch and apply or cancel pending edits before changing construction geometry".into());
@@ -1387,9 +1484,15 @@ impl Application {
                     return Err("Place at least four spline control poles before finishing".into());
                 }
                 let project = self.current_mut();
-                project
-                    .sketch
-                    .finish_spline(&mut project.session, false, channel)?;
+                if project.sketch.can_finish_spline() {
+                    project
+                        .sketch
+                        .finish_spline(&mut project.session, false, channel)?;
+                } else {
+                    // Enter ends any other drawing tool; committed geometry
+                    // stays and the pending gesture is dropped (CAD-413).
+                    project.sketch.end_tool();
+                }
             }
             Command::SketchOperation(tool) => {
                 if !self.enabled(command) {
@@ -1458,6 +1561,10 @@ impl Application {
                 self.mode = Mode::Model;
                 self.route_architecture_tool(tool, equipment_preset);
                 self.active_tool = Some((self.active, origin));
+                if self.last_model_tool != Some((self.active, origin)) {
+                    self.last_model_settings = None;
+                }
+                self.last_model_tool = Some((self.active, origin));
                 let label = wood_preset.map_or(tool.label(), |preset| preset.label());
                 self.message = if matches!(
                     tool,
@@ -1638,7 +1745,9 @@ impl Application {
         };
         match command {
             Command::Mode(Mode::Export) => {
-                self.mode == Mode::Export || !pending_before_metadata_commit()
+                self.mode == Mode::Export
+                    || !pending_before_metadata_commit()
+                    || self.only_parameter_rows_pending()
             }
             Command::External(_) => {
                 self.mode == Mode::Sketch
@@ -1787,11 +1896,15 @@ impl Application {
             }
             Command::ImportArtwork => !pending() && !self.file_busy(),
             Command::FinishCurve => {
-                self.mode == Mode::Sketch && !pending() && self.current().sketch.can_finish_spline()
+                let sketch = &self.current().sketch;
+                self.mode == Mode::Sketch
+                    && !pending()
+                    && (sketch.can_finish_spline() || sketch.editing && sketch.tool.is_some())
             }
             Command::SketchOperation(_) => {
                 self.mode == Mode::Sketch && !pending() && self.current().sketch.operation_ready()
             }
+            Command::SketchSelect => self.mode == Mode::Sketch && self.current().sketch.editing,
             Command::Draw(_)
             | Command::Construction
             | Command::Dimension
@@ -2137,7 +2250,7 @@ impl Application {
                     });
                     for mode in Mode::ALL.into_iter().rev() {
                         let color = mode.color().gamma_multiply(1.6);
-                        if controls::tab(
+                        let mut tab = controls::tab(
                             ui,
                             mode.title(),
                             self.mode.top_level() == mode,
@@ -2147,16 +2260,23 @@ impl Application {
                                 active_text: color,
                                 active_background: Color32::from_rgb(37, 45, 56),
                             },
-                        )
-                        .clicked()
-                        {
+                        );
+                        if mode == Mode::Parameters && self.project_tab_pending() {
+                            self.paint_project_pending_marker(ui, &tab);
+                            tab = tab.on_hover_text(
+                                "Unapplied parameter edits · Apply and Rebuild or Discard Edit",
+                            );
+                        }
+                        if tab.clicked() {
                             action = Some(Command::Mode(mode));
                         }
                     }
                 });
             },
         );
-        if let Some(index) = switch {
+        if let Some(index) = switch
+            && !self.guard_parameter_leave(parameter_leave::ParameterLeave::Project(index))
+        {
             self.activate_project(index);
         }
         if let Some(path) = recent
@@ -2310,6 +2430,7 @@ impl Application {
                     |command| match command {
                         Command::Draw(tool) => sketch.editing && sketch.tool == Some(tool),
                         Command::Construction => sketch.editing && sketch.construction(),
+                        Command::SketchSelect => sketch.select_active(),
                         command => tool_active(command),
                     },
                     category,
@@ -2464,6 +2585,7 @@ impl Application {
                 || self.find_open
                 || self.close_confirm
                 || self.close_project_confirm.is_some()
+                || self.parameter_leave.is_some()
                 || self.history_open
                 || self.import_open
                 || self.settings_open
@@ -2505,7 +2627,8 @@ impl Application {
             || self.settings_open
             || self.library_management_open
             || self.close_confirm
-            || self.close_project_confirm.is_some();
+            || self.close_project_confirm.is_some()
+            || self.parameter_leave.is_some();
         let shell_interaction = shell_interaction || self.current().exchange.drawing_pdf_open();
         // egui clears keyboard focus for Escape before this application pass.
         // Remember text ownership so that same key cannot also cancel a tool.
@@ -2547,6 +2670,12 @@ impl Application {
                 self.cancel_close();
             } else if self.close_project_confirm.is_some() {
                 self.close_project_confirm = None;
+            } else if self.parameter_leave.is_some() {
+                if let Err(error) = self.resolve_parameter_leave(parameter_leave::LeaveChoice::Stay)
+                {
+                    self.message = error;
+                    self.message_error = true;
+                }
             } else if self.current().sketch.primitive_corner_input_focused()
                 && !egui::Popup::is_any_open(ctx)
             {
@@ -2637,27 +2766,25 @@ impl Application {
                 len != input.events.len()
             })
         {
-            let project = self.current_mut();
-            if project
-                .sketch
-                .arm_model_confirmation(&project.session, &project.resources)
-            {
-                ctx.request_repaint();
-            } else if project
-                .sketch
-                .model_can_apply(&project.session, &project.resources)
-            {
-                self.execute(Command::Apply, &[], Channel::Ui);
-            }
+            self.end_model_tool();
+            ctx.request_repaint();
         }
         let frame = self
             .shortcut_runtime
             .collect(ctx, &self.shortcuts, &context);
-        for action in frame.actions {
+        for (action, binding) in frame.actions.into_iter().zip(frame.bindings) {
             match action {
                 ShortcutAction::Command(command) => {
                     if self.enabled(command) {
                         self.execute(command, &[], Channel::Ui);
+                    } else {
+                        // A consumed key must say why nothing started.
+                        self.message = format!(
+                            "{} ({}) is not available here",
+                            binding.label,
+                            binding.chord.label()
+                        );
+                        self.message_error = false;
                     }
                 }
                 ShortcutAction::FindTool => self.focus_search = true,
@@ -2673,6 +2800,13 @@ impl Application {
                         self.current_mut()
                             .sketch
                             .focus_inline_field(action == ShortcutAction::NextWorkspace);
+                        continue;
+                    }
+                    // Likewise for a wall path's Length/Angle fields (CAD-427).
+                    if self.current().sketch.model_outline_inline_visible() {
+                        self.current_mut()
+                            .sketch
+                            .focus_model_outline_inline(action == ShortcutAction::NextWorkspace);
                         continue;
                     }
                     // Cycle the ribbon's visible workbenches in their chosen order.
@@ -2845,6 +2979,7 @@ impl Application {
             ui,
             self.close_confirm
                 || self.close_project_confirm.is_some()
+                || self.parameter_leave.is_some()
                 || self.import_open
                 || self.file_action.is_some()
                 || self.replacement.is_some()
@@ -3049,6 +3184,9 @@ impl Application {
                 } else {
                     let sketch_mode = self.mode == Mode::Sketch;
                     let mode = self.mode;
+                    let repeat_label = self
+                        .last_model_tool
+                        .map(|(_, command)| self.command_label(command));
                     let architecture = mode == Mode::Model
                         && self.registry.workspace(Mode::Model).tabs[self.tab].title
                             == "Architecture";
@@ -3092,8 +3230,12 @@ impl Application {
                             .last()
                             .map(|a| a.label.clone())
                             .unwrap_or_else(|| "Sketch updated".into());
+                        let model_ended = modeling_before && !p.sketch.model_active();
                         self.message = label;
                         self.message_error = false;
+                        if model_ended && let Some(tool) = &repeat_label {
+                            self.message = format!("{} · right-click repeats {tool}", self.message);
+                        }
                         ctx.request_repaint();
                     } else if let Some(error) = confirmation_error {
                         self.message = error;
@@ -3105,6 +3247,25 @@ impl Application {
                     if sheet_view_requested {
                         self.execute(Command::SheetView, &[], Channel::Ui);
                         ctx.request_repaint();
+                    }
+                    // CAD-413: remember the Model tool's repeatable settings
+                    // while it runs; act on a plain viewport right-click.
+                    let p = self.current();
+                    if p.sketch.model_active()
+                        && let Some(settings) = p.sketch.model_tool_settings()
+                    {
+                        self.last_model_settings = Some(settings);
+                    }
+                    match self.current_mut().sketch.take_model_right_click() {
+                        Some(crate::sketch_editor::ModelRightClick::EndTool) => {
+                            self.end_model_tool();
+                            ctx.request_repaint();
+                        }
+                        Some(crate::sketch_editor::ModelRightClick::RepeatTool) => {
+                            self.repeat_model_tool();
+                            ctx.request_repaint();
+                        }
+                        None => {}
                     }
                     if sketch_opened {
                         self.mode = Mode::Sketch;
@@ -3150,6 +3311,7 @@ impl Application {
             self.tab = tab;
             ctx.request_repaint();
         }
+        self.show_parameter_leave_dialog(&ctx);
         self.show_close_project_dialog(&ctx);
         self.show_close_dialog(&ctx);
         self.remember_current_view();
@@ -5234,17 +5396,41 @@ mod ribbon_layout_tests {
 #[path = "application/boolean_ux_tests.rs"]
 mod boolean_ux_tests;
 #[cfg(test)]
+#[path = "application/drawing_flow_tests.rs"]
+mod drawing_flow_tests;
+#[cfg(test)]
 #[path = "application/frame_tests.rs"]
 mod frame_tests;
 #[cfg(test)]
 #[path = "application/inspector_tests.rs"]
 mod inspector_tests;
 #[cfg(test)]
+#[path = "application/model_tool_lifecycle_tests.rs"]
+mod model_tool_lifecycle_tests;
+#[cfg(test)]
+#[path = "application/numeric_field_tests.rs"]
+mod numeric_field_tests;
+#[cfg(test)]
+#[path = "application/panel_placement_tests.rs"]
+mod panel_placement_tests;
+#[cfg(test)]
 #[path = "application/ribbon_fit_tests.rs"]
 mod ribbon_fit_tests;
 #[cfg(test)]
+#[path = "application/shortcut_tests.rs"]
+mod shortcut_tests;
+#[cfg(test)]
+#[path = "application/sketch_corner_tests.rs"]
+mod sketch_corner_tests;
+#[cfg(test)]
+#[path = "application/sketch_select_tests.rs"]
+mod sketch_select_tests;
+#[cfg(test)]
 #[path = "application/tool_enter_tests.rs"]
 mod tool_enter_tests;
+#[cfg(test)]
+#[path = "application/tool_lifecycle_tests.rs"]
+mod tool_lifecycle_tests;
 #[cfg(test)]
 #[path = "application/tool_search_tests.rs"]
 mod tool_search_tests;
@@ -5258,8 +5444,17 @@ mod workbench_tests;
 const RIBBON_TAB_STRIP: f32 = 36.0;
 const RIBBON_BOTTOM_PAD: f32 = 2.0;
 #[cfg(test)]
+#[path = "application/model_add_sketch_tests.rs"]
+mod model_add_sketch_tests;
+#[cfg(test)]
 #[path = "application/open_fit_tests.rs"]
 mod open_fit_tests;
+#[cfg(test)]
+#[path = "application/opening_tree_tests.rs"]
+mod opening_tree_tests;
+#[cfg(test)]
+#[path = "application/view_roll_tests.rs"]
+mod view_roll_tests;
 #[cfg(test)]
 #[path = "application/viewport_focus_tests.rs"]
 mod viewport_focus_tests;

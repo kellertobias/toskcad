@@ -516,10 +516,10 @@ impl CompoundCutoutPanel {
                 changed |= item.center[1].show(ui, "Center Y", "World Y");
                 changed |= item.width.show(ui, "Width", "Local box X");
                 changed |= item.depth.show(ui, "Depth", "Local box Y");
-                ui.horizontal(|ui| {
-                    ui.label("Rotation (°)");
-                    changed |= ui.add(egui::DragValue::new(&mut item.rotation)).changed();
-                });
+                changed |= crate::numeric_field::NumericField::new("Rotation", "deg")
+                    .value(ui, &mut item.rotation, f64::NEG_INFINITY..=f64::INFINITY)
+                    .input
+                    .changed();
                 changed |= ui
                     .checkbox(&mut item.vertical, "Override this box's vertical extent")
                     .changed();

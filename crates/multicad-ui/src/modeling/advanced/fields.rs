@@ -33,12 +33,11 @@ fn direction(ui: &mut egui::Ui, title: &str, value: &mut [f64; 3]) -> bool {
     ui.label(title);
     let mut changed = false;
     for (axis, v) in ["X", "Y", "Z"].into_iter().zip(value) {
-        ui.horizontal(|ui| {
-            ui.label(axis);
-            changed |= ui
-                .add(egui::DragValue::new(v).speed(0.01).max_decimals(6))
-                .changed();
-        });
+        let label = format!("{title} {axis}");
+        changed |= crate::numeric_field::NumericField::new(&label, "ratio")
+            .value(ui, v, f64::NEG_INFINITY..=f64::INFINITY)
+            .input
+            .changed();
     }
     changed
 }

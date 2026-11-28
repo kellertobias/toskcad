@@ -158,6 +158,34 @@ impl Harness {
     }
     /// Click the control whose accessible label or painted text is `label`.
     pub(super) fn click_label(&mut self, label: &str) {
+        let pos = self.label_position(label);
+        self.click_at(pos);
+    }
+    /// Right-click the widget or text labelled `label`, e.g. to open a tree
+    /// row's context menu.
+    pub(super) fn right_click_label(&mut self, label: &str) {
+        let pos = self.label_position(label);
+        self.press_at(pos, egui::PointerButton::Secondary);
+    }
+    /// Where `label` shows once it stays in place: a widget that just
+    /// appeared can still move on the next frame, so the position must
+    /// repeat in two consecutive frames.
+    fn label_position(&mut self, label: &str) -> egui::Pos2 {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut previous = self.label_position_once(label);
+        loop {
+            let pos = self.label_position_once(label);
+            if pos == previous {
+                return pos;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {label} to stay in place"
+            );
+            previous = pos;
+        }
+    }
+    fn label_position_once(&mut self, label: &str) -> egui::Pos2 {
         let out = self.render(vec![]);
         let pos = out
             .platform_output
@@ -182,7 +210,7 @@ impl Harness {
             })
             .unwrap_or_else(|| panic!("Missing {label}"));
         out.drop_without_applying_deltas();
-        self.click_at(pos);
+        pos
     }
     /// Click the `nth` (top to bottom) checkbox whose label starts with `prefix`.
     pub(super) fn click_nth_checkbox(&mut self, prefix: &str, nth: usize) {
@@ -211,12 +239,15 @@ impl Harness {
         ));
     }
     pub(super) fn click_at(&mut self, pos: egui::Pos2) {
+        self.press_at(pos, egui::PointerButton::Primary);
+    }
+    fn press_at(&mut self, pos: egui::Pos2, button: egui::PointerButton) {
         for pressed in [true, false] {
             self.frame(vec![
                 egui::Event::PointerMoved(pos),
                 egui::Event::PointerButton {
                     pos,
-                    button: egui::PointerButton::Primary,
+                    button,
                     pressed,
                     modifiers: egui::Modifiers::NONE,
                 },

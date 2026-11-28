@@ -350,14 +350,11 @@ impl CabinetFields {
                             }
                         }
                         if shelf.adjustable {
-                            ui.horizontal(|ui| {
-                                ui.label("Support level");
-                                changed |= ui
-                                    .add(
-                                        egui::DragValue::new(&mut shelf.level).range(0..=1_000_000),
-                                    )
+                            changed |=
+                                crate::numeric_field::NumericField::new("Support level", "count")
+                                    .value(ui, &mut shelf.level, 0..=1_000_000)
+                                    .input
                                     .changed();
-                            });
                             if let Some((first, _)) = grid {
                                 ui.small(format!(
                                     "Underside from floor: {} · 32 mm pitch",

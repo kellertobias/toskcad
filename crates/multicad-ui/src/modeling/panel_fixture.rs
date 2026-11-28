@@ -190,6 +190,7 @@ pub(crate) fn click(
         .unwrap();
     let scene = native_fixture::scene(s.document(), native.snapshot(), 0).unwrap();
     let camera = Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         scale: 0.5,

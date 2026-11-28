@@ -230,6 +230,9 @@ impl DrawingBackend for Backend {
     }
 }
 #[cfg(test)]
+#[path = "drawings/guided_view_tests.rs"]
+mod guided_view_tests;
+#[cfg(test)]
 #[path = "drawings/rust_parity_tests.rs"]
 mod rust_parity_tests;
 #[cfg(test)]

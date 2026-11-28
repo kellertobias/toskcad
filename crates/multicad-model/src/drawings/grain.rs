@@ -188,6 +188,7 @@ impl Model {
         document: &Document,
         view: &DrawingView,
         providers: &DrawingProviders,
+        filter: Option<&ViewPartFilter>,
     ) -> Result<Vec<DrawingVector>, ModelError> {
         let guided;
         let view = if view.guide.is_some() {
@@ -204,7 +205,7 @@ impl Model {
         }
         let parameters =
             multicad_core::parameters::evaluate(document).map_err(|e| error(Some(view.id), e))?;
-        let bodies = providers.resolve(document, self, &view.source)?;
+        let bodies = providers.resolve_shown(document, self, view, filter)?;
         let (u, v) = (view.frame.u, view.frame.v);
         let w = cross(u, v);
         let origin = view.frame.origin_mm;

@@ -116,7 +116,8 @@ fn enter_applies_fillet_with_picked_edges_like_apply_and_escape_cancels() {
     // Enter with nothing picked does not apply.
     h.key(egui::Key::Enter);
     assert_eq!(h.revision(), 0);
-    assert!(h.modeling());
+    assert!(!h.modeling());
+    open(&mut h);
     // Pick one edge; the preview builds while picking stays active.
     let p = h.app.current_mut();
     let scene = p.scene.visible().unwrap().clone();
@@ -190,7 +191,7 @@ fn enter_applies_extrude_and_an_invalid_focused_value_shows_its_error_instead() 
     open(&mut h);
     // Invalid text in the focused Distance field: Enter shows the error and
     // nothing is applied, however long the preview is given.
-    h.type_into_field_and_enter("Distance (mm)", "abc");
+    h.type_into_field_and_enter("Distance", "abc");
     let deadline = Instant::now() + Duration::from_millis(600);
     while Instant::now() < deadline {
         h.frame(vec![]);
@@ -204,7 +205,7 @@ fn enter_applies_extrude_and_an_invalid_focused_value_shows_its_error_instead() 
         "the invalid value's error is shown: {texts:?}"
     );
     // A valid value typed into the focused field: Enter commits it and applies.
-    h.type_into_field_and_enter("Distance (mm)", "12");
+    h.type_into_field_and_enter("Distance", "12");
     h.until("Enter to apply the extrusion", |app| {
         app.current().session.revision() == 1
     });

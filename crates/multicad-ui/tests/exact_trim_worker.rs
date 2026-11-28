@@ -280,6 +280,7 @@ fn viewport_pick(scale: f32) -> worker::PickProjection {
         },
         maximum_distance_mm: 0.8,
         camera: camera::Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: std::f32::consts::FRAC_PI_2,
             scale,

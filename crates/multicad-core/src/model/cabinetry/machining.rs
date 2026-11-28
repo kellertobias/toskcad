@@ -542,7 +542,7 @@ pub fn machining_panel_box(
     parameters: &EvaluatedParameters,
     part: EntityId,
 ) -> Result<PanelBox, DocumentError> {
-    super::joint::panel_box(document, parameters, part)
+    super::joint::unplaced_panel_box(document, parameters, part)
 }
 fn box_center(b: &PanelBox) -> [f64; 3] {
     let n = b.normal();
@@ -564,7 +564,7 @@ pub fn resolve_machining_face(
     let name = document
         .get(target)
         .map_or("A panel".into(), |e| e.name.clone());
-    let b = super::joint::panel_box(document, parameters, target)?;
+    let b = super::joint::unplaced_panel_box(document, parameters, target)?;
     let source = panel_feature(document, target)
         .map(|f| read_panel(document, f))
         .transpose()?;
@@ -591,7 +591,10 @@ pub fn resolve_machining_face(
                 .targets
                 .iter()
                 .filter(|t| **t != target)
-                .map(|t| super::joint::panel_box(document, parameters, *t).map(|b| box_center(&b)))
+                .map(|t| {
+                    super::joint::unplaced_panel_box(document, parameters, *t)
+                        .map(|b| box_center(&b))
+                })
                 .collect::<Result<_, _>>()?;
             if others.is_empty() {
                 return Err(invalid(format!(
@@ -837,7 +840,7 @@ pub fn resolve_machining(
     let name = document
         .get(target)
         .map_or("A panel".into(), |e| e.name.clone());
-    let b = super::joint::panel_box(document, parameters, target)?;
+    let b = super::joint::unplaced_panel_box(document, parameters, target)?;
     let which = resolve_machining_face(document, parameters, machining, target)?;
     let f = face(&b, which);
     let m = MARGIN_MM;

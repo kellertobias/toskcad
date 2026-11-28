@@ -53,6 +53,7 @@ fn pick(
 ) -> bool {
     panel.picking = Some(side);
     let camera = Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         scale: 10.,

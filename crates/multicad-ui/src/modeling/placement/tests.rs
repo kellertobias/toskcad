@@ -499,7 +499,7 @@ fn editing_visible_numeric_input_invalidates_ready_stamp_before_apply_and_binds_
         .shapes
         .iter()
         .find_map(|s| match &s.shape {
-            egui::Shape::Text(t) if t.galley.text() == "X (mm)" => {
+            egui::Shape::Text(t) if t.galley.text() == "X" => {
                 Some(t.pos + t.galley.size() * 0.5 + egui::vec2(0., 23.))
             }
             _ => None,

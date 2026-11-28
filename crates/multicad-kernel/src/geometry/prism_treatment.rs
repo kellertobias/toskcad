@@ -7,6 +7,9 @@
 //! edges become exact blend faces on a retained boundary; see [`blend`].
 //! Where both are selected at one corner, the cap blends continue around
 //! the rounded corner, and at equal sizes the corner blend is a sphere.
+//! A selection may cover part of a tangent chain of cap edges: the blend
+//! then ends in a flat face where the selection ends. Profiles may have
+//! holes made of lines and arcs.
 mod blend;
 mod profile;
 
@@ -20,10 +23,12 @@ use multicad_core::references::{
 use multicad_rust_kernel::normal_sweep::Edge as SweepEdge;
 use profile::{CornerCut, Seg, Source};
 
-/// A plain prism in its local chart: the ring runs counterclockwise about
-/// the frame normal and spans `span` along it.
+/// A plain prism in its local chart: the outer ring runs counterclockwise
+/// about the frame normal, hole rings clockwise, and it spans `span` along
+/// the normal. Edges and vertices are numbered through the rings in order.
 struct Prism {
     frame: PlaneFrame,
+    rings: Vec<Vec<Seg>>,
     ring: Vec<Seg>,
     span: [f64; 2],
     cap_names: [FaceName; 2],
@@ -36,7 +41,7 @@ struct SweepSource {
     reverse: bool,
     feature: EntityId,
     origins: Vec<Origin>,
-    authored_reversed: bool,
+    authored_reversed: Vec<bool>,
     path_origin: Option<Origin>,
     cap_anchors: Option<[ReferenceFrame; 2]>,
 }
@@ -80,7 +85,7 @@ fn curved(seg: Seg) -> CurvedEdge2d {
     }
 }
 
-fn reversed(seg: Seg) -> Seg {
+fn reversed_seg(seg: Seg) -> Seg {
     match seg {
         Seg::Line { a, b } => Seg::Line { a: b, b: a },
         Seg::Arc { c, r, a, b, cw } => Seg::Arc {
@@ -220,14 +225,19 @@ impl Solid {
             let Some(view) = body.treatable_prism() else {
                 return Ok(vec![]);
             };
-            let Some(ring) = view
-                .ring
+            let Some(rings) = view
+                .rings
                 .iter()
-                .map(|&edge| seg(edge))
+                .map(|ring| {
+                    ring.iter()
+                        .map(|&edge| seg(edge))
+                        .collect::<Option<Vec<_>>>()
+                })
                 .collect::<Option<Vec<_>>>()
             else {
                 return Ok(vec![]);
             };
+            let ring = rings.concat();
             // Cap ordinal 0 lies at height 0, the start of a reversed sweep's
             // top.
             let ordinals = if view.reverse { [1, 0] } else { [0, 1] };
@@ -240,13 +250,14 @@ impl Solid {
                         reverse: view.reverse,
                         feature: view.feature,
                         origins: view.origins.iter().map(|&o| o.clone()).collect(),
-                        authored_reversed: view.authored_reversed,
+                        authored_reversed: view.authored_reversed.clone(),
                         path_origin: view.path_origin.cloned(),
                         cap_anchors: view.cap_anchors,
                     }
                 });
             return Ok(vec![Prism {
                 frame,
+                rings,
                 ring,
                 span: view.span,
                 cap_names: ordinals.map(|ordinal| source_name(face(topology, ordinal))),
@@ -314,6 +325,7 @@ impl Solid {
                     .collect();
                 Prism {
                     frame,
+                    rings: vec![ring.clone()],
                     ring,
                     span: [0., size[along]],
                     cap_names,
@@ -394,6 +406,8 @@ fn treat_prism(
         EdgeTreatment::Chamfer { distance_mm } => (Kind::Chamfer, distance_mm),
     };
     let n = prism.ring.len();
+    let lengths: Vec<usize> = prism.rings.iter().map(Vec::len).collect();
+    let (_, prev, loops) = blend::ring_links(&lengths);
     let mut caps: [Vec<Option<Origin>>; 2] = [vec![None; n], vec![None; n]];
     let mut sides: Vec<Option<Origin>> = vec![None; n];
     for (edge, &pick) in edges.iter().zip(picks) {
@@ -404,54 +418,69 @@ fn treat_prism(
         *slot = Some(edge.origin.clone());
     }
     let selected: Vec<bool> = sides.iter().map(Option::is_some).collect();
-    let (ring, sources, names, cap_origins) = if selected.contains(&true) {
+    let (rings, sources, names, cap_origins) = if selected.contains(&true) {
         let cut = match kind {
             Kind::Fillet => CornerCut::Round(size),
             Kind::Chamfer => CornerCut::Bevel(size),
         };
-        let cut_ring = profile::cut_corners(&prism.ring, &selected, cut, policy.minimum_feature_mm)
-            .map_err(|message| refused(capitalized(message)))?;
-        let mut ring = Vec::with_capacity(cut_ring.len());
-        let mut sources = Vec::with_capacity(cut_ring.len());
-        let mut names = Vec::with_capacity(cut_ring.len());
+        let mut rings = Vec::with_capacity(prism.rings.len());
+        let mut sources = Vec::new();
+        let mut names = Vec::new();
         let mut cap_origins: [Vec<Option<Vec<Origin>>>; 2] = [vec![], vec![]];
-        for (seg, source) in cut_ring {
-            ring.push(seg);
-            sources.push(source);
-            match source {
-                Source::Edge(i) => {
-                    names.push(prism.side_names[i].clone());
-                    for level in 0..2 {
-                        cap_origins[level].push(caps[level][i].clone().map(|o| vec![o]));
+        for (ring, range) in prism.rings.iter().zip(&loops) {
+            let cut_ring = profile::cut_corners(
+                ring,
+                &selected[range.clone()],
+                cut,
+                policy.minimum_feature_mm,
+            )
+            .map_err(|message| refused(capitalized(message)))?;
+            let mut segs = Vec::with_capacity(cut_ring.len());
+            for (seg, source) in cut_ring {
+                segs.push(seg);
+                let source = match source {
+                    Source::Edge(i) => Source::Edge(range.start + i),
+                    Source::Corner(k) => Source::Corner(range.start + k),
+                };
+                sources.push(source);
+                match source {
+                    Source::Edge(i) => {
+                        names.push(prism.side_names[i].clone());
+                        for level in 0..2 {
+                            cap_origins[level].push(caps[level][i].clone().map(|o| vec![o]));
+                        }
                     }
-                }
-                Source::Corner(k) => {
-                    let side = sides[k].clone().expect("selected corner");
-                    names.push(FaceName {
-                        origins: vec![side.clone()],
-                        support: None,
-                        anchor: None,
-                    });
-                    for level in 0..2 {
-                        let around = [&caps[level][(k + n - 1) % n], &caps[level][k]];
-                        cap_origins[level].push(match around {
-                            [Some(a), Some(b)] => Some(vec![a.clone(), b.clone(), side.clone()]),
-                            [None, None] => None,
-                            _ if kind == Kind::Fillet => {
-                                return Err(refused(
-                                    "A rounded edge ends at a corner where only one of the two other edges is selected; select both of them or neither",
-                                ));
-                            }
-                            _ => None,
+                    Source::Corner(k) => {
+                        let side = sides[k].clone().expect("selected corner");
+                        names.push(FaceName {
+                            origins: vec![side.clone()],
+                            support: None,
+                            anchor: None,
                         });
+                        for level in 0..2 {
+                            let around = [&caps[level][prev[k]], &caps[level][k]];
+                            cap_origins[level].push(match around {
+                                [Some(a), Some(b)] => {
+                                    Some(vec![a.clone(), b.clone(), side.clone()])
+                                }
+                                [None, None] => None,
+                                _ if kind == Kind::Fillet => {
+                                    return Err(refused(
+                                        "A rounded edge ends at a corner where only one of the two other edges is selected; select both of them or neither",
+                                    ));
+                                }
+                                _ => None,
+                            });
+                        }
                     }
                 }
             }
+            rings.push(segs);
         }
-        (ring, sources, names, cap_origins)
+        (rings, sources, names, cap_origins)
     } else {
         (
-            prism.ring.clone(),
+            prism.rings.clone(),
             (0..n).map(Source::Edge).collect(),
             prism.side_names.clone(),
             caps.map(|level| level.into_iter().map(|o| o.map(|o| vec![o])).collect()),
@@ -468,12 +497,17 @@ fn treat_prism(
                 Source::Corner(k) => sides[k].clone().expect("selected corner"),
             })
             .collect();
-        return extrude_again(prism, sweep, &ring, origins, policy);
+        return extrude_again(prism, sweep, &rings, origins, policy);
     }
+    let lengths: Vec<usize> = rings.iter().map(Vec::len).collect();
+    let (next, prev, loops) = blend::ring_links(&lengths);
     blend::build(
         &Plan {
             frame: prism.frame,
-            ring,
+            ring: rings.concat(),
+            next,
+            prev,
+            loops,
             span: prism.span,
             kind,
             size,
@@ -486,32 +520,46 @@ fn treat_prism(
     )
 }
 
+/// Extrude the treated rings again as the source sweep, each ring and its
+/// origins in their authored direction.
 fn extrude_again(
     prism: &Prism,
     sweep: &SweepSource,
-    ring: &[Seg],
-    mut origins: Vec<Origin>,
+    rings: &[Vec<Seg>],
+    origins: Vec<Origin>,
     policy: GeometryPolicy,
 ) -> Result<Solid, GeometryError> {
-    let outer: Vec<CurvedEdge2d> = if sweep.authored_reversed {
-        origins.reverse();
-        ring.iter()
-            .rev()
-            .map(|&seg| curved(reversed(seg)))
-            .collect()
-    } else {
-        ring.iter().map(|&seg| curved(seg)).collect()
-    };
+    let mut wires = Vec::with_capacity(rings.len());
+    let mut authored = Vec::with_capacity(origins.len());
+    let mut first = 0;
+    for (ring, &reversed) in rings.iter().zip(&sweep.authored_reversed) {
+        let ring_origins = &origins[first..first + ring.len()];
+        first += ring.len();
+        if reversed {
+            authored.extend(ring_origins.iter().rev().cloned());
+            wires.push(
+                ring.iter()
+                    .rev()
+                    .map(|&seg| curved(reversed_seg(seg)))
+                    .collect::<Vec<_>>(),
+            );
+        } else {
+            authored.extend(ring_origins.iter().cloned());
+            wires.push(ring.iter().map(|&seg| curved(seg)).collect());
+        }
+    }
+    let mut wires = wires.into_iter();
+    let outer = wires.next().unwrap_or_default();
     let height = prism.span[1] - prism.span[0];
     let solid = Solid::rust_extrude_normal_profile_with_path(
         &CurvedProfile {
             frame: prism.frame,
             outer,
-            holes: vec![],
+            holes: wires.collect(),
         },
         if sweep.reverse { -height } else { height },
         sweep.feature,
-        &origins,
+        &authored,
         sweep.path_origin.clone(),
         policy,
     )?;

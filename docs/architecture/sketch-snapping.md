@@ -14,11 +14,11 @@ All distances are measured in screen pixels after projecting the sketch-plane ca
 
 | Class | Targets | Acquisition distance |
 | --- | --- | --- |
-| 0 | Existing sketch points: endpoints, vertices, spline poles, circle/arc center points (reused by identity) | 8 px |
+| 0 | Existing sketch points: endpoints, vertices, spline poles, circle/arc center points (reused by identity); supporting-face corners and face centres | 8 px |
 | 1 | Line midpoints, shape centers, acquired references, midpoint of two references | 8 px |
-| 2 | Intersection of two assistive lines; assistive line crossing an existing line; perpendicular foot and tangent point from the line start (see below) | 8 px |
+| 2 | Intersection of two assistive lines (horizontal, vertical or edge extension) from two references; assistive line crossing an existing line; perpendicular foot and tangent point from the line start (see below) | 8 px |
 | 3 | Nearest point on an existing line, circle or arc (arcs only inside their sweep) | 6 px |
-| 4 | Horizontal or vertical assistive line through a reference | 6 px |
+| 4 | Horizontal, vertical or edge-extension assistive line through a reference | 6 px |
 
 The lowest class within its distance wins. Within a class, the nearest target wins. The target shown in the previous frame stays eligible up to 1.5× its acquisition distance, which prevents flicker.
 
@@ -31,19 +31,21 @@ The shown target always has a marker at its exact position, so snapped placement
 | Marker | Targets | Cursor |
 | --- | --- | --- |
 | Filled square, highlight color | Existing sketch points (corners, vertices, poles), supporting-face corners and acquired references | Crosshair |
-| Ring with dot | Circle, arc and shape centers | Crosshair |
+| Ring with dot | Circle, arc and shape centers, and supporting-face centres | Crosshair |
 | Triangle | Line midpoints and the midpoint of two references | Crosshair |
 | Cross | Guide intersections, guide on line, perpendicular feet, tangent points | Crosshair |
 | Small ring | A point on an existing line, circle or arc, or on a supporting-face edge | Cell |
-| None (dotted guide only) | Horizontal or vertical alignment | Unchanged |
+| None (dotted guide only) | Horizontal, vertical or edge-extension alignment | Unchanged |
 
 The label is drawn in the marker's color. Without a target the cursor is unchanged.
 
-## Supporting-face corners and edges
+## Supporting-face corners, centres and edges
 
 In a face-attached sketch, every draw tool that places points (all except Fillet, Chamfer and Text) offers the supporting face's producer geometry that lies in the sketch plane. Vertices are "Face corner" targets (class 0, like existing points, vertex marker). Straight and circular edges are "Face edge" targets (class 3, like a point on a sketch curve, edge marker); the target is the exact foot on the edge. A corner or edge already occupied by sketch geometry is left to that geometry.
 
-Placing a point on a face corner or edge creates nothing at once. When the gesture commits, each corner or edge it placed a point on is captured as a canonical projected reference (Project, reference only, the CAD-128 mechanism). A drawn point on a corner reuses the projected point by identity. A point on an edge lies exactly on the projected edge; the sketch model has no point-on-curve constraint, so it is not held there afterwards.
+The centre of every circular face edge (the arcs of a filleted outline, a full-circle hole) is a "Face centre" target (CAD-422): class 0, the center marker, at the exact centre in sketch coordinates. A hole split into arcs at a seam offers one centre. A centre already occupied by a sketch point is left to that point.
+
+Placing a point on a face corner or edge creates nothing at once. When the gesture commits, each corner or edge it placed a point on is captured as a canonical projected reference (Project, reference only, the CAD-128 mechanism). A drawn point on a corner reuses the projected point by identity. A drawn point on a face centre captures that circular edge and reuses the projected circle's or arc's centre point by identity, in the same one-Undo transaction. A point on an edge lies exactly on the projected edge; the sketch model has no point-on-curve constraint, so it is not held there afterwards.
 
 - **One transaction.** Each capture is prepared against the same base document and the captures are merged (`merge_capture_previews`), which refuses captures that edit existing source, touch other entities or share identities. The drawn geometry and any entered inline sizes are added to that candidate. The sketch stays locked while the asynchronous native candidate validation runs, and the candidate commits as one Undo step only if that validation passes. The status reports the commit only after it happened. A polyline continues from the end of a composed segment.
 - **Refusals.** A corner or edge that is no longer in the native geometry is reported as "Missing face reference"; one that resolves to several elements as "Ambiguous face reference (N projections)". A failed check, an unsupported target, a stale scene or a project change during the projection leaves the document unchanged. Escape withdraws a queued or running projection.
@@ -74,15 +76,18 @@ Any other loop has no center target. No centroid or bounding-box center is guess
 
 ## Dwell references
 
-- **Acquiring:** hovering an acquirable target (sketch point, line midpoint, shape center, or point on a line/circle/arc) for **0.5 s** acquires it as a reference, shown as an orange cross at its exact position. The pointer may drift **4 px** from where the dwell started; larger movement, or a different target, restarts the timer. Briefly passing over a target never acquires it. A pending dwell requests a repaint, so acquisition does not depend on further pointer motion.
+- **Acquiring:** hovering an acquirable target (sketch point — curve and arc ends included —, supporting-face corner or face centre, line midpoint, shape center, or point on a line/circle/arc) for **0.5 s** acquires it as a reference, shown as an orange cross at its exact position. The pointer may drift **4 px** from where the dwell started; larger movement, or a different target, restarts the timer. Briefly passing over a target never acquires it. A pending dwell requests a repaint, so acquisition does not depend on further pointer motion.
 - **Limit:** up to **2** references are held. Acquiring a third drops the oldest.
 - **Midpoint of two references:** shown as a diamond marker and offered as a snap target. For example, references (0,0) and (20,10) place (10,5).
-- **Assistive lines:** each reference offers horizontal and vertical lines in all four directions. They are drawn dotted from the reference through the snapped position. Lines from two references intersect, and a line also snaps where it crosses an existing line. Exact alignment with a reference is also drawn when another target wins.
+- **Assistive lines:** each reference offers horizontal and vertical lines in all four directions, and one line along each edge that meets it, extended past it (CAD-423). For a line the extension is its own direction; for an arc it is the tangent at that end. Sketch edges and supporting-face edges both count. An extension along X or Y, or along another extension (a side and its tangent arc), is the same line and is offered once. So a triangle corner has exactly four guides, and the two ends of a rounded-rectangle corner arc each extend the adjacent side.
+- Every guide of a held reference is drawn faint and dotted across the canvas; the guide being snapped to is drawn from the reference through the snapped position. Moving along a guide snaps onto it ("Edge extension" for an extension).
+- Lines from two references intersect at an exact snap target ("Alignment intersection"), for example the virtual sharp corner of a rounded rectangle where the two side extensions cross. A crossing at a reference itself is left to the reference. A horizontal or vertical line also snaps where it crosses an existing line. Exact alignment with a reference is also drawn when another target wins.
 - **Releasing:** dwelling again on a held reference releases it.
 
 Lifetime:
 
-- Point, midpoint and center references follow their source when the solved geometry changes.
+- Point, midpoint and center references follow their source when the solved geometry changes; their edge extensions are recomputed from the current edges.
+- A face corner or centre reference stays when the corner was projected and a sketch point now holds it; otherwise it is dropped when the face no longer offers it.
 - On-curve references keep their acquired position while the curve exists.
 - A reference is dropped when its source disappears, for example after Undo or delete.
 - Cancelling (Esc), switching tools, finishing or leaving sketch editing, switching sketches and toggling geometry snapping clear all references. `SketchEditor::clear_snap_references` clears them explicitly.
@@ -95,6 +100,9 @@ Lifetime:
   - line midpoints and on-curve snapping, competing targets, grid versus geometry, hysteresis
   - supported and unsupported centers, arc sweep, reference limit, release, revalidation, zoom-invariant pixel tolerances
   - perpendicular feet on lines (segment only) and circles/arcs, tangent points, and their absence without a line start
+  - face centres of circular face edges (CAD-422)
+  - edge-extension guides of a triangle corner, a rotated rounded rectangle's corner-arc ends and their exact virtual-corner crossing, and acquisition of face corners and face centres (CAD-423)
+- `sketch_support_snap_tests.rs` drives a filleted box face sketch through the native scene: face-centre markers and one-Undo projection (CAD-422), and dwelling on both ends of a corner arc to commit a line exactly at the virtual corner (CAD-423)
 - `sketch_snap_host_tests.rs` drives the real canvas with injected egui time and covers:
   - dwell without document change
   - the (10,5) commit with the grid on and off

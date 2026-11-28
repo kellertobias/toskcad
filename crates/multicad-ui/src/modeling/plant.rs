@@ -253,15 +253,14 @@ impl PlantPanel {
         ui.label("Name");
         changed |= ui.text_edit_singleline(&mut self.name).changed();
         for (label, value) in [
-            ("Height (mm)", &mut self.height),
-            ("Canopy / spread (mm)", &mut self.spread),
+            ("Height", &mut self.height),
+            ("Canopy / spread", &mut self.spread),
         ] {
-            ui.horizontal(|ui| {
-                ui.label(label);
-                changed |= ui
-                    .add(egui::DragValue::new(value).speed(10.).range(1.0..=1e7))
-                    .changed();
-            });
+            changed |= crate::numeric_field::NumericField::new(label, "mm")
+                .id(ui.make_persistent_id(("plant-size", label)))
+                .value(ui, value, 1.0..=1e7)
+                .input
+                .changed();
         }
         ui.label("Size describes");
         ui.horizontal_wrapped(|ui| {
@@ -277,22 +276,29 @@ impl PlantPanel {
                 .changed();
         });
         ui.small("Generic envelope. Spread is the outer canopy footprint; no species or growth prediction.");
-        ui.label("Position / elevation (mm)");
-        ui.horizontal(|ui| {
-            for (label, value) in ["X", "Y", "Z"].into_iter().zip(&mut self.position) {
-                ui.label(label);
-                if ui.add(egui::DragValue::new(value).speed(10.)).changed() {
-                    changed = true;
-                    self.placed = true;
-                }
+        for (label, value) in ["Position X", "Position Y", "Elevation Z"]
+            .into_iter()
+            .zip(&mut self.position)
+        {
+            if crate::numeric_field::NumericField::new(label, "mm")
+                .id(ui.make_persistent_id(("plant-position", label)))
+                .value(ui, value, f64::NEG_INFINITY..=f64::INFINITY)
+                .input
+                .changed()
+            {
+                changed = true;
+                self.placed = true;
             }
-        });
-        ui.horizontal(|ui| {
-            ui.label("Rotation °");
-            changed |= ui
-                .add(egui::DragValue::new(&mut self.rotation_deg).speed(1.))
-                .changed();
-        });
+        }
+        changed |= crate::numeric_field::NumericField::new("Rotation", "deg")
+            .id(ui.make_persistent_id("plant-rotation"))
+            .value(
+                ui,
+                &mut self.rotation_deg,
+                f64::NEG_INFINITY..=f64::INFINITY,
+            )
+            .input
+            .changed();
         if ui.selectable_label(self.placing, "Place in view").clicked() {
             self.placing = !self.placing;
             changed = true;
@@ -374,6 +380,7 @@ mod tests {
                     scene: None,
                     report: None,
                     camera: crate::camera::Camera {
+                        roll: 0.0,
                         yaw: 0.,
                         pitch: std::f32::consts::FRAC_PI_2,
                         scale: 0.05,

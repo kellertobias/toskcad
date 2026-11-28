@@ -140,6 +140,9 @@ pub(super) struct CanvasEvent {
     pub pick_mm: Option<[f64; 2]>,
     /// The paper's screen rectangle and points per paper millimeter.
     pub paper: Option<(egui::Rect, f32)>,
+    /// A view being dragged: its id, the paper mm moved since the press (NaN
+    /// when unknown on release), and whether the button was released.
+    pub drag: Option<(EntityId, egui::Vec2, bool)>,
 }
 /// `picking` is `Some(first point)` while a section line is being picked.
 #[allow(clippy::too_many_arguments)]
@@ -262,6 +265,7 @@ pub(super) fn show(
         }
     }
     let mut clicked = None;
+    let mut dragged = None;
     let view_painter = painter.with_clip_rect(paper);
     let mut view_area = rect(layout.printable_mm);
     if let Some(block) = drawings::title_block_rect(&layout) {
@@ -329,14 +333,33 @@ pub(super) fn show(
                         .interact(
                             bounds.expand(5.).intersect(paper),
                             ui.id().with(view.id),
-                            egui::Sense::click(),
+                            egui::Sense::click_and_drag(),
                         )
                         .on_hover_text(format!(
-                            "{} · {}:{} · click to edit",
+                            "{} · {}:{} · click to edit, drag to move",
                             view.name, view.scale.numerator, view.scale.denominator
                         ));
                     if response.clicked() {
                         clicked = Some(view.id);
+                    }
+                    if response.hovered() && !response.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                    }
+                    // The whole move since the press, so the drag threshold
+                    // is not lost.
+                    let moved =
+                        ui.input(|i| Some(i.pointer.latest_pos()? - i.pointer.press_origin()?));
+                    if response.dragged()
+                        && let Some(moved) = moved
+                    {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                        dragged = Some((view.id, moved / scale, false));
+                    }
+                    if response.drag_stopped() {
+                        // The press origin is gone on release; the editor
+                        // keeps the last move unless this frame has one.
+                        let moved = moved.map_or(egui::Vec2::NAN, |m| m / scale);
+                        dragged = Some((view.id, moved, true));
                     }
                     if selected == Some(view.id) {
                         view_painter.rect_stroke(
@@ -396,6 +419,7 @@ pub(super) fn show(
         annotation,
         pick_mm: None,
         paper: Some((paper, scale)),
+        drag: dragged,
     };
     if let Some(first) = picking {
         let response = ui
@@ -419,10 +443,9 @@ pub(super) fn show(
             && let Some(position) = response.interact_pointer_pos()
         {
             event = CanvasEvent {
-                view: None,
-                annotation: None,
                 pick_mm: Some(to_paper(position)),
                 paper: Some((paper, scale)),
+                ..Default::default()
             };
         }
     } else {

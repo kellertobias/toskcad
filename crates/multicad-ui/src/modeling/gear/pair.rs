@@ -1028,7 +1028,7 @@ mod rack_roles_tests {
                 .shapes
                 .iter()
                 .find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) if text.galley.text() == "Rack pitch cells (count)" => {
+                    egui::Shape::Text(text) if text.galley.text() == "Rack pitch cells" => {
                         Some(text.pos.y)
                     }
                     _ => None,

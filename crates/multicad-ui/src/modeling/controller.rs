@@ -167,7 +167,44 @@ pub enum ModelToolOutcome {
     },
     Cancelled,
 }
+/// Settings a repeated Model tool starts with (CAD-413). Tools without an
+/// entry restart from their defaults with the current selection.
+#[derive(Clone, Debug)]
+pub(crate) enum ToolSettings {
+    EdgeTreatment(super::edge_treatment::EdgeTreatmentSettings),
+}
 impl ModelToolController {
+    /// The active Fillet / Chamfer form's size field text.
+    #[cfg(test)]
+    pub(crate) fn edge_treatment_size_text(&self) -> Option<String> {
+        match &self.form {
+            Some(ModelForm::EdgeTreatment(panel)) => Some(panel.size_text().to_owned()),
+            _ => None,
+        }
+    }
+    /// A handle drag or viewport point pick is in progress (CAD-413).
+    pub(crate) fn gesture_active(&self) -> bool {
+        self.transform_dragging() || self.placement_point_picking() || self.panel_point_picking()
+    }
+    /// The active form's repeatable settings, if it has any.
+    pub(crate) fn tool_settings(&self) -> Option<ToolSettings> {
+        match &self.form {
+            Some(ModelForm::EdgeTreatment(panel)) if !self.editing() => {
+                Some(ToolSettings::EdgeTreatment(panel.settings()))
+            }
+            _ => None,
+        }
+    }
+    /// Apply a previous run's settings to the matching active form.
+    pub(crate) fn restore_tool_settings(&mut self, settings: &ToolSettings) -> bool {
+        match (&mut self.form, settings) {
+            (Some(ModelForm::EdgeTreatment(panel)), ToolSettings::EdgeTreatment(settings)) => {
+                panel.restore(settings);
+                true
+            }
+            _ => false,
+        }
+    }
     pub fn set_architecture_level(&mut self, level: Option<EntityId>) {
         self.architecture_level = Some(level);
     }
@@ -862,14 +899,15 @@ impl ModelToolController {
         channel: Channel,
     ) -> Result<(), String> {
         let name = GeneratedNames::new(session.document()).numbered("Wall", " feature");
+        // Wall is a drawing tool: nothing exists until segments are clicked
+        // or typed, and the whole chain is one wall feature (CAD-427).
+        let mut panel = super::wall::WallPanel::new(session.document(), name)?;
+        panel.start_new_path();
         self.begin_form(
             session,
             resources,
             channel,
-            ModelForm::Wall(Box::new(super::wall::WallPanel::new(
-                session.document(),
-                name,
-            )?)),
+            ModelForm::Wall(Box::new(panel)),
         )
     }
     /// Room door, window or vertical-cutout tool on `wall` (or the first
@@ -895,6 +933,36 @@ impl ModelToolController {
             channel,
             ModelForm::Opening(Box::new(panel)),
         )
+    }
+    /// Reopen one existing door, window or vertical cutout of `wall` in its
+    /// Room tool, for editing, moving to another wall or removal.
+    pub fn begin_opening_existing(
+        &mut self,
+        session: &Session,
+        resources: &ProjectResources,
+        wall: EntityId,
+        opening: EntityId,
+        channel: Channel,
+    ) -> Result<(), String> {
+        let panel = super::opening::OpeningPanel::existing(session.document(), wall, opening)?;
+        self.begin_form(
+            session,
+            resources,
+            channel,
+            ModelForm::Opening(Box::new(panel)),
+        )
+    }
+    /// Choose the wall the open door or window form moves it to.
+    #[cfg(test)]
+    pub(crate) fn rehost_opening_for_tests(
+        &mut self,
+        document: &multicad_core::document::Document,
+        to: Option<EntityId>,
+    ) -> Result<(), String> {
+        match &mut self.form {
+            Some(ModelForm::Opening(panel)) => panel.set_rehost(document, to),
+            _ => Err("No opening form is open".into()),
+        }
     }
     /// The wall feature producing a selected Part, for the Room tools.
     pub fn wall_of(document: &multicad_core::document::Document, id: EntityId) -> Option<EntityId> {
@@ -990,6 +1058,20 @@ impl ModelToolController {
             ) => true,
             Some(ModelForm::Architecture(panel)) => panel.outlines(),
             _ => false,
+        }
+    }
+    /// Whether the active path ends as a chain that keeps its corners.
+    pub(crate) fn outline_chains(&self) -> bool {
+        matches!(&self.form, Some(ModelForm::Wall(_)))
+    }
+    /// Whether the wall path's inline Length/Angle fields are shown (CAD-427).
+    pub(crate) fn outline_inline_visible(&self) -> bool {
+        matches!(&self.form, Some(ModelForm::Wall(panel)) if panel.outline().inline_fields_visible())
+    }
+    /// Tab from the canvas enters Length (Shift+Tab: Angle).
+    pub(crate) fn focus_outline_inline(&mut self, forward: bool) {
+        if let Some(ModelForm::Wall(panel)) = self.form.as_mut() {
+            panel.outline_mut().focus_inline_field(forward);
         }
     }
     /// Give Enter, Escape or Backspace to a wall, fence or slab path while it

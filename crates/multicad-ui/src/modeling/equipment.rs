@@ -493,11 +493,8 @@ impl EquipmentPanel {
         }
         ui.label("Name");
         changed |= ui.text_edit_singleline(&mut self.name).changed();
-        for (label, value) in ["Width (mm)", "Depth (mm)", "Height (mm)"]
-            .into_iter()
-            .zip(&mut self.size)
-        {
-            changed |= number(ui, label, value, 1. ..=100_000.);
+        for (label, value) in ["Width", "Depth", "Height"].into_iter().zip(&mut self.size) {
+            changed |= number(ui, label, "mm", value, 1. ..=100_000.);
         }
         let floors: Vec<_> = model::levels(document)
             .map(|e| (e.id, e.name.clone()))
@@ -524,8 +521,8 @@ impl EquipmentPanel {
                     .selectable_value(&mut self.side, WallSide::Right, "Right face")
                     .changed();
             });
-            changed |= number(ui, "Along wall (mm)", &mut self.along, 0. ..=1e9);
-            changed |= number(ui, "From wall face (mm)", &mut self.standoff, 0. ..=1e6);
+            changed |= number(ui, "Along wall", "mm", &mut self.along, 0. ..=1e9);
+            changed |= number(ui, "From wall face", "mm", &mut self.standoff, 0. ..=1e6);
             ui.small("Click a wall segment in the view to choose its attachment position.");
         }
         if self.kind.preset().mount == MountClass::CeilingTop {
@@ -535,26 +532,28 @@ impl EquipmentPanel {
             if !self.ceiling_auto {
                 changed |= number(
                     ui,
-                    "Ceiling above floor (mm)",
+                    "Ceiling above floor",
+                    "mm",
                     &mut self.ceiling,
                     1. ..=100_000.,
                 );
             }
             changed |= number(
                 ui,
-                "Drop below ceiling (mm)",
+                "Drop below ceiling",
+                "mm",
                 &mut self.height,
                 0. ..=100_000.,
             );
         } else {
             let label = match self.kind.preset().mount {
-                MountClass::WallCenter => "Center above floor (mm)",
-                MountClass::CounterTop => "Top above floor (mm)",
-                _ => "Bottom above floor (mm)",
+                MountClass::WallCenter => "Center above floor",
+                MountClass::CounterTop => "Top above floor",
+                _ => "Bottom above floor",
             };
-            changed |= number(ui, label, &mut self.height, -100_000. ..=100_000.);
+            changed |= number(ui, label, "mm", &mut self.height, -100_000. ..=100_000.);
         }
-        changed |= number(ui, "Rotation (°)", &mut self.rotation, -3600. ..=3600.);
+        changed |= number(ui, "Rotation", "deg", &mut self.rotation, -3600. ..=3600.);
         let p = self.kind.preset();
         if p.supports_built_in && p.supports_standalone {
             ui.horizontal(|ui| {
@@ -588,9 +587,9 @@ impl EquipmentPanel {
         changed |= ui.text_edit_singleline(&mut self.label).changed();
         if p.service_front_mm > 0. || p.door_front_mm > 0. {
             ui.collapsing("Access and service envelopes", |ui| {
-                changed |= number(ui, "Service front (mm)", &mut self.service, 0. ..=100_000.);
+                changed |= number(ui, "Service front", "mm", &mut self.service, 0. ..=100_000.);
                 changed |= ui.checkbox(&mut self.service_visible, "Show service envelope").changed();
-                changed |= number(ui, "Door access front (mm)", &mut self.door, 0. ..=100_000.);
+                changed |= number(ui, "Door access front", "mm", &mut self.door, 0. ..=100_000.);
                 changed |= ui.checkbox(&mut self.door_visible, "Show door access envelope").changed();
                 ui.small("Conservative access boxes, separate from physical geometry; included in clearance checks.");
             });
@@ -732,18 +731,19 @@ impl EquipmentPanel {
         false
     }
 }
+/// CAD-416 shared numeric field.
 fn number(
     ui: &mut egui::Ui,
     label: &str,
+    unit: &str,
     value: &mut f64,
     range: std::ops::RangeInclusive<f64>,
 ) -> bool {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add(egui::DragValue::new(value).range(range).speed(10.))
-            .changed()
-    })
-    .inner
+    crate::numeric_field::NumericField::new(label, unit)
+        .id(ui.make_persistent_id(("equipment-number", label)))
+        .value(ui, value, range)
+        .input
+        .changed()
 }
 fn picker(
     ui: &mut egui::Ui,
@@ -842,6 +842,7 @@ mod tests {
             "Click in the apartment view to position the equipment"
         );
         let camera = crate::camera::Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: std::f32::consts::FRAC_PI_2,
             scale: 0.5,

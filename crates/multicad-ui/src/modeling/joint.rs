@@ -142,12 +142,10 @@ impl TenonFields {
             "Along the joint, including the rounded ends",
         );
         changed |= self.length.show(ui, "Tenon length", "Mortise to mortise");
-        ui.horizontal(|ui| {
-            ui.label("Tenons per pair");
-            changed |= ui
-                .add(egui::DragValue::new(&mut self.count).range(1..=model::MAX_TENONS))
-                .changed();
-        });
+        changed |= crate::numeric_field::NumericField::new("Tenons per pair", "count")
+            .value(ui, &mut self.count, 1..=model::MAX_TENONS)
+            .input
+            .changed();
         changed |= self.inset.show(
             ui,
             "End inset",
@@ -409,12 +407,10 @@ impl JointPanel {
             changed |= self.dowels.show(ui);
         }
         if self.kind == Kind::Finger {
-            ui.horizontal(|ui| {
-                ui.label("Fingers");
-                changed |= ui
-                    .add(egui::DragValue::new(&mut self.count).range(2..=model::MAX_FINGERS))
-                    .changed();
-            });
+            changed |= crate::numeric_field::NumericField::new("Fingers", "count")
+                .value(ui, &mut self.count, 2..=model::MAX_FINGERS)
+                .input
+                .changed();
             changed |= self.fit.show(ui, "Fit", "Total gap at each finger face");
         }
         ui.separator();

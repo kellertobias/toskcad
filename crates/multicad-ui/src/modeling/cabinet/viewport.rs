@@ -232,6 +232,7 @@ mod tests {
 
     fn top_view() -> crate::camera::Camera {
         crate::camera::Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: std::f32::consts::FRAC_PI_2,
             scale: 0.8,

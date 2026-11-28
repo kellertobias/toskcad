@@ -101,6 +101,8 @@ pub enum Command {
     SheetFasteners,
     SheetView,
     Construction,
+    /// End the active sketch drawing or edit tool and select geometry (CAD-412).
+    SketchSelect,
     Dimension,
     FinishSketch,
     AbortSketch,
@@ -322,7 +324,7 @@ impl Default for Registry {
             },
             Tool {
                 id: "new-sketch",
-                label: "Sketch",
+                label: "Add Sketch",
                 icon: Icon::Sketch,
                 action: Command::NewSketch,
                 aliases: &["start", "new-sketch", "add-sketch", "sketch"],
@@ -340,6 +342,13 @@ impl Default for Registry {
                 icon: Icon::Page,
                 action: Command::ImportArtwork,
                 aliases: &["import-artwork", "dxf", "svg"],
+            },
+            Tool {
+                id: "sketch-select",
+                label: "Select",
+                icon: Icon::Select,
+                action: Command::SketchSelect,
+                aliases: &["select"],
             },
             Tool {
                 id: "construction",
@@ -608,6 +617,7 @@ impl Default for Registry {
                     tab(
                         "Common",
                         &[
+                            "sketch-select",
                             "rectangle",
                             "line",
                             "circle",
@@ -647,46 +657,50 @@ impl Default for Registry {
                 tabs: vec![
                     RibbonTab {
                         title: "Common",
-                        tools: ModelingTool::ALL
-                            .into_iter()
-                            .filter(|tool| {
-                                !matches!(
-                                    tool,
-                                    ModelingTool::Copy
-                                        | ModelingTool::Thread
-                                        | ModelingTool::Gear
-                                        | ModelingTool::MechanicalPart
-                                        | ModelingTool::ScrewConnection
-                                        | ModelingTool::ProfileConnection
-                                        | ModelingTool::Boolean
-                                        | ModelingTool::Wall
-                                        | ModelingTool::Fence
-                                        | ModelingTool::Door
-                                        | ModelingTool::Window
-                                        | ModelingTool::Cutout
-                                        | ModelingTool::Level
-                                        | ModelingTool::Stair
-                                        | ModelingTool::Plant
-                                        | ModelingTool::Equipment
-                                        | ModelingTool::Panel
-                                        | ModelingTool::Cabinet
-                                        | ModelingTool::WoodBox
-                                        | ModelingTool::Joint
-                                        | ModelingTool::Machining
-                                        | ModelingTool::ShelfPins
-                                        | ModelingTool::LooseTenon
-                                        | ModelingTool::FdmAid
-                                        | ModelingTool::FdmBridge
-                                        | ModelingTool::FdmSupport
-                                        | ModelingTool::SurfaceStructure
-                                        | ModelingTool::Member
-                                        | ModelingTool::Frame
-                                        | ModelingTool::Connection
-                                        | ModelingTool::Weld
-                                        | ModelingTool::Sheet
-                                )
-                            })
-                            .map(ModelingTool::id)
+                        // Add Sketch runs the global Sketch command (CAD-418).
+                        tools: std::iter::once("new-sketch")
+                            .chain(
+                                ModelingTool::ALL
+                                    .into_iter()
+                                    .filter(|tool| {
+                                        !matches!(
+                                            tool,
+                                            ModelingTool::Copy
+                                                | ModelingTool::Thread
+                                                | ModelingTool::Gear
+                                                | ModelingTool::MechanicalPart
+                                                | ModelingTool::ScrewConnection
+                                                | ModelingTool::ProfileConnection
+                                                | ModelingTool::Boolean
+                                                | ModelingTool::Wall
+                                                | ModelingTool::Fence
+                                                | ModelingTool::Door
+                                                | ModelingTool::Window
+                                                | ModelingTool::Cutout
+                                                | ModelingTool::Level
+                                                | ModelingTool::Stair
+                                                | ModelingTool::Plant
+                                                | ModelingTool::Equipment
+                                                | ModelingTool::Panel
+                                                | ModelingTool::Cabinet
+                                                | ModelingTool::WoodBox
+                                                | ModelingTool::Joint
+                                                | ModelingTool::Machining
+                                                | ModelingTool::ShelfPins
+                                                | ModelingTool::LooseTenon
+                                                | ModelingTool::FdmAid
+                                                | ModelingTool::FdmBridge
+                                                | ModelingTool::FdmSupport
+                                                | ModelingTool::SurfaceStructure
+                                                | ModelingTool::Member
+                                                | ModelingTool::Frame
+                                                | ModelingTool::Connection
+                                                | ModelingTool::Weld
+                                                | ModelingTool::Sheet
+                                        )
+                                    })
+                                    .map(ModelingTool::id),
+                            )
                             .chain(BOOLEAN_OPERATIONS.map(|(id, ..)| id))
                             .chain(["duplicate", "symbol"])
                             .collect(),
@@ -756,6 +770,8 @@ impl Default for Registry {
                             "page-setup",
                             "page-apply",
                             "page-discard",
+                            "drawing-add-view",
+                            "drawing-standard-views",
                             "drawing-projection",
                             "drawing-section",
                             "drawing-detail",

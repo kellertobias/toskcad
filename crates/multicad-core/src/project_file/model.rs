@@ -337,6 +337,9 @@ impl ProjectFile {
         if crate::constraint_sketch::source::requires_shapes(&self.document) {
             required.insert(crate::constraint_sketch::source::SHAPES_CAPABILITY.into());
         }
+        if crate::constraint_sketch::source::requires_corner_shapes(&self.document) {
+            required.insert(crate::constraint_sketch::source::CORNER_SHAPES_CAPABILITY.into());
+        }
         if crate::constraint_sketch::source::requires_text(&self.document) {
             required.insert(crate::constraint_sketch::text::CAPABILITY.into());
         }
@@ -381,6 +384,18 @@ impl ProjectFile {
                 .is_ok_and(|book| crate::drawings::has_section_limits(&book))
         }) {
             required.insert(crate::drawings::SECTION_CAPABILITY.into());
+        }
+        if crate::drawings::books(&self.document).any(|id| {
+            crate::drawings::read(&self.document, id)
+                .is_ok_and(|book| crate::drawings::has_projections(&book))
+        }) {
+            required.insert(crate::drawings::PROJECTION_CAPABILITY.into());
+        }
+        if crate::drawings::books(&self.document).any(|id| {
+            crate::drawings::read(&self.document, id)
+                .is_ok_and(|book| crate::drawings::has_part_filters(&book))
+        }) {
+            required.insert(crate::drawings::PART_FILTER_CAPABILITY.into());
         }
         if crate::drawings::books(&self.document).any(|id| {
             crate::drawings::read(&self.document, id)
@@ -515,6 +530,8 @@ pub fn supported_capabilities() -> BTreeSet<String> {
         crate::drawings::CAPABILITY.into(),
         crate::drawings::VIEW_CAPABILITY.into(),
         crate::drawings::SECTION_CAPABILITY.into(),
+        crate::drawings::PROJECTION_CAPABILITY.into(),
+        crate::drawings::PART_FILTER_CAPABILITY.into(),
         crate::drawings::ANNOTATION_CAPABILITY.into(),
         crate::drawings::GUIDE_CAPABILITY.into(),
         crate::drawings::GUIDED_VIEW_CAPABILITY.into(),
@@ -532,6 +549,7 @@ pub fn supported_capabilities() -> BTreeSet<String> {
         crate::inspection::CAPABILITY.into(),
         crate::constraint_sketch::source::V4_CAPABILITY.into(),
         crate::constraint_sketch::source::SHAPES_CAPABILITY.into(),
+        crate::constraint_sketch::source::CORNER_SHAPES_CAPABILITY.into(),
         crate::constraint_sketch::text::CAPABILITY.into(),
         crate::constraint_sketch::text::LEGACY_CAPABILITY.into(),
         crate::sketch_external::CAPABILITY.into(),

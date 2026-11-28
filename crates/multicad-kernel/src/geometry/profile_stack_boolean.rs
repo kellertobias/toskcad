@@ -27,6 +27,7 @@ use multicad_rust_kernel::brep::{
 use std::collections::{BTreeMap, BTreeSet};
 
 mod arrangement;
+mod face_column;
 use arrangement::{Arrangement, P2, Piece, Refusal, Segment, Shape, Support};
 
 const OPERATION: &str = "profile stack Boolean";
@@ -403,6 +404,26 @@ struct Patch {
     loops: Vec<Vec<Use>>,
     origins: BTreeSet<Origin>,
     support: Option<ReferenceFrame>,
+    /// A hole loop cut into this existing face of the column's target.
+    host: Option<usize>,
+}
+
+/// The target of a column Boolean: a retained solid that, inside the
+/// column of the tool profile, is material over whole slabs.
+struct Column {
+    /// The target's material in each slab, and below and above all slabs.
+    inside: Vec<bool>,
+    outside: [bool; 2],
+    /// The target face at each level whose material changes across it.
+    hosts: BTreeMap<usize, usize>,
+}
+
+/// A slab, or the space below or above every slab.
+#[derive(Clone, Copy)]
+enum Slab {
+    Below,
+    In(usize),
+    Above,
 }
 
 struct Stack {
@@ -416,6 +437,9 @@ struct Stack {
     /// The (operand, ring, curve) each segment came from.
     owners: Vec<[usize; 3]>,
     policy: GeometryPolicy,
+    /// Operand 0 as a retained target around the tool column, instead of a
+    /// profile.
+    column: Option<Column>,
 }
 
 impl Stack {
@@ -488,6 +512,7 @@ impl Stack {
             operands,
             owners,
             policy,
+            column: None,
         })
     }
 
@@ -502,8 +527,16 @@ impl Stack {
 
     /// Each operand's material on `side` (0 left, 1 right) of a piece in a
     /// slab; outside every slab nothing is material.
-    fn inputs(&self, piece: &Piece, slab: Option<usize>, side: usize) -> [bool; 2] {
-        [0, 1].map(|o| slab.is_some_and(|k| self.active(o, k)) && piece.sides[o][side])
+    fn inputs(&self, piece: &Piece, slab: Slab, side: usize) -> [bool; 2] {
+        [0, 1].map(|o| match (&self.column, slab) {
+            (Some(column), _) if o == 0 => match slab {
+                Slab::Below => column.outside[0],
+                Slab::In(k) => column.inside[k],
+                Slab::Above => column.outside[1],
+            },
+            (_, Slab::In(k)) => self.active(o, k) && piece.sides[o][side],
+            _ => false,
+        })
     }
 
     fn result(&self, [a, b]: [bool; 2]) -> bool {
@@ -514,22 +547,26 @@ impl Stack {
         }
     }
 
-    fn material(&self, piece: &Piece, slab: Option<usize>, side: usize) -> bool {
+    fn material(&self, piece: &Piece, slab: Slab, side: usize) -> bool {
         self.result(self.inputs(piece, slab, side))
     }
 
     /// The slabs below and above a level.
-    fn around(&self, level: usize) -> [Option<usize>; 2] {
+    fn around(&self, level: usize) -> [Slab; 2] {
         [
-            level.checked_sub(1),
-            (level < self.slabs()).then_some(level),
+            level.checked_sub(1).map_or(Slab::Below, Slab::In),
+            if level < self.slabs() {
+                Slab::In(level)
+            } else {
+                Slab::Above
+            },
         ]
     }
 
     /// Whether the result's material differs across `piece` in `slab`, and
     /// if so whether it lies on the left.
     fn wall(&self, piece: &Piece, slab: usize) -> Option<bool> {
-        let [left, right] = [0, 1].map(|s| self.material(piece, Some(slab), s));
+        let [left, right] = [0, 1].map(|s| self.material(piece, Slab::In(slab), s));
         (left != right).then_some(left)
     }
 
@@ -577,7 +614,32 @@ impl Stack {
                     continue;
                 }
                 let loops = self.trace(&uses)?;
-                for face in self.nest(loops, up)? {
+                let (faces, holes) = self.nest(loops, up)?;
+                if !holes.is_empty() {
+                    // Only an existing face of the column target can hold a
+                    // hole around the tool column.
+                    let host = self
+                        .column
+                        .as_ref()
+                        .and_then(|column| column.hosts.get(&level).copied())
+                        .ok_or_else(|| {
+                            invalid("A cap hole of the profile Boolean has no outer loop")
+                        })?;
+                    patches.push(Patch {
+                        surface: Surface::Plane(Frame {
+                            origin: self.chart.world([0., 0.], self.levels[level]),
+                            x: self.chart.frame.u,
+                            y: self.chart.frame.v,
+                            z: self.chart.n,
+                        }),
+                        same_sense: up,
+                        loops: holes,
+                        origins: BTreeSet::new(),
+                        support: None,
+                        host: Some(host),
+                    });
+                }
+                for face in faces {
                     let z = self.levels[level];
                     let frame = self.chart.frame;
                     let origin = self.chart.world([0., 0.], z);
@@ -619,6 +681,7 @@ impl Stack {
                         loops: face,
                         origins,
                         support: Some(support),
+                        host: None,
                     });
                 }
             }
@@ -795,6 +858,7 @@ impl Stack {
                     loops: self.trace(&uses)?,
                     origins,
                     support,
+                    host: None,
                 })
             })
             .collect()
@@ -861,7 +925,13 @@ impl Stack {
     /// Group cap loops into faces, outer loop first. For a cap facing up
     /// its outer loops run counter-clockwise in the chart; facing down they
     /// run clockwise.
-    fn nest(&self, loops: Vec<Vec<Use>>, up: bool) -> Result<Vec<Vec<Vec<Use>>>, GeometryError> {
+    /// Loops that lie in no outer loop come back apart.
+    #[allow(clippy::type_complexity)]
+    fn nest(
+        &self,
+        loops: Vec<Vec<Use>>,
+        up: bool,
+    ) -> Result<(Vec<Vec<Vec<Use>>>, Vec<Vec<Use>>), GeometryError> {
         let area = |ring: &Vec<Use>| -> f64 {
             ring.iter()
                 .map(|&(key, forward)| match key {
@@ -881,19 +951,22 @@ impl Stack {
             .partition(|(a, _)| *a > 0.);
         outers.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut faces: Vec<Vec<Vec<Use>>> = outers.iter().map(|(_, r)| vec![r.clone()]).collect();
+        let mut orphans = vec![];
         for (_, hole) in holes {
             let EdgeKey::Across(p, _) = hole[0].0 else {
                 unreachable!("cap loops are horizontal")
             };
             let point = self.arrangement.pieces[p].shape.point(0.5);
             // The smallest outer loop around the hole holds it.
-            let owner = outers
+            match outers
                 .iter()
                 .position(|(_, outer)| arrangement::contains(self.ring_shapes(outer), point))
-                .ok_or_else(|| invalid("A cap hole of the profile Boolean has no outer loop"))?;
-            faces[owner].push(hole);
+            {
+                Some(owner) => faces[owner].push(hole),
+                None => orphans.push(hole),
+            }
         }
-        Ok(faces)
+        Ok((faces, orphans))
     }
 
     /// The exact result volume: each slab's section area by its height.

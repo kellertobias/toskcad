@@ -530,31 +530,20 @@ impl PlanePicker {
             .on_hover_text(
                 "Use an existing construction plane; unresolved attachments cannot be selected",
             );
-        ui.horizontal(|ui| {
-            ui.label("Normal offset · mm");
-            ui.add(
-                egui::DragValue::new(&mut self.options.normal_offset_mm)
-                    .range(-1e7..=1e7)
-                    .speed(0.5),
-            )
-            .on_hover_text("Offset along the selected plane's positive normal");
-        });
+        crate::numeric_field::NumericField::new("Normal offset", "mm")
+            .id(ui.make_persistent_id("sketch-plane-normal-offset"))
+            .help("Offset along the selected plane's positive normal")
+            .value(ui, &mut self.options.normal_offset_mm, -1e7..=1e7);
         let mut angle = self.options.angle_rad.to_degrees();
-        ui.horizontal(|ui| {
-            ui.label("In-plane angle");
-            if ui
-                .add(
-                    egui::DragValue::new(&mut angle)
-                        .range(-360000.0..=360000.0)
-                        .suffix("°")
-                        .speed(1.),
-                )
-                .on_hover_text("Rotate sketch U and V around the plane's positive normal")
-                .changed()
-            {
-                self.options.angle_rad = angle.to_radians();
-            }
-        });
+        if crate::numeric_field::NumericField::new("In-plane angle", "deg")
+            .id(ui.make_persistent_id("sketch-plane-angle"))
+            .help("Rotate sketch U and V around the plane's positive normal")
+            .value(ui, &mut angle, -360000.0..=360000.0)
+            .input
+            .changed()
+        {
+            self.options.angle_rad = angle.to_radians();
+        }
         let result = self.current_preview(context);
         if let Ok(Some(preview)) = &result {
             ui.label(label(&preview.choice, context.document));

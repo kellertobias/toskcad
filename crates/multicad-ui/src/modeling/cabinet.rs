@@ -11,6 +11,9 @@ use super::{
 mod fields;
 #[cfg(test)]
 mod naming_tests;
+mod placement;
+#[cfg(test)]
+mod placement_tests;
 mod points;
 mod viewport;
 mod visual;
@@ -43,6 +46,9 @@ pub enum CabinetCommand {
         feature: EntityId,
         name: String,
         panel: Box<PanelDefinition>,
+        /// CAD-430: a position/orientation typed or picked in the
+        /// inspector, applied with the panel edit in one step.
+        placement: Option<Box<model::PanelPlacementRequest>>,
     },
 }
 impl CabinetCommand {
@@ -62,6 +68,15 @@ impl CabinetCommand {
                 editing: true,
                 feature,
                 panel,
+                placement: Some(placement),
+                ..
+            } => {
+                model::prepare_panel_placement(session, revision, actor, *feature, panel, placement)
+            }
+            Self::Panel {
+                editing: true,
+                feature,
+                panel,
                 ..
             } => model::prepare_panel_edit(session, revision, actor, *feature, panel),
             Self::Panel {
@@ -69,6 +84,7 @@ impl CabinetCommand {
                 feature,
                 name,
                 panel,
+                ..
             } => model::prepare_panel(
                 session,
                 revision,
@@ -236,6 +252,8 @@ pub(super) struct CabinetPanel {
     grain: GrainAxis,
     edges: [bool; 4],
     oversize: DimensionField,
+    /// Where an existing panel is (CAD-430); None while creating.
+    placement: Option<placement::PlacementFields>,
     error: Option<String>,
     /// Display-only envelope guide for (stamp, source revision).
     guide: Option<(FormStamp, u64, Option<CabinetGuide>)>,
@@ -301,6 +319,7 @@ impl CabinetPanel {
             grain: GrainAxis::Free,
             edges: [false; 4],
             oversize: field(0., "mm"),
+            placement: None,
             error: None,
             guide: None,
             link: DiagramLink::default(),
@@ -453,6 +472,8 @@ impl CabinetPanel {
                 if let Some(o) = &panel.oversize {
                     form.oversize = of(o, "mm")?;
                 }
+                form.placement =
+                    placement::PlacementFields::open(document, panel.output.body, feature);
             }
             PanelSource::WoodBox { .. } => {
                 return Err("Open the Wood Box recipe to edit this generated face".into());
@@ -565,7 +586,12 @@ impl CabinetPanel {
                 let pick = |i: usize| band.clone().filter(|_| self.edges[i]);
                 let oversize = self.oversize.resolve(document)?;
                 let zero = matches!(oversize, Dimension::Literal { value, .. } if value == 0.);
+                let placement = match &self.placement {
+                    Some(fields) => fields.request(document)?.map(Box::new),
+                    None => None,
+                };
                 Ok(CabinetCommand::Panel {
+                    placement,
                     editing: self.existing.is_some(),
                     feature: self.feature,
                     name: self.name.clone(),
@@ -646,7 +672,7 @@ impl CabinetPanel {
         ui.separator();
         match self.kind {
             Kind::Carcass => changed |= self.show_carcass(ui, document, &stocks),
-            Kind::Panel => changed |= self.show_panel(ui),
+            Kind::Panel => changed |= self.show_panel(ui, document),
         }
         ui.separator();
         if self.kind == Kind::Carcass {
@@ -973,15 +999,11 @@ impl CabinetPanel {
                     )
                     .changed();
             } else {
-                ui.horizontal(|ui| {
-                    ui.label("Count");
-                    changed |= ui
-                        .add(
-                            egui::DragValue::new(&mut self.shelf_count)
-                                .range(0..=model::MAX_SHELVES as u32),
-                        )
-                        .changed();
-                });
+                changed |= crate::numeric_field::NumericField::new("Count", "count")
+                    .id(ui.make_persistent_id("cabinet-shelf-count"))
+                    .value(ui, &mut self.shelf_count, 0..=model::MAX_SHELVES as u32)
+                    .input
+                    .changed();
             }
         }
         let fit_title = format!(
@@ -1175,8 +1197,27 @@ impl CabinetPanel {
             }
         }
     }
-    fn show_panel(&mut self, ui: &mut egui::Ui) -> bool {
+    fn show_panel(&mut self, ui: &mut egui::Ui, document: &Document) -> bool {
         let mut changed = false;
+        if self.placement.is_some() {
+            // An existing panel: plane and origin are shown as where the
+            // Part is now, with a face direction and a turn (CAD-430).
+            let parameters = multicad_core::parameters::evaluate(document).ok();
+            let origin = parameters.as_ref().and_then(|p| {
+                let mut out = [0.; 3];
+                for (o, f) in out.iter_mut().zip(&self.origin) {
+                    *o = fields::value(f, document, p).ok()?;
+                }
+                Some(out)
+            });
+            let plane = self.plane;
+            let fields = self.placement.as_mut().expect("checked");
+            fields.follow(origin, plane);
+            changed |= fields.show(ui);
+            changed |= self.show_panel_size(ui);
+            self.show_point_placement(ui);
+            return changed | self.show_panel_details(ui);
+        }
         ui.label("Plane");
         controls::inspector_combo(ui, "panel-plane")
             .selected_text(match self.plane {
@@ -1193,7 +1234,13 @@ impl CabinetPanel {
                     changed |= ui.selectable_value(&mut self.plane, plane, label).changed();
                 }
             });
-        changed |= self.length.show(
+        changed |= self.show_panel_size(ui);
+        changed |= self.show_origin(ui, "World position of the panel's minimum corner");
+        self.show_point_placement(ui);
+        changed | self.show_panel_details(ui)
+    }
+    fn show_panel_size(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = self.length.show(
             ui,
             "Length (u)",
             "Finished size along the plane's first axis",
@@ -1203,8 +1250,10 @@ impl CabinetPanel {
             "Width (v)",
             "Finished size along the plane's second axis",
         );
-        changed |= self.show_origin(ui, "World position of the panel's minimum corner");
-        self.show_point_placement(ui);
+        changed
+    }
+    fn show_panel_details(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
         ui.label("Grain direction (this panel)");
         ui.horizontal_wrapped(|ui| {
             for (axis, label, help) in [
@@ -1548,11 +1597,7 @@ pub(in crate::modeling) mod tests {
                 .iter()
                 .any(|(t, ..)| t.contains("ending") && !t.contains("not bending"))
         );
-        assert!(
-            has("Banded edges")
-                && has("Edge strip thickness (mm)")
-                && has("Strip trim allowance (mm)")
-        );
+        assert!(has("Banded edges") && has("Edge strip thickness") && has("Strip trim allowance"));
         assert!(has(
             "Click an edge in the diagram or tick it to add a strip."
         ));

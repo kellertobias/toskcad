@@ -451,6 +451,7 @@ fn section_picking_skips_removed_surfaces_and_clips_edges_without_new_source_fac
     );
     let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(900., 600.));
     let camera = Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         target: [50., 30., 18.],
@@ -541,6 +542,7 @@ fn instance_frames_are_in_world_coordinates_and_camera_rays_match_both_projectio
     let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(900., 600.));
     for perspective in [false, true] {
         let camera = Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: std::f32::consts::FRAC_PI_2,
             scale: 3.,
@@ -730,6 +732,7 @@ fn screen_picking_uses_real_vertices_edges_and_faces_with_occlusion() {
     let scene = Scene::new(stamp(), vec![geometry], vec![far.clone(), near.clone()]).unwrap();
     let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(900., 600.));
     let camera = Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         scale: 3.,
@@ -790,6 +793,7 @@ fn perspective_edge_hit_reprojects_to_the_pointer_and_display_data_is_validated(
     let part = instance(&geometry, [0.; 3]);
     let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(900., 600.));
     let camera = Camera {
+        roll: 0.0,
         yaw: -0.6,
         pitch: 0.6,
         scale: 3.,

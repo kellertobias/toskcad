@@ -638,7 +638,7 @@ impl FencePanel {
                 let post=plan.posts.iter().find(|p|p.key==key).expect("selected post");let FencePostKey::Interior{start,..}=key else{unreachable!()};if let Ok(points)=self.outline.positions(document)&&let Some(i)=self.outline.vertex_ids().iter().position(|id|*id==start){let offset=(post.position_mm[0]-points[i][0]).portable_hypot(post.position_mm[1]-points[i][1]);self.positions.push(PositionRow{post:key,offset:field(offset)});changed=true;}
             }
             let labels=self.positions.iter().map(|p|self.post_label(p.post)).collect::<Vec<_>>();let mut remove=None;
-            for(index,row)in self.positions.iter_mut().enumerate(){ui.push_id(index,|ui|{ui.label(&labels[index]);egui::Grid::new("post-position").num_columns(2).show(ui,|ui|{changed|=row.offset.show(ui,"Offset along segment","Explicit center distance from the directed segment start");ui.end_row();});if ui.button("Restore automatic position").clicked(){remove=Some(index);}});}
+            for(index,row)in self.positions.iter_mut().enumerate(){ui.push_id(index,|ui|{ui.label(&labels[index]);ui.vertical(|ui|{changed|=row.offset.show(ui,"Offset along segment","Explicit center distance from the directed segment start");});if ui.button("Restore automatic position").clicked(){remove=Some(index);}});}
             if let Some(index)=remove{self.positions.remove(index);changed=true;}
         });
         changed
@@ -763,14 +763,11 @@ impl FencePanel {
                         .changed();
                 }
             });
-        egui::Grid::new("fence-placement")
-            .num_columns(2)
-            .show(ui, |ui| {
-                changed |=
-                    self.base_z
-                        .show(ui, "Base above level", "World Z when no level is selected");
-                ui.end_row();
-            });
+        ui.vertical(|ui| {
+            changed |=
+                self.base_z
+                    .show(ui, "Base above level", "World Z when no level is selected");
+        });
         if !self.symbol.active() {
             changed |= ui
                 .checkbox(
@@ -779,31 +776,25 @@ impl FencePanel {
                 )
                 .changed();
             if self.height_override {
-                egui::Grid::new("fence-height-override")
-                    .num_columns(2)
-                    .show(ui, |ui| {
-                        changed |= self.height.show(
-                            ui,
-                            "Post height",
-                            "Infill keeps its construction dimensions",
-                        );
-                        ui.end_row();
-                    });
+                ui.vertical(|ui| {
+                    changed |= self.height.show(
+                        ui,
+                        "Post height",
+                        "Infill keeps its construction dimensions",
+                    );
+                });
             }
             changed |= ui
                 .checkbox(&mut self.spacing_override, "Override spacing for this run")
                 .changed();
             if self.spacing_override {
-                egui::Grid::new("fence-spacing-override")
-                    .num_columns(2)
-                    .show(ui, |ui| {
-                        changed |= self.spacing.show(
-                            ui,
-                            "Post spacing",
-                            "Center pitch before explicit post adjustments",
-                        );
-                        ui.end_row();
-                    });
+                ui.vertical(|ui| {
+                    changed |= self.spacing.show(
+                        ui,
+                        "Post spacing",
+                        "Center pitch before explicit post adjustments",
+                    );
+                });
             }
         }
         changed |= self.outline.show(ui, document, "Horizontal fence plane");

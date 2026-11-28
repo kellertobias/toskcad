@@ -1,4 +1,5 @@
 use crate::egui;
+use crate::numeric_field::{Emphasis, NumericField};
 use multicad_core::{
     constraint_sketch::Dimension,
     document::Document,
@@ -24,6 +25,28 @@ pub(crate) struct DimensionField {
     previous: Option<BoundExpression>,
     original: Dimension,
     original_text: String,
+    /// The latest resolve error, shown below the field (CAD-416).
+    error: LastError,
+}
+const HINT: &str = "Value or =$parameter";
+/// Interior slot so `resolve(&self)` callers need not change; a clone copies
+/// the message rather than sharing it. One pointer keeps the field small.
+#[derive(Debug, Default)]
+struct LastError(std::sync::Arc<std::sync::Mutex<Option<String>>>);
+impl LastError {
+    fn get(&self) -> Option<String> {
+        self.0.lock().map(|error| error.clone()).unwrap_or_default()
+    }
+    fn set(&self, error: Option<String>) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = error;
+        }
+    }
+}
+impl Clone for LastError {
+    fn clone(&self) -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(self.get())))
+    }
 }
 impl DimensionField {
     /// `unit` is the field's canonical unit. Millimetre fields show and read
@@ -59,6 +82,7 @@ impl DimensionField {
             }
             .into(),
             previous: value.expression().cloned(),
+            error: LastError::default(),
         })
     }
     /// Replace the text with a literal given in `unit`, converted to this
@@ -91,16 +115,8 @@ impl DimensionField {
         self.previous = None;
     }
     pub fn show(&mut self, ui: &mut egui::Ui, label: &str, help: &str) -> bool {
-        ui.label(format!("{label} ({})", self.unit));
-        let response = ui
-            .add(
-                egui::TextEdit::singleline(&mut self.text)
-                    .desired_width(crate::controls::inspector_width(ui))
-                    .hint_text(format!("Value or =$parameter · {}", self.unit)),
-            )
-            .on_hover_text(help);
-        note_enter(ui, &response);
-        response.changed()
+        self.paint(ui, None, label, help, Emphasis::Normal)
+            .changed()
     }
     /// Stable identity for forms whose validation or preview messages can insert
     /// widgets before an active edit. Other tools keep the existing auto-ID path.
@@ -112,17 +128,8 @@ impl DimensionField {
         help: &str,
     ) -> bool {
         let id = ui.make_persistent_id(id_salt);
-        ui.label(format!("{label} ({})", self.unit));
-        let response = ui
-            .add(
-                egui::TextEdit::singleline(&mut self.text)
-                    .id(id)
-                    .desired_width(crate::controls::inspector_width(ui))
-                    .hint_text(format!("Value or =$parameter · {}", self.unit)),
-            )
-            .on_hover_text(help);
-        note_enter(ui, &response);
-        response.changed()
+        self.paint(ui, Some(id), label, help, Emphasis::Normal)
+            .changed()
     }
     /// The unit unqualified input is read in.
     pub fn unit(&self) -> &str {
@@ -141,28 +148,17 @@ impl DimensionField {
         invalid: bool,
     ) -> egui::Response {
         let id = ui.make_persistent_id(id_salt);
-        let text = egui::RichText::new(format!("{label} ({})", self.unit));
-        ui.label(if invalid {
-            text.color(ui.visuals().error_fg_color).strong()
+        let emphasis = if invalid {
+            Emphasis::Invalid
         } else if highlighted {
-            text.color(ui.visuals().selection.stroke.color).strong()
+            Emphasis::Highlighted
         } else {
-            text
-        });
-        let response = ui
-            .add(
-                egui::TextEdit::singleline(&mut self.text)
-                    .id(id)
-                    .desired_width(crate::controls::inspector_width(ui))
-                    .hint_text(format!("Value or =$parameter · {}", self.unit)),
-            )
-            .on_hover_text(help);
-        note_enter(ui, &response);
-        response
+            Emphasis::Normal
+        };
+        self.paint(ui, Some(id), label, help, emphasis)
     }
-    /// Two-column Inspector grids reserve room for their label instead of
-    /// requesting the entire row for the value. The caller supplies an
-    /// owner/field identity, independent of validation text or preceding widgets.
+    /// Formerly a two-column grid cell; CAD-416 gives every numeric Inspector
+    /// field the same full-width layout, so this is [`Self::show_named`].
     pub fn show_compact(
         &mut self,
         ui: &mut egui::Ui,
@@ -170,26 +166,40 @@ impl DimensionField {
         label: &str,
         help: &str,
     ) -> bool {
-        let row_width = ui.max_rect().width().min(ui.clip_rect().width()).max(0.);
-        let width = (row_width * 0.4).min(120.);
-        let label_width = (row_width - width - ui.spacing().item_spacing.x - 4.).clamp(0., 160.);
-        ui.add_sized(
-            [label_width, 0.],
-            egui::Label::new(format!("{label} ({})", self.unit)).wrap(),
-        );
-        let id = ui.make_persistent_id(id_salt);
-        let response = ui
-            .add(
-                egui::TextEdit::singleline(&mut self.text)
-                    .id(id)
-                    .desired_width(width)
-                    .hint_text(format!("Value or =$parameter · {}", self.unit)),
-            )
-            .on_hover_text(help);
+        self.show_named(ui, id_salt, label, help)
+    }
+    /// CAD-416: label above, full-width input, unit inside on the right and
+    /// the last resolve error below.
+    fn paint(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: Option<egui::Id>,
+        label: &str,
+        help: &str,
+        emphasis: Emphasis,
+    ) -> egui::Response {
+        let error = self.error.get();
+        let unit = self.unit.clone();
+        let mut field = NumericField::new(label, &unit);
+        if let Some(id) = id {
+            field = field.id(id);
+        }
+        let response = field
+            .help(help)
+            .hint(HINT)
+            .emphasis(emphasis)
+            .error(error.as_deref())
+            .show(ui, &mut self.text)
+            .input;
         note_enter(ui, &response);
-        response.changed()
+        response
     }
     pub fn resolve(&self, document: &Document) -> Result<Dimension, String> {
+        let result = self.resolve_text(document);
+        self.error.set(result.as_ref().err().cloned());
+        result
+    }
+    fn resolve_text(&self, document: &Document) -> Result<Dimension, String> {
         if self.text.trim_start().starts_with('=') {
             return BoundExpression::bind(
                 document,
@@ -250,6 +260,59 @@ pub(crate) fn take_field_enter(ctx: &egui::Context) -> bool {
 mod tests {
     use super::*;
     use multicad_core::document::{Entity, EntityData};
+    /// CAD-416: every DimensionField unit kind shows inside its input, right
+    /// of the value, and never in the label or the edited text.
+    #[test]
+    fn units_paint_inside_the_input_and_counts_show_none() {
+        for (unit, value, symbol) in [
+            ("mm", 12., Some("mm")),
+            ("deg", 30., Some("°")),
+            ("in", 2., Some("in")),
+            ("count", 6., None),
+        ] {
+            let mut field = DimensionField::from_dimension(
+                &Dimension::Literal {
+                    value,
+                    unit: unit.into(),
+                },
+                unit,
+            )
+            .unwrap();
+            let ctx = egui::Context::default();
+            let mut input = egui::Rect::NOTHING;
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                ui.set_width(220.);
+                input = field
+                    .show_linked(ui, ("units", unit), "Size", "", false, false)
+                    .rect;
+            });
+            let texts: Vec<(String, egui::Rect)> = out
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Text(t) => Some((
+                        t.galley.text().to_owned(),
+                        t.galley.rect.translate(t.pos.to_vec2()),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            out.textures_delta.clear();
+            // Left to right, independent of paint order.
+            let mut inside: Vec<&(String, egui::Rect)> = texts
+                .iter()
+                .filter(|(_, r)| input.expand(0.5).contains_rect(*r))
+                .collect();
+            inside.sort_by(|a, b| a.1.left().total_cmp(&b.1.left()));
+            let inside: Vec<&str> = inside.iter().map(|(t, _)| t.as_str()).collect();
+            assert!(texts.iter().any(|(t, _)| t == "Size"), "{unit}: label");
+            assert_eq!(field.text, value.to_string(), "{unit}: value text only");
+            match symbol {
+                Some(symbol) => assert_eq!(inside, [field.text.as_str(), symbol], "{unit}"),
+                None => assert_eq!(inside, [field.text.as_str()], "{unit}"),
+            }
+        }
+    }
     #[test]
     fn unchanged_literal_cm_and_rad_retain_authored_units_until_edited() {
         let doc = Document::new("Unit baseline").unwrap();

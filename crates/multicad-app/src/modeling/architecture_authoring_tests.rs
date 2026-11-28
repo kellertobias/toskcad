@@ -88,6 +88,7 @@ fn plan_click(
     let mut output = ctx.run_ui(Default::default(), |ui| {
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.));
         let camera = Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: std::f32::consts::FRAC_PI_2,
             scale: 0.1,
@@ -184,7 +185,7 @@ fn graphical_upper_level_wall_and_openings_use_real_native_preview_cancel_apply_
     controller
         .begin_wall(&session, &resources, Channel::Ui)
         .unwrap();
-    click_control(&ctx, &mut controller, &mut session, "Draw in viewport");
+    // Wall starts drawing at once (CAD-427): the first click sets the start.
     for point in [[0., 0., 3000.], [6000., 0., 3000.]] {
         plan_click(&ctx, &mut controller, &session, None, point, false);
     }
@@ -196,7 +197,7 @@ fn graphical_upper_level_wall_and_openings_use_real_native_preview_cancel_apply_
     controller
         .begin_wall(&session, &resources, Channel::Ui)
         .unwrap();
-    click_control(&ctx, &mut controller, &mut session, "Draw in viewport");
+    // Wall starts drawing at once (CAD-427): the first click sets the start.
     for point in [[0., 0., 3000.], [6000., 0., 3000.]] {
         plan_click(&ctx, &mut controller, &session, None, point, false);
     }

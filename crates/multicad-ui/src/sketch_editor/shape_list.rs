@@ -14,18 +14,33 @@ use multicad_solver::SolveState;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What one list entry stands for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum ElementKey {
     Shape(EntityId),
     /// A curve with no recorded shape.
     Curve(EntityId),
     Text(EntityId),
+    /// A standalone point used by no curve (CAD-415).
+    Point(EntityId),
+}
+/// See [`SketchEditor::selection_snapshot`].
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SelectionSnapshot {
+    pub entities: Vec<EntityId>,
+    pub element: Option<EntityId>,
+    pub highlight: BTreeSet<EntityId>,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ListedElement {
     pub key: ElementKey,
     pub label: String,
     pub curves: Vec<EntityId>,
+    /// Element type, for the Sketch tab icon (CAD-415).
+    pub kind: super::sketch_tree::ElementType,
+    /// The shape this element modifies, e.g. the rectangle a fillet rounds.
+    /// The Sketch tab lists it as that shape's child.
+    pub parent: Option<ElementKey>,
 }
 /// Canonical source straight from the stored definition; positions in it are
 /// authored guesses, so callers use solved geometry for any displayed value.
@@ -48,7 +63,7 @@ fn curve_label(kind: &CurveKind) -> &'static str {
     }
 }
 /// Every element in list order: recorded shapes, then unrecorded curves
-/// (projected references named as such), then texts.
+/// (projected references named as such), then texts, then standalone points.
 pub(crate) fn elements(
     document: &Document,
     sketch: EntityId,
@@ -60,8 +75,11 @@ pub(crate) fn elements(
         .iter()
         .map(|shape| ListedElement {
             key: ElementKey::Shape(shape.id),
-            label: shape.name.clone(),
+            // A fillet or chamfer is named with its size, "Fillet R10".
+            label: shape_edit::corner_label(&source.sketch, shape),
             curves: shape.curves.clone(),
+            kind: super::sketch_tree::ElementType::of_shape(shape.kind),
+            parent: super::sketch_tree::modified_shape(shape).map(ElementKey::Shape),
         })
         .collect();
     let owned: BTreeSet<_> = source
@@ -75,7 +93,9 @@ pub(crate) fn elements(
         .sketch
         .curves
         .iter()
-        .filter(|c| !owned.contains(&c.id))
+        // A fillet's or chamfer's construction helpers stay in the sketch
+        // but are not listed (CAD-415).
+        .filter(|c| !owned.contains(&c.id) && !source.sketch.is_corner_helper(c.id))
     {
         let projected =
             crate::external_references::Controller::protected(document, sketch, curve.id);
@@ -94,6 +114,12 @@ pub(crate) fn elements(
                 format!("{kind} {n} (single curve)")
             },
             curves: vec![curve.id],
+            kind: if projected {
+                super::sketch_tree::ElementType::Projected
+            } else {
+                super::sketch_tree::ElementType::of_curve(&curve.kind)
+            },
+            parent: None,
         });
     }
     for (index, text) in source.sketch.texts.iter().enumerate() {
@@ -108,6 +134,36 @@ pub(crate) fn elements(
                 .contours()
                 .map(|c| c.into_iter().map(|c| c.id).collect())
                 .unwrap_or_default(),
+            kind: super::sketch_tree::ElementType::Text,
+            parent: None,
+        });
+    }
+    let used: BTreeSet<_> = source
+        .sketch
+        .curves
+        .iter()
+        .flat_map(|curve| match &curve.kind {
+            CurveKind::Line { start, end } => vec![*start, *end],
+            CurveKind::Arc {
+                center, start, end, ..
+            } => vec![*center, *start, *end],
+            CurveKind::Circle { center, .. } => vec![*center],
+            CurveKind::BSpline { poles, .. } => poles.clone(),
+        })
+        .collect();
+    for (index, point) in source
+        .sketch
+        .points
+        .iter()
+        .filter(|p| !used.contains(&p.id))
+        .enumerate()
+    {
+        out.push(ListedElement {
+            key: ElementKey::Point(point.id),
+            label: format!("Point {}", index + 1),
+            curves: vec![],
+            kind: super::sketch_tree::ElementType::Point,
+            parent: None,
         });
     }
     out
@@ -190,6 +246,9 @@ impl SketchEditor {
             self.constraints.clear_geometry_selection();
             self.profiles.clear();
         }
+        if let Some(ElementKey::Point(point)) = key {
+            self.constraints.select_geometry(point, None, false);
+        }
     }
     /// Canvas → list: the element that owns `curve`, if any.
     pub(crate) fn select_element_of_curve(
@@ -198,14 +257,60 @@ impl SketchEditor {
         sketch: EntityId,
         curve: Option<EntityId>,
     ) {
+        self.select_element_of_hit(document, sketch, curve, None);
+    }
+    /// Canvas → tree: the element that owns the clicked curve, or the
+    /// standalone point that was clicked.
+    pub(crate) fn select_element_of_hit(
+        &mut self,
+        document: &Document,
+        sketch: EntityId,
+        curve: Option<EntityId>,
+        point: Option<EntityId>,
+    ) {
+        if let Some(point) = point {
+            self.shape = canonical(document, sketch).and_then(|source| {
+                elements(document, sketch, &source)
+                    .into_iter()
+                    .find(|e| e.key == ElementKey::Point(point))
+                    .map(|e| e.key)
+            });
+            self.shape_fields.error = None;
+            return;
+        }
         self.shape = curve.and_then(|curve| {
             let source = canonical(document, sketch)?;
+            // A hidden fillet or chamfer helper selects the treatment that
+            // owns it (CAD-415).
+            if source.sketch.is_corner_helper(curve) {
+                return source
+                    .sketch
+                    .shapes
+                    .iter()
+                    .find(|s| s.helpers.contains(&curve))
+                    .map(|s| ElementKey::Shape(s.id));
+            }
             elements(document, sketch, &source)
                 .into_iter()
                 .find(|e| e.curves.contains(&curve))
                 .map(|e| e.key)
         });
         self.shape_fields.error = None;
+    }
+    /// Test view of the canvas selection: the selected sketch entities, the
+    /// listed element and the curves highlighted for it (CAD-412).
+    #[cfg(test)]
+    pub(crate) fn selection_snapshot(&self, document: &Document) -> SelectionSnapshot {
+        SelectionSnapshot {
+            entities: self.constraints.selection().to_vec(),
+            element: self.shape.map(|key| match key {
+                ElementKey::Shape(id)
+                | ElementKey::Curve(id)
+                | ElementKey::Text(id)
+                | ElementKey::Point(id) => id,
+            }),
+            highlight: self.element_highlight(document),
+        }
     }
     /// Curves of the selected element, for canvas highlighting.
     pub(crate) fn element_highlight(&self, document: &Document) -> BTreeSet<EntityId> {
@@ -220,46 +325,6 @@ impl SketchEditor {
             .find(|e| e.key == key)
             .map(|e| e.curves.into_iter().collect())
             .unwrap_or_default()
-    }
-    /// Left panel: the open sketch's drawn shapes.
-    pub(crate) fn element_list(&mut self, ui: &mut egui::Ui, session: &Session) {
-        let Some(sketch) = self.selected.filter(|_| self.editing) else {
-            return;
-        };
-        let Some(source) = canonical(session.document(), sketch) else {
-            return;
-        };
-        let listed = elements(session.document(), sketch, &source);
-        if self
-            .shape
-            .is_some_and(|key| !listed.iter().any(|e| e.key == key))
-        {
-            self.shape = None;
-        }
-        ui.strong("Sketch elements");
-        if listed.is_empty() {
-            ui.small("Nothing drawn yet");
-        }
-        egui::ScrollArea::vertical()
-            .id_salt("sketch-element-list")
-            .max_height(260.)
-            .show(ui, |ui| {
-                for element in &listed {
-                    let selected = self.shape == Some(element.key);
-                    if ui
-                        .selectable_label(selected, &element.label)
-                        .on_hover_text(
-                            "Select this shape in the sketch and edit its sizes in the Inspector",
-                        )
-                        .clicked()
-                    {
-                        self.select_element((!selected).then_some(element.key));
-                        self.tool = None;
-                        self.clear_drawing_progress();
-                    }
-                }
-            });
-        ui.separator();
     }
     fn solved_sketch(&self, sketch: EntityId, revision: u64) -> Option<SourceSketch> {
         let presentation = self.sketch_evaluation.current(sketch)?;
@@ -291,6 +356,7 @@ impl SketchEditor {
         let ElementKey::Shape(shape_id) = key else {
             ui.small(match key {
                 ElementKey::Text(_) => "Edit text in the Text tool.",
+                ElementKey::Point(_) => "Drag the point in the canvas, or constrain or fix it below.",
                 _ => "This curve was not drawn as a shape; select it in the canvas to dimension or constrain it.",
             });
             ui.separator();
@@ -324,6 +390,10 @@ impl SketchEditor {
             }
             let text = match constraint.and_then(|c| c.kind.dimension()) {
                 Some(Dimension::Expression { expression }) => expression.text.clone(),
+                // A chamfer setback has no single curve to measure.
+                Some(Dimension::Literal { value, unit }) if shape.kind.corner() && unit == "mm" => {
+                    format_mm(*value)
+                }
                 _ => solved
                     .as_ref()
                     .and_then(|s| measured(s, &shape, *size))
@@ -367,17 +437,13 @@ impl SketchEditor {
                        field: ShapeField,
                        label: &str,
                        hover: &str| {
-            ui.horizontal(|ui| {
-                ui.label(label);
+            ui.add_enabled_ui(ready, |ui| {
                 let text = fields.text.entry(field).or_default();
-                let response = ui.add_enabled(
-                    ready,
-                    egui::TextEdit::singleline(text)
-                        .id(field_id(field))
-                        .desired_width(90.),
-                );
-                ui.label("mm");
-                let response = response.on_hover_text(hover);
+                let response = crate::numeric_field::NumericField::new(label, "mm")
+                    .id(field_id(field))
+                    .help(hover)
+                    .show(ui, text)
+                    .input;
                 if response.lost_focus() {
                     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {

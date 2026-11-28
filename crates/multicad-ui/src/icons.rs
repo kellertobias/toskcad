@@ -2,7 +2,7 @@
 use crate::svg_icon::SvgIcon;
 use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
 use multicad_precision::PortableMath as _;
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
     User,
     Hammer,
@@ -33,7 +33,17 @@ pub enum Icon {
     Arc,
     Polyline,
     Spline,
+    Slot,
+    SketchText,
+    SketchPoint,
+    ProjectedReference,
+    SketchFillet,
+    SketchChamfer,
+    SketchConstraint,
+    SketchDimension,
     Construction,
+    /// Pointer arrow of the sketch Select tool (CAD-412).
+    Select,
     Box,
     Cylinder,
     Sphere,
@@ -90,6 +100,12 @@ pub enum Icon {
     VisibleEdges,
     Filled,
     Section,
+    /// A wall-hosted door: frame and an open leaf with its swing.
+    Door,
+    /// A wall-hosted window: frame, glazing bars.
+    Window,
+    /// A wall-hosted vertical cutout: a gap between two wall ends.
+    WallCutout,
 }
 pub fn button(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Response {
     icon_button(ui, icon, label, 30.0, false)
@@ -906,6 +922,85 @@ pub(crate) fn paint_sized(ui: &egui::Ui, icon: Icon, center: Pos2, color: Color3
             circle(8., 1., 1.);
             circle(15., 23., 1.);
         }
+        Icon::Select => {
+            path(&[
+                [6., 3.],
+                [6., 19.],
+                [10., 15.],
+                [13., 21.],
+                [16., 19.5],
+                [13., 14.],
+                [18., 14.],
+                [6., 3.],
+            ]);
+        }
+        Icon::Slot => {
+            path(&[[8., 7.], [16., 7.]]);
+            path(&[[8., 17.], [16., 17.]]);
+            let cap = |cx: f32, from: f32| -> Vec<[f32; 2]> {
+                (0..=12)
+                    .map(|i| {
+                        let a = from + i as f32 / 12. * std::f32::consts::PI;
+                        [cx + 5. * a.portable_cos(), 12. - 5. * a.portable_sin()]
+                    })
+                    .collect()
+            };
+            path(&cap(16., -std::f32::consts::FRAC_PI_2));
+            path(&cap(8., std::f32::consts::FRAC_PI_2));
+            circle(8., 12., 1.2);
+            circle(16., 12., 1.2);
+        }
+        Icon::SketchText => {
+            path(&[[5., 20.], [12., 4.], [19., 20.]]);
+            line([8., 14.], [16., 14.]);
+        }
+        Icon::SketchPoint => {
+            p.circle_filled(v(12., 12.), 2.5 * scale, color);
+            line([12., 4.], [12., 8.]);
+            line([12., 16.], [12., 20.]);
+            line([4., 12.], [8., 12.]);
+            line([16., 12.], [20., 12.]);
+        }
+        Icon::ProjectedReference => {
+            // A model edge (dashed) projected down onto the sketch line.
+            for x in [3., 9., 15.] {
+                line([x, 5.], [x + 4., 5.]);
+            }
+            line([12., 8.], [12., 15.]);
+            path(&[[9., 12.], [12., 15.], [15., 12.]]);
+            line([3., 19.], [21., 19.]);
+        }
+        Icon::SketchFillet | Icon::SketchChamfer => {
+            path(&[[4., 20.], [4., 13.]]);
+            path(&[[13., 4.], [20., 4.]]);
+            if matches!(icon, Icon::SketchFillet) {
+                let points: Vec<_> = (0..=12)
+                    .map(|i| {
+                        let a = std::f32::consts::PI - i as f32 / 12. * std::f32::consts::FRAC_PI_2;
+                        [13. + 9. * a.portable_cos(), 13. - 9. * a.portable_sin()]
+                    })
+                    .collect();
+                path(&points);
+            } else {
+                line([4., 13.], [13., 4.]);
+            }
+            circle(4., 13., 1.2);
+            circle(13., 4., 1.2);
+        }
+        Icon::SketchConstraint => {
+            // Two parallel bars with a lock-like tie between them.
+            line([4., 8.], [20., 8.]);
+            line([4., 16.], [20., 16.]);
+            line([9., 5.], [9., 19.]);
+            line([15., 5.], [15., 19.]);
+        }
+        Icon::SketchDimension => {
+            line([3., 5.], [3., 19.]);
+            line([21., 5.], [21., 19.]);
+            line([3., 12.], [21., 12.]);
+            path(&[[7., 9.], [3., 12.], [7., 15.]]);
+            path(&[[17., 9.], [21., 12.], [17., 15.]]);
+        }
         Icon::Construction => {
             for x in [2., 8., 14., 20.] {
                 line([x, 12.], [x + 2., 12.]);
@@ -1269,6 +1364,24 @@ pub(crate) fn paint_sized(ui: &egui::Ui, icon: Icon, center: Pos2, color: Color3
             ]);
             path(&[[8.0, 4.0], [8.0, 20.0]]);
             line([3.0, 12.0], [21.0, 12.0]);
+        }
+        Icon::Door => {
+            path(&[[4.0, 21.0], [4.0, 3.0], [16.0, 3.0], [16.0, 21.0]]);
+            path(&[[4.0, 21.0], [12.0, 17.0], [12.0, 5.0], [4.0, 3.0]]);
+            line([2.0, 21.0], [22.0, 21.0]);
+            p.circle_filled(v(10.0, 12.0), 1.1 * scale, color);
+        }
+        Icon::Window => {
+            rect(3.0, 4.0, 18.0, 16.0);
+            line([12.0, 4.0], [12.0, 20.0]);
+            line([3.0, 12.0], [21.0, 12.0]);
+        }
+        Icon::WallCutout => {
+            rect(2.0, 6.0, 7.0, 12.0);
+            rect(15.0, 6.0, 7.0, 12.0);
+            for y in [9.0, 12.0, 15.0] {
+                line([10.5, y], [13.5, y]);
+            }
         }
     }
 }

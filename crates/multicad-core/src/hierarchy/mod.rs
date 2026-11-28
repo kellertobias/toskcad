@@ -1,8 +1,12 @@
 //! Persistent source ownership and organizational containment, separate from
 //! feature dependencies and reusable instance placement.
+mod cascade;
 mod index;
 mod operations;
 use crate::document::{Document, EntityData, EntityId};
+pub use cascade::DeletionPlan;
+pub use cascade::Dependent;
+use cascade::closure;
 pub use index::*;
 pub use operations::*;
 use serde::{Deserialize, Serialize};
@@ -124,7 +128,14 @@ pub fn is_model_entry(data: &EntityData) -> bool {
             | EntityData::Assembly { .. }
             | EntityData::Instance { .. }
             | EntityData::Group {}
-    )
+    ) || is_joint_entry(data)
+}
+/// A panel joint may be a member of the component that holds its panels
+/// (CAD-432). It is only listed where it was placed explicitly: unplaced
+/// joints, such as generated cabinet connections, are not root entries.
+pub fn is_joint_entry(data: &EntityData) -> bool {
+    matches!(data, EntityData::Extension { definition, .. }
+        if definition.type_id == crate::model::PANEL_JOINT_KIND)
 }
 pub fn required_capability(document: &Document) -> bool {
     !document.hierarchy().is_empty()
