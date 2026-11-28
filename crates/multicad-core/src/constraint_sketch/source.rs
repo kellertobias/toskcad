@@ -27,7 +27,8 @@ pub fn requires_shapes(document: &Document) -> bool {
                     .is_some_and(|a| !a.is_empty()))
     })
 }
-/// Fillet and chamfer shapes and their `modifies` link (CAD-414). Readers
+/// Fillet and chamfer shapes, their `modifies` link (CAD-414) and their
+/// construction `helpers` (CAD-415). Readers
 /// without it would reject the new shape kinds, so a project that records any
 /// declares this capability.
 pub const CORNER_SHAPES_CAPABILITY: &str = "core.constrained_sketch.corner_shapes";
@@ -43,6 +44,7 @@ pub fn requires_corner_shapes(document: &Document) -> bool {
                 .and_then(|t| t.as_array())
                 .is_some_and(|shapes| shapes.iter().any(|shape| {
                     shape.get("modifies").is_some()
+                        || shape.get("helpers").is_some()
                         || matches!(
                             shape.get("kind").and_then(|k| k.as_str()),
                             Some("fillet" | "chamfer")
@@ -398,6 +400,26 @@ impl Source {
             {
                 return Err(invalid(
                     "Only a fillet or chamfer modifies another shape, and never itself",
+                ));
+            }
+        }
+        // CAD-415: only a fillet or chamfer has helpers; a helper belongs to
+        // one treatment and is no shape's own curve.
+        let mut helpers = BTreeSet::new();
+        for shape in &self.sketch.shapes {
+            if !shape.helpers.is_empty() && !shape.kind.corner() {
+                return Err(invalid("Only a fillet or chamfer has construction helpers"));
+            }
+            if shape.helpers.len() > 8 {
+                return Err(invalid("A fillet or chamfer has at most 8 helpers"));
+            }
+            if shape
+                .helpers
+                .iter()
+                .any(|id| owned.contains(id) || !helpers.insert(*id))
+            {
+                return Err(invalid(
+                    "A construction helper belongs to one fillet or chamfer and to no shape's curves",
                 ));
             }
         }
