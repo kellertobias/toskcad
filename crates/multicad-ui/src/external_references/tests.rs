@@ -139,6 +139,42 @@ fn controller(fixture: &Fixture, scene: Arc<Scene>) -> Controller {
         .unwrap();
     controller
 }
+/// The fixture with one box edge projected into its sketch and committed,
+/// for UI tests that need a projected reference (CAD-415).
+pub(crate) fn projected_fixture() -> Fixture {
+    let mut fixture = fixture();
+    let scene = scene(&fixture, 1);
+    let mut controller = controller(&fixture, scene);
+    controller.active.as_mut().unwrap().include_hidden = true;
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.));
+    let camera = Camera {
+        roll: 0.0,
+        yaw: 0.,
+        pitch: 1.0,
+        scale: 10.,
+        target: [15., 10., 0.],
+        perspective: false,
+    };
+    let screen = camera.project([15., 0., 0.], rect);
+    assert!(
+        controller.pointer(Pointer {
+            camera,
+            rect,
+            position: Some(egui::pos2(screen[0], screen[1])),
+            clicked: true,
+            section: None,
+            session: &fixture.session
+        }),
+        "{:?}",
+        controller.error()
+    );
+    let prepared = controller.prepare(&fixture.session, Channel::Ui).unwrap();
+    fixture
+        .session
+        .commit(prepared.edit.preview.unwrap())
+        .unwrap();
+    fixture
+}
 #[test]
 fn real_pointer_capture_and_shared_preview_are_source_neutral_until_one_undoable_apply() {
     let mut fixture = fixture();
