@@ -71,7 +71,7 @@ fn open(h: &mut Harness, feature: EntityId) {
         .begin_feature_edit(&p.session, &p.resources, &p.scene, feature, Channel::Ui)
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);
-    while !h.texts().iter().any(|t| t == "Position X (mm)") {
+    while !h.texts().iter().any(|t| t == "Position X") {
         assert!(
             Instant::now() < deadline,
             "timed out waiting for the panel inspector"
@@ -100,19 +100,19 @@ fn the_panel_inspector_edits_position_face_direction_and_rotation_one_step_each(
     open(&mut h, feature);
     let texts = h.texts();
     for shown in [
-        "Position X (mm)",
-        "Position Y (mm)",
-        "Position Z (mm)",
+        "Position X",
+        "Position Y",
+        "Position Z",
         "Face direction",
         "+Z · face up",
-        "Rotation about face (deg)",
+        "Rotation about face",
     ] {
         assert!(texts.iter().any(|t| t == shown), "{shown} in {texts:?}");
     }
 
     // Position: typed value, Enter applies one transaction in the feature.
     let start = h.revision();
-    h.type_into_field_and_enter("Position X (mm)", "150");
+    h.type_into_field_and_enter("Position X", "150");
     applied(&mut h, "the position edit", start + 1);
     let read = placement(&h, part);
     assert_eq!(read.origin_mm, [150., 0., 0.]);
@@ -144,7 +144,7 @@ fn the_panel_inspector_edits_position_face_direction_and_rotation_one_step_each(
 
     // Rotation about the face: the same Move / rotate changes in place.
     open(&mut h, feature);
-    h.type_into_field_and_enter("Rotation about face (deg)", "90");
+    h.type_into_field_and_enter("Rotation about face", "90");
     applied(&mut h, "the rotation edit", start + 3);
     let read = placement(&h, part);
     assert_eq!(read.facing, Some(PanelFacing::NegZ));

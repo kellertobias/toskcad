@@ -162,7 +162,7 @@ fn right_click_in_select_repeats_the_model_fillet_with_its_radius() {
     assert_ne!(size_text(&h).as_deref(), Some("3"), "the default differs");
     pick_edge(&mut h, body.producer);
     // Enter in the Radius field applies, as Apply does (CAD-410).
-    h.type_into_field_and_enter("Radius (mm)", "3");
+    h.type_into_field_and_enter("Radius", "3");
     h.until("the 3 mm fillet", |app| {
         app.current().session.revision() == 1
     });

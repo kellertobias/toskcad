@@ -121,7 +121,7 @@ impl SketchHarness {
         out.drop_without_applying_deltas();
         hit
     }
-    /// Click the drag-value field painted beside `caption`, replace its
+    /// Click the drag-value field painted beside or under `caption`, replace its
     /// value and press Enter, as a user types a value.
     pub(super) fn type_beside(&mut self, caption: &str, text: &str) {
         let out = self.h.render(vec![]);
@@ -149,12 +149,19 @@ impl SketchHarness {
                 )
             })
             .filter_map(|(_, n)| n.bounds())
-            .find(|b| {
-                b.x0 as f32 >= label.max.x - 1.
+            .filter(|b| {
+                // Beside the caption on its row, or (Inspector fields,
+                // CAD-416) right under it with the label above the input.
+                let beside = b.x0 as f32 >= label.max.x - 1.
                     && (b.y0 as f32) <= label.center().y
-                    && (b.y1 as f32) >= label.center().y
+                    && (b.y1 as f32) >= label.center().y;
+                let below = b.y0 as f32 >= label.max.y - 1.
+                    && (b.x0 as f32) <= label.max.x
+                    && (b.x1 as f32) >= label.min.x;
+                beside || below
             })
-            .unwrap_or_else(|| panic!("a field beside {caption}"));
+            .min_by(|a, b| a.y0.total_cmp(&b.y0))
+            .unwrap_or_else(|| panic!("a field beside or under {caption}"));
         out.drop_without_applying_deltas();
         let at = egui::pos2(
             ((field.x0 + field.x1) * 0.5) as f32,
