@@ -167,7 +167,25 @@ impl Harness {
         let pos = self.label_position(label);
         self.press_at(pos, egui::PointerButton::Secondary);
     }
+    /// Where `label` shows once it stays in place: a widget that just
+    /// appeared can still move on the next frame, so the position must
+    /// repeat in two consecutive frames.
     fn label_position(&mut self, label: &str) -> egui::Pos2 {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut previous = self.label_position_once(label);
+        loop {
+            let pos = self.label_position_once(label);
+            if pos == previous {
+                return pos;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {label} to stay in place"
+            );
+            previous = pos;
+        }
+    }
+    fn label_position_once(&mut self, label: &str) -> egui::Pos2 {
         let out = self.render(vec![]);
         let pos = out
             .platform_output

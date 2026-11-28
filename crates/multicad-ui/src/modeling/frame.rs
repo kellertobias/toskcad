@@ -1328,6 +1328,11 @@ impl FramePanel {
         controls::inspector_layout(ui);
         ui.strong(if self.editing { "Edit frame" } else { "Frame" });
         ui.small("Draw profile members as lines. Joints are made at every node: equal sections mitre, different sections butt with the larger through, round tubes cope.");
+        // The last refusal shows first, where it stays in view however long
+        // the form is.
+        if let Some(error) = &self.error {
+            ui.colored_label(ui.visuals().error_fg_color, error);
+        }
         ui.label("Frame name");
         let mut changed = ui
             .add_enabled(
@@ -1666,9 +1671,6 @@ impl FramePanel {
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
         let action = form::actions(ui, validation.is_ok(), changed, self.stamp, preview);
-        if let Some(error) = &self.error {
-            ui.colored_label(ui.visuals().error_fg_color, error);
-        }
         if action == Some(FormAction::Cancel) {
             return Some(ModelEvent::Cancel);
         }
