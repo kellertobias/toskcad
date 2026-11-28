@@ -521,7 +521,6 @@ fn inches_a_gap_set_in_the_joint_editor_and_reversing_a_member_apply_as_typed() 
         .camera
         .project(world.map(|v| v as f32), viewport);
     h.click_at(egui::pos2(s[0], s[1]));
-    eprintln!("DEBUG {:?}", h.texts());
     h.type_into_field_and_enter("Weld gap (mm, empty = frame default 0 mm)", "2");
     assert!(
         h.texts().iter().any(|t| t == "M*"),
@@ -547,9 +546,9 @@ fn inches_a_gap_set_in_the_joint_editor_and_reversing_a_member_apply_as_typed() 
         .evaluate(h.app.current().session.parameters())
         .unwrap()
         .nodes;
-    // A point on the front rail near the origin selects it.
-    let a = nodes[&front.start];
-    let mid: [f64; 3] = [a[0] + 60., a[1], a[2]];
+    // A point on the front rail, 150 mm along and in view, selects it.
+    let (a, b) = (nodes[&front.start], nodes[&front.end]);
+    let mid: [f64; 3] = std::array::from_fn(|i| a[i] + (b[i] - a[i]) * 0.15);
     let viewport = h.app.current().sketch.viewport_rect.unwrap();
     let s = h
         .app
@@ -1000,5 +999,371 @@ fn esc_closes_the_corner_dropdown_and_restores_the_joint() {
         stored.joint(corners[0]).is_none_or(|j| j.corner.is_none()),
         "{:?}",
         stored.joints
+    );
+}
+
+// --- CAD-441: drawing in 3D, T and X, split and merge, member order -------
+
+const RISE: &str = "Rise along the plane normal (mm, negative goes down)";
+const Z_LOCK: &str = "Z lock (draw along the plane normal)";
+
+/// Fit the view to every node of the frame and `extra` points, as Fit view
+/// does, and wait for it to settle.
+fn fit_frame(h: &mut Harness, extra: &[[f64; 3]]) {
+    let document = h.app.current().session.document().clone();
+    let frame = model::read_frame(&document, the_frame(&document)).unwrap();
+    let mut points: Vec<[f32; 3]> = frame
+        .evaluate(h.app.current().session.parameters())
+        .unwrap()
+        .nodes
+        .values()
+        .chain(extra)
+        .map(|p| p.map(|v| v as f32))
+        .collect();
+    points.push([0.; 3]);
+    let rect = h.app.current().sketch.viewport_rect.unwrap();
+    h.app.current_mut().sketch.camera.fit(&points, rect);
+    settle_view(h);
+}
+fn screen_of(h: &Harness, world: [f64; 3]) -> egui::Pos2 {
+    let viewport = h.app.current().sketch.viewport_rect.unwrap();
+    let s = h
+        .app
+        .current()
+        .sketch
+        .camera
+        .project(world.map(|v| v as f32), viewport);
+    egui::pos2(s[0], s[1])
+}
+fn node_world(document: &Document, h: &Harness, node: EntityId) -> [f64; 3] {
+    model::read_frame(document, the_frame(document))
+        .unwrap()
+        .evaluate(h.app.current().session.parameters())
+        .unwrap()
+        .nodes[&node]
+}
+
+#[test]
+fn z_lock_and_typed_rises_draw_four_legs_into_the_table_frame() {
+    let mut h = Harness::new(document());
+    typed_rectangle(&mut h);
+    apply(&mut h);
+    let rectangle = h.app.current().session.document().clone();
+    let frame_id = the_frame(&rectangle);
+    let corners: Vec<EntityId> = model::read_frame(&rectangle, frame_id)
+        .unwrap()
+        .members
+        .iter()
+        .map(|m| m.start)
+        .collect();
+    let revision = h.revision();
+    reopen(&mut h);
+    fit_frame(&mut h, &[[0., 0., -700.], [1000., 600., -700.]]);
+    h.click_label(Z_LOCK);
+    h.click_label("Draw in viewport");
+    for corner in &corners {
+        let at = screen_of(&h, node_world(&rectangle, &h, *corner));
+        h.click_at(at);
+        h.type_into_field_and_enter(RISE, "-700");
+    }
+    assert!(
+        h.texts().iter().any(|t| t == "8 members · 8 nodes"),
+        "{:?}",
+        h.texts()
+    );
+    apply(&mut h);
+    assert_eq!(h.revision(), revision + 1, "one transaction");
+    let after = h.app.current().session.document().clone();
+    let list = cut_list(&after);
+    assert_eq!(list.len(), 8, "eight separate Parts");
+    let legs: Vec<_> = list
+        .iter()
+        .filter(|r| r.length_mm.round() == 720.)
+        .collect();
+    assert_eq!(
+        legs.len(),
+        4,
+        "{:?}",
+        list.iter().map(|r| r.length_mm).collect::<Vec<_>>()
+    );
+    for leg in &legs {
+        assert!(leg.issues.is_empty(), "{:?}", leg.issues);
+        assert!(
+            leg.ends.iter().all(|e| e.angle_deg.abs() < 1e-9),
+            "square ends"
+        );
+    }
+    let mut rails: Vec<f64> = list
+        .iter()
+        .filter(|r| r.length_mm.round() != 720.)
+        .map(|r| r.length_mm.round())
+        .collect();
+    rails.sort_by(f64::total_cmp);
+    assert_eq!(rails, [520., 520., 920., 920.], "rails butt onto the legs");
+    let (lo, hi) = outside(&after);
+    near(lo[0], 0.);
+    near(lo[1], 0.);
+    near(hi[0], 1000.);
+    near(hi[1], 600.);
+}
+
+#[test]
+fn a_brace_drawn_on_a_temporary_plane_through_two_members_joins_at_both_nodes() {
+    let (document, corners) = table_document();
+    let mut h = Harness::new(document.clone());
+    let frame_id = the_frame(&document);
+    let foot = {
+        let frame = model::read_frame(&document, frame_id).unwrap();
+        let nodes = frame
+            .evaluate(h.app.current().session.parameters())
+            .unwrap()
+            .nodes;
+        frame
+            .members
+            .iter()
+            .filter(|m| m.start == corners[1])
+            .map(|m| m.end)
+            .find(|n| (nodes[n][2] + 700.).abs() < 1e-9)
+            .unwrap()
+    };
+    let revision = h.revision();
+    reopen(&mut h);
+    fit_frame(&mut h, &[]);
+    h.click_at(screen_of(&h, node_world(&document, &h, corners[0])));
+    h.click_label("Draw on the plane of Front and Leg 1");
+    assert!(
+        h.texts()
+            .iter()
+            .any(|t| t == "Drawing on the plane of Front and Leg 1"),
+        "{:?}",
+        h.texts()
+    );
+    h.click_at(screen_of(&h, node_world(&document, &h, corners[0])));
+    h.click_at(screen_of(&h, node_world(&document, &h, foot)));
+    h.key(egui::Key::Enter);
+    apply(&mut h);
+    assert_eq!(h.revision(), revision + 1);
+    let after = h.app.current().session.document().clone();
+    let frame = model::read_frame(&after, frame_id).unwrap();
+    assert_eq!(frame.members.len(), 9);
+    let brace = frame
+        .members
+        .iter()
+        .find(|m| m.start == corners[0] && m.end == foot)
+        .expect("a brace from the corner to the foot of leg 2");
+    let feature = model::frame_member_features(&after, frame_id)
+        .into_iter()
+        .find(|(m, _)| *m == brace.id)
+        .unwrap()
+        .1;
+    let part = model::read_member(&after, feature).unwrap().output.body;
+    let list = cut_list(&after);
+    let r = list.iter().find(|r| r.part == part).unwrap();
+    assert!(r.issues.is_empty(), "{:?}", r.issues);
+    assert!(
+        r.ends.iter().all(|e| e.kind.is_some()),
+        "joined at both nodes: {:?}",
+        r.ends
+    );
+    // The brace lies in the front face: y = 0 along its line.
+    let nodes = frame
+        .evaluate(h.app.current().session.parameters())
+        .unwrap()
+        .nodes;
+    near(nodes[&brace.start][1], 0.);
+    near(nodes[&brace.end][1], 0.);
+}
+
+#[test]
+fn clicks_on_a_member_make_t_and_x_joints_and_straight_runs_stay_one_member() {
+    let mut h = Harness::new(document());
+    open_tool(&mut h);
+    h.click_label("Draw in viewport");
+    // Points on the Top plane, where they show in the view.
+    let at = |h: &Harness, u: f64, v: f64| screen_of(h, [u, v, 0.]);
+    // Straight on through a middle point: one member.
+    for u in [-150., 0., 150.] {
+        let p = at(&h, u, 0.);
+        h.click_at(p);
+    }
+    h.key(egui::Key::Enter);
+    let count = |h: &mut Harness| {
+        h.texts()
+            .into_iter()
+            .find(|t| t.ends_with(" nodes"))
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        count(&mut h),
+        "1 members · 2 nodes",
+        "straight run is one member"
+    );
+    // A T: start on the member's midpoint.
+    h.click_label("Draw in viewport");
+    for (u, v) in [(0., 0.), (0., 120.)] {
+        let p = at(&h, u, v);
+        h.click_at(p);
+    }
+    h.key(egui::Key::Enter);
+    // An X: cross the member at a station.
+    h.click_label("Draw in viewport");
+    for (u, v) in [(-75., -100.), (-75., 0.), (-75., 100.)] {
+        let p = at(&h, u, v);
+        h.click_at(p);
+    }
+    h.key(egui::Key::Enter);
+    // Rail ends, the T station and branch end, the X start, station and end.
+    assert_eq!(count(&mut h), "4 members · 7 nodes", "{:?}", h.texts());
+    apply(&mut h);
+    let after = h.app.current().session.document().clone();
+    let frame = model::read_frame(&after, the_frame(&after)).unwrap();
+    let rail = frame.members[0].id;
+    let stations: Vec<EntityId> = frame
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.position, NodePosition::Along { member, .. } if member == rail))
+        .map(|n| n.id)
+        .collect();
+    assert_eq!(stations.len(), 2, "a T and an X station on the rail");
+    // The T station is at the midpoint.
+    let t = frame
+        .nodes
+        .iter()
+        .find_map(|n| match &n.position {
+            NodePosition::Along { distance, .. } => Some(distance.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let parameters = h.app.current().session.parameters().clone();
+    let nodes = frame.evaluate(&parameters).unwrap().nodes;
+    let rail_m = frame.member(rail).unwrap();
+    let rail_length = {
+        let (a, b) = (nodes[&rail_m.start], nodes[&rail_m.end]);
+        ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt()
+    };
+    near(
+        t.value_in(
+            multicad_core::parameters::Unit::Millimeter,
+            Some(&parameters),
+        )
+        .unwrap(),
+        (rail_length / 2.).round(),
+    );
+    let list = cut_list(&after);
+    assert_eq!(list.len(), 4);
+    let rail_record = list
+        .iter()
+        .find(|r| (r.length_mm - rail_length).abs() < 1e-6)
+        .expect("the rail runs through at full length");
+    assert!(rail_record.ends.iter().all(|e| e.kind.is_none()));
+    let butted = list
+        .iter()
+        .flat_map(|r| r.ends.clone())
+        .filter(|e| e.kind == Some(ConnectionKind::Butt) && e.terminates)
+        .count();
+    assert_eq!(
+        butted, 3,
+        "the T branch and both X halves butt onto the rail"
+    );
+}
+
+#[test]
+fn splitting_at_a_station_and_merging_back_keep_part_ids_with_undo_and_redo() {
+    let mut h = Harness::new(document());
+    open_tool(&mut h);
+    h.click_label("Draw in viewport");
+    let c = h.app.current().sketch.viewport_rect.unwrap().center();
+    h.click_at(c + egui::vec2(-150., 0.));
+    h.click_at(c + egui::vec2(150., 0.));
+    h.key(egui::Key::Enter);
+    // A station on its midpoint, with nothing drawn from it.
+    h.click_label("Draw in viewport");
+    h.click_at(c);
+    h.key(egui::Key::Enter);
+    apply(&mut h);
+    let first = h.app.current().session.document().clone();
+    let frame_id = the_frame(&first);
+    let parts = |d: &Document| -> Vec<(EntityId, EntityId)> {
+        model::frame_member_features(d, frame_id)
+            .into_iter()
+            .map(|(m, f)| (m, model::read_member(d, f).unwrap().output.body))
+            .collect()
+    };
+    let original = parts(&first);
+    assert_eq!(original.len(), 1);
+    let station = model::read_frame(&first, frame_id)
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|n| matches!(n.position, NodePosition::Along { .. }))
+        .unwrap()
+        .id;
+    reopen(&mut h);
+    h.click_at(screen_of(&h, node_world(&first, &h, station)));
+    let split = h
+        .texts()
+        .into_iter()
+        .find(|t| t.starts_with("Split ") && t.ends_with(" here"))
+        .expect("a split action on the station");
+    h.click_label(&split);
+    apply(&mut h);
+    let split_doc = h.app.current().session.document().clone();
+    let after = parts(&split_doc);
+    assert_eq!(after.len(), 2);
+    assert!(
+        after.contains(&original[0]),
+        "the split member keeps its Part"
+    );
+    // Undo and Redo restore exactly.
+    h.app.invoke(Command::Undo, &[], Channel::Ui).unwrap();
+    assert_eq!(h.app.current().session.document(), &first);
+    h.app.invoke(Command::Redo, &[], Channel::Ui).unwrap();
+    assert_eq!(h.app.current().session.document(), &split_doc);
+    // Merge them back at the node: the first keeps its Part.
+    let node = model::read_frame(&split_doc, frame_id).unwrap().members[0].end;
+    reopen(&mut h);
+    h.click_at(screen_of(&h, node_world(&split_doc, &h, node)));
+    let merge = h
+        .texts()
+        .into_iter()
+        .find(|t| t.starts_with("Merge "))
+        .expect("a merge action on the node");
+    h.click_label(&merge);
+    apply(&mut h);
+    let merged = h.app.current().session.document().clone();
+    assert_eq!(parts(&merged), original);
+    let list = cut_list(&merged);
+    assert_eq!(list.len(), 1);
+}
+
+#[test]
+fn the_joint_editor_reorders_a_three_member_node_with_preview() {
+    let (document, corners) = table_document();
+    let mut h = Harness::new(document.clone());
+    let leg = leg_part(&document, corners[0]);
+    let revision = h.revision();
+    reopen(&mut h);
+    h.click_at(screen_of(&h, node_world(&document, &h, corners[0])));
+    let texts = h.texts();
+    assert!(texts.iter().any(|t| t == "1. Leg 1 (through)"), "{texts:?}");
+    h.click_label("Move Front up");
+    assert!(h.texts().iter().any(|t| t == "1. Front (through)"));
+    // The preview shows the leg stopping under the rails.
+    let [_, hi] = previewed_bounds(&mut h, leg);
+    assert!((hi[2] + 20.).abs() < 1e-3, "{hi:?}");
+    apply(&mut h);
+    assert_eq!(h.revision(), revision + 1);
+    let after = h.app.current().session.document().clone();
+    let stored = model::read_frame(&after, the_frame(&after)).unwrap();
+    let order = stored
+        .joint(corners[0])
+        .and_then(|j| j.order.clone())
+        .unwrap();
+    assert_eq!(order[0], stored.members[0].id, "Front runs through");
+    let list = cut_list(&after);
+    assert_eq!(
+        list.iter().filter(|r| r.length_mm.round() == 680.).count(),
+        1,
+        "leg 1 stops under the rails"
     );
 }
