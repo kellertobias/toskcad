@@ -512,6 +512,72 @@ fn a_real_fillet_and_chamfer_nest_under_their_rectangle() {
 }
 
 #[test]
+fn clicking_a_hidden_corner_helper_selects_and_reveals_its_fillet() {
+    use multicad_core::sketch_corner::{CornerTreatment, corner_draft};
+    let mut h = Host::new();
+    draw(
+        &mut h,
+        DrawInput::Rectangle {
+            a: PointInput::Position([0., 0.]),
+            b: PointInput::Position([120., 80.]),
+        },
+    );
+    let source = h.source();
+    let corner = source
+        .sketch
+        .points
+        .iter()
+        .find(|p| p.position_mm == [120., 80.])
+        .unwrap()
+        .id;
+    let filleted = corner_draft(&source, corner, CornerTreatment::Fillet { radius_mm: 30. })
+        .unwrap()
+        .source;
+    commit(&mut h, filleted);
+    let source = h.source();
+    let fillet = source.sketch.shapes[1].clone();
+    let helper = fillet.helpers[0];
+    assert!(source.sketch.is_corner_helper(helper));
+    // The helper line runs from a tangent point to the virtual sharp corner;
+    // click its midpoint.
+    let at = |id| {
+        source
+            .sketch
+            .points
+            .iter()
+            .find(|p| p.id == id)
+            .unwrap()
+            .position_mm
+    };
+    let Some(CurveKind::Line { start, end }) = source
+        .sketch
+        .curves
+        .iter()
+        .find(|c| c.id == helper)
+        .map(|c| c.kind.clone())
+    else {
+        panic!("a fillet helper is a line");
+    };
+    let (a, b) = (at(start), at(end));
+    let mid = [(a[0] + b[0]) / 2., (a[1] + b[1]) / 2.];
+    click_chevron(&mut h, "Rectangle 1");
+    assert!(!h.labels().iter().any(|l| l == "Fillet R30"), "collapsed");
+    h.click(mid, Vec2::ZERO);
+    assert_eq!(
+        h.editor.shape,
+        Some(ElementKey::Shape(fillet.id)),
+        "{}",
+        h.editor.message
+    );
+    assert!(painted_selected(&mut h, "Fillet R30"));
+    assert!(h.labels().iter().any(|l| l == "Selected: Fillet R30"));
+    assert!(
+        !h.labels().iter().any(|l| l.ends_with("(single curve)")),
+        "the helper itself stays hidden"
+    );
+}
+
+#[test]
 fn constraints_and_dimensions_are_one_collapsible_group() {
     let mut h = Host::new();
     h.editor

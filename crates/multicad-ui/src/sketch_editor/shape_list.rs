@@ -280,6 +280,16 @@ impl SketchEditor {
         }
         self.shape = curve.and_then(|curve| {
             let source = canonical(document, sketch)?;
+            // A hidden fillet or chamfer helper selects the treatment that
+            // owns it (CAD-415).
+            if source.sketch.is_corner_helper(curve) {
+                return source
+                    .sketch
+                    .shapes
+                    .iter()
+                    .find(|s| s.helpers.contains(&curve))
+                    .map(|s| ElementKey::Shape(s.id));
+            }
             elements(document, sketch, &source)
                 .into_iter()
                 .find(|e| e.curves.contains(&curve))
