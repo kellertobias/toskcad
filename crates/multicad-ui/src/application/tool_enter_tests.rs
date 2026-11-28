@@ -116,7 +116,8 @@ fn enter_applies_fillet_with_picked_edges_like_apply_and_escape_cancels() {
     // Enter with nothing picked does not apply.
     h.key(egui::Key::Enter);
     assert_eq!(h.revision(), 0);
-    assert!(h.modeling());
+    assert!(!h.modeling());
+    open(&mut h);
     // Pick one edge; the preview builds while picking stays active.
     let p = h.app.current_mut();
     let scene = p.scene.visible().unwrap().clone();

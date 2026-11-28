@@ -276,6 +276,7 @@ fn rectangle_center_and_corner_targets_place_their_exact_positions() {
     assert_eq!(h.points().len(), points + 1, "corner reused, center added");
     assert!(h.points().contains(&[20., 10.]));
     // The midpoint of the right edge is an exact target as well.
+    h.editor.set_tool(DrawTool::Line).unwrap();
     h.hover([40., 10.], Vec2::new(2., 1.), 3.);
     assert_eq!(h.shown(), Some(TargetKind::LineMidpoint));
 }
