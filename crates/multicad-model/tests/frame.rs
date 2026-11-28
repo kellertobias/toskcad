@@ -8,8 +8,8 @@ use multicad_core::{
     document::{Document, Entity, EntityData, EntityId, Mutation},
     materials::*,
     model::{
-        self, ChainSegment, ConnectionKind, FrameDefinition, FrameMemberRequest, FramePlane,
-        FrameRequest, FrameSide, JointOverride, NodePosition, angle, length,
+        self, ChainSegment, ConnectionKind, FrameCorner, FrameDefinition, FrameMemberRequest,
+        FramePlane, FrameRequest, FrameSide, JointOverride, NodePosition, angle, length,
     },
     parameters::BoundExpression,
     project_file::{self, ProjectFile},
@@ -585,6 +585,235 @@ fn a_table_frame_puts_legs_through_its_rectangle_corners() {
     }
 }
 
+/// The 1000 × 600 inner rectangle with four 700 mm legs down from its
+/// corners; returns the frame, its definition and the corner nodes.
+fn table(s: &mut Session, stock: EntityId) -> (EntityId, FrameDefinition, Vec<EntityId>) {
+    let (frame, mut definition) = rectangle(s, stock, length(1000.));
+    let corners: Vec<EntityId> = definition.members.iter().map(|m| m.start).collect();
+    let mut new = vec![];
+    for (i, corner) in corners.iter().enumerate() {
+        let leg = definition
+            .add_chain(
+                s.parameters(),
+                *corner,
+                &[ChainSegment {
+                    length: length(0.),
+                    angle: angle(0.),
+                    rise: Some(length(-700.)),
+                }],
+                false,
+            )
+            .unwrap()[0];
+        new.push((leg, ["Leg 1", "Leg 2", "Leg 3", "Leg 4"][i], stock));
+    }
+    commit_frame(s, frame, &definition, &new);
+    (frame, definition, corners)
+}
+fn set_corners(definition: &mut FrameDefinition, corners: &[EntityId], corner: FrameCorner) {
+    for node in corners {
+        definition.set_joint(JointOverride {
+            node: *node,
+            corner: Some(corner),
+            ..Default::default()
+        });
+    }
+}
+/// The bounds of every Part of the model, by name.
+fn bounds(m: &Model, list: &[MemberRecord]) -> Vec<(String, [f64; 3], [f64; 3])> {
+    list.iter()
+        .map(|r| {
+            let b = m
+                .solid(m.snapshot().bodies[&r.part])
+                .unwrap()
+                .bounds()
+                .unwrap();
+            (r.name.clone(), b.min, b.max)
+        })
+        .collect()
+}
+/// The volume a rail of the inner SHS 40×40×2 loses at one end cut back to
+/// u = max(v, c) across its section, v the distance from the outer face:
+/// the integral of the section's width at v times max(v, c).
+fn rail_end_loss(c: f64) -> f64 {
+    let steps = 400_000;
+    let h = 40. / f64::from(steps);
+    (0..steps)
+        .map(|i| {
+            let v = (f64::from(i) + 0.5) * h;
+            let width = if !(2. ..=38.).contains(&v) { 40. } else { 4. };
+            width * v.max(c) * h
+        })
+        .sum()
+}
+
+#[test]
+fn each_leg_corner_construction_builds_as_a_joint_override() {
+    let (mut s, st) = session();
+    let (frame, mut definition, corners) = table(&mut s, st.shs);
+
+    // Leg through, chosen explicitly, builds exactly the automatic corner.
+    let automatic = compile(&s).member_cut_list(s.document()).unwrap();
+    set_corners(&mut definition, &corners, FrameCorner::LegThrough);
+    commit_frame(&mut s, frame, &definition, &[]);
+    let list = compile(&s).member_cut_list(s.document()).unwrap();
+    for r in &automatic {
+        let same = record(&list, &r.name);
+        near(same.length_mm, r.length_mm);
+        rel(same.volume_mm3, r.volume_mm3);
+    }
+    near(record(&list, "Leg 1").length_mm, 720.);
+
+    // Rails mitred, leg below: the rails mitre exactly as the plain
+    // rectangle; each leg butts square onto the underside of a rail, 20 mm
+    // below the frame plane, and stays inside its corner.
+    set_corners(&mut definition, &corners, FrameCorner::MitreOnLeg);
+    commit_frame(&mut s, frame, &definition, &[]);
+    let m = compile(&s);
+    let list = m.member_cut_list(s.document()).unwrap();
+    assert_eq!(list.len(), 8);
+    for (name, span) in [
+        ("Front", 1000.),
+        ("Right", 600.),
+        ("Back", 1000.),
+        ("Left", 600.),
+    ] {
+        let r = record(&list, name);
+        assert!(r.issues.is_empty(), "{name}: {:?}", r.issues);
+        for end in &r.ends {
+            assert_eq!(end.kind, Some(ConnectionKind::Miter), "{name}");
+            near(end.angle_deg, 45.);
+        }
+        near(r.length_mm, span);
+        rel(r.volume_mm3, shs_area() * (span - 40.));
+    }
+    for i in 1..=4 {
+        let leg = record(&list, &format!("Leg {i}"));
+        assert!(leg.issues.is_empty(), "{:?}", leg.issues);
+        near(leg.length_mm, 680.);
+        assert!(
+            leg.ends
+                .iter()
+                .all(|e| e.angle_deg.abs() < 1e-9 && e.terminates)
+        );
+        assert_eq!(leg.ends[0].kind, Some(ConnectionKind::Butt));
+        rel(leg.volume_mm3, shs_area() * 680.);
+    }
+    let boxes = bounds(&m, &list);
+    let (_, lo, hi) = boxes.iter().find(|(n, ..)| n == "Leg 1").unwrap();
+    near(lo[0], 0.);
+    near(lo[1], 0.);
+    near(hi[0], 40.);
+    near(hi[1], 40.);
+    near(hi[2], -20.);
+    near(lo[2], -700.);
+    let lo_all = |k: usize| boxes.iter().map(|b| b.1[k]).fold(f64::INFINITY, f64::min);
+    let hi_all = |k: usize| {
+        boxes
+            .iter()
+            .map(|b| b.2[k])
+            .fold(f64::NEG_INFINITY, f64::max)
+    };
+    near(lo_all(0), 0.);
+    near(lo_all(1), 0.);
+    near(hi_all(0), 1000.);
+    near(hi_all(1), 600.);
+
+    // Rails mitred, leg outside: each leg is centred on its node and runs to
+    // the top of the rails; the rails mitre and are cut back to the leg
+    // faces, so the legs stand 20 mm outside the 1000 × 600 rectangle.
+    set_corners(&mut definition, &corners, FrameCorner::MitreAroundLeg);
+    commit_frame(&mut s, frame, &definition, &[]);
+    let m = compile(&s);
+    let list = m.member_cut_list(s.document()).unwrap();
+    assert_eq!(list.len(), 8);
+    let boxes = bounds(&m, &list);
+    for i in 1..=4 {
+        let leg = record(&list, &format!("Leg {i}"));
+        assert!(leg.issues.is_empty(), "{:?}", leg.issues);
+        near(leg.length_mm, 720.);
+        assert!(leg.ends.iter().all(|e| e.angle_deg.abs() < 1e-9));
+        rel(leg.volume_mm3, shs_area() * 720.);
+    }
+    let (_, lo, hi) = boxes.iter().find(|(n, ..)| n == "Leg 1").unwrap();
+    for k in 0..2 {
+        near(lo[k], -20.);
+        near(hi[k], 20.);
+    }
+    near(hi[2], 20.);
+    near(lo[2], -700.);
+    for (name, span) in [
+        ("Front", 1000.),
+        ("Right", 600.),
+        ("Back", 1000.),
+        ("Left", 600.),
+    ] {
+        let r = record(&list, name);
+        assert!(r.issues.is_empty(), "{name}: {:?}", r.issues);
+        // Mitre and leg-face cut together: 304 × span less the material
+        // behind u = max(v, 20) at both ends.
+        let expected = shs_area() * span - 2. * rail_end_loss(20.);
+        assert!(
+            (r.volume_mm3 - expected).abs() <= 1e-6 * expected,
+            "{name}: {} != {expected}",
+            r.volume_mm3
+        );
+        let (_, lo, hi) = boxes.iter().find(|(n, ..)| n == name).unwrap();
+        // The rail starts at the leg face, 20 mm in from the node.
+        let along = if span == 1000. { 0 } else { 1 };
+        near(lo[along], 20.);
+        near(hi[along], span - 20.);
+    }
+    near(
+        boxes.iter().map(|b| b.1[0]).fold(f64::INFINITY, f64::min),
+        -20.,
+    );
+    near(
+        boxes
+            .iter()
+            .map(|b| b.2[0])
+            .fold(f64::NEG_INFINITY, f64::max),
+        1020.,
+    );
+    near(
+        boxes
+            .iter()
+            .map(|b| b.2[1])
+            .fold(f64::NEG_INFINITY, f64::max),
+        620.,
+    );
+
+    // Clearing the choice returns to the automatic corner.
+    definition.joints.clear();
+    commit_frame(&mut s, frame, &definition, &[]);
+    let list = compile(&s).member_cut_list(s.document()).unwrap();
+    near(record(&list, "Leg 1").length_mm, 720.);
+    near(record(&list, "Front").length_mm, 920.);
+}
+
+#[test]
+fn a_corner_construction_off_a_leg_corner_or_with_a_kind_is_refused() {
+    let (mut s, st) = session();
+    let (frame, mut definition) = rectangle(&mut s, st.shs, length(1000.));
+    let node = definition.members[0].end;
+    definition.set_joint(JointOverride {
+        node,
+        corner: Some(FrameCorner::MitreOnLeg),
+        ..Default::default()
+    });
+    let message = refused(&s, &prepare(&s, frame, &definition, &[]));
+    assert!(message.contains("no longer a leg corner"), "{message}");
+
+    let (frame, mut definition, corners) = table(&mut s, st.shs);
+    definition.set_joint(JointOverride {
+        node: corners[0],
+        corner: Some(FrameCorner::MitreOnLeg),
+        kind: Some(ConnectionKind::Butt),
+        ..Default::default()
+    });
+    let message = refused(&s, &prepare(&s, frame, &definition, &[]));
+    assert!(message.contains("cannot be combined"), "{message}");
+}
+
 #[test]
 fn joints_a_section_or_angle_cannot_take_are_refused_at_the_node() {
     // Members meeting at 10°: refused with the reason.
@@ -667,4 +896,66 @@ fn frames_round_trip_in_files_requiring_their_capability() {
     let mut older = project_file::supported_capabilities();
     older.remove(model::FRAME_CAPABILITY);
     assert!(project_file::read(&mut bytes.as_slice(), Default::default(), &older).is_err());
+}
+
+#[test]
+fn centroid_placement_offset_and_roll_place_the_section_exactly() {
+    let (mut s, _) = session();
+    let steel = s
+        .document()
+        .entities()
+        .find(|e| matches!(e.data, EntityData::Material { .. }))
+        .unwrap()
+        .id;
+    let angle_stock = stock(steel, "L 40×40×4", ProfileShape::Angle, 40., 40., 4.);
+    let angle_id = angle_stock.id;
+    s.commit(prepare_library(&s, s.revision(), actor(), &[angle_stock]).unwrap())
+        .unwrap();
+    let build = |s: &mut Session, side: FrameSide, offset: Option<[f64; 2]>, roll: Option<f64>| {
+        let mut frame = FrameDefinition::new(FramePlane::xy());
+        let a = origin(&mut frame, 0., 0.);
+        let m = frame
+            .add_chain(s.parameters(), a, &[seg(500., 0.)], false)
+            .unwrap()[0];
+        let member = frame.members.iter_mut().find(|x| x.id == m).unwrap();
+        member.side = Some(side);
+        member.offset = offset.map(|o| o.map(length));
+        member.roll = roll.map(angle);
+        let id = EntityId::new();
+        commit_frame(s, id, &frame, &[(m, "Angle", angle_id)]);
+        let model = compile(s);
+        let r = model
+            .member_cut_list(s.document())
+            .unwrap()
+            .into_iter()
+            .find(|r| {
+                r.path
+                    == model::MemberPath::FrameMember {
+                        frame: id,
+                        member: m,
+                    }
+            })
+            .unwrap();
+        model
+            .solid(model.snapshot().bodies[&r.part])
+            .unwrap()
+            .bounds()
+            .unwrap()
+    };
+    // An equal angle 40×40×4: its centroid from the heel on both legs.
+    let area = 40. * 4. + 36. * 4.;
+    let centroid = (40. * 4. * 20. + 36. * 4. * 2.) / area;
+    // Section x runs along +y (world), section y along +z for a +x member.
+    let b = build(&mut s, FrameSide::Centroid, None, None);
+    near(-b.min[1], centroid);
+    near(-b.min[2], centroid);
+    // An offset of 10 mm along the section width moves it 10 mm along +y.
+    let b = build(&mut s, FrameSide::Centroid, Some([10., 0.]), None);
+    near(-b.min[1], centroid - 10.);
+    near(-b.min[2], centroid);
+    // A 90° roll about the axis through the centroid: the section width
+    // turns to +z and its height to −y.
+    let b = build(&mut s, FrameSide::Centroid, None, Some(90.));
+    near(-b.min[1], 40. - centroid);
+    near(-b.min[2], centroid);
 }

@@ -23,6 +23,9 @@ mod wood_box;
 pub(crate) use fence::fence_target;
 pub(crate) use outline::OutlineKey;
 mod form;
+mod frame;
+#[cfg(test)]
+pub(crate) use frame::plane_choices as frame_plane_choices;
 mod gear;
 pub(crate) mod gizmo;
 mod group_edit;
@@ -130,6 +133,7 @@ pub enum ModelingTool {
     FdmBridge,
     FdmSupport,
     Member,
+    Frame,
     Connection,
     Weld,
     Sheet,
@@ -145,7 +149,7 @@ impl ModelingTool {
             _ => None,
         }
     }
-    pub const ALL: [Self; 48] = [
+    pub const ALL: [Self; 49] = [
         Self::Box,
         Self::Cylinder,
         Self::Sphere,
@@ -175,6 +179,7 @@ impl ModelingTool {
         Self::FdmBridge,
         Self::FdmSupport,
         Self::Member,
+        Self::Frame,
         Self::Connection,
         Self::Weld,
         Self::Sheet,
@@ -241,6 +246,7 @@ impl ModelingTool {
             Self::FdmBridge => "fdm-bridge",
             Self::FdmSupport => "fdm-support",
             Self::Member => "tube",
+            Self::Frame => "frame",
             Self::Connection => "cope",
             Self::Weld => "weld-joint",
             Self::Sheet => "sheet",
@@ -295,6 +301,7 @@ impl ModelingTool {
             Self::FdmBridge => "Thin bridge",
             Self::FdmSupport => "Removable support",
             Self::Member => "Tube / profile",
+            Self::Frame => "Frame",
             Self::Connection => "Miter / cope",
             Self::Weld => "Weld joint",
             Self::Sheet => "Create sheet part",
@@ -347,6 +354,7 @@ impl ModelingTool {
             Self::FdmBridge => crate::icons::Icon::Link,
             Self::FdmSupport => crate::icons::Icon::ArrowUp,
             Self::Member => crate::icons::Icon::Box,
+            Self::Frame => crate::icons::Icon::Box,
             Self::Connection => crate::icons::Icon::Cut,
             Self::Weld => crate::icons::Icon::Link,
             Self::Sheet => crate::icons::Icon::Page,
@@ -405,6 +413,7 @@ impl ModelingTool {
             Self::FdmBridge => &["bridge", "sacrificial-bridge", "thin-bridge"],
             Self::FdmSupport => &["support", "removable-support", "print-support"],
             Self::Member => &["member", "profile", "frame-member", "structural-member"],
+            Self::Frame => &["metal-frame", "draw-frame", "tube-frame", "profile-frame"],
             Self::Connection => &["miter", "member-butt", "notch", "end-cut"],
             Self::Weld => &["weld-definition", "weld-mark", "weld-order"],
             Self::Sheet => &[
@@ -488,6 +497,9 @@ impl ModelingTool {
             }
             Self::Connection => {
                 "Usage: cope (choose miter, butt or cope, the two members and a gap in the Inspector; Preview and Apply)"
+            }
+            Self::Frame => {
+                "Usage: frame (choose profile stock and placement, then click nodes or type lengths and turns in the Inspector; joints are made at every node; Preview and Apply)"
             }
             Self::Member => {
                 "Usage: tube (choose profile stock, then a sketch whose lines become members or two points, and the section placement in the Inspector; Preview and Apply)"
@@ -602,6 +614,9 @@ impl ModelingTool {
             }
             Self::Connection => {
                 "Requires native modeling, two weldment members and no pending edits. Cuts are derived from both members; unsupported joints are refused with a reason."
+            }
+            Self::Frame => {
+                "Requires native modeling and no pending edits. Profile stock comes from Project → Materials or New profile stock…; joints a section cannot take are refused at the node."
             }
             Self::Member => {
                 "Requires native modeling, profile stock defined in Project → Materials and no pending edits. Members follow straight sketch lines or point pairs."

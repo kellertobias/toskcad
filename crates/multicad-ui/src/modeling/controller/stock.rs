@@ -41,6 +41,7 @@ impl ModelToolController {
             (ModelForm::Weldment(panel), ToolStock::Profile | ToolStock::Batten) => {
                 panel.is_batten() == (*kind == ToolStock::Batten)
             }
+            (ModelForm::Frame(_), ToolStock::Profile) => true,
             _ => false,
         };
         if !compatible {
@@ -55,6 +56,7 @@ impl ModelToolController {
             ModelForm::Cabinet(panel) => panel.select_stock(stock, session.document()),
             ModelForm::Sheet(panel) => panel.select_stock(stock),
             ModelForm::Weldment(panel) => panel.select_stock(stock),
+            ModelForm::Frame(panel) => panel.select_stock(stock),
             _ => unreachable!("checked stock consumer"),
         }
         // Only this known additive edit may advance the current form's scope.

@@ -11,8 +11,8 @@ use multicad_core::{
     constraint_sketch::Dimension,
     document::{Document, EntityId},
     model::{
-        self, ChainSegment, ConnectionKind, FrameDefinition, FrameMemberRequest, FramePlane,
-        FrameRequest, FrameSide, JointOverride, NodePosition, angle, length,
+        self, ChainSegment, ConnectionKind, FrameCorner, FrameDefinition, FrameMemberRequest,
+        FramePlane, FrameRequest, FrameSide, JointOverride, NodePosition, angle, length,
     },
     parameters::EvaluatedParameters,
 };
@@ -39,6 +39,8 @@ pub enum FrameSideArg {
     Outer,
     Left,
     Right,
+    /// The section's area centroid on the line.
+    Centroid,
 }
 impl From<FrameSideArg> for FrameSide {
     fn from(s: FrameSideArg) -> Self {
@@ -48,6 +50,7 @@ impl From<FrameSideArg> for FrameSide {
             FrameSideArg::Outer => Self::Outer,
             FrameSideArg::Left => Self::Left,
             FrameSideArg::Right => Self::Right,
+            FrameSideArg::Centroid => Self::Centroid,
         }
     }
 }
@@ -64,6 +67,26 @@ impl From<JointKindArg> for ConnectionKind {
             JointKindArg::Miter => Self::Miter,
             JointKindArg::Butt => Self::Butt,
             JointKindArg::Cope => Self::Cope,
+        }
+    }
+}
+/// How a leg corner is built (one leg along the plane normal and two
+/// members in the plane): `leg_through` (automatic: rails butt onto the
+/// leg), `mitre_on_leg` (rails mitre, leg below) or `mitre_around_leg`
+/// (leg centred on the node, rails mitred and cut to its faces).
+#[derive(Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameCornerArg {
+    LegThrough,
+    MitreOnLeg,
+    MitreAroundLeg,
+}
+impl From<FrameCornerArg> for FrameCorner {
+    fn from(c: FrameCornerArg) -> Self {
+        match c {
+            FrameCornerArg::LegThrough => Self::LegThrough,
+            FrameCornerArg::MitreOnLeg => Self::MitreOnLeg,
+            FrameCornerArg::MitreAroundLeg => Self::MitreAroundLeg,
         }
     }
 }
@@ -169,6 +192,9 @@ pub enum FrameOperationArg {
         through: Option<String>,
         #[serde(default)]
         gap: Option<Quantity>,
+        /// Leg corners only; excludes `kind` and `through`.
+        #[serde(default)]
+        corner: Option<FrameCornerArg>,
     },
     /// Change one member's side, or the frame default without `member`.
     SetSide {
@@ -389,11 +415,13 @@ pub(super) fn edit_frame(host: &dyn Host, call: &Request, args: EditFrameArgs) -
                 kind,
                 through,
                 gap,
+                corner,
             } => definition.set_joint(JointOverride {
                 node: id(node)?,
                 kind: kind.map(Into::into),
                 through: through.as_deref().map(id).transpose()?,
                 gap: opt(gap, d, e)?,
+                corner: corner.map(Into::into),
             }),
             FrameOperationArg::SetSide { member, side } => match member {
                 Some(m) => {

@@ -140,7 +140,7 @@ pub struct Registry {
 pub(crate) const METAL_TITLE: &str = "Metal";
 pub(crate) const METAL_GROUPS: [(&str, &[&str]); 3] = [
     ("Sheet metal", &["sheet", "sheet-flange", "fastener"]),
-    ("Profiles", &["tube", "cope"]),
+    ("Profiles", &["frame", "tube", "cope"]),
     ("Weld", &["weld-joint", "weld-list"]),
 ];
 
@@ -693,6 +693,7 @@ impl Default for Registry {
                                                 | ModelingTool::FdmSupport
                                                 | ModelingTool::SurfaceStructure
                                                 | ModelingTool::Member
+                                                | ModelingTool::Frame
                                                 | ModelingTool::Connection
                                                 | ModelingTool::Weld
                                                 | ModelingTool::Sheet
@@ -1128,6 +1129,7 @@ mod tests {
                 "sheet",
                 "sheet-flange",
                 "fastener",
+                "frame",
                 "tube",
                 "cope",
                 "weld-joint",
@@ -1377,6 +1379,7 @@ mod tests {
                         | ModelingTool::FdmSupport
                         | ModelingTool::SurfaceStructure
                         | ModelingTool::Member
+                        | ModelingTool::Frame
                         | ModelingTool::Connection
                         | ModelingTool::Weld
                         | ModelingTool::Sheet

@@ -153,7 +153,10 @@ fn profile_stocks(document: &Document, batten: bool) -> Vec<(EntityId, String)> 
         .collect()
 }
 /// Profile stock entries with their specification and name.
-fn profile_stock_specs(document: &Document, batten: bool) -> Vec<(EntityId, StockKind, String)> {
+pub(super) fn profile_stock_specs(
+    document: &Document,
+    batten: bool,
+) -> Vec<(EntityId, StockKind, String)> {
     document
         .entities()
         .filter_map(|e| match materials::read(e).ok().flatten() {

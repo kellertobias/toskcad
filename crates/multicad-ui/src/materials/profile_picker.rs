@@ -473,14 +473,29 @@ pub(crate) fn linked_number(
     value: &mut f64,
     help: &str,
 ) -> bool {
+    linked_value(ui, link, key, label, value, help, 0.0..=f64::MAX, " mm")
+}
+/// A linked field with its own range and unit suffix, for signed values
+/// such as offsets and angles.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn linked_value(
+    ui: &mut egui::Ui,
+    link: &mut DiagramLink,
+    key: Key,
+    label: &str,
+    value: &mut f64,
+    help: &str,
+    range: std::ops::RangeInclusive<f64>,
+    suffix: &str,
+) -> bool {
     ui.horizontal_wrapped(|ui| {
         let label_response = ui.label(label_text(ui, link, key, label));
         let response = ui
             .add(
                 egui::DragValue::new(value)
                     .speed(0.1)
-                    .range(0.0..=f64::MAX)
-                    .suffix(" mm"),
+                    .range(range)
+                    .suffix(suffix),
             )
             .labelled_by(label_response.id)
             .on_hover_text(help);

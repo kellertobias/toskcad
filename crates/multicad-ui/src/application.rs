@@ -5399,6 +5399,9 @@ mod boolean_ux_tests;
 #[path = "application/drawing_flow_tests.rs"]
 mod drawing_flow_tests;
 #[cfg(test)]
+#[path = "application/frame_tests.rs"]
+mod frame_tests;
+#[cfg(test)]
 #[path = "application/inspector_tests.rs"]
 mod inspector_tests;
 #[cfg(test)]

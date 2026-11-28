@@ -95,6 +95,9 @@ pub enum FrameSide {
     Outer,
     Left,
     Right,
+    /// The section's area centroid lies on the line (angles, channels,
+    /// custom sections).
+    Centroid,
 }
 impl FrameSide {
     fn is_center(&self) -> bool {
@@ -110,6 +113,13 @@ pub struct FrameMember {
     /// None follows the frame default side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side: Option<FrameSide>,
+    /// Section shift after anchoring, along the section width and height.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<[Dimension; 2]>,
+    /// Turn of the section about the member axis, added to the member's
+    /// own rotation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roll: Option<Dimension>,
 }
 /// A stored change to one node's derived joint. Every field left empty
 /// stays automatic.
@@ -125,10 +135,39 @@ pub struct JointOverride {
     /// Weld gap at this node; the frame default otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gap: Option<Dimension>,
+    /// How a leg corner is built, where one member along the plane normal
+    /// meets two members in the plane. Excludes `kind` and `through`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner: Option<FrameCorner>,
 }
 impl JointOverride {
     pub fn is_automatic(&self) -> bool {
-        self.kind.is_none() && self.through.is_none() && self.gap.is_none()
+        self.kind.is_none() && self.through.is_none() && self.gap.is_none() && self.corner.is_none()
+    }
+}
+/// The constructions of a leg corner: one leg along the plane normal and
+/// two rails in the plane meeting at one node.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameCorner {
+    /// The leg runs through to the top of the rails; both rails butt onto
+    /// its faces. The automatic construction.
+    #[default]
+    LegThrough,
+    /// The rails mitre; the leg stops under them, butted to a rail.
+    MitreOnLeg,
+    /// The leg is centred on the node and runs through to the top; the
+    /// rails mitre and are also cut to the leg's faces.
+    MitreAroundLeg,
+}
+impl FrameCorner {
+    pub const ALL: [Self; 3] = [Self::LegThrough, Self::MitreOnLeg, Self::MitreAroundLeg];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LegThrough => "Leg through, rails butt onto it",
+            Self::MitreOnLeg => "Rails mitred, leg below",
+            Self::MitreAroundLeg => "Rails mitred, leg outside",
+        }
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -200,6 +239,10 @@ impl FrameDefinition {
                 }
                 NodePosition::Along { distance, .. } => out.push((distance, Unit::Millimeter)),
             }
+        }
+        for m in &self.members {
+            out.extend(m.offset.iter().flatten().map(|d| (d, Unit::Millimeter)));
+            out.extend(m.roll.iter().map(|d| (d, Unit::Degree)));
         }
         out.extend(
             self.joints
@@ -433,6 +476,8 @@ impl FrameDefinition {
             start,
             end,
             side: None,
+            offset: None,
+            roll: None,
         });
         id
     }
@@ -681,8 +726,24 @@ pub(super) fn frame_anchor(
         .member(member)
         .ok_or_else(|| invalid("This member was removed from its frame"))?;
     let side = m.side.unwrap_or(definition.side);
-    if side == FrameSide::Center {
-        return Ok(anchor_mm);
+    // The offset shifts the section by +offset in its own x and y, so the
+    // point on the line moves the other way in section coordinates.
+    let shifted = |anchor: [f64; 2]| -> Result<[f64; 2], DocumentError> {
+        let Some([dx, dy]) = &m.offset else {
+            return Ok(anchor);
+        };
+        Ok([
+            anchor[0] - number(dx, Unit::Millimeter, parameters)?,
+            anchor[1] - number(dy, Unit::Millimeter, parameters)?,
+        ])
+    };
+    if centred_leg(&definition, m, member_frame.axis) {
+        return shifted(anchor_mm);
+    }
+    match side {
+        FrameSide::Center => return shifted(anchor_mm),
+        FrameSide::Centroid => return shifted(section_centroid(section)),
+        _ => {}
     }
     let frame = definition.evaluate(parameters)?;
     let (a, b) = (frame.nodes[&m.start], frame.nodes[&m.end]);
@@ -702,10 +763,10 @@ pub(super) fn frame_anchor(
         }
         FrameSide::Left => unit(cross(frame.n, axis)),
         FrameSide::Right => unit(cross(axis, frame.n)),
-        FrameSide::Center => None,
+        FrameSide::Center | FrameSide::Centroid => None,
     };
     let Some(d) = toward else {
-        return Ok(anchor_mm);
+        return shifted(anchor_mm);
     };
     let size = [section.width_mm, section.height_mm];
     let mut out = anchor_mm;
@@ -717,7 +778,53 @@ pub(super) fn frame_anchor(
             out[k] = size[k];
         }
     }
-    Ok(out)
+    shifted(out)
+}
+/// The roll of a frame member about its axis, in radians.
+pub(super) fn frame_roll(
+    document: &Document,
+    parameters: &EvaluatedParameters,
+    frame: EntityId,
+    member: EntityId,
+) -> Result<f64, DocumentError> {
+    let definition = read_frame(document, frame)?;
+    definition
+        .member(member)
+        .and_then(|m| m.roll.as_ref())
+        .map_or(Ok(0.), |r| number(r, Unit::Radian, parameters))
+}
+/// The area centroid of a section in its own coordinates: the outside less
+/// its holes, from boundaries sampled at most 1° apart on arcs.
+pub fn section_centroid(section: &ProfileSection) -> [f64; 2] {
+    let outer = section
+        .custom
+        .as_ref()
+        .map_or_else(|| section.outer(0.), |c| c.outer.clone());
+    let holes = section.holes();
+    let moment = |points: &[[f64; 2]]| {
+        let mut area = 0.;
+        let mut c = [0.; 2];
+        for (a, b) in points.iter().zip(points.iter().cycle().skip(1)) {
+            let cross = a[0] * b[1] - b[0] * a[1];
+            area += cross;
+            c[0] += (a[0] + b[0]) * cross;
+            c[1] += (a[1] + b[1]) * cross;
+        }
+        (area / 2., [c[0] / 6., c[1] / 6.])
+    };
+    let (mut area, mut c) = moment(&sample_section_loop(&outer));
+    for hole in &holes {
+        let (a, m) = moment(&sample_section_loop(hole));
+        // Holes subtract whatever their winding.
+        let sign = if a.signum() == area.signum() { -1. } else { 1. };
+        area += sign * a;
+        c[0] += sign * m[0];
+        c[1] += sign * m[1];
+    }
+    if area.abs() < 1e-12 {
+        return [section.width_mm / 2., section.height_mm / 2.];
+    }
+    [c[0] / area, c[1] / area]
 }
 
 /// One derived joint between two frame members at a node, in the order
@@ -730,6 +837,94 @@ pub struct FramePair {
     pub kind: ConnectionKind,
     pub members: [EntityId; 2],
     pub gap_mm: f64,
+    pub cuts: PairCuts,
+}
+/// Which members a frame pair cuts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PairCuts {
+    /// Both members, each end keeping one cut (the one leaving it longer).
+    #[default]
+    Both,
+    /// Only the first member; the second keeps its other cuts.
+    FirstOnly,
+    /// Both members; the first member's cut is made in addition to its
+    /// other cuts at the same end.
+    FirstAdds,
+}
+/// A leg corner at a node: one member along the frame normal and two in
+/// the plane, nothing else.
+fn leg_corner(
+    definition: &FrameDefinition,
+    ends: &[EntityId],
+    station: Option<EntityId>,
+    members: &BTreeMap<EntityId, ResolvedMember>,
+) -> Option<(EntityId, [EntityId; 2])> {
+    if ends.len() != 3 || station.is_some() {
+        return None;
+    }
+    let n = definition.plane.normal;
+    let axis = |id: &EntityId| members.get(id).map(|m| m.frame.axis);
+    let legs: Vec<EntityId> = ends
+        .iter()
+        .copied()
+        .filter(|id| axis(id).is_some_and(|a| norm(cross(a, n)) < 1e-6))
+        .collect();
+    let rails: Vec<EntityId> = ends
+        .iter()
+        .copied()
+        .filter(|id| axis(id).is_some_and(|a| dot(a, n).abs() < 1e-6))
+        .collect();
+    match (legs.as_slice(), rails.as_slice()) {
+        ([leg], [a, b]) => Some((*leg, [*a, *b])),
+        _ => None,
+    }
+}
+/// Whether one leg along the frame normal and two members in the plane
+/// meet at `node` and nothing else: where a corner construction applies.
+pub fn is_leg_corner(
+    definition: &FrameDefinition,
+    parameters: &EvaluatedParameters,
+    node: EntityId,
+) -> bool {
+    let Some(n) = definition.node(node) else {
+        return false;
+    };
+    if matches!(n.position, NodePosition::Along { .. }) {
+        return false;
+    }
+    let Ok(frame) = definition.evaluate(parameters) else {
+        return false;
+    };
+    let mut legs = 0;
+    let mut rails = 0;
+    for m in &definition.members {
+        if m.start != node && m.end != node {
+            continue;
+        }
+        let (Some(a), Some(b)) = (frame.nodes.get(&m.start), frame.nodes.get(&m.end)) else {
+            return false;
+        };
+        let Some(axis) = unit(sub(*b, *a)) else {
+            return false;
+        };
+        if norm(cross(axis, frame.n)) < 1e-6 {
+            legs += 1;
+        } else if dot(axis, frame.n).abs() < 1e-6 {
+            rails += 1;
+        } else {
+            return false;
+        }
+    }
+    legs == 1 && rails == 2
+}
+/// Whether a frame member is a leg built centred on its node.
+fn centred_leg(definition: &FrameDefinition, member: &FrameMember, axis: [f64; 3]) -> bool {
+    norm(cross(axis, definition.plane.normal)) < 1e-6
+        && [member.start, member.end].iter().any(|node| {
+            definition
+                .joint(*node)
+                .is_some_and(|j| j.corner == Some(FrameCorner::MitreAroundLeg))
+        })
 }
 fn bigger(a: &ResolvedMember, b: &ResolvedMember) -> bool {
     let size = |m: &ResolvedMember| {
@@ -821,6 +1016,40 @@ pub fn frame_pairs(
             None => station,
         };
         let kind_override = joint.and_then(|j| j.kind);
+        let mut through = through;
+        if let Some(corner) = joint.and_then(|j| j.corner) {
+            if kind_override.is_some() || through.is_some() {
+                return Err(invalid(
+                    "A corner construction cannot be combined with a joint kind or a through member; choose one",
+                ));
+            }
+            let Some((leg, [r1, r2])) = leg_corner(definition, &ends, station, members) else {
+                return Err(invalid(
+                    "A corner construction is stored at a node that is no longer a leg corner (one leg and two members in the plane); remove the override",
+                ));
+            };
+            let pair = |kind, members, cuts| FramePair {
+                node: node.id,
+                kind,
+                members,
+                gap_mm,
+                cuts,
+            };
+            match corner {
+                FrameCorner::LegThrough => through = Some(leg),
+                FrameCorner::MitreOnLeg => {
+                    out.push(pair(ConnectionKind::Miter, [r1, r2], PairCuts::Both));
+                    out.push(pair(ConnectionKind::Butt, [leg, r1], PairCuts::FirstOnly));
+                    continue;
+                }
+                FrameCorner::MitreAroundLeg => {
+                    out.push(pair(ConnectionKind::Miter, [r1, r2], PairCuts::Both));
+                    out.push(pair(ConnectionKind::Butt, [r1, leg], PairCuts::FirstAdds));
+                    out.push(pair(ConnectionKind::Butt, [r2, leg], PairCuts::FirstAdds));
+                    continue;
+                }
+            }
+        }
         if kind_override == Some(ConnectionKind::Miter) && through.is_some() {
             return Err(invalid(
                 "A mitre has no through member; choose butt or cope, or clear the through member",
@@ -866,6 +1095,7 @@ pub fn frame_pairs(
                         kind,
                         members: [branch, t],
                         gap_mm,
+                        cuts: PairCuts::Both,
                     });
                 }
             }
@@ -902,6 +1132,7 @@ pub fn frame_pairs(
                     kind,
                     members,
                     gap_mm,
+                    cuts: PairCuts::Both,
                 });
             }
         }
@@ -949,4 +1180,112 @@ pub(super) fn validate_frames(document: &Document) -> Result<(), DocumentError> 
         }
     }
     Ok(())
+}
+
+/// One node's derived joint as the Frame tool shows it: the joint kind and
+/// whether its members are reversed from automatic, or the reason it cannot
+/// be built.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NodeJoint {
+    pub node: EntityId,
+    pub pairs: Vec<FramePair>,
+    pub overridden: bool,
+    pub problem: Option<String>,
+}
+/// The derived joint at every node where two or more members meet, checked
+/// against the same cut builders the evaluator uses, on a document that
+/// already holds the frame and its member features.
+pub fn frame_joint_report(
+    document: &Document,
+    parameters: &EvaluatedParameters,
+    frame: EntityId,
+) -> Result<Vec<NodeJoint>, DocumentError> {
+    let definition = read_frame(document, frame)?;
+    let mut resolved = BTreeMap::new();
+    for (member, feature) in frame_member_features(document, frame) {
+        let source = read_member(document, feature)?;
+        let segment = frame_member_path(document, parameters, frame, member)?;
+        resolved.insert(
+            member,
+            resolve_member(document, parameters, &source, segment)?,
+        );
+    }
+    let mut out = vec![];
+    for node in &definition.nodes {
+        let mut single = definition.clone();
+        // Report each node on its own so one refusal does not hide others.
+        single.joints.retain(|j| j.node == node.id);
+        let incident = definition
+            .members
+            .iter()
+            .filter(|m| m.start == node.id || m.end == node.id)
+            .count()
+            + usize::from(matches!(node.position, NodePosition::Along { .. }));
+        if incident < 2 && definition.joint(node.id).is_none() {
+            continue;
+        }
+        single.nodes.retain(|n| n.id == node.id);
+        let pairs = node_pairs(
+            document,
+            &definition,
+            &single,
+            parameters,
+            &resolved,
+            node.id,
+        );
+        let overridden = definition.joint(node.id).is_some();
+        match pairs {
+            Ok(pairs) => {
+                let problem = pairs.iter().find_map(|p| {
+                    resolve_connection(
+                        p.kind,
+                        &resolved[&p.members[0]],
+                        &resolved[&p.members[1]],
+                        p.gap_mm,
+                    )
+                    .err()
+                    .map(|e| match e {
+                        DocumentError::Invalid(m) => m,
+                        other => other.to_string(),
+                    })
+                });
+                if pairs.is_empty() && problem.is_none() && !overridden {
+                    continue;
+                }
+                out.push(NodeJoint {
+                    node: node.id,
+                    pairs,
+                    overridden,
+                    problem,
+                });
+            }
+            Err(e) => out.push(NodeJoint {
+                node: node.id,
+                pairs: vec![],
+                overridden,
+                problem: Some(match e {
+                    DocumentError::Invalid(m) => m,
+                    other => other.to_string(),
+                }),
+            }),
+        }
+    }
+    Ok(out)
+}
+/// The pairs at one node: `single` holds only that node and its override,
+/// with the full definition's members.
+fn node_pairs(
+    document: &Document,
+    full: &FrameDefinition,
+    single: &FrameDefinition,
+    parameters: &EvaluatedParameters,
+    resolved: &BTreeMap<EntityId, ResolvedMember>,
+    node: EntityId,
+) -> Result<Vec<FramePair>, DocumentError> {
+    let mut probe = full.clone();
+    probe.joints = single.joints.clone();
+    Ok(frame_pairs(document, &probe, parameters, resolved, None)?
+        .into_iter()
+        .filter(|p| p.node == node)
+        .collect())
 }

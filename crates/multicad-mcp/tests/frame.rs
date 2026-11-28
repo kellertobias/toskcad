@@ -159,4 +159,23 @@ fn mcp_draws_a_mitred_rectangle_adds_legs_and_reads_the_cut_list_with_mass() {
         e.message
     );
     assert_eq!(host.document(), before);
+
+    // A leg corner built as rails mitred over the leg: the same transaction
+    // as the Frame tool's corner dropdown.
+    let operations: Vec<Value> = corners
+        .iter()
+        .map(|c| json!({ "op": "set_joint", "node": c, "corner": "mitre_on_leg" }))
+        .collect();
+    run(
+        "edit_frame",
+        json!({ "expected_revision": edited["revision"], "frame": frame["frame"],
+        "operations": operations }),
+    )
+    .unwrap();
+    let list = run("weldment_cut_list", json!({})).unwrap();
+    near(&member(&list, "Rail 1")["length_mm"], 1000.);
+    assert_eq!(member(&list, "Rail 1")["start"]["treatment"], "miter");
+    for i in 5..=8 {
+        near(&member(&list, &format!("Leg {i}"))["length_mm"], 680.);
+    }
 }

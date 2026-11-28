@@ -740,10 +740,13 @@ pub fn resolve_member(
         ));
     }
     let axis = scale(sub(path.end, path.start), 1. / path_length_mm);
-    let rotation_rad = member
+    let mut rotation_rad = member
         .rotation
         .as_ref()
         .map_or(Ok(0.), |r| number(r, Unit::Radian, parameters))?;
+    if let MemberPath::FrameMember { frame, member: m } = &member.path {
+        rotation_rad += super::frame_roll(document, parameters, *frame, *m)?;
+    }
     let extend_mm = [
         member
             .extend_start
