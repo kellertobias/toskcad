@@ -547,7 +547,7 @@ impl FrameDefinition {
     /// Whether ending `member` at `node` instead keeps it straight: the new
     /// node lies on the member's line beyond its end, and nothing else
     /// meets the member's current end.
-    fn continues_straight(
+    pub fn continues_straight(
         &self,
         parameters: &EvaluatedParameters,
         member: EntityId,

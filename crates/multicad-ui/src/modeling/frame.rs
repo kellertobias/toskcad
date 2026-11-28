@@ -32,6 +32,12 @@ use multicad_precision::PortableMath as _;
 use std::collections::BTreeMap;
 
 const PICK_PX: f32 = 9.;
+const NO_PLANE: &str =
+    "That click does not hit the drawing plane; turn the view toward it or choose another plane";
+fn distance3(a: [f64; 3], b: [f64; 3]) -> f64 {
+    let d: [f64; 3] = std::array::from_fn(|i| b[i] - a[i]);
+    multicad_core::sketch::dot(d, d).sqrt()
+}
 const ANGLE_STEP_DEG: f64 = 15.;
 const ANGLE_SNAP_DEG: f64 = 4.;
 
@@ -144,7 +150,7 @@ fn side_label(side: FrameSide) -> &'static str {
 
 /// What a joint report was computed for: the form state, the document
 /// revision, and a node being moved with its rounded position.
-type ReportKey = (u64, u64, Option<(EntityId, [i64; 2])>);
+type ReportKey = (u64, u64, Option<(EntityId, [i64; 3])>);
 
 /// The corner dropdown open at a leg corner.
 #[derive(Clone, Debug, PartialEq)]
@@ -178,6 +184,12 @@ pub struct FramePanel {
     selected_node: Option<EntityId>,
     selected_member: Option<EntityId>,
     corner_menu: Option<CornerMenu>,
+    /// New members run along the frame plane's normal (legs).
+    z_lock: bool,
+    /// A temporary drawing plane through two members, with its label.
+    temp_plane: Option<(Frame, String)>,
+    /// The pointer's point in the world while drawing or moving.
+    hover_world: Option<[f64; 3]>,
     start: [DimensionField; 2],
     segment_length: DimensionField,
     segment_angle: DimensionField,
@@ -233,6 +245,9 @@ impl FramePanel {
             selected_node: None,
             selected_member: None,
             corner_menu: None,
+            z_lock: false,
+            temp_plane: None,
+            hover_world: None,
             start: [field(0., "mm")?, field(0., "mm")?],
             segment_length: field(1000., "mm")?,
             segment_angle: field(0., "deg")?,
@@ -433,20 +448,72 @@ impl FramePanel {
             .insert(member, FrameMemberRequest::new(member, name, stock));
         Ok(())
     }
-    fn absolute(&mut self, p: [f64; 2]) -> EntityId {
-        self.definition.add_node(NodePosition::Absolute {
-            u: length(p[0]),
-            v: length(p[1]),
-            w: None,
+    /// The frame plane, or the temporary plane being drawn on.
+    fn active_frame(&self, parameters: &EvaluatedParameters) -> Frame {
+        self.temp_plane
+            .as_ref()
+            .map_or_else(|| self.plane_frame(parameters), |(f, _)| *f)
+    }
+    /// The fixed node position at the world point `p`, in frame plane
+    /// coordinates.
+    fn point_position(
+        &self,
+        parameters: &EvaluatedParameters,
+        p: [f64; 3],
+    ) -> Result<NodePosition, String> {
+        let evaluated = self
+            .definition
+            .evaluate(parameters)
+            .map_err(|e| e.to_string())?;
+        let [u, v, w] = self
+            .definition
+            .plane_coordinates(&evaluated, p)
+            .map(|x| (x * 1e6).round() / 1e6);
+        Ok(NodePosition::Absolute {
+            u: length(u),
+            v: length(v),
+            w: (w.abs() > 1e-9).then(|| length(w)),
         })
     }
-    /// A click on the plane while drawing: start, extend or close the chain.
-    fn draw_click(&mut self, point: [f64; 2], hit: Option<EntityId>) -> Result<bool, String> {
-        let node = match hit {
-            Some(node) => node,
-            None => self.absolute(point),
+    fn point_node(
+        &mut self,
+        parameters: &EvaluatedParameters,
+        p: [f64; 3],
+    ) -> Result<EntityId, String> {
+        let position = self.point_position(parameters, p)?;
+        Ok(self.definition.add_node(position))
+    }
+    /// Whether nothing refers to `node` any more.
+    fn unused(&self, node: EntityId) -> bool {
+        !self
+            .definition
+            .members
+            .iter()
+            .any(|m| m.start == node || m.end == node)
+            && !self.definition.nodes.iter().any(|n| match &n.position {
+                NodePosition::Polar { from, .. } => *from == node,
+                _ => false,
+            })
+    }
+    /// A click while drawing: start, extend or close the chain at a node,
+    /// a station on a member (a T or X), or a new point. Drawing straight on
+    /// through a plain node keeps one member.
+    fn draw_click(
+        &mut self,
+        parameters: &EvaluatedParameters,
+        world: [f64; 3],
+        hit: Option<EntityId>,
+        station: Option<(EntityId, f64)>,
+    ) -> Result<bool, String> {
+        let node = match (hit, station) {
+            (Some(node), _) => node,
+            (None, Some((member, distance))) => self
+                .definition
+                .add_station(member, length(distance), false)
+                .map_err(|e| e.to_string())?,
+            (None, None) => self.point_node(parameters, world)?,
         };
-        let Some(&(last, _)) = self.chain.last() else {
+        let Some(&(last, previous)) = self.chain.last() else {
             self.chain.push((node, None));
             return Ok(true);
         };
@@ -454,6 +521,26 @@ impl FramePanel {
             return Ok(false);
         }
         let closes = self.chain.len() >= 3 && self.chain[0].0 == node;
+        if let Some(previous) = previous
+            && !closes
+            && self.runs_straight_on(parameters, previous, node)
+        {
+            if let Some(m) = self
+                .definition
+                .members
+                .iter_mut()
+                .find(|m| m.id == previous)
+            {
+                m.end = node;
+            }
+            if self.unused(last) {
+                self.definition.nodes.retain(|n| n.id != last);
+                self.definition.joints.retain(|j| j.node != last);
+            }
+            self.chain.pop();
+            self.chain.push((node, Some(previous)));
+            return Ok(true);
+        }
         let member = self.definition.add_member(last, node);
         self.register(member)?;
         self.chain.push((node, Some(member)));
@@ -463,6 +550,84 @@ impl FramePanel {
         }
         Ok(true)
     }
+    /// Whether ending `member` at `node` keeps it straight, to the snapping
+    /// accuracy of clicked points (fixed points are stored to 1e-6 mm): the
+    /// node lies on the member's line beyond its end, and nothing else
+    /// meets that end.
+    fn runs_straight_on(
+        &self,
+        parameters: &EvaluatedParameters,
+        member: EntityId,
+        node: EntityId,
+    ) -> bool {
+        let (Some(m), Some(nodes)) = (
+            self.definition.member(member),
+            self.positions(&self.definition, parameters),
+        ) else {
+            return false;
+        };
+        let (a, b, c) = (nodes[&m.start], nodes[&m.end], nodes[&node]);
+        let unit = |d: [f64; 3]| {
+            let l = distance3([0.; 3], d);
+            (l > 1e-9).then(|| d.map(|x| x / l))
+        };
+        let (Some(d1), Some(d2)) = (
+            unit(std::array::from_fn(|i| b[i] - a[i])),
+            unit(std::array::from_fn(|i| c[i] - b[i])),
+        ) else {
+            return false;
+        };
+        let cross = [
+            d1[1] * d2[2] - d1[2] * d2[1],
+            d1[2] * d2[0] - d1[0] * d2[2],
+            d1[0] * d2[1] - d1[1] * d2[0],
+        ];
+        let others = self
+            .definition
+            .members
+            .iter()
+            .any(|x| x.id != member && (x.start == m.end || x.end == m.end));
+        let station = matches!(
+            self.definition.node(m.end).map(|n| &n.position),
+            Some(NodePosition::Along { .. })
+        );
+        !others
+            && !station
+            && distance3([0.; 3], cross) < 1e-6
+            && multicad_core::sketch::dot(d1, d2) > 0.
+    }
+    /// With the Z lock: a member from the chain's node along the frame
+    /// plane's normal by `rise`; the chain then ends, so the next click
+    /// starts the next leg.
+    fn add_rise(
+        &mut self,
+        parameters: &EvaluatedParameters,
+        rise: multicad_core::constraint_sketch::Dimension,
+    ) -> Result<(), String> {
+        let from = self
+            .chain
+            .last()
+            .ok_or("With the Z lock on, click the node the member rises from first")?
+            .0;
+        let created = self
+            .definition
+            .add_chain(
+                parameters,
+                from,
+                &[ChainSegment {
+                    length: length(0.),
+                    angle: angle(0.),
+                    rise: Some(rise),
+                }],
+                false,
+            )
+            .map_err(|e| e.to_string())?;
+        for m in &created {
+            self.register(*m)?;
+        }
+        self.chain.clear();
+        Ok(())
+    }
     /// Add the typed segment: its length (kept as typed, with any
     /// `=$parameter`) at the typed angle relative to the previous member.
     fn add_segment(
@@ -471,11 +636,42 @@ impl FramePanel {
         parameters: &EvaluatedParameters,
     ) -> Result<(), String> {
         let length_dim = self.segment_length.resolve(document)?;
+        if self.z_lock {
+            return self.add_rise(parameters, length_dim);
+        }
         let relative = self
             .segment_angle
             .resolve(document)?
             .value_in(Unit::Degree, Some(parameters))
             .map_err(|e| e.to_string())?;
+        if let Some((plane, _)) = self.temp_plane {
+            // On a temporary plane a typed segment ends at a fixed point.
+            let (last, previous) = *self
+                .chain
+                .last()
+                .ok_or("On a temporary plane, click the node the segment starts from first")?;
+            let nodes = self
+                .positions(&self.definition, parameters)
+                .ok_or("The frame cannot be evaluated")?;
+            let heading = previous
+                .and_then(|m| self.definition.member(m))
+                .map(|m| {
+                    let (a, b) = (
+                        plane.coordinates(nodes[&m.start]),
+                        plane.coordinates(nodes[&m.end]),
+                    );
+                    (b[1] - a[1]).portable_atan2(b[0] - a[0]).to_degrees()
+                })
+                .unwrap_or(0.);
+            let l = length_dim
+                .value_in(Unit::Millimeter, Some(parameters))
+                .map_err(|e| e.to_string())?;
+            let (sin, cos) = (heading + relative).to_radians().portable_sin_cos();
+            let at = plane.coordinates(nodes[&last]);
+            let end = plane.point([at[0] + l * cos, at[1] + l * sin]);
+            self.draw_click(parameters, end, None, None)?;
+            return Ok(());
+        }
         if self.chain.is_empty() {
             let u = self.start[0].resolve(document)?;
             let v = self.start[1].resolve(document)?;
@@ -609,25 +805,20 @@ impl FramePanel {
     /// Recompute joint badges and section outlines when the source, the
     /// document or a moving node changed. A moving node is evaluated at its
     /// live position, so badges and sections follow a drag.
-    fn refresh_report(&mut self, session: &Session, probe: Option<(EntityId, [f64; 2])>) {
+    fn refresh_report(&mut self, session: &Session, probe: Option<(EntityId, [f64; 3])>) {
         let key: ReportKey = (
             self.stamp.revision,
             session.revision(),
-            probe.map(|(n, p)| (n, [p[0].round() as i64, p[1].round() as i64])),
+            probe.map(|(n, p)| (n, p.map(|x| x.round() as i64))),
         );
         if self.report.as_ref().is_some_and(|(k, _)| *k == key) {
             return;
         }
         let mut definition = self.definition.clone();
-        if let Some((node, p)) = probe {
-            let _ = definition.set_node(
-                node,
-                NodePosition::Absolute {
-                    u: length(p[0]),
-                    v: length(p[1]),
-                    w: None,
-                },
-            );
+        if let Some((node, p)) = probe
+            && let Ok(position) = self.point_position(session.parameters(), p)
+        {
+            let _ = definition.set_node(node, position);
         }
         let mut sections = vec![];
         let result = (|| -> Result<Vec<NodeJoint>, String> {
@@ -675,7 +866,10 @@ impl FramePanel {
             _ => None,
         }
     }
-    /// Draw, pick and move on the plane; returns whether the source changed.
+    /// Draw, pick and move; returns whether the source changed. Nodes and
+    /// members are picked where they show on screen; new points lie on the
+    /// frame plane or the temporary plane; the Z lock draws along the frame
+    /// plane's normal.
     pub fn viewport(&mut self, session: &Session, view: TerminationViewport<'_>) -> bool {
         if self.picking_face {
             if view.clicked && view.pointer.is_some_and(|p| view.rect.contains(p)) {
@@ -693,28 +887,24 @@ impl FramePanel {
             return false;
         }
         let parameters = session.parameters();
-        let frame = self.plane_frame(parameters);
+        let frame = self.active_frame(parameters);
+        let base = self.plane_frame(parameters);
         let tolerance = (PICK_PX / view.camera.scale.max(1e-6)) as f64;
         let nodes_world = self
             .positions(&self.definition, parameters)
             .unwrap_or_default();
-        let mut nodes: Vec<(EntityId, [f64; 2])> = nodes_world
-            .iter()
-            .map(|(id, p)| (*id, Self::to_plane(&frame, *p)))
-            .collect();
-        // Nodes off the plane (a leg's far end) land on the plane point of
-        // the node they rise from; picking prefers nodes on the plane, then
-        // the one more members meet at.
-        let n = [
-            frame.u[1] * frame.v[2] - frame.u[2] * frame.v[1],
-            frame.u[2] * frame.v[0] - frame.u[0] * frame.v[2],
-            frame.u[0] * frame.v[1] - frame.u[1] * frame.v[0],
-        ];
-        let off_plane = |id: &EntityId| {
-            nodes_world.get(id).is_some_and(|p| {
-                let d: f64 = (0..3).map(|i| (p[i] - frame.origin[i]) * n[i]).sum();
-                d.abs() > 1e-6
-            })
+        let screen = |w: [f64; 3]| {
+            let s = view.camera.project(w.map(|v| v as f32), view.rect);
+            egui::pos2(s[0], s[1])
+        };
+        let inside = view.pointer.filter(|p| view.rect.contains(*p));
+        let raw = inside.and_then(|p| view.camera.on_plane(p, view.rect, frame));
+        // The node under the pointer: nodes on the active plane first, then
+        // the one more members meet at, then the nearest.
+        let on_plane = |p: &[f64; 3]| {
+            multicad_core::sketch::dot(std::array::from_fn(|i| p[i] - frame.origin[i]), frame.n)
+                .abs()
+                <= 1e-6
         };
         let incident = |id: &EntityId| {
             self.definition
@@ -723,33 +913,85 @@ impl FramePanel {
                 .filter(|m| m.start == *id || m.end == *id)
                 .count()
         };
-        nodes.sort_by_key(|(id, _)| (off_plane(id), std::cmp::Reverse(incident(id))));
-        let inside = view.pointer.filter(|p| view.rect.contains(*p));
-        let raw = inside.and_then(|p| view.camera.on_plane(p, view.rect, frame));
-        let last = self
+        let picked: Option<EntityId> = inside.and_then(|pointer| {
+            let mut near: Vec<(EntityId, f32, bool, usize)> = nodes_world
+                .iter()
+                .filter(|(id, _)| Some(**id) != self.moving)
+                .map(|(id, p)| (*id, screen(*p).distance(pointer), on_plane(p), incident(id)))
+                .filter(|(_, d, ..)| *d <= PICK_PX)
+                .collect();
+            near.sort_by(|a, b| b.2.cmp(&a.2).then(b.3.cmp(&a.3)).then(a.1.total_cmp(&b.1)));
+            near.first().map(|n| n.0)
+        });
+        // The member under the pointer and how far along it, for selection
+        // and for stations (midpoints snap).
+        let member_hit: Option<(EntityId, f64)> = inside.and_then(|pointer| {
+            self.definition
+                .members
+                .iter()
+                .filter_map(|m| {
+                    let (a, b) = (nodes_world.get(&m.start)?, nodes_world.get(&m.end)?);
+                    let (sa, sb) = (screen(*a), screen(*b));
+                    let d = sb - sa;
+                    let l2 = d.length_sq();
+                    if l2 <= 1. {
+                        return None;
+                    }
+                    let t = ((pointer - sa).dot(d) / l2).clamp(0., 1.);
+                    let dist = (sa + d * t).distance(pointer);
+                    let t = if (t - 0.5).abs() * l2.sqrt() <= PICK_PX {
+                        0.5
+                    } else {
+                        t
+                    };
+                    let length = distance3(*a, *b);
+                    (dist <= PICK_PX).then_some((m.id, (f64::from(t) * length).round(), dist))
+                })
+                .min_by(|x, y| x.2.total_cmp(&y.2))
+                .map(|(m, d, _)| (m, d))
+        });
+        let last_world = self
             .chain
             .last()
-            .and_then(|(n, _)| nodes.iter().find(|(id, _)| id == n))
-            .map(|(_, p)| *p);
-        let at = |id: EntityId| nodes.iter().find(|(n, _)| *n == id).map(|(_, p)| *p);
+            .and_then(|(n, _)| nodes_world.get(n).copied());
+        let anchor = last_world
+            .filter(|p| on_plane(p))
+            .map(|p| frame.coordinates(p))
+            .filter(|_| self.drawing);
         let directions: Vec<f64> = self
             .definition
             .members
             .iter()
             .filter_map(|m| {
-                let (a, b) = (at(m.start)?, at(m.end)?);
-                Some((b[1] - a[1]).portable_atan2(b[0] - a[0]).to_degrees())
+                let (a, b) = (nodes_world.get(&m.start)?, nodes_world.get(&m.end)?);
+                let (a, b) = (frame.coordinates(*a), frame.coordinates(*b));
+                ((b[0] - a[0]).portable_hypot(b[1] - a[1]) > 1e-6)
+                    .then(|| (b[1] - a[1]).portable_atan2(b[0] - a[0]).to_degrees())
             })
             .collect();
-        // A node being moved never snaps onto itself.
-        let targets: Vec<(EntityId, [f64; 2])> = nodes
-            .iter()
-            .filter(|(id, _)| Some(*id) != self.moving)
-            .copied()
-            .collect();
-        let anchor = if self.drawing { last } else { None };
-        let snapped = raw.map(|r| self.snap(r, &targets, anchor, &directions, tolerance));
+        // With the Z lock: the point on the normal through the chain's node
+        // nearest the pointer's ray.
+        let rise: Option<f64> = (self.z_lock && self.drawing)
+            .then_some(())
+            .and(last_world.zip(inside))
+            .and_then(|(l, pointer)| {
+                let ray = view.camera.ray(pointer, view.rect)?;
+                let (o, d, n) = (ray.origin(), ray.direction(), base.n);
+                let dot = multicad_core::sketch::dot;
+                let w0: [f64; 3] = std::array::from_fn(|i| l[i] - o[i]);
+                let (b, c, e, dn) = (dot(n, d), dot(d, d), dot(d, w0), dot(n, w0));
+                let denominator = c - b * b;
+                (denominator.abs() > 1e-9).then(|| ((b * e - c * dn) / denominator).round())
+            });
+        let snapped: Option<([f64; 2], Option<EntityId>)> = match picked {
+            Some(node) => Some((frame.coordinates(nodes_world[&node]), Some(node))),
+            None => raw.map(|r| self.snap(r, &[], anchor, &directions, tolerance)),
+        };
         self.hover = snapped.map(|s| s.0);
+        self.hover_world = match (rise, last_world) {
+            (Some(r), Some(l)) => Some(std::array::from_fn(|i| l[i] + base.n[i] * r)),
+            _ => snapped.map(|(p, hit)| hit.map_or_else(|| frame.point(p), |n| nodes_world[&n])),
+        };
         let mut changed = false;
         // Dragging a node: press on it, move, release to place it. A press
         // that does not move stays a click that selects the node.
@@ -760,12 +1002,11 @@ impl FramePanel {
         if pressed
             && !self.drawing
             && self.moving.is_none()
-            && inside.is_some()
-            && let Some((point, Some(node))) = snapped
+            && let Some(node) = picked
         {
             self.moving = Some(node);
             self.dragging = true;
-            self.drag_from = Some(point);
+            self.drag_from = inside.map(|p| [f64::from(p.x), f64::from(p.y)]);
         }
         let mut consumed = false;
         if self.dragging && released {
@@ -773,9 +1014,13 @@ impl FramePanel {
             let from = self.drag_from.take();
             let node = self.moving.take();
             if let (Some(node), Some(from)) = (node, from) {
-                match self.hover {
-                    Some(to) if (to[0] - from[0]).portable_hypot(to[1] - from[1]) >= 0.5 => {
-                        changed |= self.place(node, to, parameters);
+                let moved = inside.is_some_and(|p| {
+                    (f64::from(p.x) - from[0]).portable_hypot(f64::from(p.y) - from[1]) >= 2.
+                });
+                match (moved, raw) {
+                    (true, Some(to)) => {
+                        let to = self.snap(to, &[], None, &directions, tolerance).0;
+                        changed |= self.place(node, frame.point(to), parameters);
                     }
                     // A press that did not move is a click on the node.
                     _ => self.select_node(node, parameters),
@@ -784,28 +1029,59 @@ impl FramePanel {
             }
         }
         if view.clicked && inside.is_some() && !consumed {
-            match (raw, snapped) {
-                (None, _) | (_, None) => {
-                    self.error = Some(
-                        "That click does not hit the drawing plane; turn the view toward it or choose another plane"
-                            .into(),
-                    );
+            if let Some(node) = self.moving.take() {
+                match raw {
+                    Some(to) => {
+                        let to = self.snap(to, &[], None, &directions, tolerance).0;
+                        changed |= self.place(node, frame.point(to), parameters);
+                    }
+                    None => self.error = Some(NO_PLANE.into()),
                 }
-                (Some(_), Some((point, hit))) => {
-                    if let Some(node) = self.moving.take() {
-                        changed |= self.place(node, point, parameters);
-                    } else if self.drawing {
-                        match self.draw_click(point, hit) {
-                            Ok(c) => changed |= c,
+            } else if self.drawing && self.z_lock {
+                match (self.chain.last(), picked, rise) {
+                    (None, Some(node), _) => {
+                        self.chain.push((node, None));
+                    }
+                    (None, None, _) => {
+                        self.error =
+                            Some("With the Z lock on, click the node the member rises from".into());
+                    }
+                    (Some(_), _, Some(r)) if r.abs() >= 1. => {
+                        match self.add_rise(parameters, length(r)) {
+                            Ok(()) => changed = true,
                             Err(e) => self.error = Some(e),
                         }
-                    } else if let Some(node) = hit {
-                        self.select_node(node, parameters);
-                    } else {
-                        self.dismiss_corner_menu();
-                        self.selected_member = self.member_at(point, &nodes, tolerance);
-                        self.selected_node = None;
                     }
+                    (Some(_), ..) => {
+                        self.error = Some(
+                            "Move the pointer along the plane normal to set the rise, or type it"
+                                .into(),
+                        );
+                    }
+                }
+            } else if self.drawing {
+                let station = if picked.is_none() { member_hit } else { None };
+                let world = match (picked, station, raw) {
+                    (Some(node), ..) => Some(nodes_world[&node]),
+                    (None, Some(_), _) => Some([0.; 3]),
+                    (None, None, Some(_)) => self.hover_world,
+                    (None, None, None) => None,
+                };
+                match world {
+                    None => self.error = Some(NO_PLANE.into()),
+                    Some(world) => match self.draw_click(parameters, world, picked, station) {
+                        Ok(c) => changed |= c,
+                        Err(e) => self.error = Some(e),
+                    },
+                }
+            } else if let Some(node) = picked {
+                self.select_node(node, parameters);
+            } else {
+                self.dismiss_corner_menu();
+                self.selected_member = member_hit.map(|(m, _)| m);
+                self.selected_node = None;
+                if self.selected_member.is_none() && raw.is_none() {
+                    self.error = Some(NO_PLANE.into());
                 }
             }
         }
@@ -813,10 +1089,18 @@ impl FramePanel {
             self.changed();
         }
         changed |= self.corner_keys(&view);
-        let probe = self.moving.zip(self.hover);
+        let probe = if self.dragging {
+            self.moving
+                .zip(raw.map(|r| frame.point(self.snap(r, &[], None, &directions, tolerance).0)))
+        } else {
+            None
+        };
         self.refresh_report(session, probe);
-        self.paint(&view, &frame, &nodes);
-        changed |= self.corner_dropdown(&view, &frame, &nodes);
+        let nodes_world = self
+            .positions(&self.definition, parameters)
+            .unwrap_or_default();
+        self.paint(&view, &nodes_world, probe);
+        changed |= self.corner_dropdown(&view, &nodes_world);
         changed
     }
     /// Arrow keys cycle the open corner dropdown, unless a field has the
@@ -849,23 +1133,15 @@ impl FramePanel {
     fn corner_dropdown(
         &mut self,
         view: &TerminationViewport<'_>,
-        frame: &Frame,
-        nodes: &[(EntityId, [f64; 2])],
+        nodes: &BTreeMap<EntityId, [f64; 3]>,
     ) -> bool {
         let Some(menu) = self.corner_menu.clone() else {
             return false;
         };
-        let Some(p) = nodes
-            .iter()
-            .find(|(id, _)| *id == menu.node)
-            .map(|(_, p)| *p)
-        else {
+        let Some(world) = nodes.get(&menu.node) else {
             return false;
         };
-        let world = std::array::from_fn::<f32, 3, _>(|i| {
-            (frame.origin[i] + p[0] * frame.u[i] + p[1] * frame.v[i]) as f32
-        });
-        let s = view.camera.project(world, view.rect);
+        let s = view.camera.project(world.map(|v| v as f32), view.rect);
         let at = egui::pos2(s[0], s[1]) + egui::vec2(14., 10.);
         let mut clicked = None;
         egui::Area::new(egui::Id::new(("frame-corner-menu", menu.node)))
@@ -935,6 +1211,63 @@ impl FramePanel {
             menu.before.clone(),
         );
         self.set_corner(node, corner, &before);
+    }
+    /// Split `member` at its station `node`; the new member takes the same
+    /// stock.
+    fn split(
+        &mut self,
+        document: &Document,
+        parameters: &EvaluatedParameters,
+        member: EntityId,
+        node: EntityId,
+    ) -> Result<(), String> {
+        let stock = self
+            .member_stock(document, member)
+            .or(self.stock)
+            .ok_or("Choose profile stock first")?;
+        let created = self
+            .definition
+            .split_member(parameters, member, node)
+            .map_err(|e| e.to_string())?;
+        self.counter += 1;
+        let name = format!("{} member {}", self.name.trim(), self.counter);
+        self.new_members
+            .insert(created, FrameMemberRequest::new(created, name, stock));
+        Ok(())
+    }
+    /// The plane through two members meeting at `node`, with u along the
+    /// first; none when they are parallel.
+    fn plane_through(
+        &self,
+        parameters: &EvaluatedParameters,
+        node: EntityId,
+        a: EntityId,
+        b: EntityId,
+    ) -> Option<Frame> {
+        let nodes = self.positions(&self.definition, parameters)?;
+        let origin = nodes[&node];
+        let away = |m: EntityId| {
+            let m = self.definition.member(m)?;
+            let other = if m.start == node { m.end } else { m.start };
+            let d: [f64; 3] = std::array::from_fn(|i| nodes[&other][i] - origin[i]);
+            let l = distance3([0.; 3], d);
+            (l > 1e-9).then(|| d.map(|x| x / l))
+        };
+        let (u, w) = (away(a)?, away(b)?);
+        let dot = multicad_core::sketch::dot;
+        let along = dot(u, w);
+        let v: [f64; 3] = std::array::from_fn(|i| w[i] - u[i] * along);
+        let l = distance3([0.; 3], v);
+        if l < 1e-6 {
+            return None;
+        }
+        let v = v.map(|x| x / l);
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        Some(Frame { origin, u, v, n })
     }
     fn select_node(&mut self, node: EntityId, parameters: &EvaluatedParameters) {
         if self.corner_menu.as_ref().is_some_and(|m| m.node != node) {
@@ -1026,68 +1359,39 @@ impl FramePanel {
             format!("Face of {name}"),
         ))
     }
-    /// Rewrite a node's own position to an absolute plane point; nodes that
-    /// depend on it follow.
-    fn place(&mut self, node: EntityId, point: [f64; 2], parameters: &EvaluatedParameters) -> bool {
-        let position = NodePosition::Absolute {
-            u: length(point[0]),
-            v: length(point[1]),
-            w: None,
-        };
+    /// Rewrite a node's own position to a fixed point; nodes that depend on
+    /// it follow.
+    fn place(&mut self, node: EntityId, world: [f64; 3], parameters: &EvaluatedParameters) -> bool {
         let mut probe = self.definition.clone();
-        match probe
-            .set_node(node, position)
-            .and_then(|_| probe.evaluate(parameters).map(|_| ()))
-        {
+        match self.point_position(parameters, world).and_then(|position| {
+            probe
+                .set_node(node, position)
+                .and_then(|_| probe.evaluate(parameters).map(|_| ()))
+                .map_err(|e| e.to_string())
+        }) {
             Ok(()) => {
                 self.definition = probe;
                 true
             }
             Err(e) => {
-                self.error = Some(e.to_string());
+                self.error = Some(e);
                 false
             }
         }
     }
-    fn member_at(
+    fn paint(
         &self,
-        point: [f64; 2],
-        nodes: &[(EntityId, [f64; 2])],
-        tolerance: f64,
-    ) -> Option<EntityId> {
-        let at = |id: EntityId| nodes.iter().find(|(n, _)| *n == id).map(|(_, p)| *p);
-        self.definition
-            .members
-            .iter()
-            .filter_map(|m| {
-                let (a, b) = (at(m.start)?, at(m.end)?);
-                let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
-                let l2 = dx * dx + dy * dy;
-                if l2 <= 0. {
-                    return None;
-                }
-                let t = (((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / l2).clamp(0., 1.);
-                let d = (point[0] - a[0] - t * dx).portable_hypot(point[1] - a[1] - t * dy);
-                (d <= tolerance).then_some((m.id, d))
-            })
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(id, _)| id)
-    }
-    fn paint(&self, view: &TerminationViewport<'_>, frame: &Frame, nodes: &[(EntityId, [f64; 2])]) {
-        let world = |p: [f64; 2]| {
-            std::array::from_fn::<f32, 3, _>(|i| {
-                (frame.origin[i] + p[0] * frame.u[i] + p[1] * frame.v[i]) as f32
-            })
-        };
-        let screen = |p: [f64; 2]| {
-            let s = view.camera.project(world(p), view.rect);
+        view: &TerminationViewport<'_>,
+        nodes: &BTreeMap<EntityId, [f64; 3]>,
+        probe: Option<(EntityId, [f64; 3])>,
+    ) {
+        let screen = |p: [f64; 3]| {
+            let s = view.camera.project(p.map(|v| v as f32), view.rect);
             egui::pos2(s[0], s[1])
         };
-        let at = |id: EntityId| {
-            if self.moving == Some(id) {
-                return self.hover;
-            }
-            nodes.iter().find(|(n, _)| *n == id).map(|(_, p)| *p)
+        let at = |id: EntityId| match probe {
+            Some((n, p)) if n == id => Some(p),
+            _ => nodes.get(&id).copied(),
         };
         let line = egui::Color32::from_rgb(64, 196, 255);
         let accent = egui::Color32::from_rgb(255, 176, 64);
@@ -1099,19 +1403,23 @@ impl FramePanel {
             1.,
             egui::Color32::from_rgba_unmultiplied(160, 200, 230, 150),
         );
-        let to_screen = |p: &[f64; 3]| {
-            let s = view.camera.project(p.map(|v| v as f32), view.rect);
-            egui::pos2(s[0], s[1])
-        };
         for [a, b] in &self.sections {
             for outline in [a, b] {
-                let points: Vec<egui::Pos2> = outline.iter().map(to_screen).collect();
+                let points: Vec<egui::Pos2> = outline.iter().map(|p| screen(*p)).collect();
                 view.painter.add(egui::Shape::closed_line(points, section));
             }
             let step = (a.len() / 8).max(1);
             for (p, q) in a.iter().zip(b).step_by(step) {
+                view.painter.line_segment([screen(*p), screen(*q)], section);
+            }
+        }
+        // The temporary plane's axes at its origin.
+        if let Some((plane, _)) = &self.temp_plane {
+            let o = screen(plane.origin);
+            for axis in [plane.u, plane.v] {
+                let tip = screen(std::array::from_fn(|i| plane.origin[i] + axis[i] * 150.));
                 view.painter
-                    .line_segment([to_screen(p), to_screen(q)], section);
+                    .line_segment([o, tip], egui::Stroke::new(1., accent));
             }
         }
         for m in &self.definition.members {
@@ -1125,7 +1433,7 @@ impl FramePanel {
                 [sa, sb],
                 egui::Stroke::new(if selected { 3. } else { 2. }, color),
             );
-            let l = (b[0] - a[0]).portable_hypot(b[1] - a[1]);
+            let l = distance3(a, b);
             let dir = (sb - sa).normalized();
             view.painter.text(
                 sa + (sb - sa) / 2. + egui::vec2(-dir.y, dir.x) * 12.,
@@ -1135,12 +1443,8 @@ impl FramePanel {
                 color,
             );
         }
-        for (id, p) in nodes {
-            let p = if self.moving == Some(*id) {
-                self.hover.unwrap_or(*p)
-            } else {
-                *p
-            };
+        for id in nodes.keys() {
+            let Some(p) = at(*id) else { continue };
             let s = screen(p);
             let selected = self.selected_node == Some(*id);
             view.painter.circle_filled(
@@ -1169,16 +1473,25 @@ impl FramePanel {
         }
         // The pending segment from the last chain node.
         if self.drawing
-            && let (Some(hover), Some((last, _))) = (self.hover, self.chain.last())
+            && let (Some(hover), Some((last, _))) = (self.hover_world, self.chain.last())
             && let Some(l) = at(*last)
         {
             view.painter
                 .line_segment([screen(l), screen(hover)], egui::Stroke::new(1.5, accent));
-            let length = (hover[0] - l[0]).portable_hypot(hover[1] - l[1]);
+            let length = distance3(l, hover);
+            let text = if self.z_lock {
+                let rise = multicad_core::sketch::dot(
+                    std::array::from_fn(|i| hover[i] - l[i]),
+                    self.definition.plane.normal,
+                );
+                format!("rise {} mm", format_number(rise.round()))
+            } else {
+                format!("{} mm", format_number(length.round()))
+            };
             view.painter.text(
                 screen(hover) + egui::vec2(12., 12.),
                 egui::Align2::LEFT_TOP,
-                format!("{} mm", format_number(length.round())),
+                text,
                 font,
                 accent,
             );
@@ -1328,101 +1641,18 @@ impl FramePanel {
         controls::inspector_layout(ui);
         ui.strong(if self.editing { "Edit frame" } else { "Frame" });
         ui.small("Draw profile members as lines. Joints are made at every node: equal sections mitre, different sections butt with the larger through, round tubes cope.");
-        ui.label("Frame name");
-        let mut changed = ui
-            .add_enabled(
-                !self.editing,
-                egui::TextEdit::singleline(&mut self.name).desired_width(ui.available_width()),
-            )
-            .changed();
-        // Plane: chosen before the first node.
-        ui.label("Drawing plane");
-        let choices = plane_choices(document);
-        let current = choices
-            .iter()
-            .find(|(_, p)| *p == self.definition.plane)
-            .map(|(label, _)| label.clone());
-        let empty = self.definition.nodes.is_empty();
-        ui.add_enabled_ui(empty, |ui| {
-            controls::inspector_combo(ui, "frame-plane")
-                .selected_text(
-                    current
-                        .clone()
-                        .or_else(|| self.face_label.clone())
-                        .unwrap_or_else(|| "Custom plane".into()),
-                )
-                .show_ui(ui, |ui| {
-                    for (label, plane) in &choices {
-                        if ui
-                            .selectable_label(current.as_ref() == Some(label), label)
-                            .clicked()
-                        {
-                            self.definition.plane = plane.clone();
-                            self.face_label = None;
-                            changed = true;
-                        }
-                    }
-                });
-            let label = if self.picking_face {
-                "Click a planar face…"
-            } else {
-                "Pick a planar face"
-            };
-            if ui
-                .button(label)
-                .on_hover_text("Then click a flat face of a model body to draw on it")
-                .clicked()
-            {
-                self.picking_face = !self.picking_face;
-                self.drawing = false;
-            }
-        });
-        // Profile stock with pictures and plain names.
-        ui.label("Profile stock");
-        let stocks = super::weldment::profile_stock_specs(document, false);
-        let selected = self
-            .stock
-            .and_then(|id| stocks.iter().find(|(s, ..)| *s == id))
-            .map_or("Choose profile stock".to_owned(), |(_, spec, name)| {
-                crate::materials::profile_picker::description(spec).unwrap_or_else(|| name.clone())
-            });
-        let create = controls::inspector_combo(ui, "frame-stock")
-            .selected_text(selected)
-            .show_ui(ui, |ui| {
-                ui.set_min_width(260.);
-                for (id, spec, name) in &stocks {
-                    let is = self.stock == Some(*id);
-                    if crate::materials::profile_picker::stock_row(ui, is, spec, name).clicked()
-                        && !is
-                    {
-                        self.stock = Some(*id);
-                        changed = true;
-                    }
-                }
-                ui.button("New profile stock…").clicked()
-            })
-            .inner
-            .unwrap_or(false);
-        if create {
-            return Some(ModelEvent::CreateStock(
-                crate::materials::ToolStock::Profile,
-            ));
+        let mut changed = false;
+        // The last refusal shows first, where it stays in view.
+        if let Some(error) = &self.error {
+            ui.colored_label(ui.visuals().error_fg_color, error);
         }
-        ui.label("Section placement");
-        controls::inspector_combo(ui, "frame-side")
-            .selected_text(side_label(self.definition.side))
-            .show_ui(ui, |ui| {
-                for (side, label) in SIDES {
-                    if ui
-                        .selectable_label(self.definition.side == side, label)
-                        .clicked()
-                    {
-                        self.definition.side = side;
-                        changed = true;
-                    }
-                }
-            });
-        ui.separator();
+        if let Some((_, label)) = &self.temp_plane {
+            ui.label(label.clone());
+            if ui.button("Back to the frame plane").clicked() {
+                self.temp_plane = None;
+                self.chain.clear();
+            }
+        }
         // Selected member.
         if let Some(member) = self.selected_member
             && self.definition.member(member).is_some()
@@ -1563,10 +1793,119 @@ impl FramePanel {
                     field.resolve(document).ok()
                 };
             }
+            // Member order where three or more members end here.
+            let ends: Vec<EntityId> = incident.clone();
+            let station = matches!(
+                self.definition.node(node).map(|n| &n.position),
+                Some(NodePosition::Along { .. })
+            );
+            if ends.len() >= 3 && !station {
+                let mut order = joint.order.clone().unwrap_or_else(|| {
+                    // The derived order: the member others are cut against
+                    // first.
+                    let through = self.joint(node).and_then(|j| {
+                        let mut counts = BTreeMap::<EntityId, usize>::new();
+                        for p in &j.pairs {
+                            *counts.entry(p.members[1]).or_default() += 1;
+                        }
+                        counts.into_iter().max_by_key(|(_, c)| *c).map(|(m, _)| m)
+                    });
+                    let mut order: Vec<EntityId> = through.into_iter().collect();
+                    order.extend(ends.iter().copied().filter(|m| Some(*m) != through));
+                    order
+                });
+                ui.label("Member order (the first runs through; each later one is cut against the earlier ones)");
+                let mut moved = None;
+                for (k, m) in order.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        let name = self.member_name(*m);
+                        ui.label(format!(
+                            "{}. {}{}",
+                            k + 1,
+                            name,
+                            if k == 0 { " (through)" } else { "" }
+                        ));
+                        if k > 0 && ui.small_button(format!("Move {name} up")).clicked() {
+                            moved = Some(k);
+                        }
+                    });
+                }
+                if let Some(k) = moved {
+                    order.swap(k - 1, k);
+                    joint.order = Some(order);
+                    joint.through = None;
+                    joint.corner = None;
+                    self.corner_menu = None;
+                }
+            }
+            // Split a member at its station; merge two collinear members.
+            if let Some(NodePosition::Along { member, .. }) =
+                self.definition.node(node).map(|n| n.position.clone())
+                && ui
+                    .button(format!("Split {} here", self.member_name(member)))
+                    .on_hover_text(
+                        "The member keeps its Part up to this node; a new member continues",
+                    )
+                    .clicked()
+            {
+                match self.split(document, parameters, member, node) {
+                    Ok(()) => changed = true,
+                    Err(e) => self.error = Some(e),
+                }
+            }
+            if let [a, b] = ends.as_slice()
+                && !station
+                && {
+                    let mut probe = self.definition.clone();
+                    probe.merge_members(parameters, *a, *b).is_ok()
+                }
+                && ui
+                    .button(format!(
+                        "Merge {} and {}",
+                        self.member_name(*a),
+                        self.member_name(*b)
+                    ))
+                    .on_hover_text("The first member runs on and keeps its Part")
+                    .clicked()
+            {
+                match self.definition.merge_members(parameters, *a, *b) {
+                    Ok(()) => {
+                        self.new_members.remove(b);
+                        self.selected_node = None;
+                        changed = true;
+                    }
+                    Err(e) => self.error = Some(e.to_string()),
+                }
+            }
+            // A temporary drawing plane through two members meeting here.
+            if self.temp_plane.is_none() {
+                for (i, a) in ends.iter().enumerate() {
+                    for b in ends.iter().skip(i + 1) {
+                        let Some(plane) = self.plane_through(parameters, node, *a, *b) else {
+                            continue;
+                        };
+                        let label = format!(
+                            "Draw on the plane of {} and {}",
+                            self.member_name(*a),
+                            self.member_name(*b)
+                        );
+                        if ui.button(&label).clicked() {
+                            self.dismiss_corner_menu();
+                            self.temp_plane =
+                                Some((plane, label.replacen("Draw on", "Drawing on", 1)));
+                            self.drawing = true;
+                            self.z_lock = false;
+                            self.chain.clear();
+                            self.selected_node = None;
+                        }
+                    }
+                }
+            }
             if picked {
                 // A joint kind or through member replaces a corner
-                // construction.
+                // construction and a member order.
                 joint.corner = None;
+                joint.order = None;
                 self.corner_menu = None;
             }
             if joint != before {
@@ -1584,6 +1923,102 @@ impl FramePanel {
                 changed = true;
             }
         }
+        ui.separator();
+        ui.label("Frame name");
+        changed |= ui
+            .add_enabled(
+                !self.editing,
+                egui::TextEdit::singleline(&mut self.name).desired_width(ui.available_width()),
+            )
+            .changed();
+        // Plane: chosen before the first node.
+        ui.label("Drawing plane");
+        let choices = plane_choices(document);
+        let current = choices
+            .iter()
+            .find(|(_, p)| *p == self.definition.plane)
+            .map(|(label, _)| label.clone());
+        let empty = self.definition.nodes.is_empty();
+        ui.add_enabled_ui(empty, |ui| {
+            controls::inspector_combo(ui, "frame-plane")
+                .selected_text(
+                    current
+                        .clone()
+                        .or_else(|| self.face_label.clone())
+                        .unwrap_or_else(|| "Custom plane".into()),
+                )
+                .show_ui(ui, |ui| {
+                    for (label, plane) in &choices {
+                        if ui
+                            .selectable_label(current.as_ref() == Some(label), label)
+                            .clicked()
+                        {
+                            self.definition.plane = plane.clone();
+                            self.face_label = None;
+                            changed = true;
+                        }
+                    }
+                });
+            let label = if self.picking_face {
+                "Click a planar face…"
+            } else {
+                "Pick a planar face"
+            };
+            if ui
+                .button(label)
+                .on_hover_text("Then click a flat face of a model body to draw on it")
+                .clicked()
+            {
+                self.picking_face = !self.picking_face;
+                self.drawing = false;
+            }
+        });
+        // Profile stock with pictures and plain names.
+        ui.label("Profile stock");
+        let stocks = super::weldment::profile_stock_specs(document, false);
+        let selected = self
+            .stock
+            .and_then(|id| stocks.iter().find(|(s, ..)| *s == id))
+            .map_or("Choose profile stock".to_owned(), |(_, spec, name)| {
+                crate::materials::profile_picker::description(spec).unwrap_or_else(|| name.clone())
+            });
+        let create = controls::inspector_combo(ui, "frame-stock")
+            .selected_text(selected)
+            .show_ui(ui, |ui| {
+                ui.set_min_width(260.);
+                for (id, spec, name) in &stocks {
+                    let is = self.stock == Some(*id);
+                    if crate::materials::profile_picker::stock_row(ui, is, spec, name).clicked()
+                        && !is
+                    {
+                        self.stock = Some(*id);
+                        changed = true;
+                    }
+                }
+                ui.button("New profile stock…").clicked()
+            })
+            .inner
+            .unwrap_or(false);
+        if create {
+            return Some(ModelEvent::CreateStock(
+                crate::materials::ToolStock::Profile,
+            ));
+        }
+        ui.label("Section placement");
+        controls::inspector_combo(ui, "frame-side")
+            .selected_text(side_label(self.definition.side))
+            .show_ui(ui, |ui| {
+                for (side, label) in SIDES {
+                    if ui
+                        .selectable_label(self.definition.side == side, label)
+                        .clicked()
+                    {
+                        self.definition.side = side;
+                        changed = true;
+                    }
+                }
+            });
+        ui.separator();
         if self.moving.is_some() {
             ui.small("Click the new position on the plane; Esc keeps the node where it is.");
         }
@@ -1594,14 +2029,32 @@ impl FramePanel {
         } else {
             "Draw in viewport"
         };
-        if ui.button(draw_label).clicked() {
-            self.drawing = !self.drawing;
+        ui.horizontal(|ui| {
+            if ui.button(draw_label).clicked() {
+                self.drawing = !self.drawing;
+                self.chain.clear();
+                self.dismiss_corner_menu();
+            }
+            ui.small(format!(
+                "{} members · {} nodes",
+                self.definition.members.len(),
+                self.definition.nodes.len()
+            ));
+        });
+        if ui
+            .checkbox(&mut self.z_lock, "Z lock (draw along the plane normal)")
+            .changed()
+        {
             self.chain.clear();
         }
         if self.drawing {
-            ui.small("Click nodes on the plane; click the first node to close the loop. Backspace removes the last node, Esc cancels the pending segment, Enter ends the chain.");
+            ui.small(if self.z_lock {
+                "Click the node a member rises from, then click along the normal or type the rise. Each rise ends its member."
+            } else {
+                "Click nodes on the plane, or on a member for a T; click the first node to close the loop. Backspace removes the last node, Esc cancels the pending segment, Enter ends the chain."
+            });
         }
-        if self.chain.is_empty() {
+        if self.chain.is_empty() && !self.z_lock && self.temp_plane.is_none() {
             ui.horizontal(|ui| {
                 changed |= self.start[0].show_compact(
                     ui,
@@ -1617,7 +2070,14 @@ impl FramePanel {
                 );
             });
         }
-        ui.label(format!("Segment length ({})", self.segment_length.unit()));
+        ui.label(if self.z_lock {
+            format!(
+                "Rise along the plane normal ({}, negative goes down)",
+                self.segment_length.unit()
+            )
+        } else {
+            format!("Segment length ({})", self.segment_length.unit())
+        });
         let length_response = ui.add(
             egui::TextEdit::singleline(&mut self.segment_length.text)
                 .id_salt("frame-segment-length")
@@ -1649,11 +2109,6 @@ impl FramePanel {
                 }
             }
         });
-        ui.small(format!(
-            "{} members · {} nodes",
-            self.definition.members.len(),
-            self.definition.nodes.len()
-        ));
         ui.separator();
         form::preview_status(ui, self.stamp, preview);
         let validation = self.request(document, enabled);
@@ -1666,9 +2121,6 @@ impl FramePanel {
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
         let action = form::actions(ui, validation.is_ok(), changed, self.stamp, preview);
-        if let Some(error) = &self.error {
-            ui.colored_label(ui.visuals().error_fg_color, error);
-        }
         if action == Some(FormAction::Cancel) {
             return Some(ModelEvent::Cancel);
         }

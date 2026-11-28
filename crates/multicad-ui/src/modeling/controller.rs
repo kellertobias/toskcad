@@ -1976,14 +1976,31 @@ impl ModelToolController {
             }
             Execution::Edit { feature } => {
                 let prepared = request.prepare_edit(session, Actor::local(channel), feature)?;
-                if prepared
-                    .outputs
-                    .iter()
-                    .any(|output| output.feature != feature)
+                // A frame edit keeps its members' features and may add
+                // members (new features and Parts) or remove them (CAD-441).
+                let frame = matches!(request, ModelRequest::Frame(_));
+                if !frame
+                    && prepared
+                        .outputs
+                        .iter()
+                        .any(|output| output.feature != feature)
                 {
                     return Err("Feature edit changed its producer identity".into());
                 }
-                let proof = SceneProof::edited(prepared.outputs.clone(), &[], vec![]);
+                let removed = if frame {
+                    session
+                        .document()
+                        .entities()
+                        .filter_map(|entity| {
+                            (matches!(entity.data, EntityData::Part { .. })
+                                && prepared.prepared.document().get(entity.id).is_none())
+                            .then_some(entity.id)
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
+                let proof = SceneProof::edited(prepared.outputs.clone(), &[], removed);
                 (prepared, proof)
             }
             Execution::EditGroup { group } => {
