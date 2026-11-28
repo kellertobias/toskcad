@@ -92,6 +92,15 @@ impl Tool {
         Self::Diameter,
         Self::Angle,
     ];
+    /// The unit of the value this constraint takes, if it takes one. Lengths
+    /// are authored in mm and angles in degrees; the unit is not edited.
+    fn unit(self) -> Option<&'static str> {
+        match self {
+            Self::Distance | Self::Length | Self::Radius | Self::Diameter => Some("mm"),
+            Self::Angle => Some("deg"),
+            _ => None,
+        }
+    }
     fn label(self) -> &'static str {
         match self {
             Self::Fix => "Fix point",
@@ -248,7 +257,6 @@ pub struct ConstraintEditor {
     last_element: Option<EntityId>,
     tool: Tool,
     value: f64,
-    unit: String,
     evaluation: Option<ReferenceReport>,
     current: Option<Arc<EvaluatedSketch>>,
     dimension_fields: BTreeMap<EntityId, DimensionFields>,
@@ -277,7 +285,6 @@ impl Default for ConstraintEditor {
             last_element: None,
             tool: Tool::Length,
             value: 10.,
-            unit: "mm".into(),
             evaluation: None,
             current: None,
             dimension_fields: BTreeMap::new(),
@@ -386,7 +393,6 @@ impl ConstraintEditor {
                 _ => 0.,
             })
             .ok_or("Selected curve is unavailable")?;
-        self.unit = "mm".into();
         Ok(())
     }
     /// Exact command entry supplies its own value and needs no measured guess.
@@ -396,11 +402,9 @@ impl ConstraintEditor {
         id: EntityId,
         element: EntityId,
         value: f64,
-        unit: &str,
     ) -> Result<(), String> {
         self.choose_dimension(session, id, element)?;
         self.value = value;
-        self.unit = unit.into();
         Ok(())
     }
     fn choose_dimension(
@@ -1183,7 +1187,11 @@ impl ConstraintEditor {
                 .on_hover_text("Use the selected geometry in selection order")
                 .clicked()
             {
-                match self.tool.kind(&self.selection, self.value, &self.unit) {
+                match self.tool.kind(
+                    &self.selection,
+                    self.value,
+                    self.tool.unit().unwrap_or("mm"),
+                ) {
                     Ok(kind) => {
                         let fix = matches!(kind, Kind::Fix { .. });
                         match self.add_kind(session, id, &mut source, kind) {
@@ -1200,11 +1208,9 @@ impl ConstraintEditor {
         });
         ui.horizontal(|ui| {
             ui.add(egui::DragValue::new(&mut self.value).speed(0.1));
-            ui.add(
-                egui::TextEdit::singleline(&mut self.unit)
-                    .desired_width(40.)
-                    .hint_text("mm"),
-            );
+            if let Some(unit) = self.tool.unit() {
+                ui.label(unit);
+            }
         });
         let mut remove = None;
         let mut dimension_edit = None;
@@ -1237,7 +1243,7 @@ impl ConstraintEditor {
                     let fields = self.dimension_fields.entry(c.id).or_insert_with(||DimensionFields::from_dimension(d));
                     ui.horizontal(|ui| {
                         ui.add(egui::TextEdit::singleline(&mut fields.text).desired_width(125.).hint_text("80 or =$width / 2")).on_hover_text("A literal value or a formula beginning with =. Reference parameters with $name.");
-                        ui.add(egui::TextEdit::singleline(&mut fields.unit).desired_width(35.)).on_hover_text("Dimension unit, such as mm or deg");
+                        ui.label(&fields.unit).on_hover_text("Unit of this dimension");
                     });
                     ui.horizontal(|ui| {
                         if ui.small_button("Preview value").on_hover_text("Validate this value or formula without changing the document").clicked() {
@@ -1866,6 +1872,100 @@ mod tests {
         });
         doc = doc.edited(&source.replace(&doc, id).unwrap()).unwrap();
         (Session::new(doc).unwrap(), id, poles[1])
+    }
+    fn click_at(
+        ctx: &egui::Context,
+        editor: &mut ConstraintEditor,
+        session: &mut Session,
+        id: EntityId,
+        pos: egui::Pos2,
+    ) {
+        show_constraints(
+            ctx,
+            editor,
+            session,
+            id,
+            [true, false]
+                .map(|pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                })
+                .into_iter()
+                .fold(vec![egui::Event::PointerMoved(pos)], |mut e, b| {
+                    e.push(b);
+                    e
+                }),
+        );
+    }
+    fn texts(output: &egui::FullOutput) -> Vec<String> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    }
+    /// The unit beside a constraint value is a fixed label: it follows the
+    /// constraint (mm for lengths, deg for angles), clicking it focuses no
+    /// editor, and an added dimension carries that unit.
+    #[test]
+    fn constraint_units_are_fixed_labels_that_follow_the_constraint() {
+        let (mut session, id, source, edge) = setup();
+        let next = source.sketch.curves[1].id;
+        let mut editor = ConstraintEditor::default();
+        editor.set_current(Some(current(&session, id)));
+        let ctx = egui::Context::default();
+        ctx.all_styles_mut(|style| style.animation_time = 0.);
+        show_constraints(&ctx, &mut editor, &mut session, id, vec![]);
+        // Length: the value is in mm, shown as text, not an input.
+        let output = show_constraints(&ctx, &mut editor, &mut session, id, vec![]);
+        let mm = text_position(&output, "mm");
+        click_at(&ctx, &mut editor, &mut session, id, mm);
+        assert!(!ctx.text_edit_focused(), "the unit is not editable");
+        // Fix takes no value, so no unit is shown.
+        editor.tool = Tool::Fix;
+        let output = show_constraints(&ctx, &mut editor, &mut session, id, vec![]);
+        assert!(!texts(&output).iter().any(|t| t == "mm" || t == "deg"));
+        // Angle: the unit becomes deg, and the added angle is in degrees.
+        editor.tool = Tool::Angle;
+        editor.value = 90.;
+        editor.selection = vec![edge, next];
+        let output = show_constraints(&ctx, &mut editor, &mut session, id, vec![]);
+        assert!(texts(&output).iter().any(|t| t == "deg"));
+        assert!(!texts(&output).iter().any(|t| t == "mm"));
+        let add = text_position(&output, "Add");
+        click_at(&ctx, &mut editor, &mut session, id, add);
+        let added = editor
+            .draft
+            .as_ref()
+            .expect("a constraint draft")
+            .sketch
+            .constraints
+            .last()
+            .unwrap();
+        assert!(
+            matches!(&added.kind, Kind::Angle { dimension, .. } if dimension.unit() == "deg"),
+            "{:?} {:?}",
+            added.kind,
+            editor.error
+        );
+        // The new angle's row shows its unit as a fixed label too.
+        let output = show_constraints(&ctx, &mut editor, &mut session, id, vec![]);
+        let shown = output
+            .shapes
+            .iter()
+            .filter(
+                |shape| matches!(&shape.shape, egui::Shape::Text(t) if t.galley.text() == "deg"),
+            )
+            .count();
+        assert_eq!(shown, 2, "the Add row and the angle row");
+        let deg = text_position(&output, "deg");
+        click_at(&ctx, &mut editor, &mut session, id, deg);
+        assert!(!ctx.text_edit_focused());
     }
     #[test]
     fn numeric_spline_pole_preview_is_source_neutral_and_apply_is_one_undo() {

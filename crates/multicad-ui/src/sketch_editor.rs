@@ -3510,7 +3510,7 @@ impl SketchEditor {
             .ok_or("Select a curve in the Inspector first")?;
         if let Some(value) = value {
             self.constraints
-                .begin_dimension_exact(session, id, element, value, unit)?;
+                .begin_dimension_exact(session, id, element, value)?;
         } else {
             self.constraints.begin_dimension(session, id, element)?;
         }
