@@ -8,6 +8,10 @@ pub struct Camera {
     pub scale: f32,
     pub target: [f32; 3],
     pub perspective: bool,
+    /// Turn of the image about the view direction, in radians; positive
+    /// turns the image clockwise on screen (CAD-419). Roll buttons keep it
+    /// on exact quarter turns in `[0, 2π)`.
+    pub roll: f32,
 }
 impl Default for Camera {
     fn default() -> Self {
@@ -17,6 +21,7 @@ impl Default for Camera {
             scale: 2.4,
             target: [90.0, 40.0, 12.0],
             perspective: false,
+            roll: 0.0,
         }
     }
 }
@@ -41,7 +46,38 @@ impl Camera {
         };
         let (s, c) = exact(self.yaw.portable_sin_cos());
         let (sp, cp) = exact(self.pitch.portable_sin_cos());
-        [[-c, s, 0.], [-sp * s, -sp * c, cp], [cp * s, cp * c, sp]]
+        let right = [-c, s, 0.];
+        let up = [-sp * s, -sp * c, cp];
+        let toward_eye = [cp * s, cp * c, sp];
+        if self.roll == 0. {
+            return [right, up, toward_eye];
+        }
+        // Rolling the image clockwise shows the former up direction at the
+        // right; quarter turns stay exact like the axis headings above.
+        let (sr, cr) = exact(self.roll.portable_sin_cos());
+        [
+            std::array::from_fn(|i| cr * right[i] + sr * up[i]),
+            std::array::from_fn(|i| cr * up[i] - sr * right[i]),
+            toward_eye,
+        ]
+    }
+    /// The roll as whole quarter turns, `0..4`.
+    pub fn roll_quarters(&self) -> i32 {
+        ((self.roll / std::f32::consts::FRAC_PI_2).round() as i32).rem_euclid(4)
+    }
+    /// The exact roll angle of `quarters` quarter turns, in `[0, 2π)`.
+    pub fn quarter_roll(quarters: i32) -> f32 {
+        quarters.rem_euclid(4) as f32 * std::f32::consts::FRAC_PI_2
+    }
+    /// Look along `toward_eye` (a unit vector from the target to the eye)
+    /// without changing target, zoom or roll. A vertical direction keeps the
+    /// current heading.
+    pub fn look_from(&mut self, toward_eye: [f32; 3]) {
+        let horizontal = toward_eye[0].portable_hypot(toward_eye[1]);
+        if horizontal > 1e-6 {
+            self.yaw = toward_eye[0].portable_atan2(toward_eye[1]);
+        }
+        self.pitch = toward_eye[2].clamp(-1., 1.).portable_asin();
     }
     pub fn orbit(&mut self, delta: Vec2) {
         self.yaw += delta.x * 0.01;

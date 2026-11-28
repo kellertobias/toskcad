@@ -289,6 +289,9 @@ pub struct SketchEditor {
     measure_pin_allowed: bool,
     initial_fit: crate::initial_fit::InitialFit,
     home_requested: bool,
+    /// Plane normal (toward the eye) of the sketch the view was last
+    /// oriented to; roll arrows turn about it while editing (CAD-419).
+    sketch_normal: Option<[f32; 3]>,
     tree: crate::model_tree::ModelTree,
     tree_selection: std::collections::BTreeSet<EntityId>,
     sheet_view_requested: bool,
@@ -416,6 +419,7 @@ impl Default for SketchEditor {
             measure_pin_allowed: true,
             initial_fit: Default::default(),
             home_requested: false,
+            sketch_normal: None,
             tree: Default::default(),
             tree_selection: Default::default(),
             sheet_view_requested: false,
@@ -2008,6 +2012,7 @@ impl SketchEditor {
             )
         }) {
             self.camera = Camera {
+                roll: 0.0,
                 yaw: Camera::PLAN_YAW,
                 pitch: std::f32::consts::FRAC_PI_2,
                 scale: 0.05,
@@ -2069,6 +2074,7 @@ impl SketchEditor {
             )
         }) {
             self.camera = Camera {
+                roll: 0.0,
                 yaw: Camera::PLAN_YAW,
                 pitch: std::f32::consts::FRAC_PI_2,
                 scale: 0.05,
@@ -2550,7 +2556,9 @@ impl SketchEditor {
             frame.n[0].portable_atan2(frame.n[1]) as f32
         };
         self.camera.pitch = frame.n[2].clamp(-1., 1.).portable_asin() as f32;
+        self.camera.roll = 0.;
         self.camera.target = frame.origin.map(|v| v as f32);
+        self.sketch_normal = Some(frame.n.map(|v| v as f32));
     }
     fn refresh_contexts(&mut self, doc: &Document, revision: u64) {
         let Some(scene) = self.display_scene.as_deref() else {
@@ -4748,6 +4756,7 @@ impl SketchEditor {
             // Flat patterns read in plan: +X right, +Y up, seen from above.
             self.camera.yaw = Camera::PLAN_YAW;
             self.camera.pitch = std::f32::consts::FRAC_PI_2;
+            self.camera.roll = 0.;
             self.camera.perspective = false;
             let home = std::mem::take(&mut self.home_requested);
             if (home || self.fit_requested)
@@ -6246,7 +6255,8 @@ impl SketchEditor {
                 .pivot(Align2::RIGHT_TOP)
                 .fixed_pos(rect.right_top() - Vec2::new(8., -4.))
                 .show(ui.ctx(), |ui| {
-                    navigation::orientation(ui, &mut self.camera);
+                    let roll_axis = self.editing.then_some(self.sketch_normal).flatten();
+                    navigation::orientation_about(ui, &mut self.camera, roll_axis);
                 });
         }
         let mut coordinates = self.coordinates;

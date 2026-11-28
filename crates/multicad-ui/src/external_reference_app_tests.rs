@@ -122,6 +122,7 @@ fn ribbon_command_pointer_preview_apply_and_undo_use_the_shared_external_transac
         "Fit uses current native source bounds while selecting a reference, not the empty consumer sketch"
     );
     app.current_mut().sketch.camera = crate::camera::Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: 1.0,
         scale: 10.,

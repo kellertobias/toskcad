@@ -222,6 +222,7 @@ fn render_native_gpu(material_palette: bool) {
         };
         let scene = Arc::new(Scene::new(stamp, vec![geometry.clone()], parts).unwrap());
         let camera = Camera {
+            roll: 0.0,
             target: [50., 30., 48.],
             yaw: if oblique { -0.6 } else { 0. },
             pitch: if oblique {
@@ -521,6 +522,7 @@ fn distant_visible_edges_hide_the_rear_plate_in_both_projections() {
     for perspective in [false, true] {
         for scale in [0.2, 0.8] {
             let camera = Camera {
+                roll: 0.0,
                 target: [90., 70., 12.],
                 yaw: 0.,
                 pitch: std::f32::consts::FRAC_PI_2,
@@ -601,6 +603,7 @@ fn world_origin_axes_respect_solid_depth_in_both_projections() {
         generation: 0,
     };
     let camera = Camera {
+        roll: 0.0,
         target: [35., 0., 10.],
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
@@ -734,6 +737,7 @@ fn gpu_uploads_only_drawn_geometry_and_reuses_buffers_through_visibility_and_res
     assert_eq!(subset.geometries().len(), 3);
     let view = View {
         camera: Camera {
+            roll: 0.0,
             target: [0.; 3],
             yaw: 0.,
             pitch: std::f32::consts::FRAC_PI_2,

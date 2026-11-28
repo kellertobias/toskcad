@@ -148,6 +148,7 @@ fn real_pointer_capture_and_shared_preview_are_source_neutral_until_one_undoable
     controller.active.as_mut().unwrap().include_hidden = true;
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.));
     let camera = Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: 1.0,
         scale: 10.,

@@ -58,6 +58,7 @@ fn fixture() -> Fixture {
 }
 fn camera() -> Camera {
     Camera {
+        roll: 0.0,
         yaw: -0.6,
         pitch: 0.6,
         scale: 6.,

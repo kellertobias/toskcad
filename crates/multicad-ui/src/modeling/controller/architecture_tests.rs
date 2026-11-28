@@ -29,6 +29,7 @@ fn draw_wall(
     let rect =
         crate::egui::Rect::from_min_size(crate::egui::Pos2::ZERO, crate::egui::vec2(800., 600.));
     let camera = crate::camera::Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         target: [2000., 0., z],
@@ -134,6 +135,7 @@ fn repeated_equipment_keeps_its_chosen_floor_when_the_active_level_changes() {
         );
         ctx.run_ui(Default::default(), |ui| {
             let camera = crate::camera::Camera {
+                roll: 0.0,
                 yaw: 0.,
                 pitch: std::f32::consts::FRAC_PI_2,
                 target: [x, 400., 0.],
@@ -225,6 +227,7 @@ fn active_level_seeds_new_wall_stair_slab_and_equipment_but_never_reassigns_save
     for point in [[1000., 500., 3000.], [2000., 500., 3000.]] {
         let mut output = ctx.run_ui(Default::default(), |ui| {
             let camera = crate::camera::Camera {
+                roll: 0.0,
                 yaw: 0.,
                 pitch: std::f32::consts::FRAC_PI_2,
                 target: [0., 0., 3000.],
@@ -315,6 +318,7 @@ fn active_level_seeds_new_wall_stair_slab_and_equipment_but_never_reassigns_save
             crate::egui::vec2(800., 600.),
         );
         let camera = crate::camera::Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: std::f32::consts::FRAC_PI_2,
             target: [0., 0., 3000.],
@@ -450,6 +454,7 @@ fn path_keys_belong_to_the_wall_drawing_only_while_it_captures_the_plan() {
     let ctx = egui::Context::default();
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.));
     let camera = crate::camera::Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: 1.5,
         scale: 0.1,
@@ -527,6 +532,7 @@ fn wall_tool_starts_empty_and_every_end_gesture_keeps_the_chain_as_one_undoable_
     let ctx = egui::Context::default();
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.));
     let camera = crate::camera::Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         scale: 0.1,

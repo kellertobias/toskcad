@@ -351,6 +351,7 @@ fn saved_arbitrary_primitive_frame_and_formulas_survive_reopen_and_native_edit()
 
 fn top_view_camera() -> crate::camera::Camera {
     crate::camera::Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         scale: 4.,

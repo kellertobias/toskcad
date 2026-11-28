@@ -1893,6 +1893,7 @@ mod tests {
         let ctx = egui::Context::default();
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.));
         let camera = Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: 1.5,
             scale: 0.1,

@@ -639,6 +639,7 @@ fn primitive_drag_replaces_the_native_preview_with_current_dimensions() {
     let context = egui::Context::default();
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.));
     let camera = crate::camera::Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         scale: 2.,
@@ -1192,6 +1193,7 @@ fn new_panel_opens_viewport_dimensions_and_drag_works_while_an_inspector_field_h
     let context = egui::Context::default();
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024., 700.));
     let camera = crate::camera::Camera {
+        roll: 0.0,
         yaw: 0.,
         pitch: std::f32::consts::FRAC_PI_2,
         scale: 0.8,

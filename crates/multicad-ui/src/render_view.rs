@@ -73,6 +73,7 @@ pub fn restore(render: &RenderCamera, height_px: f32) -> Result<Camera, String> 
         Projection::Orthographic { height_mm } => (false, height_mm),
     };
     Ok(Camera {
+        roll: 0.0,
         yaw: f[0].portable_atan2(f[1]) as f32,
         pitch: f[2].clamp(-1., 1.).portable_asin() as f32,
         scale: (height_px as f64 / height_mm).clamp(0.02, 100.) as f32,
@@ -93,6 +94,7 @@ mod tests {
     fn capture_and_restore_round_trip_the_viewport_camera() {
         for perspective in [true, false] {
             let camera = Camera {
+                roll: 0.0,
                 yaw: -0.6,
                 pitch: 0.5,
                 scale: 2.4,

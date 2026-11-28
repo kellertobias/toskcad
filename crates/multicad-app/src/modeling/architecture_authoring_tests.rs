@@ -88,6 +88,7 @@ fn plan_click(
     let mut output = ctx.run_ui(Default::default(), |ui| {
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.));
         let camera = Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: std::f32::consts::FRAC_PI_2,
             scale: 0.1,

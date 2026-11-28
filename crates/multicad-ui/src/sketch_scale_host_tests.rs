@@ -71,6 +71,7 @@ impl Host {
         let mut editor = SketchEditor::default();
         editor.set_model_backend(Box::new(NativeBackend::new()));
         editor.camera = Camera {
+            roll: 0.0,
             yaw: 0.,
             pitch: std::f32::consts::FRAC_PI_2,
             scale: 2.,
