@@ -166,7 +166,7 @@ fn mcp_draws_a_mitred_rectangle_adds_legs_and_reads_the_cut_list_with_mass() {
         .iter()
         .map(|c| json!({ "op": "set_joint", "node": c, "corner": "mitre_on_leg" }))
         .collect();
-    run(
+    let cornered = run(
         "edit_frame",
         json!({ "expected_revision": edited["revision"], "frame": frame["frame"],
         "operations": operations }),
@@ -178,4 +178,38 @@ fn mcp_draws_a_mitred_rectangle_adds_legs_and_reads_the_cut_list_with_mass() {
     for i in 5..=8 {
         near(&member(&list, &format!("Leg {i}"))["length_mm"], 680.);
     }
+
+    // Split Rail 1 at a station and merge it back: the same transactions
+    // as the Frame tool's joint editor.
+    let rail = frame["frame_members"][0]["member"].clone();
+    let station = run(
+        "edit_frame",
+        json!({ "expected_revision": cornered["revision"], "frame": frame["frame"],
+        "operations": [{ "op": "add_station", "member": rail, "distance": mm(400.) }] }),
+    )
+    .unwrap();
+    let node = station["created_stations"][0].clone();
+    let split = run(
+        "edit_frame",
+        json!({ "expected_revision": station["revision"], "frame": frame["frame"], "stock": shs,
+        "operations": [{ "op": "split_member", "member": rail, "node": node }],
+        "name_prefix": "Rail half" }),
+    )
+    .unwrap();
+    assert_eq!(split["members"], 9);
+    let list = run("weldment_cut_list", json!({})).unwrap();
+    // Rail 1 keeps its member to the station; the new half continues.
+    near(&member(&list, "Rail 1")["length_mm"], 400.);
+    assert_eq!(member(&list, "Rail 1")["path"]["member"], rail);
+    assert!(member(&list, "Rail half 9")["length_mm"].as_f64().unwrap() > 400.);
+    let merged = run(
+        "edit_frame",
+        json!({ "expected_revision": split["revision"], "frame": frame["frame"],
+        "operations": [{ "op": "merge_members", "keep": rail,
+            "remove": split["created_members"][0] }] }),
+    )
+    .unwrap();
+    assert_eq!(merged["members"], 8);
+    let list = run("weldment_cut_list", json!({})).unwrap();
+    near(&member(&list, "Rail 1")["length_mm"], 1000.);
 }

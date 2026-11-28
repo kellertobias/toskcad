@@ -220,6 +220,53 @@ or a clicked planar face (as Add Sketch does).
 - Clicks never project silently: a click that hits no valid plane is
   refused with the reason, like the wall editor's checked clicks.
 
+**As built (CAD-441).**
+- Nodes and members are painted at their 3D positions and picked where
+  they show on screen. Nodes on the active plane are preferred, then the
+  node more members meet at.
+- **Z lock** is an Inspector check box, "Z lock (draw along the plane
+  normal)":
+  - Click the node a member rises from.
+  - Then either click along the normal (the point nearest the pointer's
+    ray) or type the rise in "Rise along the plane normal (mm, negative
+    goes down)". Each rise ends its member, so legs are drawn one after
+    another.
+  - Nodes are `Polar { length: 0, rise }`.
+- **Temporary plane.** The joint editor of a node lists "Draw on the plane
+  of A and B" for every non-parallel pair of members ending there.
+  - The plane's u runs along A.
+  - Clicked points on it become fixed `Absolute { u, v, w }` nodes in frame
+    coordinates. A typed segment on it ends at a fixed point.
+  - "Back to the frame plane" returns.
+- **T and X.**
+  - While drawing, a click on a member (not a node) adds an `Along`
+    station there; the midpoint snaps.
+  - Starting a chain there makes a T. Crossing the member at a station
+    keeps two halves, an X.
+  - Drawing straight on through a plain node (snapped to the previous
+    direction) extends the previous member and drops the node (Q5).
+- **Split and merge.** The joint editor of a station offers "Split M here":
+  the member keeps its id, feature and Part up to the node, and a new
+  member continues. A node where only two collinear members meet offers
+  "Merge A and B": A runs on and keeps its Part; B's is removed.
+  - Stations on a member that splits or merges become fixed points.
+  - MCP `edit_frame` has `split_member` and `merge_members`.
+- **Member order.** At a node where three or more members end, the joint
+  editor lists the order ("1. Leg 1 (through)"), and "Move X up" reorders
+  it.
+  - It is stored as the override `order`: the first runs through, and each
+    later member is cut against every earlier one, its cuts added at that
+    end.
+  - Only the first member is cut square to cover the second.
+  - It excludes `through` and `corner`; an order that no longer lists the
+    members ending at the node is reported.
+- **Frame butts** may meet a flat face at an angle of at least 15° (the
+  branch is cut along that face) or butt square against a round member,
+  touching it. Stored weldment connections keep refusing both.
+- Equal sections that do not mirror (a brace onto a leg) butt instead of
+  mitring, and a leg along the normal runs through.
+- A reopened frame edit may add and remove member Parts.
+
 ### 4.3 Placement
 
 The form shows a small section diagram (the CAD-434 linked diagram) with
