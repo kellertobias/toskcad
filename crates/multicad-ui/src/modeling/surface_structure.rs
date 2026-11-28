@@ -279,13 +279,11 @@ impl SurfaceStructurePanel {
             ui.small(format!("Embedded {width} × {height} pixels · black is zero relief"))
                 .on_hover_text("The top image row maps to +V. Repeated tiles fit the relief window and each raised or recessed cell leaves a 10% gap.");
             for (label, value) in ["Repeat U", "Repeat V"].into_iter().zip(repeat) {
-                changed |= ui
-                    .horizontal(|ui| {
-                        ui.label(label);
-                        ui.add(egui::DragValue::new(value).range(1..=MAX_SURFACE_IMAGE_REPEAT))
-                            .changed()
-                    })
-                    .inner;
+                changed |= crate::numeric_field::NumericField::new(label, "count")
+                    .id(ui.make_persistent_id(("surface-repeat", label)))
+                    .value(ui, value, 1..=MAX_SURFACE_IMAGE_REPEAT)
+                    .input
+                    .changed();
             }
         } else {
             changed |= link.field(

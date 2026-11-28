@@ -1108,19 +1108,15 @@ impl OutlineEditor {
                 ui.small(format!(
                     "Click corners on {plane_label}; the dashed segment follows the pointer until the next click. Click the first corner to close, Enter to finish an open path, Backspace to remove the last corner, Esc to cancel and keep the previous outline."
                 ));
-                ui.horizontal(|ui| {
-                    ui.label("Next segment");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.next_length.text)
-                            .desired_width(70.)
-                            .hint_text("mm"),
-                    );
-                    ui.label("mm at");
-                    ui.add(
-                        egui::DragValue::new(&mut self.next_angle_deg)
-                            .range(-360.0..=360.0)
-                            .suffix("°"),
-                    );
+                ui.vertical(|ui| {
+                    let unit = self.next_length.unit().to_owned();
+                    crate::numeric_field::NumericField::new("Next segment length", &unit)
+                        .id(ui.make_persistent_id("outline-next-length"))
+                        .hint("Value or =$parameter")
+                        .show(ui, &mut self.next_length.text);
+                    crate::numeric_field::NumericField::new("Next segment angle", "deg")
+                        .id(ui.make_persistent_id("outline-next-angle"))
+                        .value(ui, &mut self.next_angle_deg, -360.0..=360.0);
                     if ui
                         .button("Add")
                         .on_hover_text(
@@ -1212,20 +1208,11 @@ impl OutlineEditor {
                 ui.horizontal(|ui| {
                     let selected = self.selected == Some(Selection::Corner(i));
                     if ui
-                        .selectable_label(selected, format!("{}", i + 1))
+                        .selectable_label(selected, format!("Corner {}", i + 1))
                         .on_hover_text("Select this corner")
                         .clicked()
                     {
                         select = Some(Selection::Corner(i));
-                    }
-                    for field in self.corners[i].iter_mut() {
-                        changed |= ui
-                            .add(
-                                egui::TextEdit::singleline(&mut field.text)
-                                    .desired_width(72.)
-                                    .hint_text("mm or =$p"),
-                            )
-                            .changed();
                     }
                     if ui
                         .small_button("×")
@@ -1235,6 +1222,15 @@ impl OutlineEditor {
                         remove = Some(i);
                     }
                 });
+                for (field, axis) in self.corners[i].iter_mut().zip(["X", "Y"]) {
+                    let unit = field.unit().to_owned();
+                    changed |= crate::numeric_field::NumericField::new(axis, &unit)
+                        .id(ui.make_persistent_id(("outline-corner-field", axis)))
+                        .hint("Value or =$parameter")
+                        .show(ui, &mut field.text)
+                        .input
+                        .changed();
+                }
                 if let Some(l) = lengths.get(i) {
                     let selected = self.selected == Some(Selection::Segment(i));
                     if ui
@@ -1263,11 +1259,12 @@ impl OutlineEditor {
         if let Some(Selection::Segment(i)) = self.selected
             && i < lengths.len()
         {
-            ui.horizontal(|ui| {
-                ui.label(format!("Segment {} length", i + 1));
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.segment_length.text).desired_width(70.),
-                );
+            ui.vertical(|ui| {
+                let unit = self.segment_length.unit().to_owned();
+                let label = format!("Segment {} length", i + 1);
+                crate::numeric_field::NumericField::new(&label, &unit)
+                    .id(ui.make_persistent_id("outline-segment-length"))
+                    .show(ui, &mut self.segment_length.text);
                 if ui
                     .button("Set")
                     .on_hover_text("Moves the segment's end corner along it")

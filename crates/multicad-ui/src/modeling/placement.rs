@@ -525,15 +525,12 @@ impl PlacementPanel {
             }
         });
         for (axis, label) in self.axis.iter_mut().zip(["Axis X", "Axis Y", "Axis Z"]) {
-            ui.horizontal(|ui| {
-                ui.label(label);
-                changed |= ui
-                    .add(egui::DragValue::new(axis).speed(0.1))
-                    .on_hover_text(
-                        "Custom finite nonzero axis; normalized by the typed geometric operation",
-                    )
-                    .changed();
-            });
+            changed |= crate::numeric_field::NumericField::new(label, "ratio")
+                .id(ui.make_persistent_id(("placement-axis", label)))
+                .help("Custom finite nonzero axis; normalized by the typed geometric operation")
+                .value(ui, axis, f64::NEG_INFINITY..=f64::INFINITY)
+                .input
+                .changed();
         }
         changed|=self.angle.show(ui,"Angle","Signed angle: rotate about the pivot first, then translate; formulas retain parameter identities");
         let validation = self.request(document, enabled);

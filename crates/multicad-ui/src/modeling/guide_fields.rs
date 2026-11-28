@@ -163,16 +163,16 @@ impl GuideFields {
                 );
             }
             GuideView::Section => {
-                for (label, point) in [
-                    ("Line start (x, y mm)", &mut self.start),
-                    ("Line end (x, y mm)", &mut self.end),
-                ] {
-                    ui.label(label);
-                    ui.horizontal(|ui| {
-                        for v in point.iter_mut() {
-                            changed |= ui.add(egui::DragValue::new(v).speed(10.)).changed();
-                        }
-                    });
+                for (label, point) in [("Line start", &mut self.start), ("Line end", &mut self.end)]
+                {
+                    for (axis, v) in ["X", "Y"].into_iter().zip(point.iter_mut()) {
+                        let label = format!("{label} {axis}");
+                        changed |= crate::numeric_field::NumericField::new(&label, "mm")
+                            .id(ui.make_persistent_id(("guide-line", label.as_str())))
+                            .value(ui, v, f64::NEG_INFINITY..=f64::INFINITY)
+                            .input
+                            .changed();
+                    }
                 }
                 ui.small("The view looks across the line toward its left side; the cut is limited to the line.");
                 changed |= ui
@@ -225,12 +225,11 @@ impl GuideFields {
                     }
                 }
             });
-        ui.horizontal(|ui| {
-            ui.label("Scale 1 :");
-            changed |= ui
-                .add(egui::DragValue::new(&mut self.scale).range(1..=10000))
-                .changed();
-        });
+        changed |= crate::numeric_field::NumericField::new("Scale 1 :", "count")
+            .id(ui.make_persistent_id("guide-scale"))
+            .value(ui, &mut self.scale, 1..=10000)
+            .input
+            .changed();
         changed |= ui
             .checkbox(
                 &mut self.generate,

@@ -59,12 +59,10 @@ impl DowelFields {
             "Dowel diameter",
             "Nominal diameter; receiving holes include the fit allowance",
         );
-        ui.horizontal(|ui| {
-            ui.label("Dowels per pair");
-            changed |= ui
-                .add(egui::DragValue::new(&mut self.count).range(1..=model::MAX_TENONS))
-                .changed();
-        });
+        changed |= crate::numeric_field::NumericField::new("Dowels per pair", "count")
+            .value(ui, &mut self.count, 1..=model::MAX_TENONS)
+            .input
+            .changed();
         changed |= self.inset.show(
             ui,
             "End inset",

@@ -104,7 +104,7 @@ fn window_placement_is_collapsed_retained_and_revealed() {
     p.offset[0].text = "3".into();
     p.rotation.text = "30".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, &d));
-    assert!(!painted.has("Offset U (mm)"), "placement starts collapsed");
+    assert!(!painted.has("Offset U"), "placement starts collapsed");
     assert!(painted.has_prefix("Window placement · offset 3, 0 mm · 30° · border 1 mm"));
     assert_eq!(p.offset[0].resolve(&d).unwrap(), length(3.));
     // The rotation callout opens the section at its field.
@@ -116,7 +116,7 @@ fn window_placement_is_collapsed_retained_and_revealed() {
         &mut show(&mut p, &d),
     );
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, &d));
-    assert!(painted.has("Rotation (deg)"));
+    assert!(painted.has("Rotation"));
     assert_eq!(p.link.active(), Some(visual::ROTATION));
     // Validation reveals a collapsed field in a fresh form.
     let ctx = egui::Context::default();
@@ -124,5 +124,5 @@ fn window_placement_is_collapsed_retained_and_revealed() {
     p.border.text = "=".into();
     let painted = harness::settle(&ctx, 360., &mut show(&mut p, &d));
     assert_eq!(p.link.invalid, Some(visual::BORDER));
-    assert!(painted.has("Face border (mm)"));
+    assert!(painted.has("Face border"));
 }

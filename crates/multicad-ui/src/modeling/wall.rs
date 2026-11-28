@@ -1098,12 +1098,10 @@ impl WallPanel {
                         });
                     }
                 }
-                ui.horizontal(|ui| {
-                    ui.label("Segment");
-                    changed |= ui
-                        .add(egui::DragValue::new(&mut row.segment).range(1..=256))
-                        .changed();
-                });
+                changed |= crate::numeric_field::NumericField::new("Segment", "count")
+                    .value(ui, &mut row.segment, 1..=256)
+                    .input
+                    .changed();
                 changed |= row.offset.show(
                     ui,
                     "Offset along segment",

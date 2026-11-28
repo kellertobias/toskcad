@@ -5266,6 +5266,9 @@ mod inspector_tests;
 #[path = "application/panel_placement_tests.rs"]
 mod panel_placement_tests;
 #[cfg(test)]
+#[path = "application/numeric_field_tests.rs"]
+mod numeric_field_tests;
+#[cfg(test)]
 #[path = "application/ribbon_fit_tests.rs"]
 mod ribbon_fit_tests;
 #[cfg(test)]

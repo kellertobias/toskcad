@@ -999,15 +999,11 @@ impl CabinetPanel {
                     )
                     .changed();
             } else {
-                ui.horizontal(|ui| {
-                    ui.label("Count");
-                    changed |= ui
-                        .add(
-                            egui::DragValue::new(&mut self.shelf_count)
-                                .range(0..=model::MAX_SHELVES as u32),
-                        )
-                        .changed();
-                });
+                changed |= crate::numeric_field::NumericField::new("Count", "count")
+                    .id(ui.make_persistent_id("cabinet-shelf-count"))
+                    .value(ui, &mut self.shelf_count, 0..=model::MAX_SHELVES as u32)
+                    .input
+                    .changed();
             }
         }
         let fit_title = format!(
@@ -1601,11 +1597,7 @@ pub(in crate::modeling) mod tests {
                 .iter()
                 .any(|(t, ..)| t.contains("ending") && !t.contains("not bending"))
         );
-        assert!(
-            has("Banded edges")
-                && has("Edge strip thickness (mm)")
-                && has("Strip trim allowance (mm)")
-        );
+        assert!(has("Banded edges") && has("Edge strip thickness") && has("Strip trim allowance"));
         assert!(has(
             "Click an edge in the diagram or tick it to add a strip."
         ));

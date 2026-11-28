@@ -276,7 +276,7 @@ fn placement_is_collapsed_keeps_values_and_validation_reveals_and_marks_the_fiel
     frame(&ctx, &mut p, &s, 320., vec![]);
     let f = frame(&ctx, &mut p, &s, 320., vec![]);
     assert!(
-        find(&f, "Base center X (mm)").is_none(),
+        find(&f, "Base center X").is_none(),
         "advanced placement starts collapsed"
     );
     assert!(
@@ -295,7 +295,7 @@ fn placement_is_collapsed_keeps_values_and_validation_reveals_and_marks_the_fiel
     let f = frame(&ctx, &mut p, &s, 320., vec![]);
     assert_eq!(p.link.invalid, Some("hardware.x"));
     assert!(
-        find(&f, "Base center X (mm)").is_some(),
+        find(&f, "Base center X").is_some(),
         "validation reveals the containing section"
     );
     assert!(p.request(s.document(), true).is_err());
@@ -304,7 +304,7 @@ fn placement_is_collapsed_keeps_values_and_validation_reveals_and_marks_the_fiel
     let f = frame(&ctx, &mut p, &s, 320., vec![]);
     assert_eq!(p.link.invalid, None);
     assert!(
-        find(&f, "Base center X (mm)").is_some(),
+        find(&f, "Base center X").is_some(),
         "a revealed section stays open"
     );
 }

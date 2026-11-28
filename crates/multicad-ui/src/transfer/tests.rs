@@ -481,7 +481,7 @@ fn empty_selection_exposes_receiving_options_before_any_capture() {
         "Source occurrence",
         "Receiving Part 1",
         "Override source diameter",
-        "Radial clearance (mm)",
+        "Radial clearance",
         "Through receiving body",
     ] {
         text(&out, label);

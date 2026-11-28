@@ -533,10 +533,10 @@ impl Panel {
                 ui.label(format!("{} selected sketch entities", selected.len()));
                 self.transform_controls(ui, tool);
                 if matches!(tool, OperationTool::LinearPattern | OperationTool::CircularPattern) {
-                    ui.horizontal(|ui| {
-                        ui.label("Instances");
-                        ui.add(egui::DragValue::new(&mut self.count).range(2..=MAX_PATTERN_INSTANCES));
-                    }).response.on_hover_text("Count includes the original; spacing and angle are increments, not a total span");
+                    crate::numeric_field::NumericField::new("Instances", "count")
+                        .id(ui.make_persistent_id("sketch-pattern-instances"))
+                        .help("Count includes the original; spacing and angle are increments, not a total span")
+                        .value(ui, &mut self.count, 2..=MAX_PATTERN_INSTANCES);
                 }
                 ui.checkbox(&mut self.expand_connected, "Include connected geometry")
                     .on_hover_text("Explicitly permit the solver to expand selection through shared endpoints; affected geometry and constraints are reported in the preview");
@@ -783,7 +783,7 @@ impl Panel {
                 .is_some_and(|curve| matches!(curve.kind, CurveKind::BSpline { .. }));
         if spline_extension {
             let prior_length = self.max_length_mm;
-            number_input(ui, "Maximum continuation", &mut self.max_length_mm, " mm");
+            number_input(ui, "Maximum continuation", &mut self.max_length_mm, "mm");
             if prior_length != self.max_length_mm {
                 self.clear_extension_contacts();
             }
@@ -850,14 +850,16 @@ fn curve_label_at(index: usize, kind: &CurveKind) -> String {
 fn vector_input(ui: &mut egui::Ui, label: &str, value: &mut [f64; 2]) {
     ui.label(label);
     for (index, axis) in ["X / U", "Y / V"].iter().enumerate() {
-        number_input(ui, axis, &mut value[index], " mm");
+        number_input(ui, axis, &mut value[index], "mm");
     }
 }
-fn number_input(ui: &mut egui::Ui, label: &str, value: &mut f64, suffix: &str) {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add(egui::DragValue::new(value).speed(0.5).suffix(suffix));
-    });
+/// CAD-416 shared numeric field; `unit` is a canonical unit or symbol.
+fn number_input(ui: &mut egui::Ui, label: &str, value: &mut f64, unit: &str) {
+    crate::numeric_field::NumericField::new(label, unit).value(
+        ui,
+        value,
+        f64::NEG_INFINITY..=f64::INFINITY,
+    );
 }
 
 #[cfg(test)]
