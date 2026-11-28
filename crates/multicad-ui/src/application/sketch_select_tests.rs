@@ -482,7 +482,26 @@ fn select_works_after_esc_in_picked_face_and_reopened_sketches() {
     for _ in 0..3 {
         s.h.frame(vec![]);
     }
-    s.h.click_label("Open selected sketch");
+    // CAD-425 (approved by the user) removed the "Open selected sketch"
+    // button; reopen through Edit sketch in the tree's context menu.
+    let id =
+        s.h.app
+            .current()
+            .sketch
+            .selected
+            .expect("the finished sketch");
+    let name =
+        s.h.app
+            .current()
+            .session
+            .document()
+            .get(id)
+            .unwrap()
+            .name
+            .clone();
+    s.h.right_click_label(&name);
+    s.h.frame(vec![]);
+    s.h.click_label("Edit sketch");
     s.settle();
     s.click([60., 20.], egui::vec2(-1., 0.));
     edge_selected(&s, rectangle.curves[1], "reopened");
