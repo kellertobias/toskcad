@@ -585,7 +585,11 @@ pub fn corner_draft(
         CornerTreatment::Fillet { .. } => crate::constraint_sketch::ShapeKind::Fillet,
         CornerTreatment::Chamfer { .. } => crate::constraint_sketch::ShapeKind::Chamfer,
     };
-    proposed.sketch.record_corner(kind, created[0], modifies);
+    let shape = proposed.sketch.record_corner(kind, created[0], modifies);
+    // Its construction helpers belong to it, so lists can hide them (CAD-415).
+    proposed
+        .sketch
+        .record_corner_helpers(shape, created[1..].to_vec());
     proposed.validate()?;
     Ok(CornerDraft {
         source: proposed,

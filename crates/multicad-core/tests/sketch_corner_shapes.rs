@@ -280,3 +280,67 @@ fn corner_shapes_survive_save_and_reopen_and_require_their_capability() {
             .is_none()
     );
 }
+
+#[test]
+fn a_treatment_records_its_construction_helpers_which_prune_validate_and_serialize() {
+    let source = rectangle();
+    let draft = corner_draft(
+        &source,
+        corner(&source, [100., 60.]),
+        CornerTreatment::Fillet { radius_mm: 3. },
+    )
+    .unwrap();
+    let source = draft.source;
+    let fillet = source.sketch.shapes[1].clone();
+    // The helpers are exactly the construction curves the draft created.
+    assert_eq!(fillet.helpers, draft.created_curves[1..].to_vec());
+    assert_eq!(fillet.helpers.len(), 2);
+    for helper in &fillet.helpers {
+        let curve = source
+            .sketch
+            .curves
+            .iter()
+            .find(|c| c.id == *helper)
+            .unwrap();
+        assert!(curve.construction);
+        assert!(source.sketch.is_corner_helper(*helper));
+        assert!(source.sketch.shape_of(*helper).is_none());
+    }
+    assert!(!source.sketch.is_corner_helper(fillet.curves[0]));
+    assert!(source.sketch.shapes[0].helpers.is_empty());
+    // A deleted helper is dropped from the link on write.
+    let mut pruned = source.clone();
+    pruned.sketch.curves.retain(|c| c.id != fillet.helpers[0]);
+    pruned.sketch.prune_shapes();
+    assert_eq!(pruned.sketch.shapes[1].helpers, vec![fillet.helpers[1]]);
+    // Only a treatment has helpers, a helper is no shape's curve, and two
+    // treatments never share one.
+    let mut rectangle_helper = source.clone();
+    rectangle_helper.sketch.shapes[0].helpers = vec![fillet.helpers[0]];
+    assert!(rectangle_helper.validate().is_err());
+    let mut owned = source.clone();
+    owned.sketch.shapes[1].helpers = vec![owned.sketch.shapes[0].curves[0]];
+    assert!(owned.validate().is_err());
+    let draft = corner_draft(
+        &source,
+        corner(&source, [0., 0.]),
+        CornerTreatment::Chamfer { distance_mm: 2. },
+    )
+    .unwrap();
+    let mut shared = draft.source;
+    shared.sketch.shapes[2].helpers = fillet.helpers.clone();
+    assert!(shared.validate().is_err());
+    // The field is omitted when empty and reads back when present.
+    let json = serde_json::to_value(&fillet).unwrap();
+    assert_eq!(
+        json.get("helpers").and_then(|h| h.as_array()).map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(serde_json::from_value::<Shape>(json).unwrap(), fillet);
+    assert!(
+        serde_json::to_value(&source.sketch.shapes[0])
+            .unwrap()
+            .get("helpers")
+            .is_none()
+    );
+}
