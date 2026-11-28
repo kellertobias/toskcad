@@ -698,10 +698,32 @@ impl FramePanel {
         let nodes_world = self
             .positions(&self.definition, parameters)
             .unwrap_or_default();
-        let nodes: Vec<(EntityId, [f64; 2])> = nodes_world
+        let mut nodes: Vec<(EntityId, [f64; 2])> = nodes_world
             .iter()
             .map(|(id, p)| (*id, Self::to_plane(&frame, *p)))
             .collect();
+        // Nodes off the plane (a leg's far end) land on the plane point of
+        // the node they rise from; picking prefers nodes on the plane, then
+        // the one more members meet at.
+        let n = [
+            frame.u[1] * frame.v[2] - frame.u[2] * frame.v[1],
+            frame.u[2] * frame.v[0] - frame.u[0] * frame.v[2],
+            frame.u[0] * frame.v[1] - frame.u[1] * frame.v[0],
+        ];
+        let off_plane = |id: &EntityId| {
+            nodes_world.get(id).is_some_and(|p| {
+                let d: f64 = (0..3).map(|i| (p[i] - frame.origin[i]) * n[i]).sum();
+                d.abs() > 1e-6
+            })
+        };
+        let incident = |id: &EntityId| {
+            self.definition
+                .members
+                .iter()
+                .filter(|m| m.start == *id || m.end == *id)
+                .count()
+        };
+        nodes.sort_by_key(|(id, _)| (off_plane(id), std::cmp::Reverse(incident(id))));
         let inside = view.pointer.filter(|p| view.rect.contains(*p));
         let raw = inside.and_then(|p| view.camera.on_plane(p, view.rect, frame));
         let last = self
