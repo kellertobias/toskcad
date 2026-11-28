@@ -374,6 +374,130 @@ fn fillets_and_chamfers_are_children_of_the_shape_they_modify() {
     );
 }
 
+/// Click the disclosure chevron painted on `label`'s row.
+fn click_chevron(h: &mut Host, label: &str) {
+    let output = h.frame(vec![]);
+    let text = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text() == label => {
+                Some(text.pos + text.galley.size() * 0.5)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("Missing {label}"));
+    let chevron = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Path(path) if path.points.len() == 3 => {
+                let center = egui::Rect::from_points(&path.points).center();
+                ((center.y - text.y).abs() < 6. && center.x < text.x).then_some(center)
+            }
+            _ => None,
+        })
+        .max_by(|a, b| a.x.total_cmp(&b.x))
+        .unwrap_or_else(|| panic!("No chevron on {label}"));
+    output.drop_without_applying_deltas();
+    h.press(chevron);
+}
+
+#[test]
+fn a_real_fillet_and_chamfer_nest_under_their_rectangle() {
+    use multicad_core::sketch_corner::{CornerTreatment, corner_draft};
+    let mut h = Host::new();
+    draw(
+        &mut h,
+        DrawInput::Rectangle {
+            a: PointInput::Position([0., 0.]),
+            b: PointInput::Position([120., 80.]),
+        },
+    );
+    let corner = |source: &Source, at: [f64; 2]| {
+        source
+            .sketch
+            .points
+            .iter()
+            .find(|p| p.position_mm == at)
+            .unwrap()
+            .id
+    };
+    // Round one corner and cut another through the core corner treatment,
+    // committed as canonical edits like the Fillet and Chamfer tools.
+    let source = h.source();
+    let filleted = corner_draft(
+        &source,
+        corner(&source, [120., 80.]),
+        CornerTreatment::Fillet { radius_mm: 30. },
+    )
+    .unwrap()
+    .source;
+    let chamfered = corner_draft(
+        &filleted,
+        corner(&filleted, [0., 0.]),
+        CornerTreatment::Chamfer { distance_mm: 2. },
+    )
+    .unwrap()
+    .source;
+    commit(&mut h, chamfered);
+    let source = h.source();
+    let [rect, fillet, chamfer] = [0, 1, 2].map(|i| source.sketch.shapes[i].clone());
+    assert_eq!(fillet.modifies, Some(rect.id));
+    assert_eq!(chamfer.modifies, Some(rect.id));
+    h.frame(vec![]).drop_without_applying_deltas();
+    let row = |kind, label: &str, depth| (kind, label.to_string(), depth);
+    // The corner treatment's two construction helpers per corner belong to no
+    // recorded shape, so they stay listed as single curves.
+    assert_eq!(
+        element_rows_painted(&h),
+        vec![
+            row(ElementType::Rectangle, "Rectangle 1", 0),
+            row(ElementType::Fillet, "Fillet R30", 1),
+            row(ElementType::Chamfer, "Chamfer 2", 1),
+            row(ElementType::Line, "Line 1 (single curve)", 0),
+            row(ElementType::Line, "Line 2 (single curve)", 0),
+            row(ElementType::Line, "Line 3 (single curve)", 0),
+            row(ElementType::Line, "Line 4 (single curve)", 0),
+        ]
+    );
+    // Collapsing the rectangle hides its corners.
+    click_chevron(&mut h, "Rectangle 1");
+    let labels = h.labels();
+    assert!(labels.iter().any(|l| l == "Rectangle 1"), "{labels:?}");
+    assert!(
+        !labels.iter().any(|l| l == "Fillet R30" || l == "Chamfer 2"),
+        "{labels:?}"
+    );
+    // Picking the fillet arc's midpoint on the canvas reveals and selects its
+    // row; the arc is large enough that its midpoint is clear of the virtual
+    // sharp corner where the helpers meet.
+    let mid = 30. * std::f64::consts::FRAC_1_SQRT_2;
+    let arc_mid = [90. + mid, 50. + mid];
+    let clear = h.screen(arc_mid).distance(h.screen([120., 80.]));
+    assert!(
+        clear > 20.,
+        "the arc midpoint is {clear} px from the sharp corner; px/mm {}",
+        h.screen([1., 0.]).distance(h.screen([0., 0.]))
+    );
+    h.click(arc_mid, Vec2::ZERO);
+    assert_eq!(
+        h.editor.shape,
+        Some(ElementKey::Shape(fillet.id)),
+        "{}",
+        h.editor.message
+    );
+    assert!(painted_selected(&mut h, "Fillet R30"));
+    assert!(h.labels().iter().any(|l| l == "Selected: Fillet R30"));
+    // And the tree selects the chamfer's own line on the canvas.
+    h.click_label("Chamfer 2");
+    assert_eq!(h.editor.shape, Some(ElementKey::Shape(chamfer.id)));
+    assert_eq!(
+        h.editor.element_highlight(h.session.document()),
+        chamfer.curves.iter().copied().collect()
+    );
+}
+
 #[test]
 fn constraints_and_dimensions_are_one_collapsible_group() {
     let mut h = Host::new();

@@ -44,15 +44,7 @@ pub(crate) enum ElementType {
     Text,
     Point,
     Projected,
-    #[allow(
-        dead_code,
-        reason = "Shown once the core shape record has fillets (CAD-412)"
-    )]
     Fillet,
-    #[allow(
-        dead_code,
-        reason = "Shown once the core shape record has chamfers (CAD-412)"
-    )]
     Chamfer,
 }
 impl ElementType {
@@ -79,6 +71,8 @@ impl ElementType {
             ShapeKind::Arc => Self::Arc,
             ShapeKind::Polyline => Self::Polyline,
             ShapeKind::Spline => Self::Spline,
+            ShapeKind::Fillet => Self::Fillet,
+            ShapeKind::Chamfer => Self::Chamfer,
         }
     }
     pub(crate) fn of_curve(kind: &CurveKind) -> Self {
@@ -122,11 +116,10 @@ impl ElementType {
         }
     }
 }
-/// The shape a recorded shape modifies, read from the canonical record.
-/// Today's record has no such link, so every shape is top-level; the core
-/// shape model (CAD-412) adds it for fillets and chamfers.
-pub(crate) fn modified_shape(_shape: &Shape) -> Option<EntityId> {
-    None
+/// The shape a recorded fillet or chamfer modifies, read from the canonical
+/// record (CAD-414); `None` keeps the shape at the top level.
+pub(crate) fn modified_shape(shape: &Shape) -> Option<EntityId> {
+    shape.modifies
 }
 
 /// One painted tree row.

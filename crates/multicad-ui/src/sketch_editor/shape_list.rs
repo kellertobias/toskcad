@@ -67,7 +67,12 @@ pub(crate) fn elements(
         .iter()
         .map(|shape| ListedElement {
             key: ElementKey::Shape(shape.id),
-            label: shape.name.clone(),
+            // A fillet or chamfer shows its size ("Fillet R10"); every
+            // other shape keeps its name.
+            label: multicad_core::constraint_sketch::shape_edit::corner_label(
+                &source.sketch,
+                shape,
+            ),
             curves: shape.curves.clone(),
             kind: super::sketch_tree::ElementType::of_shape(shape.kind),
             parent: super::sketch_tree::modified_shape(shape).map(ElementKey::Shape),
