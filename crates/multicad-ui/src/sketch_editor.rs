@@ -67,6 +67,8 @@ mod scale_host_tests;
 mod screw_connection_host;
 mod shape_list;
 #[cfg(test)]
+pub(crate) use shape_list::SelectionSnapshot;
+#[cfg(test)]
 mod shape_list_tests;
 #[cfg(test)]
 mod sketch_entry_tests;
@@ -174,6 +176,19 @@ struct SplinePointer {
     anchor: Option<EntityId>,
     clicked: bool,
 }
+/// What a plain right-click in the Model viewport asks for (CAD-413).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelRightClick {
+    EndTool,
+    RepeatTool,
+}
+/// A drawing tool with the settings it ended with (CAD-413).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RepeatTool {
+    pub tool: DrawTool,
+    pub construction: bool,
+    pub corner_size_mm: f64,
+}
 pub struct SketchEditor {
     architecture: crate::architecture_view::Context,
     show_source_tree: bool,
@@ -204,6 +219,17 @@ pub struct SketchEditor {
     construction: bool,
     /// Fillet radius or chamfer setback for the corner tools, in mm.
     corner_size_mm: f64,
+    /// Fillet / chamfer shapes made in the active corner tool session; a new
+    /// size in the tool resizes them (CAD-414).
+    corner_session: Vec<EntityId>,
+    /// The size those shapes currently have.
+    corner_session_size: Option<f64>,
+    /// The last ended drawing tool and its settings; a plain right-click in
+    /// Select restarts it (CAD-413).
+    last_tool: Option<RepeatTool>,
+    /// A plain right-click in the Model viewport this frame (CAD-413): end
+    /// the active Model tool, or repeat the last one. The application acts.
+    model_right_click: Option<ModelRightClick>,
     /// Text tool Inspector state (CAD-142).
     text_tool: text_tool::TextTool,
     draw_preview_id: EntityId,
@@ -326,6 +352,10 @@ impl Default for SketchEditor {
             inline: Default::default(),
             construction: false,
             corner_size_mm: 2.,
+            corner_session: vec![],
+            corner_session_size: None,
+            last_tool: None,
+            model_right_click: None,
             text_tool: Default::default(),
             draw_preview_id: EntityId::new(),
             element: None,
@@ -781,6 +811,26 @@ impl SketchEditor {
         self.model_creation_form_active()
             .then(|| self.model.wood_preset())
             .flatten()
+    }
+    /// The Model viewport's plain right-click request of the last frame.
+    pub fn take_model_right_click(&mut self) -> Option<ModelRightClick> {
+        self.model_right_click.take()
+    }
+    /// Repeatable settings of the active Model tool (CAD-413).
+    pub(crate) fn model_tool_settings(&self) -> Option<crate::modeling::ToolSettings> {
+        self.model.tool_settings()
+    }
+    /// Start the just-begun Model tool from earlier settings (CAD-413).
+    pub(crate) fn restore_model_tool_settings(
+        &mut self,
+        settings: &crate::modeling::ToolSettings,
+    ) -> bool {
+        self.model.restore_tool_settings(settings)
+    }
+    /// Whether a Model tool is mid-gesture: a handle drag or point pick that
+    /// Enter or a right-click must not end.
+    pub(crate) fn model_gesture_active(&self) -> bool {
+        self.model.gesture_active()
     }
     pub fn model_active(&self) -> bool {
         self.model.active()
@@ -2092,6 +2142,48 @@ impl SketchEditor {
         self.model_workspace = mode == crate::registry::Mode::Model;
         self.motion_workspace = mode == crate::registry::Mode::Motion;
     }
+    /// The canonical source of a sketch, face sketches included.
+    #[cfg(test)]
+    pub(crate) fn canonical_source(
+        &self,
+        document: &Document,
+        sketch: EntityId,
+    ) -> multicad_core::constraint_sketch::source::Source {
+        shape_list::canonical(document, sketch).expect("a canonical sketch source")
+    }
+    /// The current solved sketch of `sketch`, if the worker has published it.
+    #[cfg(test)]
+    pub(crate) fn solved_for_tests(
+        &self,
+        sketch: EntityId,
+    ) -> Option<multicad_core::constraint_sketch::Sketch> {
+        self.sketch_evaluation
+            .current(sketch)
+            .and_then(|p| p.evaluated.solved().cloned())
+    }
+    /// The canvas status line.
+    #[cfg(test)]
+    pub(crate) fn status_message(&self) -> &str {
+        &self.message
+    }
+    /// Whether the sketch worker still owes the open sketch's solution.
+    #[cfg(test)]
+    pub(crate) fn sketch_evaluation_pending(&self) -> bool {
+        self.sketch_evaluation.pending()
+    }
+    /// Screen position of an open-sketch plane point in the last viewport.
+    #[cfg(test)]
+    pub(crate) fn sketch_screen(&self, session: &Session, p: [f64; 2]) -> Pos2 {
+        let sketch = self.selected.expect("an open sketch");
+        let (_, frame, _) = self
+            .read_sketch(session.document(), sketch, session.revision())
+            .expect("a readable sketch");
+        let s = self.camera.project(
+            frame.point(p).map(|v| v as f32),
+            self.viewport_rect.expect("a painted viewport"),
+        );
+        Pos2::new(s[0], s[1])
+    }
     pub fn has_pending_edits(&self) -> bool {
         if self.materials.pending() {
             return true;
@@ -2138,8 +2230,12 @@ impl SketchEditor {
         self.moving = false;
         self.picking = false;
         self.plane_picker.cancel();
-        self.tool = None;
-        self.clear_drawing_progress();
+        // Escape drops the pending gesture; the tool stays repeatable.
+        let message = self.message.clone();
+        if self.end_tool().is_none() {
+            self.clear_drawing_progress();
+        }
+        self.message = message;
         self.snap_assist.clear();
         self.cancel_move();
         // A queued or running face projection creates nothing (CAD-383).
@@ -2944,6 +3040,69 @@ impl SketchEditor {
         };
         Ok(())
     }
+    /// The Select tool (CAD-412): end the active drawing or sketch edit tool,
+    /// discarding only its uncommitted gesture, so canvas clicks select.
+    pub fn select_tool(&mut self) {
+        if !self.editing {
+            return;
+        }
+        self.end_tool();
+        if self.operations.tool().is_some() && !self.has_pending_edits() {
+            self.cancel_operation();
+        }
+        self.message =
+            "Select · click curves or points · Shift/Cmd-click adds or removes · empty space clears"
+                .into();
+    }
+    /// End the active drawing tool, keeping committed geometry and dropping
+    /// only the uncommitted gesture. The tool and its settings are kept for a
+    /// right-click repeat (CAD-413). Returns the ended tool.
+    pub fn end_tool(&mut self) -> Option<DrawTool> {
+        let tool = self.tool.take()?;
+        self.corner_session.clear();
+        self.last_tool = Some(RepeatTool {
+            tool,
+            construction: self.construction,
+            corner_size_mm: self.corner_size_mm,
+        });
+        self.clear_drawing_progress();
+        self.inline = Default::default();
+        self.inline_fields_ui_hidden();
+        self.snap_assist.clear();
+        self.message = format!(
+            "{} ended · committed geometry stays · {}",
+            tool.label(),
+            Self::repeat_hint(tool)
+        );
+        Some(tool)
+    }
+    /// Status hint that a plain right-click in Select repeats `tool`.
+    pub(crate) fn repeat_hint(tool: DrawTool) -> String {
+        format!("Select · right-click repeats {}", tool.label())
+    }
+    /// Restart the last ended drawing tool with its settings (CAD-413).
+    pub fn repeat_last_tool(&mut self) -> Result<DrawTool, String> {
+        let last = self.last_tool.ok_or("No drawing tool to repeat yet")?;
+        self.set_tool(last.tool)?;
+        self.construction = last.construction;
+        self.corner_size_mm = last.corner_size_mm;
+        self.set_tool_status();
+        self.message = format!("{} repeated · {}", last.tool.label(), self.message);
+        Ok(last.tool)
+    }
+    /// A single-shot tool's gesture committed: return to Select (CAD-413).
+    pub(super) fn end_single_shot(&mut self, tool: DrawTool) {
+        if !tool.single_shot() || self.tool != Some(tool) {
+            return;
+        }
+        let committed = std::mem::take(&mut self.message);
+        self.end_tool();
+        self.message = format!("{committed} · {}", Self::repeat_hint(tool));
+    }
+    /// Whether the open sketch is in the Select tool: no drawing or edit tool.
+    pub fn select_active(&self) -> bool {
+        self.editing && self.tool.is_none() && self.operations.tool().is_none()
+    }
     pub fn set_tool(&mut self, tool: DrawTool) -> Result<(), String> {
         if self.has_pending_edits() {
             return Err(self.pending_edits_refusal());
@@ -2956,6 +3115,7 @@ impl SketchEditor {
         self.external.cancel();
         self.moving = false;
         self.tool = Some(tool);
+        self.corner_session.clear();
         self.clear_drawing_progress();
         self.snap_assist.clear();
         self.set_tool_status();
@@ -3087,7 +3247,14 @@ impl SketchEditor {
                 construction: self.construction,
             },
             channel,
-        )
+        )?;
+        // A spline is one shape: finishing it returns to Select (CAD-413).
+        // A face projection ends the tool once it commits.
+        if !self.projection_pending() {
+            self.message = "Spline committed · Undo removes it".into();
+            self.end_single_shot(DrawTool::Spline);
+        }
+        Ok(())
     }
     fn spline_pointer(
         &mut self,
@@ -5949,6 +6116,17 @@ impl SketchEditor {
                     self.reset_profile_clicks();
                     self.element = None;
                     self.constraints.select_geometry(point, None, extend);
+                    if extend {
+                        // Adding a point keeps the list on the last curve.
+                        let remaining = self
+                            .constraints
+                            .selection()
+                            .iter()
+                            .rev()
+                            .copied()
+                            .find(|entity| presentation.geometry.iter().any(|g| g.id() == *entity));
+                        self.select_element_of_curve(session.document(), id, remaining);
+                    }
                     self.profiles.clear();
                     self.message = format!(
                         "{} selected sketch entities · Shift-click adds or removes",
@@ -5960,6 +6138,16 @@ impl SketchEditor {
                     self.element = Some(curve);
                     if !self.constraints.select_geometry(curve, Some(curve), extend) {
                         self.element = None;
+                        // A toggled-off curve leaves the list on the last
+                        // curve still selected, never on the removed one.
+                        let remaining = self
+                            .constraints
+                            .selection()
+                            .iter()
+                            .rev()
+                            .copied()
+                            .find(|entity| presentation.geometry.iter().any(|g| g.id() == *entity));
+                        self.select_element_of_curve(session.document(), id, remaining);
                     }
                     self.profiles.clear();
                     self.message = format!(
@@ -5979,6 +6167,12 @@ impl SketchEditor {
                     );
                 }
                 None => {
+                    // Empty space clears picked curves and points (CAD-412);
+                    // the queued area pick then chooses or clears profiles.
+                    if !extend {
+                        self.element = None;
+                        self.constraints.clear_geometry_selection();
+                    }
                     if let Some(point) = self.camera.on_plane(pointer, rect, frame) {
                         if let Err(error) = self.enqueue_profile_click(
                             session.document(),
@@ -5996,6 +6190,42 @@ impl SketchEditor {
                     }
                 }
             }
+        }
+        // CAD-413: a plain right-click (a right-drag navigates instead) ends
+        // the active tool, or in Select restarts the last tool and settings.
+        if sketch_mode
+            && self.editing
+            && !self.moving
+            && !self.external.active()
+            && response.secondary_clicked()
+        {
+            if self.tool.is_some() {
+                self.end_tool();
+            } else if self.operations.tool().is_some() {
+                if self.has_pending_edits() {
+                    self.message = self.pending_edits_refusal();
+                } else {
+                    self.select_tool();
+                }
+            } else if self.last_tool.is_some()
+                && let Err(error) = self.repeat_last_tool()
+            {
+                self.message = error;
+            }
+            ui.ctx().request_repaint();
+        }
+        if !sketch_mode
+            && !self.editing
+            && !self.picking
+            && !self.measurement.active()
+            && response.secondary_clicked()
+        {
+            self.model_right_click = Some(if self.model_active() {
+                ModelRightClick::EndTool
+            } else {
+                ModelRightClick::RepeatTool
+            });
+            ui.ctx().request_repaint();
         }
         self.paint_snap_aids(&painter, session, rect);
         if !self.measurement.active() && self.moving && self.selected.is_some() {

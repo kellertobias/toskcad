@@ -21,6 +21,14 @@ pub(crate) enum ElementKey {
     Curve(EntityId),
     Text(EntityId),
 }
+/// See [`SketchEditor::selection_snapshot`].
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SelectionSnapshot {
+    pub entities: Vec<EntityId>,
+    pub element: Option<EntityId>,
+    pub highlight: BTreeSet<EntityId>,
+}
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ListedElement {
     pub key: ElementKey,
@@ -60,7 +68,8 @@ pub(crate) fn elements(
         .iter()
         .map(|shape| ListedElement {
             key: ElementKey::Shape(shape.id),
-            label: shape.name.clone(),
+            // A fillet or chamfer is named with its size, "Fillet R10".
+            label: shape_edit::corner_label(&source.sketch, shape),
             curves: shape.curves.clone(),
         })
         .collect();
@@ -207,6 +216,18 @@ impl SketchEditor {
         });
         self.shape_fields.error = None;
     }
+    /// Test view of the canvas selection: the selected sketch entities, the
+    /// listed element and the curves highlighted for it (CAD-412).
+    #[cfg(test)]
+    pub(crate) fn selection_snapshot(&self, document: &Document) -> SelectionSnapshot {
+        SelectionSnapshot {
+            entities: self.constraints.selection().to_vec(),
+            element: self.shape.map(|key| match key {
+                ElementKey::Shape(id) | ElementKey::Curve(id) | ElementKey::Text(id) => id,
+            }),
+            highlight: self.element_highlight(document),
+        }
+    }
     /// Curves of the selected element, for canvas highlighting.
     pub(crate) fn element_highlight(&self, document: &Document) -> BTreeSet<EntityId> {
         let (Some(key), Some(sketch)) = (self.shape, self.selected) else {
@@ -324,6 +345,10 @@ impl SketchEditor {
             }
             let text = match constraint.and_then(|c| c.kind.dimension()) {
                 Some(Dimension::Expression { expression }) => expression.text.clone(),
+                // A chamfer setback has no single curve to measure.
+                Some(Dimension::Literal { value, unit }) if shape.kind.corner() && unit == "mm" => {
+                    format_mm(*value)
+                }
                 _ => solved
                     .as_ref()
                     .and_then(|s| measured(s, &shape, *size))

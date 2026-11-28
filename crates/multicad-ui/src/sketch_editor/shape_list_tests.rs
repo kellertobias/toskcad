@@ -227,6 +227,7 @@ fn two_rectangles() -> (Host, Shape, Shape) {
     h.click([0., 0.], Vec2::ZERO);
     h.click([100., 60.], Vec2::ZERO);
     assert_eq!(h.source().sketch.shapes.len(), 1, "{}", h.editor.message);
+    h.editor.set_tool(DrawTool::Rectangle).unwrap();
     let t = h.time + 1.;
     // Acquire the top-edge midpoint and the center as references.
     h.hover([50., 60.], Vec2::new(1., 1.), t);

@@ -407,7 +407,7 @@ impl ShortcutMap {
             (
                 Key::Enter,
                 crate::registry::Command::FinishCurve,
-                "Finish curve",
+                "Finish the spline or end the drawing tool",
             ),
             (
                 Key::T,

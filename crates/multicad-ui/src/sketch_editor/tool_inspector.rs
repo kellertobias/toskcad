@@ -12,7 +12,7 @@ impl SketchEditor {
     ) {
         ui.strong(tool.label());
         if tool.corner() {
-            self.corner_size_ui(ui, tool);
+            self.corner_size_ui(ui, session, tool);
         }
         if tool == DrawTool::Text {
             self.text_tool_ui(ui, session);

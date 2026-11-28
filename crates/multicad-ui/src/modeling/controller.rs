@@ -167,7 +167,44 @@ pub enum ModelToolOutcome {
     },
     Cancelled,
 }
+/// Settings a repeated Model tool starts with (CAD-413). Tools without an
+/// entry restart from their defaults with the current selection.
+#[derive(Clone, Debug)]
+pub(crate) enum ToolSettings {
+    EdgeTreatment(super::edge_treatment::EdgeTreatmentSettings),
+}
 impl ModelToolController {
+    /// The active Fillet / Chamfer form's size field text.
+    #[cfg(test)]
+    pub(crate) fn edge_treatment_size_text(&self) -> Option<String> {
+        match &self.form {
+            Some(ModelForm::EdgeTreatment(panel)) => Some(panel.size_text().to_owned()),
+            _ => None,
+        }
+    }
+    /// A handle drag or viewport point pick is in progress (CAD-413).
+    pub(crate) fn gesture_active(&self) -> bool {
+        self.transform_dragging() || self.placement_point_picking() || self.panel_point_picking()
+    }
+    /// The active form's repeatable settings, if it has any.
+    pub(crate) fn tool_settings(&self) -> Option<ToolSettings> {
+        match &self.form {
+            Some(ModelForm::EdgeTreatment(panel)) if !self.editing() => {
+                Some(ToolSettings::EdgeTreatment(panel.settings()))
+            }
+            _ => None,
+        }
+    }
+    /// Apply a previous run's settings to the matching active form.
+    pub(crate) fn restore_tool_settings(&mut self, settings: &ToolSettings) -> bool {
+        match (&mut self.form, settings) {
+            (Some(ModelForm::EdgeTreatment(panel)), ToolSettings::EdgeTreatment(settings)) => {
+                panel.restore(settings);
+                true
+            }
+            _ => false,
+        }
+    }
     pub fn set_architecture_level(&mut self, level: Option<EntityId>) {
         self.architecture_level = Some(level);
     }

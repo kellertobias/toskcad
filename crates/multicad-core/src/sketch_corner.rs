@@ -576,6 +576,16 @@ pub fn corner_draft(
             _ => unreachable!("edge shapes follow their curve kinds"),
         }
     }
+    // The treatment is a shape of its own, linked to the shape whose corner
+    // it modifies (CAD-414).
+    let modifies = edge_ids
+        .iter()
+        .find_map(|curve| proposed.sketch.shape_of(*curve).map(|shape| shape.id));
+    let kind = match treatment {
+        CornerTreatment::Fillet { .. } => crate::constraint_sketch::ShapeKind::Fillet,
+        CornerTreatment::Chamfer { .. } => crate::constraint_sketch::ShapeKind::Chamfer,
+    };
+    proposed.sketch.record_corner(kind, created[0], modifies);
     proposed.validate()?;
     Ok(CornerDraft {
         source: proposed,

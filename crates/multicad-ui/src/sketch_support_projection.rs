@@ -572,6 +572,9 @@ impl SketchEditor {
                 self.inline.texts.iter_mut().for_each(String::clear);
                 self.message =
                     "Face reference projected and geometry committed · one Undo step".into();
+                if let Some(tool) = tool {
+                    self.end_single_shot(tool);
+                }
                 // A polyline continues from the end of the committed segment.
                 let line = created
                     .last()
