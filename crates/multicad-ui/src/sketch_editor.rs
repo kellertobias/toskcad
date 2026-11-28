@@ -1214,14 +1214,25 @@ impl SketchEditor {
             "Boolean · the preview follows the selected bodies; Apply or Enter commits".into();
         Ok(())
     }
+    /// The wall path's inline Length/Angle fields (CAD-427).
+    pub(crate) fn model_outline_inline_visible(&self) -> bool {
+        self.model.outline_inline_visible()
+    }
+    pub(crate) fn focus_model_outline_inline(&mut self, forward: bool) {
+        self.model.focus_outline_inline(forward);
+    }
     /// Route a path-drawing key to the active wall, fence or slab outline.
     /// Returns the status text, or `None` when no path takes the key.
     pub(crate) fn model_outline_key(
         &mut self,
         key: crate::modeling::OutlineKey,
     ) -> Option<&'static str> {
+        let chains = self.model.outline_chains();
         self.model.outline_key(key)?;
         let message = match key {
+            crate::modeling::OutlineKey::Finish | crate::modeling::OutlineKey::Cancel if chains => {
+                "Wall chain ended · placed segments kept · Apply builds them as one wall"
+            }
             crate::modeling::OutlineKey::Finish => "Path finished · Preview or Apply builds it",
             crate::modeling::OutlineKey::Cancel => "Path drawing cancelled · previous path kept",
             crate::modeling::OutlineKey::RemoveLast => "Last corner removed",

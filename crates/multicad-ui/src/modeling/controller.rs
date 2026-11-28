@@ -847,14 +847,15 @@ impl ModelToolController {
         channel: Channel,
     ) -> Result<(), String> {
         let name = GeneratedNames::new(session.document()).numbered("Wall", " feature");
+        // Wall is a drawing tool: nothing exists until segments are clicked
+        // or typed, and the whole chain is one wall feature (CAD-427).
+        let mut panel = super::wall::WallPanel::new(session.document(), name)?;
+        panel.start_new_path();
         self.begin_form(
             session,
             resources,
             channel,
-            ModelForm::Wall(Box::new(super::wall::WallPanel::new(
-                session.document(),
-                name,
-            )?)),
+            ModelForm::Wall(Box::new(panel)),
         )
     }
     /// Room door, window or vertical-cutout tool on `wall` (or the first
@@ -1004,6 +1005,20 @@ impl ModelToolController {
             ) => true,
             Some(ModelForm::Architecture(panel)) => panel.outlines(),
             _ => false,
+        }
+    }
+    /// Whether the active path ends as a chain that keeps its corners.
+    pub(crate) fn outline_chains(&self) -> bool {
+        matches!(&self.form, Some(ModelForm::Wall(_)))
+    }
+    /// Whether the wall path's inline Length/Angle fields are shown (CAD-427).
+    pub(crate) fn outline_inline_visible(&self) -> bool {
+        matches!(&self.form, Some(ModelForm::Wall(panel)) if panel.outline().inline_fields_visible())
+    }
+    /// Tab from the canvas enters Length (Shift+Tab: Angle).
+    pub(crate) fn focus_outline_inline(&mut self, forward: bool) {
+        if let Some(ModelForm::Wall(panel)) = self.form.as_mut() {
+            panel.outline_mut().focus_inline_field(forward);
         }
     }
     /// Give Enter, Escape or Backspace to a wall, fence or slab path while it
